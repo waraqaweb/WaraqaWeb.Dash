@@ -14,7 +14,7 @@ const fetchJson = async <T>(path: string, init?: RequestInit, fallback?: T): Pro
   try {
     const res = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
-      cache: init?.cache ?? 'force-cache'
+      cache: init?.cache ?? 'no-store'
     });
     return handleResponse<T>(res);
   } catch (error) {

@@ -2,6 +2,9 @@ import type { Metadata } from 'next';
 import './globals.css';
 import GlobalEvaluationCta from '../components/GlobalEvaluationCta';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export const metadata: Metadata = {
   title: 'Waraqa',
   description: 'Personalized Quran, Arabic, and Islamic studies from anywhere.'

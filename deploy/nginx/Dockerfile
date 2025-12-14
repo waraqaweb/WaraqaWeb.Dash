@@ -10,7 +10,7 @@ COPY frontend/ ./
 # Ensure assets are built to work under /dashboard
 ENV PUBLIC_URL=/dashboard
 ENV GENERATE_SOURCEMAP=false
-ENV NODE_OPTIONS=--max_old_space_size=1024
+ENV NODE_OPTIONS=--max_old_space_size=2048
 RUN npm run build
 
 

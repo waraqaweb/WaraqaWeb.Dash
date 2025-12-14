@@ -9,7 +9,7 @@ COPY frontend/marketing-site/ ./
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_OPTIONS=--max_old_space_size=1024
+ENV NODE_OPTIONS=--max_old_space_size=2048
 RUN npm run build
 
 EXPOSE 4000

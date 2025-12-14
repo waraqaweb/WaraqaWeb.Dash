@@ -125,54 +125,54 @@ const AppRoutes = () => {
     return () => {
       document.body.classList.remove('homepage-scroll-lock');
     };
-          {/* Dashboard-scoped auth routes (preferred in production under /dashboard/*) */}
-          <Route
-            path="/dashboard/login"
-            element={
-              <PublicRoute>
-                <LoginPage />
-              </PublicRoute>
-            }
-          />
-          <Route
-            path="/dashboard/admin/login"
-            element={
-              <PublicRoute>
-                <AdminLoginPage />
-              </PublicRoute>
-            }
-          />
-          <Route
-            path="/dashboard/register"
-            element={
-              <PublicRoute>
-                <RegisterPage />
-              </PublicRoute>
-            }
-          />
-          <Route
-            path="/dashboard/forgot-password"
-            element={
-              <PublicRoute>
-                <ForgotPassword />
-              </PublicRoute>
-            }
-          />
-          <Route
-            path="/dashboard/reset-password"
-            element={
-              <PublicRoute>
-                <ResetPassword />
-              </PublicRoute>
-            }
-          />
-
   }, [location.pathname, user]);
 
   return (
     // Render the main routes using the background location if set so the modal can overlay
     <>
       <Routes location={background || location}>
+      {/* Dashboard-scoped auth routes (preferred in production under /dashboard/*) */}
+      <Route
+        path="/dashboard/login"
+        element={
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/dashboard/admin/login"
+        element={
+          <PublicRoute>
+            <AdminLoginPage />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/dashboard/register"
+        element={
+          <PublicRoute>
+            <RegisterPage />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/dashboard/forgot-password"
+        element={
+          <PublicRoute>
+            <ForgotPassword />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/dashboard/reset-password"
+        element={
+          <PublicRoute>
+            <ResetPassword />
+          </PublicRoute>
+        }
+      />
+
       {/* Public routes */}
       <Route 
         path="/login" 

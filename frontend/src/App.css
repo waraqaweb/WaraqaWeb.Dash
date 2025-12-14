@@ -1,0 +1,847 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  /* Rounded shapes, soft shadows */
+  --radius: 0.75rem; /* 12px */
+
+  /* Google-style, light, friendly palette */
+  --background: #F8FAFC; /* slate-50 */
+  --foreground: #1F2937; /* slate-800 */
+  --card: #FFFFFF;
+  --card-foreground: #1F2937;
+  --popover: #FFFFFF;
+  --popover-foreground: #1F2937;
+
+  /* Brand and accents */
+  --primary: #2C736C; /* blue-600 */
+  --primary-foreground: #FFFFFF;
+  --secondary: #F1F5F9; /* slate-100 */
+  --secondary-foreground: #334155; /* slate-700 */
+  --muted: #F8FAFC; /* slate-50 */
+  --muted-foreground: #64748B; /* slate-500 */
+  --accent: #0EA5E9; /* sky-500 */
+  --accent-foreground: #FFFFFF;
+  --destructive: #DC2626; /* red-600 */
+  --destructive-foreground: #FFFFFF;
+
+  /* Surfaces and rings */
+  --border: #E2E8F0; /* slate-200 */
+  --input: #F8FAFC; /* slate-50 */
+  --ring: #2C736C; /* blue-600 */
+
+  /* Charts and status hues */
+  --chart-1: #2C736C; /* blue-600 */
+  --chart-2: #10B981; /* emerald-500 */
+  --chart-3: #F59E0B; /* amber-500 */
+  --chart-4: #8B5CF6; /* violet-500 */
+  --chart-5: #EF4444; /* red-500 */
+
+  /* Sidebar */
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #1F2937;
+  --sidebar-primary: #2C736C;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #F1F5F9;
+  --sidebar-accent-foreground: #334155;
+  --sidebar-border: #E2E8F0;
+  --sidebar-ring: #2C736C;
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+.custom-global-style * {
+  border-color: theme('colors.border');
+  outline: 2px solid theme('colors.ring / 0.5');
+}
+
+.react-select__control {
+  border-radius: 8px !important;
+  border: 1px solid #d1d5db !important;
+  box-shadow: none !important;
+  min-height: 40px !important;
+}
+
+.react-select__control--is-focused {
+  border-color: #2C736C !important;
+  box-shadow: 0 0 0 1px #2C736C !important;
+}
+
+.react-select__menu {
+  z-index: 9999 !important;
+}
+/* Hide arrows in Chrome, Safari, Edge, Opera */
+.no-spinners::-webkit-outer-spin-button,
+.no-spinners::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Hide arrows in Firefox */
+.no-spinners[type=text] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+/* Quran Recitation Toggle Buttons */
+.recite-toggle {
+  background-color: #f3f4f6; /* light gray */
+  color: #374151; /* dark gray */
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.recite-toggle:hover {
+  background-color: #e5e7eb;
+}
+
+.recite-toggle.active {
+  background-color: #2C736C; /* blue */
+  color: #fff;
+  border-color: #2C736C;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.3);
+}
+
+.recite-toggle {
+  background-color: #f3f4f6;
+  color: #374151;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+.recite-toggle:hover {
+  background-color: #e5e7eb;
+}
+.recite-toggle.active {
+  background-color: #2C736C;
+  color: white;
+  border-color: #2C736C;
+}
+
+svg:hover {
+  transform: scale(1.12);
+  transition: transform 0.15s ease-in-out;
+}
+
+/* Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Merienda:wght@400;700&display=swap');
+
+/* Global typography */
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Optional homepage scroll lock
+   Apply by adding the .homepage-scroll-lock class to <body>. */
+body.homepage-scroll-lock,
+body.homepage-scroll-lock #root {
+  overflow: hidden !important;
+}
+
+body.homepage-scroll-lock {
+  position: fixed;
+  width: 100%;
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+body.homepage-scroll-lock *::-webkit-scrollbar {
+  display: none !important;
+}
+
+body.homepage-scroll-lock .react-big-calendar,
+body.homepage-scroll-lock .react-big-calendar * {
+  overflow: visible !important;
+}
+body.homepage-scroll-lock .rbc-time-content,
+body.homepage-scroll-lock .rbc-time-view,
+body.homepage-scroll-lock .rbc-day-slot,
+body.homepage-scroll-lock .rbc-time-body {
+  overflow: visible !important;
+}
+body {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica Neue, Arial, "Noto Sans", sans-serif;
+  color: var(--foreground);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-merienda {
+  font-family: 'Merienda', cursive;
+}
+
+/* Legacy global button styles removed in favor of Tailwind utility-based patterns. */
+
+/* ------------------------------------------------------------------
+   Project Button Styles
+
+   This section centralizes button styles used across the app. It
+   defines semantic helpers and documents which buttons will be
+   affected. Use the helper classes in components instead of long
+   inline class lists where possible.
+
+   Affected buttons (examples):
+   - .sidebar-button        -> buttons in the sidebar/navigation
+   - button[type="submit"] / .btn-submit -> primary form submit buttons
+   - .btn-secondary         -> secondary buttons in forms
+   - .tab-toggle            -> toggle/tab buttons (use .active when selected)
+   - .icon-button           -> icon-only action buttons (students/teachers/guardian pages)
+
+   Colors:
+   - Primary color: var(--primary)
+   - Neutral/Grey: use var(--muted) / var(--muted-foreground) or --border for subtle accents
+
+   Notes:
+   - Prefer .icon-button for rows that only need an icon (no border, compact)
+   - Avoid heavy borders and sharp radiuses; use the root --radius variable
+   - Keep hover states subtle (soft tint or elevation)
+   ------------------------------------------------------------------ */
+
+/* Sidebar / navigation buttons */
+.sidebar-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--sidebar-foreground);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+.sidebar-button:hover {
+  background: color-mix(in srgb, var(--sidebar-accent) 20%, transparent);
+}
+.sidebar-button.active {
+  background: var(--sidebar-primary);
+  color: var(--sidebar-primary-foreground);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+}
+
+/* Primary submit button (semantic) - kept as explicit selector */
+button[type="submit"], input[type="submit"], .btn-submit {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  border: none !important;
+  padding: 0.6rem 1rem !important;
+  border-radius: calc(var(--radius) - 2px) !important;
+  box-shadow: 0 6px 18px rgba(44,115,108,0.08);
+  transition: transform 0.08s ease, filter 0.12s ease, box-shadow 0.12s ease;
+}
+button[type="submit"]:hover, input[type="submit"]:hover, .btn-submit:hover {
+  transform: translateY(-1px);
+  filter: brightness(0.97);
+}
+
+/* Secondary button (opt-in) */
+.btn-secondary {
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  border: 1px solid rgba(0,0,0,0.06) !important;
+  padding: 0.5rem 0.85rem !important;
+  border-radius: calc(var(--radius) - 4px) !important;
+}
+
+/* Tab / toggle buttons */
+.tab-toggle {
+  padding: 0.45rem 0.8rem;
+  border-radius: calc(var(--radius) - 4px);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.tab-toggle.active {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+/* Icon-only buttons (compact, used on Students / Teachers / Guardians pages)
+   Use this for small action icons in tables and lists. They are intentionally
+   borderless and rely on color and subtle hover tints for affordance. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 9999px; /* pill/circle */
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.08s ease;
+}
+.icon-button:hover {
+  background: color-mix(in srgb, var(--muted) 85%, transparent);
+  transform: translateY(-1px);
+}
+.icon-button:active {
+  transform: translateY(0);
+}
+
+/* Page-scoped helpers for explicit pages */
+.page-students .icon-button,
+.page-teachers .icon-button,
+.page-guardians .icon-button {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Make SVGs inside icon buttons slightly larger for better tap targets */
+.icon-button svg { width: 18px; height: 18px; }
+
+/* Bordered variant for icon buttons (used in some admin pages) */
+.icon-button.bordered {
+  border: 1px solid var(--border);
+  box-shadow: none;
+  background: transparent;
+}
+.icon-button.bordered:hover {
+  background: color-mix(in srgb, var(--muted) 85%, transparent);
+}
+
+/* Color variants for icon buttons (semantic colors) */
+.icon-button--green { color: var(--chart-2) !important; }
+.icon-button--green:hover { background: color-mix(in srgb, var(--chart-2) 10%, transparent); }
+
+.icon-button--red { color: var(--chart-5) !important; }
+.icon-button--red:hover { background: color-mix(in srgb, var(--chart-5) 10%, transparent); }
+
+.icon-button--blue { color: var(--primary) !important; }
+.icon-button--blue:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+
+.icon-button--orange { color: var(--chart-3) !important; }
+.icon-button--orange:hover { background: color-mix(in srgb, var(--chart-3) 10%, transparent); }
+
+.icon-button--indigo { color: var(--chart-4) !important; }
+.icon-button--indigo:hover { background: color-mix(in srgb, var(--chart-4) 10%, transparent); }
+
+.icon-button--muted { color: var(--muted-foreground) !important; }
+.icon-button--muted:hover { background: color-mix(in srgb, var(--muted) 85%, transparent); }
+
+.icon-button--gray { color: #9CA3AF !important; }
+.icon-button--gray:hover { background: color-mix(in srgb, #9CA3AF 8%, transparent); }
+
+
+/* ------------------------------------------------------------------
+   react-big-calendar: Google-like weekly time-grid tweaks
+   - Denser hour rows (smaller slot height) so events look like time blocks
+   - Clear time gutter, lighter separators, and rounded event cards
+   - Ensure event content truncates cleanly and has good contrast
+   Notes: keep selectors specific to avoid surprising other components
+   ------------------------------------------------------------------ */
+
+/* Make the time gutter and headers match the dashboard palette */
+.rbc-time-view {
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.rbc-time-gutter {
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  padding-top: 6px;
+}
+.rbc-time-gutter .rbc-label {
+  color: var(--muted-foreground);
+  padding: 0 8px 0 6px;
+}
+
+.classes-calendar-shell {
+  --calendar-border: rgba(148, 163, 184, 0.35);
+  --calendar-light-border: rgba(148, 163, 184, 0.22);
+  --calendar-hour-border: rgba(148, 163, 184, 0.3);
+  --calendar-slot-bg: linear-gradient(180deg, #ffffff 0%, #f8fafc 85%, #f5f7fb 100%);
+}
+
+.classes-calendar-shell .rbc-time-view {
+  background: transparent;
+  border: none;
+}
+
+.classes-calendar-shell .rbc-time-header {
+  border: none;
+  background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+  border-radius: 20px 20px 0 0;
+  padding: 4px 0 4px 0;
+  margin: 0 4px;
+}
+
+.classes-calendar-shell .rbc-time-header .rbc-row {
+  border-bottom: 1px solid var(--calendar-light-border);
+  margin: 0;
+}
+
+.classes-calendar-shell .rbc-time-header .rbc-header {
+  margin: 0;
+  border-right: 1px solid var(--calendar-light-border);
+  padding: 6px 0;
+  min-height: 62px;
+}
+
+.classes-calendar-shell .rbc-time-header .rbc-header:last-child {
+  border-right: none;
+}
+
+.classes-calendar-shell .rbc-time-gutter .rbc-label {
+  display: none !important;
+}
+
+.classes-calendar-shell .calendar-time-gutter {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid var(--calendar-border);
+  background: #fff;
+}
+
+.classes-calendar-shell .calendar-time-gutter__overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.classes-calendar-shell .calendar-time-gutter__slot {
+  flex: 1;
+  min-height: 28px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  text-align: right;
+  padding: 2px 14px 0 6px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  color: #0f172a;
+}
+
+.classes-calendar-shell .calendar-time-gutter__slot--hour {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  font-size: 12px;
+}
+
+.classes-calendar-shell .calendar-time-gutter__slot--half {
+  font-weight: 500;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.classes-calendar-shell .rbc-time-content {
+  overflow-x: hidden !important;
+  scroll-behavior: smooth;
+  padding-right: 6px;
+  background: var(--calendar-slot-bg);
+}
+
+
+.classes-calendar-shell .rbc-day-bg.rbc-today,
+.classes-calendar-shell .rbc-day-slot.rbc-today {
+  background: rgba(226, 232, 240, 0.6) !important;
+}
+
+.classes-calendar-shell .rbc-event {
+  cursor: grab;
+  transition: transform 120ms ease, box-shadow 140ms ease;
+  box-shadow: 0 4px 14px rgba(15,23,42,0.12) !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(15,23,42,0.04) !important;
+}
+
+.classes-calendar-shell .rbc-event:active {
+  cursor: grabbing;
+  transform: translateY(-1px) scale(1.01);
+  box-shadow: 0 12px 26px rgba(15,23,42,0.18) !important;
+}
+
+.classes-calendar-shell .rbc-addons-dnd-resizable .rbc-addons-dnd-resize-ns {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(15,23,42,0.16);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.classes-calendar-shell .rbc-event:hover .rbc-addons-dnd-resize-ns,
+.classes-calendar-shell .rbc-event:focus-within .rbc-addons-dnd-resize-ns {
+  opacity: 0.65;
+}
+
+.rbc-time-header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.rbc-time-header {
+  /* Google-like stacked day header: larger day number over weekday name.
+     Give a bit more vertical space so the stacked layout reads well. */
+  height: 56px;
+  line-height: 1;
+  display: block;
+}
+.rbc-time-header .rbc-row {
+  align-items: center;
+  width: 100%;
+}
+.rbc-time-header .rbc-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  height: 56px;
+  text-align: center;
+  color: var(--foreground);
+}
+
+/* Ensure header cells render as a single centered row (no split lines)
+   and remove any decorative square/background from inner elements. */
+.rbc-time-header .rbc-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.rbc-time-header .rbc-header {
+  white-space: normal; /* allow stacking (day number + weekday) */
+}
+
+/* Style the stacked pieces: first child is the numeric day, second is weekday */
+.rbc-time-header .rbc-header > * {
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  display: block !important;
+  cursor: default !important;
+}
+.rbc-time-header .rbc-header > :first-child {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--foreground);
+  line-height: 1;
+}
+.rbc-time-header .rbc-header > :last-child {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  text-transform: capitalize;
+  margin-top: 2px;
+}
+
+/* Today's column: subtle top accent like Google Calendar */
+.rbc-time-header .rbc-today,
+.rbc-time-header .rbc-today .rbc-header {
+  background: #F3F4F6 !important;
+}
+.rbc-time-header .rbc-today .rbc-header {
+  border-top: 3px solid var(--primary);
+  box-shadow: none !important;
+}
+
+/* Tighter time-slot height -> denser grid similar to Google Calendar */
+.rbc-time-slot {
+  height: 28px; /* smaller slot height for 30-minute slots to increase density */
+}
+
+/* Ensure day columns have visible vertical separators and row borders */
+.rbc-time-content {
+  border-left: 1px solid var(--border);
+}
+.rbc-time-content > .rbc-row > .rbc-day-bg {
+  border-left: 1px solid var(--border);
+}
+
+/* Make the time gutter wider and labels readable */
+.rbc-time-gutter {
+  width: 84px !important;
+  min-width: 84px !important;
+  padding-top: 6px;
+}
+.rbc-time-gutter .rbc-label {
+  padding: 6px 10px;
+  text-align: right;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+.rbc-day-slot .rbc-time-slot,
+.rbc-time-content .rbc-time-slot {
+  border-bottom: 1px solid rgba(15,23,42,0.04);
+}
+
+/* Day columns background & separators */
+.rbc-day-bg {
+  background: var(--card);
+}
+.rbc-day-slot {
+  padding: 2px 4px; /* minimize paddings to reduce overall height and avoid nested scrolls */
+}
+
+/* Current day highlight: use a light grey background for today's column and
+   header so it remains subtle and consistent with the dashboard palette. */
+
+.rbc-day-bg.rbc-today,
+.rbc-time-header .rbc-today,
+.rbc-time-header .rbc-today .rbc-header,
+.rbc-day-slot .rbc-today,
+.rbc-time-content .rbc-day-bg.rbc-today {
+  /* Force a subtle, neutral background for today's column. Use !important
+     to override inline styles or other stronger rules that may have been
+     added elsewhere (e.g., dynamic JS or third-party CSS). */
+  background: #F3F4F6 !important; /* light gray */
+  background-image: none !important;
+  border-color: var(--border) !important;
+}
+
+/* Extra strong override: in some cases the calendar or plugins may set a
+   background-image or inline background on child elements inside the
+   today's column. Force all descendants to the neutral grey to ensure no
+   green/teal gradients remain. */
+.react-big-calendar .rbc-time-content > .rbc-row > .rbc-day-bg.rbc-today,
+.react-big-calendar .rbc-time-content > .rbc-row > .rbc-day-bg.rbc-today *,
+.react-big-calendar .rbc-day-slot.rbc-today,
+.react-big-calendar .rbc-day-slot.rbc-today * {
+  background: #F3F4F6 !important;
+  background-color: #F3F4F6 !important;
+  background-image: none !important;
+  background-clip: padding-box !important;
+  -webkit-background-clip: padding-box !important;
+  box-shadow: none !important;
+}
+
+/* Ensure the header label for today remains readable */
+.rbc-time-header .rbc-today .rbc-header,
+.rbc-time-header .rbc-today {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+/* Event card visuals */
+.rbc-event {
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 6px !important;
+  padding: 2px 4px !important; /* minimize event padding */
+  overflow: hidden !important;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  box-shadow: 0 4px 8px rgba(15,23,42,0.04) !important;
+  border-left-width: 4px !important;
+}
+.rbc-event .rbc-event-content {
+  display: block;
+  /* Allow per-event inline styles to choose the most readable color. Use
+     inherit here so JS can set color on the event element and the content
+     follows it. Avoid forcing a global !important color which would
+     override event-level choices. */
+  color: inherit;
+  font-size: 12px; /* slightly smaller to fit more text */
+  font-weight: 600;
+}
+.rbc-event .rbc-event-label {
+  display: none; /* keep the event block compact and use our EventCard content */
+}
+
+/* Make availability background events look subtle and layered */
+.rbc-event.availability-layer,
+.rbc-event[aria-label*="availability"] {
+  background: rgba(226,232,240,0.9) !important;
+  color: var(--muted-foreground) !important;
+  box-shadow: none !important;
+  border-left-width: 0 !important;
+}
+
+/* ------------------------------------------------------------------
+   Calendar grid normalization
+   Enforce a single, light gray 1px grid for both horizontal and
+   vertical separators to match Google Calendar's simple lines.
+   This reduces visual noise from double borders or mixed strengths.
+   ------------------------------------------------------------------ */
+.rbc-time-slots,
+.rbc-time-content,
+.rbc-time-slot,
+.rbc-row,
+.rbc-day-slot,
+.rbc-time-slots table tr,
+.rbc-time-slots table tr td,
+.rbc-time-slots table,
+.rbc-time-content > .rbc-row > .rbc-day-bg {
+  box-sizing: border-box !important;
+}
+
+/* uniform horizontal separators (half-hour and hour lines use same color;
+   hour lines will be visually emphasized by slightly thicker line) */
+.rbc-time-content .rbc-time-slot,
+.rbc-time-slots table tr,
+.rbc-time-slots tr,
+.rbc-time-content .rbc-time-slot:nth-child(2n),
+.rbc-time-slots table tr:nth-child(2n) {
+  border-bottom: 1px solid rgba(15,23,42,0.03) !important; /* very light */
+}
+
+/* vertical separators between day columns (light) */
+.rbc-day-slot,
+.rbc-time-content > .rbc-row > .rbc-day-bg,
+.rbc-time-slots table tr td {
+  border-right: 1px solid rgba(15,23,42,0.03) !important; /* very light */
+}
+
+/* prevent double borders by making cell backgrounds transparent */
+.rbc-day-bg,
+.rbc-day-bg * {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+/* reduce event inner borders to avoid conflict with grid lines */
+.rbc-event {
+  border: none !important;
+  border-left-width: 0 !important;
+}
+
+
+/* Now marker (current time) styling */
+.rbc-now {
+  background: linear-gradient(90deg, rgba(44,115,108,0.85), rgba(44,115,108,0.35));
+}
+
+/* Improve popup event preview readability */
+.rbc-overlay {
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(15,23,42,0.12);
+}
+
+/* Keep toolbar compact and aligned with dashboard cards */
+.rbc-toolbar {
+  background: transparent;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+}
+
+/* Compact toolbar children: reduce space before previous/next and make
+   buttons tighter so the toolbar takes minimal vertical space. */
+.rbc-toolbar .rbc-btn-group {
+  display: flex !important;
+  gap: 6px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  align-items: center !important;
+}
+.rbc-toolbar .rbc-btn {
+  padding: 6px 8px !important;
+  margin: 0 !important;
+  min-width: auto !important;
+  height: 32px !important;
+  border-radius: 6px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+}
+.rbc-toolbar .rbc-toolbar-label {
+  margin: 0 !important;
+  padding: 0 8px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+.rbc-toolbar .rbc-btn:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+

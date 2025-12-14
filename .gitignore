@@ -1,0 +1,66 @@
+# Node modules
+node_modules/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Node / package manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Logs
+*.log
+
+# Build output
+dist/
+build/
+
+# Next.js
+.next/
+out/
+.vercel/
+
+# Cache
+.cache/
+
+# Tooling caches
+.eslintcache
+.stylelintcache
+.parcel-cache/
+.turbo/
+.swc/
+
+# Coverage
+coverage/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE / editor settings
+.vscode/
+.idea/
+.vs/
+
+# Local temp / scratch
+tmp/
+Trash/
+
+# Stray root artifacts (do not commit)
+{console.error(e)
+class process
+
+# Git folder backups (never commit)
+.git.backup*/
+.git.backup-*/
+.git-backup*/
+.git-backup-*/

@@ -1,0 +1,49 @@
+{
+  "common": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "save": "Save",
+    "close": "Close",
+    "edit": "Edit",
+    "delete": "Delete",
+    "view": "View",
+    "download": "Download",
+    "send": "Send",
+    "whatsapp": "WhatsApp",
+    "email": "Email"
+  },
+  "invoices": {
+    "titleGuardian": "Guardian invoices",
+    "titleMy": "My invoices",
+    "loading": "Loading invoices…",
+    "empty": "No invoices found",
+    "emptyHint": "Try a different filter.",
+    "downloadDocx": "Download DOCX",
+    "copyLink": "Copy share link",
+    "paidInFull": "Paid in full",
+    "due": "Due",
+    "total": "Total",
+    "snapshot": "Snapshot",
+    "delivery": "Delivery status",
+    "issued": "Issued",
+    "dueDate": "Due date",
+    "balance": "Balance due",
+    "notes": "Notes"
+  },
+  "modals": {
+    "deleteInvoiceTitle": "Delete invoice",
+    "deleteInvoiceMessage": "Delete this invoice? You can restore it later.",
+    "cancelInvoiceTitle": "Cancel invoice",
+    "cancelInvoiceMessage": "Cancel this invoice? It will no longer be valid.",
+    "restoreInvoiceTitle": "Restore invoice",
+    "restoreInvoiceMessage": "Restore this deleted invoice?",
+    "permanentDeleteTitle": "Permanently delete",
+    "permanentDeleteMessage": "Delete this invoice permanently? This cannot be undone."
+  },
+  "feedback": {
+    "paymentRecorded": "Payment recorded",
+    "refundRecorded": "Refund recorded",
+    "linkCopied": "Link copied",
+    "error": "Something went wrong"
+  }
+}

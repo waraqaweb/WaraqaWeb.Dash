@@ -1,0 +1,122 @@
+الدفع يساوي تماما عدد الساعات المدفوع
+يظهر عدد الساعات المدفوعة بعد طرح ما تم حضوره
+ماذا لو تم تحديد الفاتورة كغير مدفوع مرة ثانية
+كيفية ارجاع مبلغ تم دفعه بالفعل
+ماذا لو تم حذف درس مدفوع يجب أن يضاف مكانه أقرب درس غير مدفوع
+ماذا لو تم تغيير حالة من حضور أو غياب إلى ملغى
+الدروس التي تظ
+الدفع أقل من الدروس التي تم حضورها
+الدفع أكثر من الدروس المحددة في بيانات الفاتورة
+تعديل بيانات الفاتورة بعد دفعها
+
+Hours paid
+this field need to be calculated everytime I open the modal to be a calculation of the number of classes practically existing in the view invoice modal currently whether it's save in the front end or in the database. that number should be the same number of hours specifed by eith max hours or end date in view invoice modal and any change there should instantly update this number here even without opening the modal and changing the number in the record payment modal should change the number or extend the end date or whatever method is used to cover the number entered in this modal. so they are completing each other.
+
+the scienario that needs me to do this is
+sometimes after I send an invoice to a guardian for 30 days he tells me that he will cancel some classes and I update the invoice in paypal to cover the number of classes he wanted when he pays, I want to come directly to the record payment without needing to open view invoice modal again to update it with what the guardian wanted I want to enter the number of classes he paid and it should update the classes list in view invoice modal to or he may ask to pay more than what we sent for him and this case you should add more classes to the list to cover all the classes he paid.
+so what I need is a dynamic instant sycncing between the hours paid field in record payment modal and (max hours/end date ) in view invoice modal so no need to enter the data twice they should be linked together and instantly updated in all parts of the dashboard
+
+Editable Fields & Permissions
+
+Prompt:
+
+Continue with the Profile Page.
+
+All users can update all fields except:
+hourly rate (admin only), email, and other financial fields.
+bonous for teachers
+Bank details → editable by user → triggers admin notification.
+
+Active/Inactive status → admin only.
+
+add Transfer fees → admin only (others read-only). an amount of usd or percent of the toatal invoice amount this will be called in the invoice for calcualtions
+
+Total hours → admin only (others read-only).
+
+Hourly rate defaults to 10 USD for new Guardians.
+
+I tried to gather all the information I need for each user along with the ones above
+guardian information
+Basic Information
+First Name (editable by admin and the user himself)
+Last Name (editable by admin and the user himself)
+Email (editable by admin and the user himself)
+
+Password (editable by admin and the user himself)
+Role (editable by admin only)
+
+isActive (editable by admin only)
+
+isEmailVerified (editable by admin only)
+
+Contact Info
+Phone(editable by admin and the user himself)
+Address - Street (editable by admin and the user himself)
+City (editable by admin and the user himself)
+State (editable by admin and the user himself)
+Country (choose from a list)
+Zip Code (delete it for all users we don't need it)
+Profile Info
+Profile Picture (editable by admin and the user himself)
+Date of Birth (date picker) (editable by admin and the user himself)
+Gender (dropdownlist) (editable by admin and the user himself)
+
+Timezone (from the system timezone) (editable by admin and the user himself) with an option to detect timezone
+
+System Fields
+Last Login (read only calls actual data)
+Login Attempts (read only calls actual data)  
+Lock Until (delete for all users)
+Notifications (editable by admin and the user himself)
+Email Notifications
+true
+SMS Notifications
+false
+Push Notifications
+true
+Virtuals no need for that
+Full Name
+isLocked (editable by admin only)
+
+Guardian Info
+Relationship (delete for all users)
+Emergency Contact (delete for all users)
+Payment Method dropdown includes (Paypal - Bank account - Wise Transfer)
+Hourly Rate (editable by admin only)
+Billing Address (delete for all users)
+Total Hours (editable by admin only)
+Students (fetch students)
+
+---
+
+teacher's information
+
+First Name(editable by admin and the user himself)
+Last Name(editable by admin and the user himself)
+Email(editable by admin and the user himself)
+Password(editable by admin and the user himself)
+Role (editable by admin)
+Phone(editable by admin and the user himself)
+Address - Street(editable by admin and the user himself)
+City(editable by admin and the user himself)
+isActive (editable by admin)
+isEmailVerified (editable by admin)
+Last Login (read only with real data)
+Login Attempts (read only with real data)
+createdAt (read only with real data)
+
+Hourly Rate is calculated automtaically based on the teachers hour rate in backend (editable by admin only) and its monthly changing
+Monthly Rate (delete this for teacher)
+Bonus (total number of bonuses collected from teachers invoices)
+Instapay Name
+Bank Details
+Bank Name
+Account Number
+IBAN
+SWIFT / BIC
+
+educational Qualifications (teachers can update this field)
+bio, certificates, courses he teaches fetched from the courses list in the project and all the avilable information
+
+and almost the teacher's infrmatoion are the same data for admin except for payment and educational qualifications for admin
+and reasonable fields like admin cant be activated or locked to not corrupt the system

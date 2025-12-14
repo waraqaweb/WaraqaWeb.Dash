@@ -5,6 +5,19 @@ services:
     volumes:
       - mongo-data:/data/db
 
+  mongo-express:
+    image: mongo-express:1.0.2-20
+    restart: unless-stopped
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_SITE_BASEURL: /db
+      ME_CONFIG_BASICAUTH_USERNAME: ${DB_PANEL_USER}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${DB_PANEL_PASSWORD}
+    depends_on:
+      - mongo
+
   backend:
     build:
       context: .
@@ -47,6 +60,7 @@ services:
     depends_on:
       - backend
       - marketing
+      - mongo-express
 
 volumes:
   mongo-data:

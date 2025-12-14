@@ -8,6 +8,7 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "create-admin": "node scripts/createAdmin.js",
+    "upsert-admin": "node scripts/upsertAdmin.js",
     "create-users": "node scripts/seedUsers.js",
     "migrate:remove-guardian-bio": "node scripts/removeGuardianBioInstapay.js",
     "test": "mocha --recursive --exit"

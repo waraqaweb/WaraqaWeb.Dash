@@ -123,7 +123,7 @@ const VacationManagementPage = () => {
   };
 
   const handleDeleteVacation = async (vacation) => {
-    if (!confirm('Are you sure you want to delete this vacation?')) return;
+    if (!window.confirm('Are you sure you want to delete this vacation?')) return;
 
     try {
       if (!vacation.name && !['pending', 'rejected'].includes(vacation.status)) {
@@ -143,7 +143,7 @@ const VacationManagementPage = () => {
   };
 
   const handleTerminateSystemVacation = async (vacation) => {
-    if (!confirm('Are you sure you want to terminate this system vacation?')) return;
+    if (!window.confirm('Are you sure you want to terminate this system vacation?')) return;
 
     try {
       await api.post(`/system-vacations/${vacation._id}/end`);
@@ -156,7 +156,7 @@ const VacationManagementPage = () => {
 
   const handleEndVacationEarly = async (vacation) => {
     const actionLabel = vacation.lifecycleStatus === 'approved' ? 'shorten this vacation' : 'end this vacation now';
-    if (!confirm(`Are you sure you want to ${actionLabel}?`)) return;
+    if (!window.confirm(`Are you sure you want to ${actionLabel}?`)) return;
 
     let endDatePayload = undefined;
     if (vacation.lifecycleStatus === 'approved' && new Date(vacation.startDate) > new Date()) {

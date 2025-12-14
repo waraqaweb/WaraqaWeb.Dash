@@ -60,7 +60,7 @@ const ProtectedRoute = ({ children, requiredRole = null, allowedRoles = null }) 
 
   if (!user) {
     
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/dashboard/login" replace />;
   }
 
   const requiredRoles = Array.isArray(allowedRoles) && allowedRoles.length > 0
@@ -125,6 +125,48 @@ const AppRoutes = () => {
     return () => {
       document.body.classList.remove('homepage-scroll-lock');
     };
+          {/* Dashboard-scoped auth routes (preferred in production under /dashboard/*) */}
+          <Route
+            path="/dashboard/login"
+            element={
+              <PublicRoute>
+                <LoginPage />
+              </PublicRoute>
+            }
+          />
+          <Route
+            path="/dashboard/admin/login"
+            element={
+              <PublicRoute>
+                <AdminLoginPage />
+              </PublicRoute>
+            }
+          />
+          <Route
+            path="/dashboard/register"
+            element={
+              <PublicRoute>
+                <RegisterPage />
+              </PublicRoute>
+            }
+          />
+          <Route
+            path="/dashboard/forgot-password"
+            element={
+              <PublicRoute>
+                <ForgotPassword />
+              </PublicRoute>
+            }
+          />
+          <Route
+            path="/dashboard/reset-password"
+            element={
+              <PublicRoute>
+                <ResetPassword />
+              </PublicRoute>
+            }
+          />
+
   }, [location.pathname, user]);
 
   return (
@@ -372,7 +414,7 @@ const AppRoutes = () => {
       {/* Default redirect - if authenticated, redirect based on role, otherwise to login */}
       <Route 
         path="/" 
-        element={loading ? <LoadingSpinner fullScreen /> : (user ? (user.role === 'admin' ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/dashboard" replace />) : <Navigate to="/login" replace />)}
+        element={loading ? <LoadingSpinner fullScreen /> : (user ? (user.role === 'admin' ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/dashboard" replace />) : <Navigate to="/dashboard/login" replace />)}
       />
       
       {/* Unauthorized page */}

@@ -1,0 +1,52 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      MONGODB_URI: mongodb://mongo:27017/online-class-manager
+      # Comma-separated list of allowed browser origins for CORS
+      # Example: https://yourdomain.com
+      FRONTEND_URL: ${FRONTEND_URL}
+      # TODO: fill these secrets in on the server (.env)
+      JWT_SECRET: ${JWT_SECRET}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
+    depends_on:
+      - mongo
+
+  marketing:
+    build:
+      context: .
+      dockerfile: deploy/marketing/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Browser should call same origin /api
+      NEXT_PUBLIC_API_BASE_URL: /api
+      # Server-side fetches inside Next should use the internal backend hostname
+      MARKETING_API_BASE_URL: http://backend:5000/api
+    depends_on:
+      - backend
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/nginx/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - marketing
+
+volumes:
+  mongo-data:

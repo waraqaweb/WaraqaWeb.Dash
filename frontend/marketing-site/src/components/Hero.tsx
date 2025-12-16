@@ -1,4 +1,9 @@
 import Link from 'next/link';
+const dashboardBaseUrl = (
+  process.env.NEXT_PUBLIC_DASHBOARD_BASE_URL ||
+  (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : 'https://app.waraqa.com')
+).replace(/\/$/, '');
+const dashboardHref = (path: string) => `${dashboardBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 import Image from 'next/image';
 import type { CSSProperties } from 'react';
 import type { HeroCTA, SiteSettings, MarketingCourse, LandingSection } from '../lib/marketingClient';
@@ -215,7 +220,7 @@ const CTAButton = ({ cta }: { cta: HeroCTA }) => {
 };
 
 const defaultCtas: HeroCTA[] = [
-  { label: 'Book an evaluation', href: '/book/evaluation' },
+  { label: 'Book an evaluation', href: dashboardHref('/book/evaluation') },
   { label: 'Explore programs', href: '/courses', style: 'secondary' }
 ];
 

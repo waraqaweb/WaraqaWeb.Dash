@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import GlobalEvaluationCta from '../components/GlobalEvaluationCta';
+import DirAuto from '../components/DirAuto';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -11,10 +12,11 @@ export const metadata: Metadata = {
 };
 
 const RootLayout = ({ children }: { children: React.ReactNode }) => (
-  <html lang="en">
-    <body suppressHydrationWarning className="bg-slate-50 text-slate-900 antialiased">
+  <html lang="en" dir="auto">
+    <body dir="auto" suppressHydrationWarning className="bg-slate-50 text-slate-900 antialiased">
       {children}
       <GlobalEvaluationCta />
+      <DirAuto />
     </body>
   </html>
 );

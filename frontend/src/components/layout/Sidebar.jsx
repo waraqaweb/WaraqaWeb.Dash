@@ -36,18 +36,17 @@ const Sidebar = ({ isOpen, onClose, activeView, onViewChange, onOpenProfileModal
     // Dashboard, Classes, Teachers, Guardians, Students, Vacations, Invoices, Salaries, Feedbacks
     const ordered = [
       { id: 'home', label: 'Dashboard', icon: Home, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/home' },
-  { id: 'classes', label: 'Classes', icon: Calendar, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/classes' },
-    { id: 'availability', label: isAdmin() ? 'Meeting Availability' : 'My Availability', icon: Clock, roles: ['admin', 'teacher'], link: '/dashboard/availability' },
+      { id: 'classes', label: 'Classes', icon: Calendar, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/classes' },
+      { id: 'availability', label: isAdmin() ? 'Availability' : 'My Availability', icon: Clock, roles: ['admin', 'teacher'], link: '/dashboard/availability' },
       { id: 'teachers', label: 'Teachers', icon: GraduationCap, roles: ['admin'], link: '/dashboard/teachers' },
-      { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },
       { id: 'guardians', label: 'Guardians', icon: UserCheck, roles: ['admin'], link: '/dashboard/guardians' },
-  { id: 'students', label: 'Students', icon: Users, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/students' },
-  { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
-  { id: 'invoices', label: 'Invoices', icon: FileText, roles: ['admin', 'guardian'], link: '/dashboard/invoices' },
-      // Salaries: admin -> /admin/teacher-salaries, teacher -> /teacher/salary
-  { id: 'salaries', label: 'Salaries', icon: DollarSign, roles: ['admin', 'teacher'], link: isAdmin() ? '/admin/teacher-salaries' : '/teacher/salary' },
-  { id: 'marketing', label: 'Marketing', icon: Megaphone, roles: ['admin'], link: '/admin/marketing' },
-  { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
+      { id: 'students', label: 'Students', icon: Users, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/students' },
+      { id: 'invoices', label: 'Invoices', icon: FileText, roles: ['admin', 'guardian'], link: '/dashboard/invoices' },
+      { id: 'salaries', label: 'Salaries', icon: DollarSign, roles: ['admin', 'teacher'], link: isAdmin() ? '/admin/teacher-salaries' : '/teacher/salary' },
+      { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
+      { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
+      { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },
+      { id: 'marketing', label: 'Marketing', icon: Megaphone, roles: ['admin'], link: '/admin/marketing' },
     ];
 
     // Filter by current user's role

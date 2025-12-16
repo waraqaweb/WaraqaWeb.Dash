@@ -1,18 +1,31 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
+const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs/promises');
 const { body, param, query, validationResult } = require('express-validator');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const libraryService = require('../services/libraryService');
 const libraryAnnotationService = require('../services/libraryAnnotationService');
+const { normalizeUtf8FromLatin1 } = require('../utils/textEncoding');
 
 const router = express.Router();
+
+const LIBRARY_UPLOAD_TMP_DIR =
+  process.env.LIBRARY_UPLOAD_TMP_DIR || path.join(__dirname, '..', 'tmp', 'library-uploads');
+
+try {
+  fs.mkdirSync(LIBRARY_UPLOAD_TMP_DIR, { recursive: true });
+} catch (e) {
+  // ignore; multer will surface an error when it tries to write
+}
+
 const upload = multer({
-  storage: multer.memoryStorage(),
+  dest: LIBRARY_UPLOAD_TMP_DIR,
   limits: {
-    fileSize: Number(process.env.LIBRARY_UPLOAD_MAX_BYTES || 25 * 1024 * 1024)
+    // Default bumped to 500MB so common classroom videos succeed.
+    fileSize: Number(process.env.LIBRARY_UPLOAD_MAX_BYTES || 500 * 1024 * 1024)
   }
 });
 
@@ -232,6 +245,7 @@ router.post(
   requireAdmin,
   upload.single('file'),
   async (req, res, next) => {
+    const tmpPath = req.file?.path;
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded', error: 'FILE_REQUIRED' });
@@ -241,10 +255,13 @@ router.post(
         return res.status(400).json({ message: 'Destination folder is required', error: 'FOLDER_REQUIRED' });
       }
 
+      const originalName = normalizeUtf8FromLatin1(req.file.originalname);
+
       const payload = await libraryService.uploadLibraryAsset({
-        buffer: req.file.buffer,
-        fileName: req.file.originalname,
+        filePath: req.file.path,
+        fileName: originalName,
         mimeType: req.file.mimetype,
+        bytes: req.file.size,
         folderId,
         user: req.user
       });
@@ -252,6 +269,10 @@ router.post(
       res.status(201).json(payload);
     } catch (error) {
       next(error);
+    } finally {
+      if (tmpPath) {
+        fsPromises.unlink(tmpPath).catch(() => {});
+      }
     }
   }
 );
@@ -369,11 +390,26 @@ router.get('/assets/download', async (req, res, next) => {
   try {
     const { token } = req.query;
     const { asset, payload } = await libraryService.resolveLocalDownloadToken(token);
-    const fileName = payload.fileName || asset.fileName || 'library-file';
+    const fileName = normalizeUtf8FromLatin1(payload.fileName || asset.fileName || 'library-file');
     const disposition = payload.attachment === false ? 'inline' : 'attachment';
 
+    const encodeRFC5987 = (value) =>
+      encodeURIComponent(value)
+        .replace(/['()]/g, escape)
+        .replace(/\*/g, '%2A')
+        .replace(/%(7C|60|5E)/g, (match) => match.toLowerCase());
+
+    const safeName = String(fileName)
+      .replace(/[\\/]/g, '-')
+      .replace(/"/g, '');
+    const asciiFallback = safeName.replace(/[^\x20-\x7E]+/g, '_') || 'library-file';
+
     res.setHeader('Content-Type', asset.contentType || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `${disposition}; filename="${fileName.replace(/"/g, '')}"`);
+    // Use RFC 5987 (filename*) for proper UTF-8 filenames (Arabic, etc.) with an ASCII fallback.
+    res.setHeader(
+      'Content-Disposition',
+      `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeRFC5987(safeName)}`
+    );
 
     if (asset.storagePath) {
       try {

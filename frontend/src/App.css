@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Bidi-friendly defaults (Arabic/RTL + mixed text) */
+html,
+body {
+  unicode-bidi: plaintext;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
 
 
 @custom-variant dark (&:is(.dark *));

@@ -16,6 +16,20 @@ body {
   overflow-x: hidden;
 }
 
+/* Bidi-friendly defaults (Arabic/RTL + mixed text) */
+html,
+body {
+  unicode-bidi: plaintext;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
 body {
   font-family: var(--font-sans), 'Space Grotesk', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont;
   margin: 0;

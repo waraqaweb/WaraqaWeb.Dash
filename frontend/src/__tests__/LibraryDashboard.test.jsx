@@ -1,9 +1,27 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import LibraryDashboard from '../pages/library/LibraryDashboard';
 
 const mockLoadFolder = jest.fn();
 const mockSubmitShare = jest.fn();
+
+jest.mock('../components/library/DocumentViewer', () => ({
+  __esModule: true,
+  default: () => null
+}));
+
+jest.mock('../components/layout/DashboardLayout', () => ({
+  __esModule: true,
+  default: ({ children }) => <div>{children}</div>
+}));
+
+jest.mock('../components/library/LibraryGrid', () => ({
+  __esModule: true,
+  default: ({ folders = [], items = [] }) => (
+    <div data-testid="library-grid">
+      folders:{folders.length};items:{items.length}
+    </div>
+  )
+}));
 
 jest.mock('../api/library', () => ({
   __esModule: true,
@@ -11,6 +29,7 @@ jest.mock('../api/library', () => ({
   createLibraryItem: jest.fn(async () => ({ success: true })),
   deleteLibraryFolder: jest.fn(async () => ({ success: true })),
   deleteLibraryItem: jest.fn(async () => ({ success: true })),
+  fetchDocumentPages: jest.fn(async () => ({ pages: [] })),
   updateLibraryFolder: jest.fn(async () => ({ success: true })),
   updateLibraryItem: jest.fn(async () => ({ success: true })),
 }));
@@ -40,16 +59,18 @@ jest.mock('../hooks/useLibraryData', () => ({
   })
 }));
 
+const LibraryDashboard = require('../pages/library/LibraryDashboard').default;
+
 describe('LibraryDashboard', () => {
   it('renders folders and opens share modal', () => {
     render(<LibraryDashboard />);
 
-    expect(screen.getByText('Mathematics')).toBeInTheDocument();
-    expect(screen.getByText('Algebra')).toBeInTheDocument();
+    expect(screen.getAllByText('Mathematics').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('library-grid').textContent).toContain('folders:1;items:1');
 
     const requestButtons = screen.getAllByText(/Request access/i);
     fireEvent.click(requestButtons[0]);
 
-    expect(screen.getByText('Request Library Access')).toBeInTheDocument();
+    expect(screen.getByText('Request Library Access')).toBeTruthy();
   });
 });

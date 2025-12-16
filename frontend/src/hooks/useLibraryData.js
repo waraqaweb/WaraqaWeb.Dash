@@ -7,41 +7,6 @@ import {
   fetchShareStatus
 } from '../api/library';
 
-const SAMPLE_TREE = [
-  {
-    _id: 'math',
-    displayName: 'Mathematics',
-    subject: 'Mathematics',
-    level: null,
-    isSecret: false,
-    children: [
-      {
-        _id: 'math-primary',
-        displayName: 'Primary',
-        level: 'Primary',
-        subject: 'Mathematics',
-        children: [
-          {
-            _id: 'math-primary-1',
-            displayName: 'Grade 1',
-            level: 'Grade 1',
-            subject: 'Mathematics',
-            children: []
-          }
-        ]
-      }
-    ]
-  },
-  {
-    _id: 'science',
-    displayName: 'Science',
-    subject: 'Science',
-    level: null,
-    isSecret: false,
-    children: []
-  }
-];
-
 const debounce = (fn, delay = 300) => {
   let timer;
   return (...args) => {
@@ -72,7 +37,7 @@ export const useLibraryData = ({ searchTerm: externalSearchTerm = '', filter: ex
     try {
       setIsTreeLoading(true);
       const { tree: apiTree } = await fetchTree();
-      return apiTree?.length ? apiTree : SAMPLE_TREE;
+      return apiTree?.length ? apiTree : [];
     } finally {
       setIsTreeLoading(false);
     }

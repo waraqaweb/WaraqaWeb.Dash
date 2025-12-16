@@ -819,6 +819,9 @@ router.post('/media', authenticateToken, requireAdmin, upload.single('file'), as
       return res.status(400).json({ message: 'file is required' });
     }
 
+    const { normalizeUtf8FromLatin1 } = require('../utils/textEncoding');
+    const originalName = normalizeUtf8FromLatin1(req.file.originalname);
+
     // Convert buffer to data URI for potential Cloudinary upload or DB fallback
     const fileEncoded = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
 
@@ -827,7 +830,7 @@ router.post('/media', authenticateToken, requireAdmin, upload.single('file'), as
       try {
         const uploadResult = await uploadImage(fileEncoded, { folder: 'waraqa/marketing_assets' });
         const asset = await MediaAsset.create({
-          originalName: req.file.originalname,
+          originalName,
           url: uploadResult.main.secure_url,
           thumbnailUrl: uploadResult.thumb?.secure_url,
           publicId: uploadResult.main.public_id,
@@ -854,7 +857,7 @@ router.post('/media', authenticateToken, requireAdmin, upload.single('file'), as
     try {
       const dataUri = fileEncoded;
       const asset = await MediaAsset.create({
-        originalName: req.file.originalname,
+        originalName,
         url: dataUri,
         thumbnailUrl: null,
         publicId: null,

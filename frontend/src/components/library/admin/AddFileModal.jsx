@@ -93,6 +93,12 @@ const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
         setForm((prev) => ({ ...prev, displayName: inferredName || prev.displayName }));
       }
     } catch (uploadError) {
+      // Provide useful diagnostics for debugging failed uploads.
+      console.error('[Library] Upload failed', {
+        message: uploadError?.message,
+        status: uploadError?.response?.status,
+        data: uploadError?.response?.data
+      });
       const message = uploadError?.response?.data?.message || 'Upload failed. Please try again.';
       setUploadedAsset(null);
       setUploadState({ status: 'error', fileName: file.name, bytes: file.size, message });

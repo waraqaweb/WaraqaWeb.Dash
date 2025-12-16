@@ -15,6 +15,12 @@ type Props = {
   siteSettings?: SiteSettings;
 };
 
+const dashboardBaseUrl = (
+  process.env.NEXT_PUBLIC_DASHBOARD_BASE_URL ||
+  (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : 'https://app.waraqa.com')
+).replace(/\/$/, '');
+const dashboardHref = (path: string) => `${dashboardBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+
 const MarketingHeader = ({ siteSettings }: Props) => {
   const navItems = siteSettings?.primaryNavigation?.length ? siteSettings.primaryNavigation : fallbackNav;
   const announcement = siteSettings?.announcement?.active ? siteSettings.announcement : null;
@@ -46,13 +52,13 @@ const MarketingHeader = ({ siteSettings }: Props) => {
         </nav>
         <div className="flex flex-wrap items-center gap-2">
           <Link
-            href="/dashboard/login"
+            href={dashboardHref('/dashboard/login')}
             className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
           >
             Sign in
           </Link>
           <Link
-            href="/book/evaluation"
+            href={dashboardHref('/book/evaluation')}
             className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white shadow hover:bg-brand-dark"
           >
             Book free evaluation

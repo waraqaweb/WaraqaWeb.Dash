@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import flattenFolders from './folderUtils';
+import { subjects } from '../../dashboard/subjects';
+
+const LEVEL_OPTIONS = ['Beginner', 'Intermediate', 'Advanced', 'Special'];
 
 const DEFAULT_FORM = {
   parentFolder: 'root',
@@ -123,21 +126,33 @@ const FolderModal = ({ open, onClose, onSubmit, folders, defaultParent }) => {
           <div className="grid gap-4 sm:grid-cols-3">
             <label className="text-sm">
               <span className="text-muted-foreground">Subject</span>
-              <input
-                type="text"
+              <select
                 value={form.subject}
                 onChange={(event) => handleChange('subject', event.target.value)}
-                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-              />
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+              >
+                <option value="">Choose a subject</option>
+                {(subjects || []).map((subject) => (
+                  <option key={subject} value={subject}>
+                    {subject}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-sm">
               <span className="text-muted-foreground">Level / grade</span>
-              <input
-                type="text"
+              <select
                 value={form.level}
                 onChange={(event) => handleChange('level', event.target.value)}
-                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-              />
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+              >
+                <option value="">Choose a level</option>
+                {LEVEL_OPTIONS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-sm">
               <span className="text-muted-foreground">Order index</span>

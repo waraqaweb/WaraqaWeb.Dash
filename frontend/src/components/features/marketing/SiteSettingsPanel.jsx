@@ -1,5 +1,5 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
-import { getSiteSettings, updateSiteSettings } from '../../../api/marketing';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { getSiteSettings, updateSiteSettings, uploadMediaAsset } from '../../../api/marketing';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 
 const defaultSettings = {
@@ -50,14 +50,19 @@ const blankSocial = { label: '', url: '', icon: '' };
 
 const labelClass = 'text-[0.78rem] font-semibold uppercase tracking-[0.08em] text-slate-500';
 const inputClass = 'mt-1 w-full rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2.5 text-sm text-slate-900 shadow-inner focus:border-slate-500 focus:ring-2 focus:ring-slate-200';
+const inputClassNoTop = 'w-full rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2.5 text-sm text-slate-900 shadow-inner focus:border-slate-500 focus:ring-2 focus:ring-slate-200';
 const chipButtonClass = 'inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-400';
 
 const SiteSettingsPanel = forwardRef(({ onDirtyChange, onSaved }, ref) => {
   const [formState, setFormState] = useState(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingHeroMedia, setUploadingHeroMedia] = useState({ card: false, background: false });
   const [status, setStatus] = useState({ type: '', message: '' });
   const [dirty, setDirty] = useState(false);
+
+  const heroCardFileInputRef = useRef(null);
+  const heroBackgroundFileInputRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
@@ -109,6 +114,27 @@ const SiteSettingsPanel = forwardRef(({ onDirtyChange, onSaved }, ref) => {
       ref[path[path.length - 1]] = value;
       return next;
     });
+  };
+
+  const handleHeroImageUpload = async ({ file, targetField, kind }) => {
+    if (!file) return;
+
+    setStatus({ type: '', message: '' });
+    setUploadingHeroMedia((prev) => ({ ...prev, [kind]: true }));
+
+    try {
+      const uploaded = await uploadMediaAsset({ file, tags: ['hero', kind] });
+      if (!uploaded?.url) throw new Error('Upload succeeded but no URL returned');
+      handleNestedChange(['hero', targetField], uploaded.url);
+    } catch (error) {
+      console.error('Hero image upload failed', error);
+      setStatus({
+        type: 'error',
+        message: error?.response?.data?.message || error?.message || 'Failed to upload image. Please try again.'
+      });
+    } finally {
+      setUploadingHeroMedia((prev) => ({ ...prev, [kind]: false }));
+    }
   };
 
   const handleArrayChange = (key, index, field, value) => {
@@ -243,24 +269,68 @@ const SiteSettingsPanel = forwardRef(({ onDirtyChange, onSaved }, ref) => {
 
           <label className={labelClass}>
             Hero card image URL
-            <input
-              type="text"
-              value={formState.hero?.media || ''}
-              onChange={(e) => handleNestedChange(['hero', 'media'], e.target.value)}
-              className={inputClass}
-              placeholder="https://cdn... (PNG with transparent background works best)"
-            />
+            <div className="mt-1 flex items-start gap-2">
+              <input
+                type="text"
+                value={formState.hero?.media || ''}
+                onChange={(e) => handleNestedChange(['hero', 'media'], e.target.value)}
+                className={`${inputClassNoTop} flex-1`}
+                placeholder="Upload an image (or paste a URL)"
+              />
+              <input
+                ref={heroCardFileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files && e.target.files[0];
+                  e.target.value = '';
+                  handleHeroImageUpload({ file, targetField: 'media', kind: 'card' });
+                }}
+              />
+              <button
+                type="button"
+                className={`${chipButtonClass} normal-case mt-2.5`}
+                onClick={() => heroCardFileInputRef.current?.click()}
+                disabled={uploadingHeroMedia.card}
+              >
+                {uploadingHeroMedia.card ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                Upload image
+              </button>
+            </div>
           </label>
 
           <label className={labelClass}>
             Hero background image URL
-            <input
-              type="text"
-              value={formState.hero?.backgroundMedia || ''}
-              onChange={(e) => handleNestedChange(['hero', 'backgroundMedia'], e.target.value)}
-              className={inputClass}
-              placeholder="Optional: used when Hero image mode is background"
-            />
+            <div className="mt-1 flex items-start gap-2">
+              <input
+                type="text"
+                value={formState.hero?.backgroundMedia || ''}
+                onChange={(e) => handleNestedChange(['hero', 'backgroundMedia'], e.target.value)}
+                className={`${inputClassNoTop} flex-1`}
+                placeholder="Upload an image (or paste a URL)"
+              />
+              <input
+                ref={heroBackgroundFileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files && e.target.files[0];
+                  e.target.value = '';
+                  handleHeroImageUpload({ file, targetField: 'backgroundMedia', kind: 'background' });
+                }}
+              />
+              <button
+                type="button"
+                className={`${chipButtonClass} normal-case mt-2.5`}
+                onClick={() => heroBackgroundFileInputRef.current?.click()}
+                disabled={uploadingHeroMedia.background}
+              >
+                {uploadingHeroMedia.background ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                Upload image
+              </button>
+            </div>
           </label>
         </div>
       </section>

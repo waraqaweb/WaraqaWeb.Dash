@@ -414,51 +414,6 @@ const LibraryDashboardContent = () => {
             onOpenWhiteboard={() => setWhiteboardOpen(true)}
           />
 
-          {folders.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {folders.map((folder) => (
-                <div
-                  key={resolveFolderId(folder) || folder.displayName}
-                  className="inline-flex items-center gap-1 rounded-full border border-border bg-card pr-1 text-xs"
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleFolderClick(folder)}
-                    className="inline-flex items-center gap-2 rounded-full bg-transparent px-3 py-1 text-xs"
-                  >
-                    {folder.displayName}
-                  </button>
-                  {canManageLibrary && (
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleFolderRenameRequest(folder);
-                        }}
-                        className="rounded-full p-1 text-muted-foreground hover:bg-muted"
-                        title="Rename folder"
-                      >
-                        <PencilLine className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleFolderDeleteRequest(folder);
-                        }}
-                        className="rounded-full p-1 text-red-600 hover:bg-red-50"
-                        title="Delete folder"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
           {error && (
             <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               {error}
@@ -472,12 +427,16 @@ const LibraryDashboardContent = () => {
           )}
 
           <LibraryGrid
+            folders={folders}
             items={items}
             view={view}
-            onOpen={setViewerItem}
+            onOpenItem={setViewerItem}
+            onOpenFolder={handleFolderClick}
             isAdmin={canManageLibrary}
             onRenameItem={handleItemRenameRequest}
             onDeleteItem={handleItemDeleteRequest}
+            onRenameFolder={handleFolderRenameRequest}
+            onDeleteFolder={handleFolderDeleteRequest}
           />
         </div>
       </div>

@@ -1,4 +1,9 @@
 import Link from 'next/link';
+const dashboardBaseUrl = (
+  process.env.NEXT_PUBLIC_DASHBOARD_BASE_URL ||
+  (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : 'https://app.waraqa.com')
+).replace(/\/$/, '');
+const dashboardHref = (path: string) => `${dashboardBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 import clsx from 'clsx';
 import Image from 'next/image';
 import type { MarketingCourse } from '@/lib/marketingClient';
@@ -179,7 +184,7 @@ const CourseNarrative = ({ course, index = 0 }: { course: MarketingCourse; index
             Talk to admissions
           </Link>
           <Link
-            href={`/book/evaluation?course=${course.slug}`}
+            href={dashboardHref(`/book/evaluation?course=${course.slug}`)}
             className="rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
           >
             Preview evaluation

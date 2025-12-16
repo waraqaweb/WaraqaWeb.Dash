@@ -7,6 +7,7 @@ const LibraryItem = require('../models/library/LibraryItem');
 const LibraryAsset = require('../models/library/LibraryAsset');
 const { getUserAccessContext } = require('./libraryPermissionsService');
 const { buildSignedDownloadUrl, deleteLibraryAsset } = require('./libraryStorageService');
+const { normalizeUtf8FromLatin1 } = require('../utils/textEncoding');
 
 const DOWNLOAD_TOKEN_SECRET = process.env.LIBRARY_DOWNLOAD_SECRET || process.env.JWT_SECRET || 'library-download-secret';
 const DOWNLOAD_TOKEN_TTL_SECONDS = Number(process.env.LIBRARY_DOWNLOAD_TTL_SECONDS || 600);
@@ -32,6 +33,16 @@ async function persistBufferToLocalStore(assetId, buffer, fileName) {
   await fs.mkdir(dir, { recursive: true });
   const filePath = path.join(dir, safeName);
   await fs.writeFile(filePath, buffer);
+  return filePath;
+}
+
+async function persistFileToLocalStore(assetId, sourcePath, fileName) {
+  await ensureLocalAssetRoot();
+  const safeName = sanitizeFileNameSegment(fileName);
+  const dir = path.join(LOCAL_ASSET_ROOT, assetId.toString().slice(0, 2), assetId.toString());
+  await fs.mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, safeName);
+  await fs.copyFile(sourcePath, filePath);
   return filePath;
 }
 
@@ -90,7 +101,7 @@ function buildFolderCandidate(access) {
 function serializeTreeNode(folder) {
   return {
     _id: asId(folder._id),
-    displayName: folder.displayName,
+    displayName: normalizeUtf8FromLatin1(folder.displayName),
     subject: folder.subject,
     level: folder.level,
     tags: folder.tags,
@@ -151,7 +162,7 @@ function serializeFolder(folder, { includeSecretMeta = false } = {}) {
   if (!folder) return null;
   const base = {
     id: asId(folder._id),
-    displayName: folder.displayName,
+    displayName: normalizeUtf8FromLatin1(folder.displayName),
     slug: folder.slug,
     description: folder.description,
     subject: folder.subject,
@@ -185,7 +196,7 @@ function serializeItem(item, { includeStorageSecrets = false, folder, permission
         provider: storage.provider,
         resourceType: storage.resourceType,
         folderPath: storage.folderPath,
-        fileName: storage.fileName,
+        fileName: normalizeUtf8FromLatin1(storage.fileName),
         format: storage.format,
         bytes: storage.bytes,
         metadata: storage.metadata
@@ -194,7 +205,7 @@ function serializeItem(item, { includeStorageSecrets = false, folder, permission
   return {
     id: asId(item._id),
     folder: asId(item.folder),
-    displayName: item.displayName,
+    displayName: normalizeUtf8FromLatin1(item.displayName),
     slug: item.slug,
     description: item.description,
     subject: item.subject,
@@ -623,8 +634,8 @@ async function deleteItem({ itemId }) {
   }
 }
 
-async function uploadLibraryAsset({ buffer, fileName, mimeType, folderId, user }) {
-  if (!buffer) {
+async function uploadLibraryAsset({ buffer, filePath, bytes, fileName, mimeType, folderId, user }) {
+  if (!buffer && !filePath) {
     throw httpError(400, 'File upload payload missing', 'FILE_REQUIRED');
   }
 
@@ -638,17 +649,23 @@ async function uploadLibraryAsset({ buffer, fileName, mimeType, folderId, user }
     throw httpError(404, 'Folder not found', 'FOLDER_NOT_FOUND');
   }
 
-  const normalizedName = fileName || 'library-file';
+  const normalizedName = normalizeUtf8FromLatin1(fileName || 'library-file');
   const assetId = new mongoose.Types.ObjectId();
-  const storagePath = await persistBufferToLocalStore(assetId, buffer, normalizedName);
-  const shouldEmbed = buffer.length <= EMBEDDED_ASSET_LIMIT;
+  const resolvedBytes = Number.isFinite(bytes) && bytes > 0 ? bytes : buffer ? buffer.length : null;
+  const sizeBytes = resolvedBytes || (filePath ? (await fs.stat(filePath)).size : 0);
+
+  const storagePath = buffer
+    ? await persistBufferToLocalStore(assetId, buffer, normalizedName)
+    : await persistFileToLocalStore(assetId, filePath, normalizedName);
+
+  const shouldEmbed = sizeBytes <= EMBEDDED_ASSET_LIMIT;
 
   const assetPayload = {
     _id: assetId,
     storagePath,
     contentType: mimeType || 'application/octet-stream',
     fileName: normalizedName,
-    bytes: buffer.length,
+    bytes: sizeBytes,
     folder: folder._id,
     createdBy: user?._id,
     metadata: {
@@ -660,7 +677,7 @@ async function uploadLibraryAsset({ buffer, fileName, mimeType, folderId, user }
   };
 
   if (shouldEmbed) {
-    assetPayload.data = buffer;
+    assetPayload.data = buffer || (await fs.readFile(storagePath));
   }
 
   await LibraryAsset.create(assetPayload);
@@ -672,7 +689,7 @@ async function uploadLibraryAsset({ buffer, fileName, mimeType, folderId, user }
     folderPath: folder._id.toString(),
     fileName: normalizedName,
     format: (normalizedName.split('.').pop() || 'bin').toLowerCase(),
-    bytes: buffer.length,
+    bytes: sizeBytes,
     metadata: {
       assetId: assetId.toString(),
       mimeType: mimeType || 'application/octet-stream',
@@ -683,7 +700,7 @@ async function uploadLibraryAsset({ buffer, fileName, mimeType, folderId, user }
   return {
     storage,
     pageCount: null,
-    bytes: buffer.length,
+    bytes: sizeBytes,
     fileName: normalizedName
   };
 }

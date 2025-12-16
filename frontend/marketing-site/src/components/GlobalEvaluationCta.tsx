@@ -1,9 +1,15 @@
 import Link from 'next/link';
 
+const dashboardBaseUrl = (
+  process.env.NEXT_PUBLIC_DASHBOARD_BASE_URL ||
+  (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : 'https://app.waraqa.com')
+).replace(/\/$/, '');
+const dashboardHref = (path: string) => `${dashboardBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+
 const GlobalEvaluationCta = () => (
   <div className="pointer-events-none fixed bottom-5 right-5 z-40 flex flex-col items-end gap-2">
     <Link
-      href="/book/evaluation"
+      href={dashboardHref('/book/evaluation')}
       className="pointer-events-auto rounded-full bg-brand px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-brand-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
     >
       Book free evaluation

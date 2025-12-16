@@ -306,9 +306,21 @@ app.get('/api/health', (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('❌ Error:', err.stack);
-  res.status(500).json({ 
-    message: 'Something went wrong!', 
+  const isMulterLimit = err && (err.code === 'LIMIT_FILE_SIZE' || err.code === 'LIMIT_UNEXPECTED_FILE');
+  const status = err.status || (isMulterLimit ? 413 : 500);
+
+  // Keep logging server-side details for debugging.
+  console.error('❌ Error:', err && (err.stack || err));
+
+  if (isMulterLimit) {
+    return res.status(status).json({
+      message: 'File too large for upload. Please use a smaller file or increase the server upload limit.',
+      error: err.code
+    });
+  }
+
+  res.status(status).json({
+    message: status >= 500 ? 'Something went wrong!' : err.message,
     error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
   });
 });

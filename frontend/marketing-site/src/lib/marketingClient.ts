@@ -3,6 +3,8 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   'http://localhost:5000/api';
 
+const DEFAULT_TIMEOUT_MS = Number(process.env.MARKETING_API_TIMEOUT_MS || 10000);
+
 const handleResponse = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
     throw new Error(`Marketing API error: ${response.status}`);
@@ -11,10 +13,14 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
 };
 
 const fetchJson = async <T>(path: string, init?: RequestInit, fallback?: T): Promise<T> => {
+  const controller = init?.signal ? undefined : new AbortController();
+  const timeoutMs = Number.isFinite(DEFAULT_TIMEOUT_MS) && DEFAULT_TIMEOUT_MS > 0 ? DEFAULT_TIMEOUT_MS : 10000;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
   try {
     const res = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
-      cache: init?.cache ?? 'no-store'
+      cache: init?.cache ?? 'no-store',
+      signal: init?.signal ?? controller?.signal
     });
     // NOTE: We must await here so non-OK responses are caught by this try/catch.
     return await handleResponse<T>(res);
@@ -32,6 +38,8 @@ const fetchJson = async <T>(path: string, init?: RequestInit, fallback?: T): Pro
     const hint =
       'Failed to reach the marketing API. Ensure the backend server is running and NEXT_PUBLIC_API_BASE_URL (or MARKETING_API_BASE_URL) is configured.';
     throw new Error(hint);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 };
 

@@ -16,7 +16,8 @@ const fetchJson = async <T>(path: string, init?: RequestInit, fallback?: T): Pro
       ...init,
       cache: init?.cache ?? 'no-store'
     });
-    return handleResponse<T>(res);
+    // NOTE: We must await here so non-OK responses are caught by this try/catch.
+    return await handleResponse<T>(res);
   } catch (error) {
     console.error('Marketing API fetch failed', {
       path,

@@ -37,12 +37,12 @@ const Sidebar = ({ isOpen, onClose, activeView, onViewChange, onOpenProfileModal
     const ordered = [
       { id: 'home', label: 'Dashboard', icon: Home, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/home' },
       { id: 'classes', label: 'Classes', icon: Calendar, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/classes' },
-      { id: 'availability', label: isAdmin() ? 'Availability' : 'My Availability', icon: Clock, roles: ['admin', 'teacher'], link: '/dashboard/availability' },
       { id: 'teachers', label: 'Teachers', icon: GraduationCap, roles: ['admin'], link: '/dashboard/teachers' },
       { id: 'guardians', label: 'Guardians', icon: UserCheck, roles: ['admin'], link: '/dashboard/guardians' },
       { id: 'students', label: 'Students', icon: Users, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/students' },
       { id: 'invoices', label: 'Invoices', icon: FileText, roles: ['admin', 'guardian'], link: '/dashboard/invoices' },
       { id: 'salaries', label: 'Salaries', icon: DollarSign, roles: ['admin', 'teacher'], link: isAdmin() ? '/admin/teacher-salaries' : '/teacher/salary' },
+      { id: 'availability', label: isAdmin() ? 'Meetings' : 'My Availability', icon: Clock, roles: ['admin', 'teacher'], link: '/dashboard/availability' },
       { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
       { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
       { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },

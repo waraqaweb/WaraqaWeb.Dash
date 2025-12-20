@@ -702,7 +702,10 @@ function App() {
   }, []);
   return (
     // Opt-in to React Router v7 behavior to silence deprecation warnings and prepare for upgrade
-    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <Router
+      basename={process.env.PUBLIC_URL || '/'}
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
       <div className="min-h-screen bg-background">
         <AppRoutes />
       </div>

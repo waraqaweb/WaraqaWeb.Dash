@@ -12,9 +12,38 @@ const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
   const firstInputRef = useRef(null);
   const notesRef = useRef(null);
 
+  useEffect(() => {
+    if (!open) return;
+    if (firstInputRef.current) firstInputRef.current.focus();
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open || !notesRef.current) return;
+    const ta = notesRef.current;
+    ta.style.height = '0px';
+    const h = Math.max(80, Math.min(300, ta.scrollHeight));
+    ta.style.height = h + 'px';
+  }, [open, notes]);
+
   if (!open || !prompt) return null;
 
   const teacher = prompt.teacher || {};
+  const teacherSummary = {
+    _id: teacher._id || prompt.teacherId,
+    firstName: teacher.firstName || prompt.teacherFirstName || '',
+    lastName: teacher.lastName || prompt.teacherLastName || ''
+  };
+
+  const buildFeedbackSummary = (extra = {}) => ({
+    teacher: teacherSummary,
+    teacherName: `${teacherSummary.firstName || ''} ${teacherSummary.lastName || ''}`.trim() || 'Teacher',
+    classId: prompt.classId,
+    scheduledDate: prompt.scheduledDate || null,
+    ...extra,
+  });
 
   const handleSubmit = async () => {
     try {
@@ -29,12 +58,24 @@ const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
       };
       const res = await api.post('/feedbacks', payload);
       if (res.data && res.data.success) {
-        onSubmitted && onSubmitted();
+        const serverFeedback = res.data.feedback || res.data.data;
+        onSubmitted && onSubmitted({
+          action: 'submitted',
+          type: 'monthly',
+          feedback: serverFeedback || buildFeedbackSummary({
+            classRating: payload.classRating,
+            teacherRating: payload.teacherRating,
+            progressEvaluation: payload.progressEvaluation,
+            notes: payload.notes,
+            createdAt: new Date().toISOString(),
+          })
+        });
         onClose();
       }
     } catch (err) {
       console.error('Submit monthly feedback error', err);
       alert('Failed to submit feedback');
+      onSubmitted && onSubmitted({ action: 'error', type: 'monthly', error: err });
     } finally {
       setSubmitting(false);
     }
@@ -44,28 +85,14 @@ const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
     try {
       await api.post(`/feedbacks/monthly/dismiss`, { teacherId: teacher._id, classId: prompt.classId });
       // notify parent to refresh prompts, then close
-      onSubmitted && onSubmitted();
+      onSubmitted && onSubmitted({ action: 'dismissed', type: 'monthly', feedback: buildFeedbackSummary() });
       onClose();
     } catch (err) {
       console.error('Dismiss monthly prompt error', err);
+      onSubmitted && onSubmitted({ action: 'error', type: 'monthly', error: err });
       onClose();
     }
   };
-
-  useEffect(() => {
-    if (firstInputRef.current) firstInputRef.current.focus();
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!notesRef.current) return;
-    const ta = notesRef.current;
-    ta.style.height = '0px';
-    const h = Math.max(80, Math.min(300, ta.scrollHeight));
-    ta.style.height = h + 'px';
-  }, [notes]);
 
   const StarInput = ({ value, onChange, label }) => {
     const stars = [1,2,3,4,5];

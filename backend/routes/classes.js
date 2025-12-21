@@ -20,6 +20,10 @@ const InvoiceService = require('../services/invoiceService');
 const mongoose = require("mongoose");
 const systemVacationService = require("../services/systemVacationService");
 const availabilityService = require("../services/availabilityService");
+const {
+  extractParticipantIds,
+  refreshParticipantsFromSchedule,
+} = require("../services/activityStatusService");
 const { processArrayWithTimezone, addTimezoneInfo, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
 
 // timezone helpers (you must have these implemented)
@@ -154,6 +158,7 @@ function sanitizeClassForRole(classObj, role) {
 
   return clone;
 }
+
 
 const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 const MAX_CHANGE_RATIO = 0.4;
@@ -1089,6 +1094,8 @@ router.post(
         return res.status(404).json({ message: "Class not found" });
       }
 
+      const { teacherId, guardianId, studentId } = extractParticipantIds(classDoc);
+
       if (classDoc.status === "pattern") {
         return res.status(400).json({ message: "Cannot cancel a recurring pattern template" });
       }
@@ -1160,11 +1167,19 @@ router.post(
   const responseClass = sanitizeClassForRole(populated.toObject({ virtuals: true }), req.user.role);
   const updatedPolicy = await buildChangePolicy(populated, req.user);
 
-      return res.json({
+      const responsePayload = {
         message: "Class cancelled",
         class: responseClass,
         policy: updatedPolicy,
-      });
+      };
+
+      try {
+        await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
+      } catch (refreshErr) {
+        console.warn("[cancel] Failed to refresh participant activity flags", refreshErr.message);
+      }
+
+      return res.json(responsePayload);
     } catch (err) {
       console.error("POST /classes/:id/cancel error:", err);
       return res.status(500).json({ message: "Failed to cancel class", error: err.message });
@@ -1265,18 +1280,18 @@ router.post(
 
       // Validate references
       console.log("Validating teacher:", teacher);
-      const teacherDoc = await User.findOne({ _id: teacher, role: "teacher", isActive: true });
+      const teacherDoc = await User.findOne({ _id: teacher, role: "teacher" });
       if (!teacherDoc) {
-        console.log("Teacher not found or inactive");
-        return res.status(404).json({ message: "Teacher not found or inactive" });
+        console.log("Teacher not found");
+        return res.status(404).json({ message: "Teacher not found" });
       }
       console.log("Teacher found:", teacherDoc.firstName, teacherDoc.lastName);
 
       console.log("Validating guardian:", student.guardianId);
-      const guardianDoc = await User.findOne({ _id: student.guardianId, role: "guardian", isActive: true });
+      const guardianDoc = await User.findOne({ _id: student.guardianId, role: "guardian" });
       if (!guardianDoc) {
-        console.log("Guardian not found or inactive");
-        return res.status(404).json({ message: "Guardian not found or inactive" });
+        console.log("Guardian not found");
+        return res.status(404).json({ message: "Guardian not found" });
       }
       console.log("Guardian found:", guardianDoc.firstName, guardianDoc.lastName);
 
@@ -1503,6 +1518,7 @@ router.post(
         } catch (e) { console.warn("Socket emit recurring create failed", e.message); }
       }
 
+      await refreshParticipantsFromSchedule(teacher, studentForClass.guardianId, studentForClass.studentId);
       return res.status(201).json({ message: "Created", classes: createdClasses, count: createdClasses.length });
     } catch (err) {
       console.error("=== POST /classes error ===");
@@ -1559,9 +1575,9 @@ router.post(
       }
 
       const teacherId = req.body.teacher || sourceClass.teacher;
-      const teacherDoc = await User.findOne({ _id: teacherId, role: "teacher", isActive: true });
+      const teacherDoc = await User.findOne({ _id: teacherId, role: "teacher" });
       if (!teacherDoc) {
-        return res.status(404).json({ message: "Teacher not found or inactive" });
+        return res.status(404).json({ message: "Teacher not found" });
       }
 
       const originalStudent = sourceClass.student || {};
@@ -1579,9 +1595,9 @@ router.post(
           return res.status(400).json({ message: "Guardian and student IDs are required when overriding student" });
         }
 
-        const guardianDoc = await User.findOne({ _id: guardianId, role: "guardian", isActive: true });
+        const guardianDoc = await User.findOne({ _id: guardianId, role: "guardian" });
         if (!guardianDoc) {
-          return res.status(404).json({ message: "Guardian not found or inactive" });
+          return res.status(404).json({ message: "Guardian not found" });
         }
 
         let studentSub;
@@ -1675,6 +1691,7 @@ router.post(
       });
 
       await duplicateClass.save();
+      await refreshParticipantsFromSchedule(teacherId, studentForClass.guardianId, studentForClass.studentId);
 
       const populatedClass = await Class.findById(duplicateClass._id)
         .populate("teacher", "firstName lastName email phone profilePicture")
@@ -2085,6 +2102,9 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
     const scope = req.query.scope || req.query.deleteType || "single";
     const classDoc = await Class.findById(req.params.id);
     if (!classDoc) return res.status(404).json({ message: "Class not found" });
+    const teacherId = classDoc.teacher;
+    const guardianId = classDoc.student?.guardianId;
+    const studentId = classDoc.student?.studentId;
 
     if (scope === "single") {
       await Class.findByIdAndDelete(classDoc._id);
@@ -2098,6 +2118,7 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
         }).catch(console.error);
       } catch (e) { console.warn("Notification trigger failed", e.message); }
       try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { id: classDoc._id }); } catch (e) {}
+      await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
       return res.json({ message: "Class deleted (single instance)" });
     }
 
@@ -2108,6 +2129,7 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
       const ids = toDelete.map(d => d._id);
       const result = await Class.deleteMany({ parentRecurringClass: parentId, scheduledDate: { $gte: baseDate } });
       try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { ids, parentId }); } catch (e) {}
+      await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
       return res.json({ message: `Deleted ${result.deletedCount} future class(es)`, count: result.deletedCount, deletedIds: ids });
     }
 
@@ -2123,6 +2145,7 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
       const ids = toDelete.map((d) => d._id);
       const result = await Class.deleteMany({ parentRecurringClass: parentId, scheduledDate: { $lt: baseDate } });
       try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { ids, parentId, scope: "past" }); } catch (e) {}
+      await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
       return res.json({ message: `Deleted ${result.deletedCount} past class(es)`, count: result.deletedCount, deletedIds: ids });
     }
 
@@ -2133,6 +2156,7 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
       const result = await Class.deleteMany({ parentRecurringClass: parentId });
       await Class.findByIdAndDelete(parentId);
       try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { parentId, childrenIds: childIds }); } catch (e) {}
+      await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
       return res.json({ message: `Deleted series (pattern + ${result.deletedCount} classes)`, count: result.deletedCount + 1 });
     }
 
@@ -2167,6 +2191,8 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
   const classDoc = await Class.findById(req.params.id);
     if (!classDoc) return res.status(404).json({ message: "Class not found" });
     console.log("✅ Loaded classDoc:", classDoc._id);
+
+    const { teacherId, guardianId, studentId } = extractParticipantIds(classDoc);
 
     const now = new Date();
     const scheduled = new Date(classDoc.scheduledDate);
@@ -2471,8 +2497,15 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
     // This prevents duplicate hour updates and ensures consistency
 
     const responseClass = sanitizeClassForRole(classDoc.toObject({ virtuals: true }), req.user?.role);
+    const responsePayload = { message: "Report submitted", class: responseClass };
 
-    return res.json({ message: "Report submitted", class: responseClass });
+    try {
+      await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
+    } catch (refreshErr) {
+      console.warn("[report] Failed to refresh participant activity flags", refreshErr.message);
+    }
+
+    return res.json(responsePayload);
   } catch (err) {
     console.error("❌ PUT /classes/:id/report error:", err);
     console.error("❌ PUT /classes/:id/report error (outer catch)", {
@@ -2506,6 +2539,36 @@ router.post("/maintenance/generate-recurring", authenticateToken, requireRole(["
   } catch (err) {
     console.error("maintenance error:", err);
     return res.status(500).json({ message: "Failed maintenance", error: err.message });
+  }
+});
+
+/* -------------------------
+   POST /api/classes/maintenance/recompute-activity
+   Admin-only utility to manually refresh activity flags
+   ------------------------- */
+router.post("/maintenance/recompute-activity", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  try {
+    const teacherId = req.body.teacherId || null;
+    const guardianId = req.body.guardianId || null;
+    const studentId = req.body.studentId || null;
+
+    if (!teacherId && !(guardianId && studentId)) {
+      return res.status(400).json({
+        message: "Provide a teacherId or both guardianId and studentId to refresh activity",
+      });
+    }
+
+    await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
+
+    return res.json({
+      message: "Activity flags refreshed",
+      teacherId,
+      guardianId,
+      studentId,
+    });
+  } catch (err) {
+    console.error("POST /classes/maintenance/recompute-activity error:", err);
+    return res.status(500).json({ message: "Failed to refresh activity flags", error: err.message });
   }
 });
 

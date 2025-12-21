@@ -133,6 +133,7 @@ const ClassesPage = () => {
   const [viewLayout, setViewLayout] = useState(getInitialLayout);
   const isCalendarView = viewLayout === 'calendar';
   const { isAdmin, isTeacher, user } = useAuth();
+  const adminTimezone = user?.timezone || DEFAULT_TIMEZONE;
   const createAvailabilityState = useMemo(() => (overrides = {}) => ({
     slots: [],
     slotsByDay: {},
@@ -193,6 +194,7 @@ const ClassesPage = () => {
   const deleteCountdownRef = useRef(null);
   // Ref to avoid temporal-dead-zone errors when effects reference fetchClasses
   const fetchClassesRef = useRef(null);
+  const adminTimezoneRef = useRef(adminTimezone);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [duplicateClass, setDuplicateClass] = useState(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -203,7 +205,7 @@ const ClassesPage = () => {
   const [shareMessage, setShareMessage] = useState("");
   const [publicEvaluationLink, setPublicEvaluationLink] = useState(resolvePublicEvaluationLink);
   const [evaluationLinkCopied, setEvaluationLinkCopied] = useState(false);
-  const [targetTimezone, setTargetTimezone] = useState(user?.timezone || DEFAULT_TIMEZONE);
+  const [targetTimezone, setTargetTimezone] = useState(adminTimezone);
   const [teacherAvailability, setTeacherAvailability] = useState(() => createAvailabilityState());
   const [calendarAvailability, setCalendarAvailability] = useState(null);
   const [calendarAvailabilityTeacherId, setCalendarAvailabilityTeacherId] = useState(null);
@@ -236,9 +238,9 @@ const ClassesPage = () => {
     isRecurring: false,
     scheduledDate: "",
     duration: 60,
-    recurrenceDetails: [{ dayOfWeek: 1, time: "18:00", duration: 60, timezone: "UTC" }],
+    recurrenceDetails: [{ dayOfWeek: 1, time: "18:00", duration: 60, timezone: adminTimezone }],
     generationPeriodMonths: 2,
-    timezone: "UTC",
+    timezone: adminTimezone,
     meetingLink: ""
   });
 
@@ -414,8 +416,25 @@ const ClassesPage = () => {
   }, [fetchTeacherAvailability, isTeacherUser, user?._id]);
 
   useEffect(() => {
-    setTargetTimezone(user?.timezone || DEFAULT_TIMEZONE);
-  }, [user?.timezone]);
+    setTargetTimezone(adminTimezone);
+  }, [adminTimezone]);
+
+  useEffect(() => {
+    setNewClass((prev) => {
+      if (!prev) return prev;
+      const shouldUpdateTimezone = !prev.timezone || prev.timezone === adminTimezoneRef.current;
+      if (!shouldUpdateTimezone) return prev;
+      return {
+        ...prev,
+        timezone: adminTimezone,
+        recurrenceDetails: (prev.recurrenceDetails || []).map((slot) => ({
+          ...slot,
+          timezone: adminTimezone,
+        })),
+      };
+    });
+    adminTimezoneRef.current = adminTimezone;
+  }, [adminTimezone]);
 
   useEffect(() => {
     if (shareMode === "admin" && showShareModal && !selectedTeacherId && teachers.length > 0) {
@@ -956,7 +975,7 @@ fetchClassesRef.current = fetchClasses;
           dayOfWeek: 1,
           time: "18:00",
           duration: 60,
-          timezone: prev.timezone || "UTC"
+          timezone: prev.timezone || adminTimezone
         }
       ]
     }));
@@ -1089,9 +1108,9 @@ Would you like to create another series anyway?`
       isRecurring: false,
       scheduledDate: "",
       duration: 60,
-      recurrenceDetails: [{ dayOfWeek: 1, time: "18:00", duration: 60, timezone: "UTC" }],
+      recurrenceDetails: [{ dayOfWeek: 1, time: "18:00", duration: 60, timezone: adminTimezone }],
       generationPeriodMonths: 2,
-      timezone: "UTC",
+      timezone: adminTimezone,
       meetingLink: ""
     });
   };
@@ -1105,7 +1124,7 @@ Would you like to create another series anyway?`
         await fetchStudentsForEditModal(fullClass.student.guardianId._id || fullClass.student.guardianId);
       }
 
-      const classTimezone = fullClass.timezone || DEFAULT_TIMEZONE;
+      const classTimezone = fullClass.timezone || adminTimezone;
       const rawPatternSlots = Array.isArray(fullClass.recurrenceDetails)
         ? fullClass.recurrenceDetails
         : [];
@@ -1163,7 +1182,7 @@ Would you like to create another series anyway?`
         isRecurring: fullClass.isRecurring || false,
         scheduledDate: fullClass.scheduledDate || "",
         duration: fullClass.duration || 60,
-        timezone: fullClass.timezone || "UTC",
+        timezone: fullClass.timezone || adminTimezone,
         meetingLink: fullClass.meetingLink || "",
         generationPeriodMonths: fullClass.recurrence?.generationPeriodMonths || 2,
         recurrenceDetails,
@@ -1225,7 +1244,7 @@ Would you like to create another series anyway?`
           dayOfWeek: 1,
           time: "18:00",
           duration: 60,
-          timezone: prev.timezone || "UTC"
+          timezone: prev.timezone || adminTimezone
         }
       ]
     }));

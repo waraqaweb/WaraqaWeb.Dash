@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import {
   Search,
@@ -43,16 +43,24 @@ import ConfirmModal from '../ui/ConfirmModal';
 import Toast from '../ui/Toast';
 import { computeInvoiceTotals } from '../../utils/invoiceTotals';
 
+const getInvoicePaymentTimestamp = (invoice) => {
+  if (!invoice) return 0;
+  const paidSource = invoice.paidAt || invoice.paymentDate || (invoice.payment && invoice.payment.date) || invoice.updatedAt;
+  const fallback = invoice.createdAt;
+  return new Date(paidSource || fallback).getTime();
+};
+
 const InvoicesPage = () => {
   const { isAdmin, isGuardian, socket } = useAuth();
   const { searchTerm, globalFilter } = useSearch();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [sortBy, setSortBy] = useState('createdAt');
+  const [sortBy, setSortBy] = useState('paidAt');
   const [sortOrder, setSortOrder] = useState('desc');
   const [expandedInvoice, setExpandedInvoice] = useState(null);
   const [currentPage, setCurrentPage] = useState(Number(new URLSearchParams(location.search).get('page') || '1'));
@@ -65,8 +73,6 @@ const InvoicesPage = () => {
   // Default to showing unpaid invoices first per new UX
   const [activeTab, setActiveTab] = useState('unpaid');
   const [modalState, setModalState] = useState({ type: null, invoiceId: null, invoiceSlug: null });
-  const modalStateRef = React.useRef(modalState);
-  useEffect(() => { modalStateRef.current = modalState; }, [modalState]);
   // FAB open/close state
   const [fabOpen, setFabOpen] = useState(false);
   const fabRef = React.useRef(null);
@@ -176,26 +182,28 @@ const InvoicesPage = () => {
       // Active tab controls the primary status filter and desired ordering.
       // - Unpaid tab: show oldest created invoices first (createdAt asc)
       // - Paid tab: show latest paid invoices first (paidAt desc)
-      // - All tab (or none): show newest created invoices first (createdAt desc)
+      // - All tab (or none): show invoices by latest payment (paidAt desc, fallback createdAt)
       if (activeTab && activeTab !== 'all') {
         params.status = activeTab;
         if (activeTab === 'unpaid') {
           params.sortBy = 'createdAt';
           params.order = 'asc';
-        } else if (activeTab === 'paid') {
+        } else {
           params.sortBy = 'paidAt';
           params.order = 'desc';
-        } else {
-          params.sortBy = sortBy;
-          params.order = sortOrder;
         }
       } else if (statusFilter !== 'all') {
         params.status = statusFilter;
-        params.sortBy = sortBy;
-        params.order = sortOrder;
+        if (statusFilter === 'unpaid') {
+          params.sortBy = 'createdAt';
+          params.order = 'asc';
+        } else {
+          params.sortBy = 'paidAt';
+          params.order = 'desc';
+        }
       } else {
-        // Default for the 'all' tab: newest created first
-        params.sortBy = 'createdAt';
+        // Default for the 'all' tab: latest payment first
+        params.sortBy = 'paidAt';
         params.order = 'desc';
       }
 
@@ -367,17 +375,17 @@ const InvoicesPage = () => {
     }
     setModalState({ type, invoiceId, invoiceSlug });
 
-    // push a history entry so the browser Back button will close the modal
     try {
-      const params = new URLSearchParams(window.location.search);
+      const params = new URLSearchParams(location.search);
       params.set('modal', type);
-      if (invoiceId) params.set('invoice', invoiceId);
-      const newUrl = `${location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
-      const state = { invoicesModal: true, modalType: type, invoiceId, invoiceSlug };
-      window.history.pushState(state, '', newUrl);
+      if (invoiceId) params.set('invoice', invoiceId); else params.delete('invoice');
+      if (invoiceSlug) params.set('invoiceSlug', invoiceSlug); else params.delete('invoiceSlug');
+      const nextSearch = params.toString();
+      const nextUrl = `${location.pathname}${nextSearch ? `?${nextSearch}` : ''}`;
+      const nextState = { ...(location.state || {}), invoicesModal: true, modalType: type, invoiceId, invoiceSlug };
+      navigate(nextUrl, { state: nextState, replace: false });
     } catch (err) {
-      // non-fatal
-      console.warn('Failed to push modal history state', err);
+      console.warn('Failed to sync modal route state', err);
     }
   };
   // Allow callers to force-close by passing the second parameter `force`.
@@ -397,28 +405,24 @@ const InvoicesPage = () => {
     // Always clear the modal state first
     setModalState({ type: null, invoiceId: null, invoiceSlug: null });
 
-    // Clean up URL parameters to prevent modal from reopening
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const hadModalParams = params.has('modal') || params.has('invoice');
-      
-      if (hadModalParams) {
-        params.delete('modal');
-        params.delete('invoice');
-        const newUrl = `${location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
-        
-        // If the current history state corresponds to a modal we opened, go back
-        const current = window.history.state;
-        if (!force && current && current.invoicesModal) {
-          // Going back will trigger popstate, but we've already cleared modalState
-          window.history.back();
-        } else {
-          // Replace current URL to remove modal params
-          window.history.replaceState({}, '', newUrl);
-        }
-      }
-    } catch (err) {
-      console.warn('Error cleaning up URL on closeModal', err);
+    const params = new URLSearchParams(location.search);
+    const hadModalParams = params.has('modal') || params.has('invoice') || params.has('invoiceSlug');
+    const shouldGoBack = !force && Boolean(location.state && location.state.invoicesModal);
+
+    params.delete('modal');
+    params.delete('invoice');
+    params.delete('invoiceSlug');
+    const nextSearch = params.toString();
+    const baseState = { ...(location.state || {}) };
+    delete baseState.invoicesModal;
+    delete baseState.modalType;
+    delete baseState.invoiceId;
+    delete baseState.invoiceSlug;
+
+    if (shouldGoBack) {
+      navigate(-1);
+    } else if (hadModalParams) {
+      navigate(`${location.pathname}${nextSearch ? `?${nextSearch}` : ''}`, { replace: true, state: baseState });
     }
 
     if (refresh) {
@@ -427,58 +431,29 @@ const InvoicesPage = () => {
     }
   };
 
-  // push a modal state into history (exposed to child modals if they want nested history)
-  const pushModalHistory = (type, invoiceId, invoiceSlug = null, extra = {}) => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      params.set('modal', type);
-      if (invoiceId) params.set('invoice', invoiceId);
-      const newUrl = `${location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
-      const state = { invoicesModal: true, modalType: type, invoiceId, invoiceSlug, ...extra };
-      window.history.pushState(state, '', newUrl);
-    } catch (err) {
-      console.warn('Failed to push nested modal history', err);
-    }
-  };
-
-  // Listen for back/forward navigation and update modal state accordingly
+  // Keep modal state in sync with query parameters so deep links and browser navigation work naturally
   useEffect(() => {
-    const onPop = (ev) => {
-      const state = ev.state;
-      // If the popped state includes our modal marker, open it accordingly
-      if (state && state.invoicesModal) {
-        setModalState({ type: state.modalType || null, invoiceId: state.invoiceId || null, invoiceSlug: state.invoiceSlug || null });
+    try {
+      const params = new URLSearchParams(location.search);
+      const modal = params.get('modal');
+      const invoice = params.get('invoice');
+      const invoiceSlug = params.get('invoiceSlug');
+
+      if (!modal) {
+        setModalState((prev) => (prev.type ? { type: null, invoiceId: null, invoiceSlug: null } : prev));
         return;
       }
 
-      // Not a modal state -> ensure any open modal is closed
-      if (modalStateRef.current && modalStateRef.current.type) {
-        setModalState({ type: null, invoiceId: null, invoiceSlug: null });
-      }
-    };
-
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // On mount, if the URL already contains a modal query (deep link), open it
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const modal = params.get('modal');
-      const invoice = params.get('invoice');
-      if (modal) {
-        setModalState({ type: modal, invoiceId: invoice, invoiceSlug: null });
-        // push the same state so future back navigation works predictably
-        const state = { invoicesModal: true, modalType: modal, invoiceId: invoice };
-        window.history.replaceState(state, '', window.location.pathname + window.location.search);
-      }
+      setModalState((prev) => {
+        if (prev.type === modal && prev.invoiceId === invoice && prev.invoiceSlug === invoiceSlug) {
+          return prev;
+        }
+        return { type: modal, invoiceId: invoice, invoiceSlug };
+      });
     } catch (err) {
-      // noop
+      console.warn('Failed to sync modal from URL search params', err);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location.search]);
 
   const handleQuickSend = async (invoiceId, method, force = false) => {
     const key = `${invoiceId}-${method}`;
@@ -511,20 +486,13 @@ const InvoicesPage = () => {
 
     // Comparator consistent with list ordering rules used elsewhere:
     // unpaid -> createdAt asc (oldest first)
-    // paid -> paidAt desc (latest paid first)
-    // all/other -> createdAt desc (newest first)
+    // other views -> paidAt desc (latest payment first, fallback createdAt)
     const invoiceComparator = (a, b) => {
       try {
         if (activeTab === 'unpaid') {
           return new Date(a.createdAt) - new Date(b.createdAt);
         }
-        if (activeTab === 'paid') {
-          const aPaid = a.paidAt ? new Date(a.paidAt) : new Date(a.createdAt);
-          const bPaid = b.paidAt ? new Date(b.paidAt) : new Date(b.createdAt);
-          return bPaid - aPaid;
-        }
-        // default: newest created first
-        return new Date(b.createdAt) - new Date(a.createdAt);
+        return getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a);
       } catch (err) {
         return 0;
       }
@@ -1061,16 +1029,9 @@ const InvoicesPage = () => {
     if (activeTab === 'unpaid') {
       // oldest created first
       list.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    } else if (activeTab === 'paid') {
-      // latest paid first; fallback to createdAt if paidAt missing
-      list.sort((a, b) => {
-        const aPaid = a.paidAt ? new Date(a.paidAt) : new Date(a.createdAt);
-        const bPaid = b.paidAt ? new Date(b.paidAt) : new Date(b.createdAt);
-        return bPaid - aPaid;
-      });
     } else {
-      // 'all' or other tabs: newest created first
-      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      // all other views: latest payment first (fallback to createdAt)
+      list.sort((a, b) => getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a));
     }
     return list;
   }, [filteredInvoices, activeTab]);
@@ -1603,7 +1564,6 @@ const InvoicesPage = () => {
           invoiceSlug={modalState.invoiceSlug}
           invoiceId={modalState.invoiceId}
           onClose={() => closeModal(true)}
-          onPushHistory={pushModalHistory}
           onInvoiceUpdate={handleInvoiceUpdate}
         />
       )}
@@ -1611,7 +1571,6 @@ const InvoicesPage = () => {
         <RecordPaymentModal
           invoiceId={modalState.invoiceId}
           onClose={() => closeModal()}
-          onPushHistory={pushModalHistory}
           onUpdated={() => {
             // success toast and refresh list/stats
             setToast({ show: true, type: 'success', message: 'Payment recorded' });

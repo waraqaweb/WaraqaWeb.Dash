@@ -29,6 +29,10 @@
  */
 
 const mongoose = require("mongoose");
+const {
+  extractParticipantIds,
+  refreshParticipantsFromSchedule,
+} = require("../services/activityStatusService");
 
 const classSchema = new mongoose.Schema({
   // Basic Class Information
@@ -1080,6 +1084,27 @@ classSchema.pre('findOneAndDelete', async function(next) {
     console.error('Error in class findOneAndDelete middleware:', err);
     next(); // Don't block deletion even if invoice recalc fails
   }
+});
+
+function scheduleActivityRefresh(doc, contextLabel) {
+  if (!doc) return;
+  const { teacherId, guardianId, studentId } = extractParticipantIds(doc);
+  if (!teacherId && !guardianId) return;
+  refreshParticipantsFromSchedule(teacherId, guardianId, studentId).catch((err) => {
+    console.warn(`[Class:${contextLabel}] Failed to refresh activity flags`, err.message);
+  });
+}
+
+classSchema.post('save', function(doc) {
+  scheduleActivityRefresh(doc, 'save');
+});
+
+classSchema.post('deleteOne', { document: true, query: false }, function(doc) {
+  scheduleActivityRefresh(doc, 'deleteOne');
+});
+
+classSchema.post('findOneAndDelete', function(doc) {
+  scheduleActivityRefresh(doc, 'findOneAndDelete');
 });
 
 module.exports = mongoose.model("Class", classSchema);

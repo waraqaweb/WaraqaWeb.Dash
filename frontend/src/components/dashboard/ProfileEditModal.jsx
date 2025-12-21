@@ -50,6 +50,11 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
         if (targetUser.teacherInfo?.spokenLanguages !== undefined) {
           formData.spokenLanguages = targetUser.teacherInfo.spokenLanguages;
         }
+        if (targetUser.teacherInfo?.googleMeetLink !== undefined) {
+          formData.googleMeetLink = targetUser.teacherInfo.googleMeetLink;
+        } else {
+          formData.googleMeetLink = '';
+        }
         // Availability config
         if (targetUser.teacherInfo?.availabilityConfig !== undefined) {
           formData.availabilityConfig = targetUser.teacherInfo.availabilityConfig;
@@ -121,6 +126,11 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
           if (freshUser.teacherInfo?.qualifications !== undefined) formData.qualifications = freshUser.teacherInfo.qualifications;
           if (freshUser.teacherInfo?.subjects !== undefined) formData.courses = freshUser.teacherInfo.subjects;
           if (freshUser.teacherInfo?.spokenLanguages !== undefined) formData.spokenLanguages = freshUser.teacherInfo.spokenLanguages;
+          if (freshUser.teacherInfo?.googleMeetLink !== undefined) {
+            formData.googleMeetLink = freshUser.teacherInfo.googleMeetLink;
+          } else {
+            formData.googleMeetLink = '';
+          }
           if (freshUser.teacherInfo?.availabilityConfig !== undefined) formData.availabilityConfig = freshUser.teacherInfo.availabilityConfig;
         }
         
@@ -289,11 +299,11 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
   const adminOnly = ['email','role','isActive','isEmailVerified','guardianInfo.hourlyRate','guardianInfo.transferFee','totalHours','lastLogin','loginAttempts','lockUntil'];
     // monthlyHours and bonus removed from modal editing; they are read-only on the profile page
     // bankDetails require special rules: admins can edit, users can edit their own only if they are not guardians
-  const selfEditable = ['firstName','lastName','password','phone','address','profilePicture','dateOfBirth','gender','timezone','notifications','paymentMethod','qualifications','bio','courses','instapayName'];
+  const selfEditable = ['firstName','lastName','password','phone','address','profilePicture','dateOfBirth','gender','timezone','notifications','paymentMethod','qualifications','bio','courses','instapayName','googleMeetLink'];
     // allow users to edit their spoken languages
     selfEditable.push('spokenLanguages');
     // Fields that are strictly teacher-only and must not be editable when editing a guardian
-    const teacherOnlyFields = ['bio', 'instapayName', 'qualifications', 'courses', 'availabilityConfig'];
+    const teacherOnlyFields = ['bio', 'instapayName', 'qualifications', 'courses', 'availabilityConfig', 'googleMeetLink'];
 
     // If the field is teacher-only but the current form's role is not teacher, disallow editing
     if (teacherOnlyFields.includes(field) && form && form.role !== 'teacher') return false;
@@ -490,6 +500,13 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
         if (form.role === 'teacher') {
           if (!payload.teacherInfo) payload.teacherInfo = {};
           payload.teacherInfo.instapayName = form.instapayName;
+        }
+      }
+
+      if (form.googleMeetLink !== undefined && canEdit('googleMeetLink')) {
+        if (form.role === 'teacher') {
+          if (!payload.teacherInfo) payload.teacherInfo = {};
+          payload.teacherInfo.googleMeetLink = (form.googleMeetLink || '').trim();
         }
       }
       
@@ -765,6 +782,18 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                       <input className="w-full min-w-0 border rounded px-2 py-1" value={form.instapayName||''} onChange={(e)=>setField('instapayName', e.target.value)} disabled={!canEdit('instapayName')} />
                     </div>
                   )}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700">Default Meeting Link</label>
+                    <input
+                      type="url"
+                      className="w-full min-w-0 border rounded px-2 py-1"
+                      value={form.googleMeetLink || ''}
+                      onChange={(e) => setField('googleMeetLink', e.target.value)}
+                      disabled={!canEdit('googleMeetLink')}
+                      placeholder="https://meet.google.com/..."
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Used to auto-fill the meeting link when this teacher is assigned to a class.</p>
+                  </div>
                   <h4 className="font-semibold mb-2">Educational</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">

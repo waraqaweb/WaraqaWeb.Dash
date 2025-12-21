@@ -10,7 +10,6 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   Search, 
-  Filter, 
   SortAsc, 
   SortDesc, 
   ChevronDown, 
@@ -42,6 +41,26 @@ import api from '../../api/axios';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import EditStudentModal from '../students/EditStudentModal';
 
+const STUDENT_STATUS_TABS = [
+  { id: 'active', label: 'Active' },
+  { id: 'inactive', label: 'Inactive' },
+  { id: 'all', label: 'All' }
+];
+
+const isStudentActive = (student = {}) => {
+  const infoStatus = (student.studentInfo?.status || '').toLowerCase();
+  if (infoStatus.includes('inactive') || infoStatus === 'suspended') {
+    return false;
+  }
+  if (infoStatus === 'active') {
+    return true;
+  }
+  if (typeof student.isActive === 'boolean') {
+    return student.isActive;
+  }
+  return true;
+};
+
 const StudentsPage = () => {
   const { user, isAdmin, isGuardian, isTeacher, loginAsUser } = useAuth();
   const [students, setStudents] = useState([]);
@@ -57,7 +76,7 @@ const StudentsPage = () => {
   const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
   const [sortBy, setSortBy] = useState('firstName');
   const [sortOrder, setSortOrder] = useState('asc');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active');
   const [guardianFilter, setGuardianFilter] = useState('all');
   const [guardiansList, setGuardiansList] = useState([]);
   const [expandedStudent, setExpandedStudent] = useState(null);
@@ -68,7 +87,52 @@ const StudentsPage = () => {
   const deriveStudentTimezone = (s) => {
     return s?.guardianTimezone || s?.timezone || s?.studentInfo?.guardianTimezone || s?.studentInfo?.timezone || 'UTC';
   };
-  const itemsPerPage = 10;
+  const itemsPerPage = 30;
+  const [statusCounts, setStatusCounts] = useState({ active: 0, inactive: 0, all: 0 });
+
+  const updateStatusCountsFromList = (list = []) => {
+    const counts = { active: 0, inactive: 0, all: list.length };
+    list.forEach((student) => {
+      if (isStudentActive(student)) {
+        counts.active += 1;
+      } else {
+        counts.inactive += 1;
+      }
+    });
+    setStatusCounts(counts);
+  };
+
+  const fetchStatusCounts = async () => {
+    try {
+      const baseParams = {
+        role: 'student',
+        search: debouncedSearch || undefined,
+      };
+
+      const makeRequest = (overrides = {}) => api.get('/users', {
+        params: {
+          ...baseParams,
+          ...overrides,
+          page: 1,
+          limit: 1,
+        },
+      });
+
+      const [allRes, activeRes, inactiveRes] = await Promise.all([
+        makeRequest(),
+        makeRequest({ isActive: true }),
+        makeRequest({ isActive: false }),
+      ]);
+
+      setStatusCounts({
+        all: allRes.data.pagination?.total ?? (allRes.data.users?.length || 0),
+        active: activeRes.data.pagination?.total ?? (activeRes.data.users?.length || 0),
+        inactive: inactiveRes.data.pagination?.total ?? (inactiveRes.data.users?.length || 0),
+      });
+    } catch (err) {
+      console.warn('Failed to fetch student status counts', err?.message || err);
+    }
+  };
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchTerm), 300);
@@ -102,6 +166,7 @@ const StudentsPage = () => {
 
   const fetchStudents = async () => {
     try {
+      let countsHandled = false;
       setLoading(true);
       console.log('[StudentsPage] fetchStudents() start', {
         guardianFilter,
@@ -135,6 +200,8 @@ const StudentsPage = () => {
         console.log('[StudentsPage] fetched guardian students', { count: arr.length, guardianId: guardianFilter });
         setStudents(withTZ);
         setTotalPages(1);
+        updateStatusCountsFromList(withTZ);
+        countsHandled = true;
       } else if (isGuardian()) {
         // if logged-in user is a guardian, fetch their students
         response = await api.get(`/users/guardian/${user._id}/students`);
@@ -143,6 +210,8 @@ const StudentsPage = () => {
         console.log('[StudentsPage] fetched my guardian students', { count: arr.length, guardianId: user?._id });
         setStudents(withTZ);
         setTotalPages(1);
+        updateStatusCountsFromList(withTZ);
+        countsHandled = true;
       } else if (isTeacher && isTeacher()) {
         // Teachers: show only students who have upcoming classes with this teacher
         // Use classes endpoint with filter=upcoming and teacher id
@@ -328,6 +397,8 @@ const StudentsPage = () => {
           const withTZ = resolvedStudents.map(st => ({ ...st, timezone: deriveStudentTimezone(st) }));
           setStudents(withTZ);
           setTotalPages(1);
+          updateStatusCountsFromList(withTZ);
+          countsHandled = true;
           response = { data: { users: resolvedStudents, students: resolvedStudents } };
         } catch (err) {
           console.error('Failed to fetch classes for teacher view', err);
@@ -342,6 +413,8 @@ const StudentsPage = () => {
           console.log('[StudentsPage] fetched admin all-students', { count: arr.length });
           setStudents(withTZ);
           setTotalPages(1);
+          updateStatusCountsFromList(withTZ);
+          countsHandled = true;
         } else {
           // Fallback for other roles (non-teacher, non-guardian), fetch users
           response = await api.get('/users', { params });
@@ -401,6 +474,10 @@ const StudentsPage = () => {
       // If we don't already have the guardians list for the filter dropdown, fetch basic list
       if (guardiansList.length === 0 && !isGuardian()) {
         fetchGuardiansList();
+      }
+
+      if (!countsHandled) {
+        await fetchStatusCounts();
       }
 
     } catch (err) {
@@ -537,9 +614,19 @@ const StudentsPage = () => {
 
   const filteredStudents = useMemo(() => {
     const q = (searchTerm || '').trim().toLowerCase();
-    if (!q) return students || [];
+    let working = students || [];
+
+    if (statusFilter !== 'all') {
+      working = working.filter((student) => {
+        const active = isStudentActive(student);
+        return statusFilter === 'active' ? active : !active;
+      });
+    }
+
+    if (!q) return working;
+
     const parts = q.split(/\s+/).filter(Boolean);
-    return (students || []).filter((s) => {
+    return working.filter((s) => {
       const first = (s.firstName || '').toLowerCase();
       const last = (s.lastName || '').toLowerCase();
       const full = `${first} ${last}`.trim();
@@ -561,7 +648,34 @@ const StudentsPage = () => {
 
       return partsMatchName || emailMatch || phoneMatch || guardianMatch || full.includes(q);
     });
-  }, [students, guardiansData, searchTerm]);
+  }, [students, guardiansData, searchTerm, statusFilter]);
+
+  const sortedStudents = useMemo(() => {
+    const list = [...(filteredStudents || [])];
+    const buildNameKey = (student) => {
+      const first = (student.firstName || '').trim().toLowerCase();
+      const last = (student.lastName || '').trim().toLowerCase();
+      if (sortBy === 'lastName') {
+        return `${last} ${first}`.trim() || last || first;
+      }
+      return `${first} ${last}`.trim();
+    };
+
+    list.sort((a, b) => {
+      const nameA = buildNameKey(a);
+      const nameB = buildNameKey(b);
+      if (nameA === nameB) {
+        return (a.lastName || '').localeCompare(b.lastName || '', undefined, { sensitivity: 'base' });
+      }
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+    });
+
+    if (sortOrder === 'desc') {
+      list.reverse();
+    }
+
+    return list;
+  }, [filteredStudents, sortBy, sortOrder]);
 
   return (
     <div className="p-6 bg-background min-h-screen">
@@ -584,7 +698,32 @@ const StudentsPage = () => {
         )}
 
         {/* Search and Filters - visible to all users */}
-        <div className="bg-card rounded-lg shadow-sm border border-border p-4 mb-6">
+        <div className="bg-card rounded-lg shadow-sm border border-border p-3 mb-6">
+          <div className="flex flex-wrap gap-2 mb-4">
+            {STUDENT_STATUS_TABS.map((tab) => {
+              const isSelected = statusFilter === tab.id;
+              const count = tab.id === 'all' ? statusCounts.all : (statusCounts[tab.id] || 0);
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter(tab.id);
+                    setCurrentPage(1);
+                  }}
+                  className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
+                    isSelected
+                      ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                      : 'bg-transparent border-border text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
           <div className="flex flex-col md:flex-row gap-4">
             {/* Search */}
             <div className="flex-1">
@@ -598,20 +737,6 @@ const StudentsPage = () => {
                   className="w-full pl-10 pr-4 py-2 border border-border rounded-md bg-input text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
-            </div>
-
-            {/* Status Filter */}
-            <div className="flex items-center space-x-2">
-              <Filter className="h-4 w-4 text-muted-foreground" />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 border border-border rounded-md bg-input text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="all">All Status</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
             </div>
 
             {/* Guardian Filter */}
@@ -645,8 +770,8 @@ const StudentsPage = () => {
         </div>
 
         {/* Students List */}
-        <div className="space-y-4">
-          {filteredStudents.map((student) => {
+        <div className="space-y-3">
+          {sortedStudents.map((student) => {
             // Resolve guardian object from multiple possible locations and the guardiansData cache
             let guardian = null;
 
@@ -673,7 +798,7 @@ const StudentsPage = () => {
             return (
               <div key={student._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
                 {/* Student Summary */}
-                <div className="p-4">
+                <div className="p-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-4">
                       {/* Avatar */}
@@ -886,7 +1011,7 @@ const StudentsPage = () => {
 
                 {/* Expanded Details */}
                 {expandedStudent === student._id && (
-                  <div className="border-t border-border bg-muted/30 p-4">
+                  <div className="border-t border-border bg-muted/30 p-3">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       {/* Contact Information */}
                       <div>
@@ -1045,7 +1170,7 @@ const StudentsPage = () => {
         )}
 
         {/* Empty State */}
-        {!loading && students.length === 0 && (
+        {!loading && sortedStudents.length === 0 && (
           <div className="text-center py-12">
             <Baby className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No students found</h3>

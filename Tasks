@@ -4,12 +4,44 @@ node scripts/seedUsers.js
 node scripts/createAdmin.js
 
 
-# Stage your changes
-git add .
-# Commit your changes with a message
-git commit -m "Describe your changes here"
-# Push your changes to GitHub
-git push -u origin main
+ADMIN EMAIL: waraqainc@gmail.com
+ADMIN PASSWORD: qTBzcA/4uhKQlmYN8ipd+mXH
+
+DB_PANEL_USER=admin
+DB_PANEL_PASSWORD=qsY5542R0fvi82xoYNUot9lJXDoicyWn
+
+3) Safe “push local changes → pull on server → rebuild both React + Next”
+This avoids “corrupting” builds by always rebuilding containers from source.
+
+On your Windows PC (local):
+cd C:\waraqa
+git pull origin main
+git status
+git add -A
+git commit -m "database upload and other adjustments"
+git push origin main
+
+On the droplet:
+
+cd /opt/waraqa/app
+
+# record current version (rollback point)
+git rev-parse HEAD
+
+# update code safely (no merge conflicts)
+git fetch origin
+git reset --hard origin/main
+
+# rebuild + restart everything (dashboard + marketing + backend)
+docker compose up -d --build
+docker compose ps
+
+Rollback (if you ever need it):
+cd /opt/waraqa/app
+git reset --hard <PASTE_OLD_HASH_HERE>
+docker compose up -d --build
+
+
 ------------------------------*النظام العام*------------------------------
 +++++++++++++ نظام التوقيت الزمني وقائمة أشهر المدن والبلدان
 +++++++++++++ اضافة مصغر لحساب فرق التوقيت بين المناطق الزمنية

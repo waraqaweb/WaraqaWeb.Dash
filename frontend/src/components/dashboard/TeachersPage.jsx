@@ -37,6 +37,19 @@
 			import api from '../../api/axios';
 			import LoadingSpinner from '../ui/LoadingSpinner';
 
+			const TEACHER_STATUS_TABS = [
+				{ id: 'active', label: 'Active' },
+				{ id: 'inactive', label: 'Inactive' },
+				{ id: 'all', label: 'All' }
+			];
+
+			const isTeacherActive = (teacher = {}) => {
+				if (typeof teacher.isActive === 'boolean') {
+					return teacher.isActive;
+				}
+				return true;
+			};
+
 			const TeachersPage = () => {
 				const { isAdmin, loginAsUser } = useAuth();
 				const { searchTerm, globalFilter } = useSearch();
@@ -48,12 +61,45 @@
 			const [debouncedSearch, setDebouncedSearch] = useState(searchTerm || '');
 			const [sortBy, setSortBy] = useState('firstName');
 			const [sortOrder, setSortOrder] = useState('asc');
-			const [statusFilter, setStatusFilter] = useState('all');
+			const [statusFilter, setStatusFilter] = useState('active');
 			const [expandedTeacher, setExpandedTeacher] = useState(null);
 			const [editingTeacher, setEditingTeacher] = useState(null);
 			const [currentPage, setCurrentPage] = useState(1);
 				const [totalPages, setTotalPages] = useState(1);
-				const itemsPerPage = 10;
+				const itemsPerPage = 30;
+				const [statusCounts, setStatusCounts] = useState({ active: 0, inactive: 0, all: 0 });
+
+				const fetchStatusCounts = async () => {
+					try {
+						const baseParams = {
+							role: 'teacher',
+							search: debouncedSearch || undefined,
+						};
+
+						const makeRequest = (overrides = {}) => api.get('/users', {
+							params: {
+								...baseParams,
+								...overrides,
+								page: 1,
+								limit: 1,
+							},
+						});
+
+						const [allRes, activeRes, inactiveRes] = await Promise.all([
+							makeRequest(),
+							makeRequest({ isActive: true }),
+							makeRequest({ isActive: false }),
+						]);
+
+						setStatusCounts({
+							all: allRes.data.pagination?.total ?? (allRes.data.users?.length || 0),
+							active: activeRes.data.pagination?.total ?? (activeRes.data.users?.length || 0),
+							inactive: inactiveRes.data.pagination?.total ?? (inactiveRes.data.users?.length || 0),
+						});
+					} catch (err) {
+						console.warn('Failed to fetch teacher status counts', err?.message || err);
+					}
+				};
 
 				// debounce global search string to avoid spamming API
 				useEffect(() => {
@@ -109,6 +155,7 @@
 
 						setTeachers(fetched);
 						setTotalPages((response.data.pagination && response.data.pagination.pages) || 1);
+						await fetchStatusCounts();
 					} catch (err) {
 						setError('Failed to fetch teachers');
 						console.error('Fetch teachers error:', err);
@@ -183,6 +230,11 @@
 				const filteredTeachers = useMemo(() => {
 					let result = teachers || [];
 
+					if (statusFilter !== 'all') {
+						const desired = statusFilter === 'active';
+						result = result.filter((t) => isTeacherActive(t) === desired);
+					}
+
 					if (searchTerm && searchTerm.trim()) {
 						const term = searchTerm.toLowerCase();
 						result = result.filter((t) => {
@@ -205,7 +257,34 @@
 					}
 
 					return result;
-				}, [teachers, searchTerm, globalFilter]);
+				}, [teachers, searchTerm, globalFilter, statusFilter]);
+
+				const sortedTeachers = useMemo(() => {
+					const list = [...(filteredTeachers || [])];
+					const buildNameKey = (teacher) => {
+						const first = (teacher.firstName || '').trim().toLowerCase();
+						const last = (teacher.lastName || '').trim().toLowerCase();
+						if (sortBy === 'lastName') {
+							return `${last} ${first}`.trim() || last || first;
+						}
+						return `${first} ${last}`.trim();
+					};
+
+					list.sort((a, b) => {
+						const nameA = buildNameKey(a);
+						const nameB = buildNameKey(b);
+						if (nameA === nameB) {
+							return (a.lastName || '').localeCompare(b.lastName || '', undefined, { sensitivity: 'base' });
+						}
+						return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+					});
+
+					if (sortOrder === 'desc') {
+						list.reverse();
+					}
+
+					return list;
+				}, [filteredTeachers, sortBy, sortOrder]);
 
 				if (loading && !teachers.length) {
 					return <LoadingSpinner />;
@@ -220,10 +299,35 @@
 								</div>
 							)}
 
-							<div className="space-y-4">
-								{filteredTeachers.map((teacher) => (
+							<div className="flex flex-wrap gap-2 mb-6">
+								{TEACHER_STATUS_TABS.map((tab) => {
+									const isSelected = statusFilter === tab.id;
+									const count = tab.id === 'all' ? statusCounts.all : (statusCounts[tab.id] || 0);
+									return (
+										<button
+											key={tab.id}
+											type="button"
+											onClick={() => {
+												setStatusFilter(tab.id);
+												setCurrentPage(1);
+											}}
+											className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
+												isSelected
+													? 'bg-primary text-primary-foreground border-primary shadow-sm'
+													: 'bg-transparent border-border text-muted-foreground hover:text-foreground'
+											}`}
+										>
+											<span>{tab.label}</span>
+											<span className="ml-2 text-xs text-muted-foreground">{count}</span>
+										</button>
+									);
+								})}
+							</div>
+
+							<div className="space-y-3">
+								{sortedTeachers.map((teacher) => (
 									<div key={teacher._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
-										<div className="p-4">
+										<div className="p-3">
 											<div className="flex items-center justify-between">
 												<div className="flex items-center space-x-4">
 													<div className="h-12 w-12 bg-primary rounded-full flex items-center justify-center">
@@ -333,7 +437,7 @@
 										</div>
 
 										{expandedTeacher === teacher._id && (
-											<div className="border-t border-border bg-muted/30 p-4">
+											<div className="border-t border-border bg-muted/30 p-3">
 												<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 													<div>
 														<h4 className="font-semibold text-foreground mb-3">Contact Information</h4>
@@ -436,7 +540,7 @@
 													</div>
 												</div>
 												{teacher.teacherInfo?.bio && (
-											<div className="mt-4 p-4">
+										<div className="mt-4 p-3">
 												<h4 className="font-semibold text-foreground mb-2">Bio</h4>
 												<p className="text-sm text-muted-foreground">{teacher.teacherInfo.bio}</p>
 											</div>
@@ -446,7 +550,7 @@
 										
 										
 
-										<div className="mt-3 p-4">
+										<div className="mt-3 p-3">
 											<div className="flex flex-wrap gap-2">
 												{teacher.teacherInfo?.subjects?.map((subject, index) => (
 													<span key={index} className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full">
@@ -481,7 +585,7 @@
 								</div>
 							)}
 
-						{!loading && filteredTeachers.length === 0 && (
+						{!loading && sortedTeachers.length === 0 && (
 							<div className="text-center py-12">
 								<User className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
 								<h3 className="text-lg font-semibold text-foreground mb-2">No teachers found</h3>

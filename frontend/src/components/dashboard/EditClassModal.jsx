@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { XCircle, Trash2, Plus, Clock, AlertTriangle } from "lucide-react";
@@ -7,7 +7,16 @@ import { formatTzToUtc } from "../../utils/time";
 import { subjects } from "./ReportTopicsConfig";
 import TimezoneSelector from "../ui/TimezoneSelector";
 import DSTWarningBanner from "../ui/DSTWarningBanner";
-import { checkDSTWarning, formatTimeInTimezone, convertClassTimeForUser } from "../../utils/timezoneUtils";
+import { checkDSTWarning, formatTimeInTimezone, convertClassTimeForUser, DEFAULT_TIMEZONE } from "../../utils/timezoneUtils";
+import SearchSelect from "../ui/SearchSelect";
+import {
+  searchTeachers,
+  getTeacherById,
+  searchGuardians,
+  getGuardianById,
+  searchStudents,
+  getStudentById
+} from "../../services/entitySearch";
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -31,6 +40,88 @@ export default function EditClassModal({
   const [dstWarning, setDstWarning] = useState(null);
   const [timezoneSearchQuery, setTimezoneSearchQuery] = useState("");
   const [showTimezoneSearch, setShowTimezoneSearch] = useState(false);
+  const teacherList = Array.isArray(teachers) ? teachers : [];
+  const guardianList = Array.isArray(guardians) ? guardians : [];
+  const studentList = Array.isArray(students) ? students : [];
+  const selectedGuardianId = editClass?.student?.guardianId ? String(editClass.student.guardianId) : null;
+  const fetchTeacherOptions = useCallback((term = '') => searchTeachers(term), []);
+  const fetchTeacherById = useCallback((id) => getTeacherById(id), []);
+  const fetchGuardianOptions = useCallback((term = '') => searchGuardians(term), []);
+  const fetchGuardianById = useCallback((id) => getGuardianById(id), []);
+  const fetchStudentOptions = useCallback(
+    (term = '') => searchStudents(term, editClass?.student?.guardianId || null),
+    [editClass?.student?.guardianId]
+  );
+  const fetchStudentById = useCallback(
+    (id) => getStudentById(id, editClass?.student?.guardianId || null),
+    [editClass?.student?.guardianId]
+  );
+  const extractTeacherMeetingLink = (option) => {
+    if (!option) return '';
+    const raw = option.raw || option;
+    return (
+      raw?.teacherInfo?.googleMeetLink ||
+      raw?.googleMeetLink ||
+      raw?.meetingLink ||
+      ''
+    );
+  };
+
+  const handleTeacherSelect = (option) => {
+    const teacherId = option?.id || '';
+    const teacherMeetingLink = extractTeacherMeetingLink(option);
+    setEditClass((prev) => ({
+      ...prev,
+      teacher: teacherId,
+      meetingLink: teacherId ? teacherMeetingLink : '',
+    }));
+  };
+
+  const handleGuardianSelect = (option) => {
+    const guardianId = option?.id || '';
+    setEditClass((prev) => ({
+      ...prev,
+      student: {
+        ...(prev.student || {}),
+        guardianId,
+        studentId: guardianId && prev.student?.guardianId === guardianId ? prev.student.studentId : '',
+      },
+    }));
+    handleGuardianChange?.(guardianId, { isEdit: true });
+    if (!guardianId) {
+      handleStudentChange?.('', { isEdit: true });
+    }
+  };
+
+  const handleStudentSelect = (option) => {
+    const studentId = option?.id || '';
+    const guardianId = option?.guardianId || editClass?.student?.guardianId || '';
+    setEditClass((prev) => ({
+      ...prev,
+      student: {
+        guardianId,
+        studentId,
+      },
+    }));
+    handleStudentChange?.(studentId, { isEdit: true });
+    if (guardianId && guardianId !== editClass?.student?.guardianId) {
+      handleGuardianChange?.(guardianId, { isEdit: true });
+    }
+  };
+
+  const validateParticipants = () => {
+    if (editClass?.teacher && editClass?.student?.guardianId && editClass?.student?.studentId) {
+      return true;
+    }
+    alert('Please select a teacher, guardian, and student before saving.');
+    return false;
+  };
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    if (!validateParticipants()) return;
+    handleUpdateClass?.(event);
+  };
   
   // Check for DST warnings when timezone or date changes
   useEffect(() => {
@@ -39,7 +130,7 @@ export default function EditClassModal({
       setDstWarning(warning.hasWarning ? warning : null);
     }
   }, [editClass?.timezone, editClass?.scheduledDate]);
-  
+
   if (!isOpen || !editClass) return null;
   
   const handleClose = () => {
@@ -49,7 +140,7 @@ export default function EditClassModal({
 
   // Helper function to get current timezone display
   const getCurrentTimezoneDisplay = () => {
-    const tz = editClass?.timezone || user?.timezone || "Africa/Cairo";
+    const tz = editClass?.timezone || user?.timezone || DEFAULT_TIMEZONE;
     const offset = moment.tz(tz).format('Z');
     const isDST = moment.tz(tz).isDST();
     return `${tz} (UTC${offset})${isDST ? ' DST' : ''}`;
@@ -121,7 +212,7 @@ export default function EditClassModal({
           </div>
 
           {/* Form */}
-          <form onSubmit={handleUpdateClass} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {/* Class Type Tabs (moved to top) */}
             <div className="rounded-lg bg-gray-100 p-1 inline-flex w-full">
               <button
@@ -147,66 +238,38 @@ export default function EditClassModal({
             
             {/* Participants */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Teacher */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Teacher * ({teachers.length} available)
-                </label>
-                <select
-                  required
-                  value={editClass.teacher || ""}
-                  onChange={(e) => setEditClass((prev) => ({ ...prev, teacher: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                >
-                  <option value="">Select Teacher</option>
-                  {teachers.map((t) => (
-                    <option key={t._id} value={t._id}>
-                      {t.firstName} {t.lastName}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <SearchSelect
+                label="Teacher *"
+                placeholder="Search teachers by name or email"
+                value={editClass.teacher || ''}
+                onChange={handleTeacherSelect}
+                fetchOptions={fetchTeacherOptions}
+                fetchById={fetchTeacherById}
+                helperText="Type to search the full teacher roster"
+                required
+              />
 
-              {/* Guardian */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Guardian * ({guardians.length} available)
-                </label>
-                <select
-                  required
-                  value={editClass.student?.guardianId || ""}
-                  onChange={(e) => handleGuardianChange(e.target.value, { isEdit: true })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                >
-                  <option value="">Select Guardian</option>
-                  {guardians.map((g) => (
-                    <option key={g._id} value={g._id}>
-                      {g.firstName} {g.lastName}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <SearchSelect
+                label="Guardian *"
+                placeholder="Search guardians by name or email"
+                value={editClass.student?.guardianId || ''}
+                onChange={handleGuardianSelect}
+                fetchOptions={fetchGuardianOptions}
+                fetchById={fetchGuardianById}
+                helperText="You can also pick a student first to auto-fill guardian"
+                required
+              />
 
-              {/* Student - FIXED: Show selected student properly */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Student * ({students.length} available)
-                </label>
-                <select
-                  required
-                  value={editClass.student?.studentId || ""}
-                  onChange={(e) => handleStudentChange(e.target.value, { isEdit: true })}
-                  disabled={!editClass.student?.guardianId}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                >
-                  <option value="">Select Student</option>
-                  {students.map((s) => (
-                    <option key={s._id} value={s._id}>
-                      {s.firstName} {s.lastName}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <SearchSelect
+                label="Student *"
+                placeholder="Search students by name or email"
+                value={editClass.student?.studentId || ''}
+                onChange={handleStudentSelect}
+                fetchOptions={fetchStudentOptions}
+                fetchById={fetchStudentById}
+                helperText={editClass.student?.guardianId ? 'Showing students for the selected guardian' : 'Search across all students'}
+                required
+              />
             </div>
 
             {/* (Tabs moved to top) */}
@@ -223,16 +286,16 @@ export default function EditClassModal({
   required
   value={
     editClass.scheduledDate
-      ? moment
+        ? moment
           .utc(editClass.scheduledDate)
-          .tz(editClass.timezone || user?.timezone || "UTC")
+          .tz(editClass.timezone || user?.timezone || DEFAULT_TIMEZONE)
           .format("YYYY-MM-DDTHH:mm")
       : ""
   }
   onChange={(e) => {
-    const utcDate = formatTzToUtc(
+      const utcDate = formatTzToUtc(
       e.target.value,
-      editClass.timezone || user?.timezone || "UTC"
+      editClass.timezone || user?.timezone || DEFAULT_TIMEZONE
     );
     setEditClass((prev) => ({ ...prev, scheduledDate: utcDate }));
   }}
@@ -407,7 +470,7 @@ export default function EditClassModal({
                   Timezone * 
                 </label>
                 <TimezoneSelector
-                  value={editClass.timezone || user?.timezone || "Africa/Cairo"}
+                  value={editClass.timezone || user?.timezone || DEFAULT_TIMEZONE}
                   onChange={(timezone) => setEditClass((prev) => ({ ...prev, timezone }))}
                   placeholder="Search and select timezone..."
                   className="w-full"

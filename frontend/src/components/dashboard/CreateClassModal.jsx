@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { XCircle, Trash2, Plus } from "lucide-react";
@@ -6,6 +6,15 @@ import TimezoneSelector from '../ui/TimezoneSelector';
 import { DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
 import { subjects } from "./ReportTopicsConfig";
 import axios from '../../api/axios';
+import SearchSelect from '../ui/SearchSelect';
+import {
+  searchTeachers,
+  getTeacherById,
+  searchGuardians,
+  getGuardianById,
+  searchStudents,
+  getStudentById
+} from '../../services/entitySearch';
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -45,6 +54,7 @@ export default function CreateClassModal({
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const adminTimezone = user?.timezone || DEFAULT_TIMEZONE;
   const pushedRef = useRef(false);
   
   // Local state for when component is used standalone (e.g., from route)
@@ -59,42 +69,116 @@ export default function CreateClassModal({
     },
     duration: 60,
     meetingLink: '',
-    timezone: DEFAULT_TIMEZONE,
+    timezone: adminTimezone,
     isRecurring: false,
     recurrenceDetails: [
-      { dayOfWeek: 1, time: '18:00', duration: 60, timezone: DEFAULT_TIMEZONE }
+      { dayOfWeek: 1, time: '18:00', duration: 60, timezone: adminTimezone }
     ],
     scheduledDate: '',
     generationPeriodMonths: 3
   });
-  const [localTeachers, setLocalTeachers] = useState([]);
-  const [localGuardians, setLocalGuardians] = useState([]);
-  const [localStudents, setLocalStudents] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   
   // Use local state if no external state is provided (standalone mode)
   const isStandalone = !setNewClass || setNewClass.toString() === '() => {}';
   const currentNewClass = isStandalone ? localNewClass : newClass;
   const currentSetNewClass = isStandalone ? setLocalNewClass : setNewClass;
-  const currentTeachers = isStandalone ? localTeachers : teachers;
-  const currentGuardians = isStandalone ? localGuardians : guardians;
-  const currentStudents = isStandalone ? localStudents : students;
   
   // Filter students based on selected guardian - only show students of selected guardian
   const selectedGuardianId = currentNewClass.student?.guardianId
     ? String(currentNewClass.student.guardianId)
     : null;
 
-  const filteredStudents = selectedGuardianId
-    ? currentStudents.filter(student => String(student.guardianId) === selectedGuardianId)
-    : []; // No students shown until guardian is selected
-  
-  // Fetch data when component is used standalone
-  useEffect(() => {
-    if (isStandalone && isOpen) {
-      fetchData();
+  const fetchTeacherOptions = useCallback((term = '') => searchTeachers(term), []);
+  const fetchTeacherById = useCallback((id) => getTeacherById(id), []);
+  const fetchGuardianOptions = useCallback((term = '') => searchGuardians(term), []);
+  const fetchGuardianById = useCallback((id) => getGuardianById(id), []);
+  const fetchStudentOptions = useCallback(
+    (term = '') => searchStudents(term, currentNewClass.student?.guardianId || null),
+    [currentNewClass.student?.guardianId]
+  );
+  const fetchStudentById = useCallback(
+    (id) => getStudentById(id, currentNewClass.student?.guardianId || null),
+    [currentNewClass.student?.guardianId]
+  );
+
+  const extractTeacherMeetingLink = (option) => {
+    if (!option) return '';
+    const raw = option.raw || option;
+    return (
+      raw?.teacherInfo?.googleMeetLink ||
+      raw?.googleMeetLink ||
+      raw?.meetingLink ||
+      ''
+    );
+  };
+
+  const handleTeacherSelect = (option) => {
+    const teacherId = option?.id || '';
+    const teacherMeetingLink = extractTeacherMeetingLink(option);
+    currentSetNewClass((prev) => ({
+      ...prev,
+      teacher: teacherId,
+      meetingLink: teacherId ? teacherMeetingLink : '',
+    }));
+  };
+
+  const handleGuardianSelect = (option) => {
+    const guardianId = option?.id || '';
+    currentSetNewClass((prev) => ({
+      ...prev,
+      student: {
+        guardianId,
+        studentId: guardianId && prev.student?.guardianId === guardianId ? prev.student?.studentId : '',
+      },
+    }));
+
+    if (!isStandalone) {
+      handleGuardianChange?.(guardianId);
+      if (!guardianId) {
+        handleStudentChange?.('');
+      }
     }
-  }, [isStandalone, isOpen]);
+  };
+
+  const handleStudentSelect = (option) => {
+    const studentId = option?.id || '';
+    const guardianId = option?.guardianId || currentNewClass.student?.guardianId || '';
+
+    currentSetNewClass((prev) => ({
+      ...prev,
+      student: {
+        guardianId,
+        studentId,
+      },
+    }));
+
+    if (!isStandalone) {
+      handleStudentChange?.(studentId);
+      if (guardianId && guardianId !== currentNewClass.student?.guardianId) {
+        handleGuardianChange?.(guardianId);
+      }
+    }
+  };
+
+  const validateParticipants = () => {
+    if (currentNewClass.teacher && currentNewClass.student?.guardianId && currentNewClass.student?.studentId) {
+      return true;
+    }
+    alert('Please select a teacher, guardian, and student before continuing.');
+    return false;
+  };
+
+  const handleFormSubmit = (event) => {
+    event.preventDefault();
+    if (!validateParticipants()) return;
+    if (isStandalone) {
+      handleLocalCreateClass();
+    } else {
+      handleCreateClass?.();
+    }
+  };
+  
 
   // Push history state when modal opens so Back (popstate) will close it
   useEffect(() => {
@@ -120,89 +204,16 @@ export default function CreateClassModal({
     };
   }, [isOpen]);
   
-  const fetchData = async () => {
-    if (isLoading) return;
-    setIsLoading(true);
-    
-    try {
-      const [teachersRes, guardiansRes] = await Promise.all([
-        axios.get('/users?role=teacher'),
-        axios.get('/users?role=guardian')
-      ]);
-      
-      setLocalTeachers(teachersRes.data.users || teachersRes.data);
-      setLocalGuardians(guardiansRes.data.users || guardiansRes.data);
-      
-      // Flatten students from guardians
-      const allStudents = (guardiansRes.data.users || guardiansRes.data).flatMap(guardian => 
-        guardian.guardianInfo?.students?.map(student => ({
-          ...student,
-          guardianId: guardian._id,
-          guardianName: guardian.fullName
-        })) || []
-      );
-      setLocalStudents(allStudents);
-
-      try {
-        const missing = allStudents.filter(s => !s || !(s.firstName || '').trim() || !(s.lastName || '').trim());
-        console.log('[CreateClassModal] fetched data summary', {
-          teachers: (teachersRes.data.users || teachersRes.data || []).length,
-          guardians: (guardiansRes.data.users || guardiansRes.data || []).length,
-          students: allStudents.length,
-          studentsMissingNames: missing.length,
-          samplesMissing: missing.slice(0, 3).map(s => ({ id: s?._id || s?.id, firstName: s?.firstName, lastName: s?.lastName, guardianId: s?.guardianId, guardianName: s?.guardianName }))
-        });
-      } catch (e) {
-        console.warn('[CreateClassModal] failed to summarize fetched data', e?.message || e);
-      }
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  const handleLocalGuardianChange = (guardianId) => {
-    if (!isStandalone) return handleGuardianChange?.(guardianId);
-    
-    try {
-      console.log('[CreateClassModal] guardian changed', { guardianId });
-    } catch(_) {}
-    setLocalNewClass(prev => ({
-      ...prev,
-      student: {
-        ...prev.student,
-        guardianId: guardianId,
-        studentId: '' // Reset student selection when guardian changes
-      }
-    }));
-  };
-  
-  const handleLocalStudentChange = (studentId) => {
-    if (!isStandalone) return handleStudentChange?.(studentId);
-    
-    try {
-      console.log('[CreateClassModal] student changed', { studentId });
-    } catch(_) {}
-    setLocalNewClass(prev => ({
-      ...prev,
-      student: {
-        ...prev.student,
-        studentId: studentId
-      }
-    }));
-  };
-
   // Log filtered students whenever guardian selection changes
   useEffect(() => {
     try {
-      const count = (filteredStudents || []).length;
-      console.log('[CreateClassModal] filteredStudents updated', { selectedGuardianId, count });
+      console.log('[CreateClassModal] guardian selection updated', { selectedGuardianId });
     } catch(_) {}
-  }, [selectedGuardianId, filteredStudents]);
+  }, [selectedGuardianId]);
   
   const handleLocalCreateClass = async () => {
     if (!isStandalone) return handleCreateClass?.();
+    if (!validateParticipants()) return;
     
     const buildPayload = () => {
       if (!currentNewClass?.isRecurring) {
@@ -384,10 +395,7 @@ export default function CreateClassModal({
           </div>
 
           {/* Form */}
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            isStandalone ? handleLocalCreateClass() : handleCreateClass?.();
-          }} className="space-y-4">
+          <form onSubmit={handleFormSubmit} className="space-y-4">
             {/* Class Type Toggle as tabs */}
             <div className="rounded-lg bg-gray-100 p-1 inline-flex w-full">
               <button
@@ -412,72 +420,35 @@ export default function CreateClassModal({
            
             {/* Participants */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Teacher */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Teacher * ({currentTeachers.length} available)
-                </label>
-                <select
-                  required
-                  value={currentNewClass.teacher}
-                  onChange={(e) =>
-                    currentSetNewClass((prev) => ({ ...prev, teacher: e.target.value }))
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                >
-                  <option value="">Select Teacher</option>
-                  {currentTeachers.map((t) => (
-                    <option key={t._id} value={t._id}>
-                      {t.firstName} {t.lastName}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <SearchSelect
+                label="Teacher *"
+                placeholder="Search teachers by name or email"
+                value={currentNewClass.teacher || ''}
+                onChange={handleTeacherSelect}
+                fetchOptions={fetchTeacherOptions}
+                fetchById={fetchTeacherById}
+                required
+              />
 
-              {/* Guardian */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Guardian * ({currentGuardians.length} available)
-                </label>
-                <select
-                  required
-                  value={currentNewClass.student?.guardianId || ''}
-                  onChange={(e) => (isStandalone ? handleLocalGuardianChange : handleGuardianChange)?.(e.target.value)} // ✅ no isEdit
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                >
-                  <option value="">Select Guardian</option>
-                  {currentGuardians.map((g) => (
-                    <option key={g._id} value={g._id}>
-                      {g.firstName} {g.lastName}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <SearchSelect
+                label="Guardian *"
+                placeholder="Search guardians by name or email"
+                value={currentNewClass.student?.guardianId || ''}
+                onChange={handleGuardianSelect}
+                fetchOptions={fetchGuardianOptions}
+                fetchById={fetchGuardianById}
+                required
+              />
 
-              {/* Student */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Student * ({filteredStudents.length} available)
-                </label>
-                <select
-                    required
-                    value={currentNewClass.student?.studentId || ''}
-                    onChange={(e) => (isStandalone ? handleLocalStudentChange : handleStudentChange)?.(e.target.value)} // ✅ no isEdit
-                    disabled={!currentNewClass.student?.guardianId}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] disabled:bg-gray-100 disabled:cursor-not-allowed"
-                  >
-                    <option value="">
-                      {!currentNewClass.student?.guardianId 
-                        ? "Select Guardian First" 
-                        : "Select Student"}
-                    </option>
-                    {filteredStudents.map((s) => (
-                      <option key={s._id} value={s._id}>
-                        {s.firstName} {s.lastName}
-                      </option>
-                    ))}
-                  </select>
-              </div>
+              <SearchSelect
+                label="Student *"
+                placeholder="Search students by name or email"
+                value={currentNewClass.student?.studentId || ''}
+                onChange={handleStudentSelect}
+                fetchOptions={fetchStudentOptions}
+                fetchById={fetchStudentById}
+                required
+              />
             </div>
 
             
@@ -696,18 +667,17 @@ export default function CreateClassModal({
             {/* Additional Fields */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Timezone
                 </label>
                 <TimezoneSelector
-                  value={currentNewClass.timezone || user?.timezone || DEFAULT_TIMEZONE}
+                  value={currentNewClass.timezone || adminTimezone}
                   onChange={(timezone) =>
                     currentSetNewClass((prev) => ({ ...prev, timezone }))
                   }
                   placeholder="Select class timezone..."
                   className="w-full"
                 />
-               
               </div>
 
               <div>
@@ -724,7 +694,6 @@ export default function CreateClassModal({
                   placeholder="https://meet.google.com/..."
                 />
               </div>
-              
             </div>
             
             {/* Description */}

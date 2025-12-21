@@ -35,6 +35,19 @@ import ProfileEditModal from './ProfileEditModal';
 import api from '../../api/axios';
 import LoadingSpinner from '../ui/LoadingSpinner';
 
+const GUARDIAN_STATUS_TABS = [
+  { id: 'active', label: 'Active' },
+  { id: 'inactive', label: 'Inactive' },
+  { id: 'all', label: 'All' }
+];
+
+const isGuardianActive = (guardian = {}) => {
+  if (typeof guardian.isActive === 'boolean') {
+    return guardian.isActive;
+  }
+  return true;
+};
+
 const GuardiansPage = () => {
   const { user, isAdmin, loginAsUser } = useAuth();
   const { searchTerm, globalFilter } = useSearch();
@@ -45,12 +58,45 @@ const GuardiansPage = () => {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy, setSortBy] = useState('firstName');
   const [sortOrder, setSortOrder] = useState('asc');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active');
   const [expandedGuardian, setExpandedGuardian] = useState(null);
   const [editingGuardian, setEditingGuardian] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const itemsPerPage = 10;
+  const itemsPerPage = 30;
+  const [statusCounts, setStatusCounts] = useState({ active: 0, inactive: 0, all: 0 });
+
+  const fetchStatusCounts = async () => {
+    try {
+      const baseParams = {
+        role: 'guardian',
+        search: debouncedSearch || undefined,
+      };
+
+      const makeRequest = (overrides = {}) => api.get('/users', {
+        params: {
+          ...baseParams,
+          ...overrides,
+          page: 1,
+          limit: 1,
+        },
+      });
+
+      const [allRes, activeRes, inactiveRes] = await Promise.all([
+        makeRequest(),
+        makeRequest({ isActive: true }),
+        makeRequest({ isActive: false }),
+      ]);
+
+      setStatusCounts({
+        all: allRes.data.pagination?.total ?? (allRes.data.users?.length || 0),
+        active: activeRes.data.pagination?.total ?? (activeRes.data.users?.length || 0),
+        inactive: inactiveRes.data.pagination?.total ?? (inactiveRes.data.users?.length || 0),
+      });
+    } catch (err) {
+      console.warn('Failed to fetch guardian status counts', err?.message || err);
+    }
+  };
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchTerm), 300);
@@ -80,6 +126,7 @@ const GuardiansPage = () => {
   const response = await api.get('/users', { params });
   setGuardians(response.data.users);
   setTotalPages(response.data.pagination.pages);
+  await fetchStatusCounts();
     } catch (err) {
       setError('Failed to fetch guardians');
       console.error('Fetch guardians error:', err);
@@ -147,6 +194,71 @@ const GuardiansPage = () => {
     }
   };
 
+  const filteredGuardians = useMemo(() => {
+    let result = guardians || [];
+
+    if (statusFilter !== 'all') {
+      const desired = statusFilter === 'active';
+      result = result.filter((guardian) => isGuardianActive(guardian) === desired);
+    }
+
+    if (searchTerm.trim()) {
+      const globalTerm = searchTerm.toLowerCase();
+      result = result.filter((g) => {
+        const fullName = `${g.firstName || ''} ${g.lastName || ''}`.toLowerCase();
+        return (
+          fullName.includes(globalTerm) ||
+          (g.email || '').toLowerCase().includes(globalTerm) ||
+          (g.phone || '').toLowerCase().includes(globalTerm) ||
+          String(g._id).includes(globalTerm) ||
+          (g.guardianInfo?.students || []).some(s => (`${s.firstName} ${s.lastName}`).toLowerCase().includes(globalTerm))
+        );
+      });
+    }
+
+    if (globalFilter && globalFilter !== 'all') {
+      switch (globalFilter) {
+        case 'active':
+          result = result.filter(g => g.isActive === true);
+          break;
+        case 'inactive':
+          result = result.filter(g => g.isActive === false);
+          break;
+        default:
+          break;
+      }
+    }
+
+    return result;
+  }, [guardians, searchTerm, globalFilter, statusFilter]);
+
+  const sortedGuardians = useMemo(() => {
+    const list = [...(filteredGuardians || [])];
+    const buildNameKey = (guardian) => {
+      const first = (guardian.firstName || '').trim().toLowerCase();
+      const last = (guardian.lastName || '').trim().toLowerCase();
+      if (sortBy === 'lastName') {
+        return `${last} ${first}`.trim() || last || first;
+      }
+      return `${first} ${last}`.trim();
+    };
+
+    list.sort((a, b) => {
+      const nameA = buildNameKey(a);
+      const nameB = buildNameKey(b);
+      if (nameA === nameB) {
+        return (a.lastName || '').localeCompare(b.lastName || '', undefined, { sensitivity: 'base' });
+      }
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+    });
+
+    if (sortOrder === 'desc') {
+      list.reverse();
+    }
+
+    return list;
+  }, [filteredGuardians, sortBy, sortOrder]);
+
   // keep the page UI mounted while loading so search inputs don't lose focus
 
   return (
@@ -160,43 +272,37 @@ const GuardiansPage = () => {
           </div>
         )}
 
-        {/* Guardians List */}
-        <div className="space-y-4">
-          {useMemo(() => {
-            let result = guardians || [];
-            
-            // Apply global search
-            if (searchTerm.trim()) {
-              const globalTerm = searchTerm.toLowerCase();
-              result = result.filter((g) => {
-                const fullName = `${g.firstName || ''} ${g.lastName || ''}`.toLowerCase();
-                return (
-                  fullName.includes(globalTerm) ||
-                  (g.email || '').toLowerCase().includes(globalTerm) ||
-                  (g.phone || '').toLowerCase().includes(globalTerm) ||
-                  String(g._id).includes(globalTerm) ||
-                  (g.guardianInfo?.students || []).some(s => (`${s.firstName} ${s.lastName}`).toLowerCase().includes(globalTerm))
-                );
-              });
-            }
+        <div className="flex flex-wrap gap-2 mb-6">
+          {GUARDIAN_STATUS_TABS.map((tab) => {
+            const isSelected = statusFilter === tab.id;
+            const count = tab.id === 'all' ? statusCounts.all : (statusCounts[tab.id] || 0);
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setStatusFilter(tab.id);
+                  setCurrentPage(1);
+                }}
+                className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
+                  isSelected
+                    ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                    : 'bg-transparent border-border text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span className="ml-2 text-xs text-muted-foreground">{count}</span>
+              </button>
+            );
+          })}
+        </div>
 
-            // Apply global filter
-            if (globalFilter && globalFilter !== 'all') {
-              switch (globalFilter) {
-                case 'active':
-                  result = result.filter(g => g.isActive === true);
-                  break;
-                case 'inactive':
-                  result = result.filter(g => g.isActive === false);
-                  break;
-              }
-            }
-            
-            return result;
-          }, [guardians, searchTerm, globalFilter]).map((guardian) => (
+        {/* Guardians List */}
+        <div className="space-y-3">
+          {sortedGuardians.map((guardian) => (
             <div key={guardian._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
               {/* Guardian Summary */}
-              <div className="p-4">
+              <div className="p-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-4">
                     {/* Avatar */}
@@ -296,8 +402,8 @@ const GuardiansPage = () => {
                 </div>
 
                 {/* Expanded Details */}
-{expandedGuardian === guardian._id && (
-  <div className="border-t border-border bg-muted/30 p-4 space-y-6">
+              {expandedGuardian === guardian._id && (
+                <div className="border-t border-border bg-muted/30 p-3 space-y-6">
     {/* Guardian Info Section */}
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {/* Contact Information */}
@@ -448,7 +554,7 @@ const GuardiansPage = () => {
         )}
 
         {/* Empty State */}
-        {!loading && guardians.length === 0 && (
+        {!loading && sortedGuardians.length === 0 && (
           <div className="text-center py-12">
             <Baby className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No guardians found</h3>

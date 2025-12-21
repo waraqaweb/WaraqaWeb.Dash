@@ -11,6 +11,7 @@
 const { generateToken } = require('../utils/jwt');
 const express = require('express');
 const { body, validationResult } = require('express-validator');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Student = require('../models/Student');
 const Notification = require('../models/Notification');
@@ -25,6 +26,114 @@ const router = express.Router();
 const multer = require('multer');
 const { uploadImage, deleteImage } = require('../services/cloudinaryService');
 
+const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const toObjectId = (value) => {
+  if (!value) return null;
+  if (value instanceof mongoose.Types.ObjectId) return value;
+  if (typeof value === 'string' && mongoose.Types.ObjectId.isValid(value)) {
+    return new mongoose.Types.ObjectId(value);
+  }
+  return null;
+};
+
+const normalize = (value = '') => String(value || '').trim().toLowerCase();
+const normalizeDate = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+};
+
+const makeStudentKey = (student = {}) => {
+  const guardianId = String(student.guardianId || student.guardian || '');
+  if (!guardianId) return null;
+
+  const first = normalize(student.firstName || student.studentInfo?.firstName);
+  const last = normalize(student.lastName || student.studentInfo?.lastName);
+  const fallbackName = normalize(student.studentName) || [first, last].filter(Boolean).join('|');
+  const dob = normalizeDate(student.dateOfBirth || student.studentInfo?.dateOfBirth);
+
+  const email = normalize(student.email || student.studentInfo?.email);
+  if (email) {
+    // Include additional identity cues with the email so siblings sharing a guardian email stay distinct
+    const hasExtraIdentity = Boolean(fallbackName || dob);
+    return hasExtraIdentity
+      ? `${guardianId}|email:${email}|name:${fallbackName || 'unknown'}|dob:${dob || 'unknown'}`
+      : `${guardianId}|email:${email}`;
+  }
+
+  if (fallbackName || dob) {
+    return `${guardianId}|name:${fallbackName || 'unknown'}|dob:${dob || 'unknown'}`;
+  }
+
+  const idPart = student._id || student.id || student.studentId;
+  if (idPart) {
+    return `${guardianId}|id:${String(idPart)}`;
+  }
+
+  return `${guardianId}|hash:${Buffer.from(JSON.stringify(student)).toString('base64').slice(0, 24)}`;
+};
+
+const dedupeStudents = (students = []) => {
+  const byKey = new Map();
+  students.forEach((student) => {
+    const key = makeStudentKey(student);
+    if (!key) return;
+    if (!byKey.has(key)) {
+      byKey.set(key, student);
+      return;
+    }
+
+    const existing = byKey.get(key);
+    if (existing && existing._source === 'embedded' && student._source === 'standalone') {
+      byKey.set(key, student);
+    }
+  });
+  return Array.from(byKey.values());
+};
+
+const sanitizeStudentHours = (students = []) =>
+  students.map((student) => {
+    const copy = { ...student };
+    delete copy.hoursRemaining;
+    delete copy.hoursConsumed;
+    delete copy.totalHours;
+    delete copy.cumulativeConsumedHours;
+    if (copy.studentInfo && typeof copy.studentInfo === 'object') {
+      const info = { ...copy.studentInfo };
+      delete info.hoursRemaining;
+      delete info.hoursConsumed;
+      copy.studentInfo = info;
+    }
+    return copy;
+  });
+
+const matchesStudentSearch = (student = {}, needle = '') => {
+  if (!needle) return true;
+  const normalizedNeedle = needle.toLowerCase();
+  const haystacks = [
+    student.firstName,
+    student.lastName,
+    student.email,
+    student.studentName,
+    student.guardianName,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+  return haystacks.some((value) => value.includes(normalizedNeedle));
+};
+
+const sortStudentsAlpha = (students = []) =>
+  students.sort((a, b) => {
+    const aFirst = (a.firstName || '').toLowerCase();
+    const bFirst = (b.firstName || '').toLowerCase();
+    if (aFirst !== bFirst) return aFirst.localeCompare(bFirst);
+    const aLast = (a.lastName || '').toLowerCase();
+    const bLast = (b.lastName || '').toLowerCase();
+    return aLast.localeCompare(bLast);
+  });
+
 // Multer setup (in-memory)
 const storage = multer.memoryStorage();
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
@@ -35,28 +144,68 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5M
  */
 router.get('/', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { role, page = 1, limit = 10 } = req.query;
-    
+    const {
+      role,
+      page = 1,
+      limit = 10,
+      search = '',
+      sortBy = 'createdAt',
+      order = 'desc',
+      isActive,
+    } = req.query;
+
+    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 200);
+    const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+    const skip = (parsedPage - 1) * parsedLimit;
+
     const query = {};
     if (role) {
       query.role = role;
     }
-    
+
+    if (typeof isActive !== 'undefined') {
+      const normalized = String(isActive).toLowerCase();
+      if (['true', '1', 'yes'].includes(normalized)) {
+        query.isActive = true;
+      } else if (['false', '0', 'no'].includes(normalized)) {
+        query.isActive = false;
+      }
+    }
+
+    const trimmedSearch = (search || '').trim();
+    if (trimmedSearch) {
+      const regex = new RegExp(escapeRegex(trimmedSearch), 'i');
+      query.$or = [
+        { firstName: regex },
+        { lastName: regex },
+        { email: regex },
+        { phone: regex },
+        { 'guardianInfo.students.firstName': regex },
+        { 'guardianInfo.students.lastName': regex },
+        { 'guardianInfo.students.email': regex },
+      ];
+    }
+
+    const allowedSortFields = new Set(['createdAt', 'firstName', 'lastName', 'email']);
+    const resolvedSortBy = allowedSortFields.has(sortBy) ? sortBy : 'createdAt';
+    const sortDirection = String(order).toLowerCase() === 'asc' ? 1 : -1;
+    const sortOptions = { [resolvedSortBy]: sortDirection, _id: sortDirection };
+
     const users = await User.find(query)
       .select('-password')
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .sort({ createdAt: -1 });
-    
+      .limit(parsedLimit)
+      .skip(skip)
+      .sort(sortOptions);
+
     const total = await User.countDocuments(query);
-    
+
     res.json({
       users,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: parsedPage,
+        limit: parsedLimit,
         total,
-        pages: Math.ceil(total / limit)
+        pages: Math.ceil(total / parsedLimit)
       }
     });
     
@@ -558,11 +707,19 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
         }
       }
     }
-    const students = Array.from(byKey.values());
-  const totalHours = students.reduce((sum, s) => sum + (Number(s.hoursRemaining) || 0), 0);
-  const cumulativeConsumedHours = Number(guardian.guardianInfo?.cumulativeConsumedHours || 0);
 
-  res.json({ students, totalHours, cumulativeConsumedHours });
+    const combinedStudents = Array.from(byKey.values());
+    const totalHours = combinedStudents.reduce((sum, s) => sum + (Number(s.hoursRemaining) || 0), 0);
+    const cumulativeConsumedHours = Number(guardian.guardianInfo?.cumulativeConsumedHours || 0);
+
+    const trimmedSearch = (req.query.search || '').trim().toLowerCase();
+    let students = combinedStudents;
+    if (trimmedSearch) {
+      students = students.filter((student) => matchesStudentSearch(student, trimmedSearch));
+    }
+    students = sortStudentsAlpha(students);
+
+    res.json({ students, totalHours, cumulativeConsumedHours });
     
   } catch (error) {
     console.error('Get students error:', error);
@@ -610,110 +767,192 @@ router.post('/students/batch', authenticateToken, async (req, res) => {
   }
 });
 /**
- * Get all students for admin
+ * Get all students for admin (supports search + pagination-style limit)
  * GET /api/users/admin/all-students
  */
 router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    // include first/last names for proper guardianName via virtual fullName
-  const guardians = await User.find({ role: 'guardian' }).select('firstName lastName guardianInfo timezone').lean();
-    const guardianIdList = guardians.map(g => g._id);
+    const { search = '', limit, guardianId, studentId } = req.query;
+    const trimmedSearch = (search || '').trim();
+    const guardianObjectId = guardianId ? toObjectId(guardianId) : null;
+    const studentObjectId = studentId ? toObjectId(studentId) : null;
 
-    // Gather embedded students
+    if (guardianId && !guardianObjectId) {
+      return res.status(400).json({ message: 'Invalid guardianId' });
+    }
+    if (studentId && !studentObjectId) {
+      return res.status(400).json({ message: 'Invalid studentId' });
+    }
+
+    const limitProvided = typeof limit !== 'undefined';
+    const safeLimit = limitProvided ? Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200) : 0;
+    const shouldUseFilteredFlow = Boolean(trimmedSearch || guardianObjectId || studentObjectId || limitProvided);
+
+    if (shouldUseFilteredFlow) {
+      const effectiveLimit = safeLimit || 200;
+      const searchRegex = trimmedSearch ? new RegExp(escapeRegex(trimmedSearch), 'i') : null;
+      const fetchLimit = Math.max(effectiveLimit * 3, 50);
+
+      const guardianMatch = { role: 'guardian' };
+      if (guardianObjectId) guardianMatch._id = guardianObjectId;
+      if (studentObjectId) {
+        guardianMatch['guardianInfo.students._id'] = studentObjectId;
+      } else if (searchRegex) {
+        guardianMatch.$or = [
+          { 'guardianInfo.students.firstName': searchRegex },
+          { 'guardianInfo.students.lastName': searchRegex },
+          { 'guardianInfo.students.email': searchRegex },
+        ];
+      }
+
+      const pipeline = [
+        { $match: guardianMatch },
+        { $project: { firstName: 1, lastName: 1, timezone: 1, students: '$guardianInfo.students' } },
+        { $unwind: '$students' },
+      ];
+
+      if (studentObjectId) {
+        pipeline.push({ $match: { 'students._id': studentObjectId } });
+      } else if (searchRegex) {
+        pipeline.push({
+          $match: {
+            $or: [
+              { 'students.firstName': searchRegex },
+              { 'students.lastName': searchRegex },
+              { 'students.email': searchRegex },
+            ],
+          },
+        });
+      }
+
+      pipeline.push(
+        {
+          $project: {
+            guardianId: '$_id',
+            guardianFirstName: '$firstName',
+            guardianLastName: '$lastName',
+            guardianTimezone: '$timezone',
+            student: '$students',
+          },
+        },
+        { $sort: { 'student.firstName': 1, 'student.lastName': 1 } },
+        { $limit: fetchLimit },
+      );
+
+      const embeddedResults = await User.aggregate(pipeline);
+      const embeddedStudents = embeddedResults.map((doc) => ({
+        ...(doc.student || {}),
+        guardianId: doc.guardianId,
+        guardianName: `${doc.guardianFirstName || ''} ${doc.guardianLastName || ''}`.trim(),
+        guardianTimezone: doc.guardianTimezone,
+        _source: 'embedded',
+      }));
+
+      const standaloneQuery = {};
+      if (guardianObjectId) standaloneQuery.guardian = guardianObjectId;
+      if (studentObjectId) {
+        standaloneQuery._id = studentObjectId;
+      } else if (searchRegex) {
+        standaloneQuery.$or = [
+          { firstName: searchRegex },
+          { lastName: searchRegex },
+          { email: searchRegex },
+        ];
+      }
+
+      const standaloneDocs = await Student.find(standaloneQuery)
+        .sort({ firstName: 1, lastName: 1 })
+        .limit(fetchLimit)
+        .populate('guardian', 'firstName lastName timezone')
+        .lean();
+
+      const standaloneStudents = standaloneDocs.map((student) => ({
+        ...student,
+        guardianId: student.guardian?._id || student.guardian,
+        guardianName: student.guardian
+          ? `${student.guardian.firstName || ''} ${student.guardian.lastName || ''}`.trim()
+          : undefined,
+        guardianTimezone: student.guardian?.timezone,
+        _source: 'standalone',
+      }));
+
+      let students = dedupeStudents([...embeddedStudents, ...standaloneStudents]);
+
+      if (trimmedSearch && !studentObjectId) {
+        students = students.filter((student) => matchesStudentSearch(student, trimmedSearch));
+      }
+
+      students = sortStudentsAlpha(students);
+
+      if (studentObjectId) {
+        students = students.filter((student) => String(student._id) === String(studentId));
+      }
+
+      if (effectiveLimit) {
+        students = students.slice(0, effectiveLimit);
+      }
+
+      students = sanitizeStudentHours(students);
+
+      return res.json({ students });
+    }
+
+    // Legacy full fetch (no filters applied)
+    const guardians = await User.find({ role: 'guardian' }).select('firstName lastName guardianInfo timezone').lean();
+    const guardianIdList = guardians.map((g) => g._id);
+
     const embeddedAll = [];
-    guardians.forEach(guardian => {
+    guardians.forEach((guardian) => {
       const arr = Array.isArray(guardian.guardianInfo?.students) ? guardian.guardianInfo.students : [];
-      arr.forEach(student => {
+      arr.forEach((student) => {
         const base = student && typeof student === 'object' && typeof student.toObject === 'function' ? student.toObject() : student;
         embeddedAll.push({
           ...base,
           guardianId: guardian._id,
           guardianName: `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim(),
           guardianTimezone: guardian.timezone,
-          _source: 'embedded'
+          _source: 'embedded',
         });
       });
     });
 
-    // Gather standalone students
     let standaloneAll = [];
     try {
       standaloneAll = await Student.find({ guardian: { $in: guardianIdList } }).lean();
-        standaloneAll = standaloneAll.map(s => ({
-        ...s,
-        guardianId: s.guardian,
+      standaloneAll = standaloneAll.map((student) => ({
+        ...student,
+        guardianId: student.guardian,
         guardianName: (() => {
-          const g = guardians.find(x => String(x._id) === String(s.guardian));
-          return g ? `${g.firstName || ''} ${g.lastName || ''}`.trim() : undefined;
+          const guardian = guardians.find((g) => String(g._id) === String(student.guardian));
+          return guardian ? `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim() : undefined;
         })(),
         guardianTimezone: (() => {
-          const g = guardians.find(x => String(x._id) === String(s.guardian));
-          return g ? g.timezone : undefined;
+          const guardian = guardians.find((g) => String(g._id) === String(student.guardian));
+          return guardian ? guardian.timezone : undefined;
         })(),
-        _source: 'standalone'
+        _source: 'standalone',
       }));
-    } catch (sErr) {
-      console.warn('Admin all-students: failed to fetch standalone students', sErr && sErr.message);
+    } catch (standaloneErr) {
+      console.warn('Admin all-students: failed to fetch standalone students', standaloneErr && standaloneErr.message);
     }
 
-    // Deduplicate by (guardianId + email) or (guardianId + name + dob); prefer standalone
-    const byKey = new Map();
-    const makeKey = (s) => {
-      const email = (s.email || '').toLowerCase();
-      const dob = s.dateOfBirth ? new Date(s.dateOfBirth).toISOString().slice(0,10) : '';
-      const name = `${(s.firstName||'').trim().toLowerCase()}|${(s.lastName||'').trim().toLowerCase()}`;
-      const g = String(s.guardianId || s.guardian);
-      return `${g}|${email || name+'|'+dob}`;
-    };
-    for (const s of [...embeddedAll, ...standaloneAll]) {
-      const k = makeKey(s);
-      if (!byKey.has(k)) {
-        byKey.set(k, s);
-      } else {
-        const existing = byKey.get(k);
-        if (existing._source === 'embedded' && s._source === 'standalone') {
-          byKey.set(k, s);
-        }
-      }
-    }
+    let students = dedupeStudents([...embeddedAll, ...standaloneAll]);
+    students = sanitizeStudentHours(students);
 
-    let students = Array.from(byKey.values());
-    // Remove hours-related fields from teacher-facing responses to avoid exposing guardian billing data
     try {
-      students = students.map(s => {
-        const copy = { ...s };
-        // common hour fields stored in embedded or standalone shapes
-        delete copy.hoursRemaining;
-        delete copy.hoursConsumed;
-        delete copy.totalHours;
-        delete copy.cumulativeConsumedHours;
-        if (copy.studentInfo && typeof copy.studentInfo === 'object') {
-          const si = { ...copy.studentInfo };
-          delete si.hoursRemaining;
-          delete si.hoursConsumed;
-          copy.studentInfo = si;
-        }
-        return copy;
-      });
-    } catch (sanErr) {
-      console.warn('Failed to sanitize teacher students hours fields', sanErr && sanErr.message);
-    }
-
-    // totalHours intentionally omitted for teacher responses
-
-    // Enrich students with guardian timezone and guardianName when possible
-    try {
-      const guardianIds = [...new Set(students.map(s => String(s.guardianId || s.guardian)).filter(Boolean))];
+      const guardianIds = [...new Set(students.map((student) => String(student.guardianId || student.guardian)).filter(Boolean))];
       if (guardianIds.length) {
-        const guardians = await User.find({ _id: { $in: guardianIds } }).select('firstName lastName timezone').lean();
+        const guardianRecords = await User.find({ _id: { $in: guardianIds } }).select('firstName lastName timezone').lean();
         const gMap = {};
-        guardians.forEach(g => { gMap[String(g._id)] = g; });
-        students = students.map(s => {
-          const g = gMap[String(s.guardianId || s.guardian)];
+        guardianRecords.forEach((guardian) => {
+          gMap[String(guardian._id)] = guardian;
+        });
+        students = students.map((student) => {
+          const record = gMap[String(student.guardianId || student.guardian)];
           return {
-            ...s,
-            guardianName: s.guardianName || (g ? `${g.firstName || ''} ${g.lastName || ''}`.trim() : s.guardianName),
-            guardianTimezone: s.guardianTimezone || (g ? g.timezone : undefined)
+            ...student,
+            guardianName: student.guardianName || (record ? `${record.firstName || ''} ${record.lastName || ''}`.trim() : student.guardianName),
+            guardianTimezone: student.guardianTimezone || record?.timezone,
           };
         });
       }
@@ -721,7 +960,7 @@ router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, r
       console.warn('Failed to enrich teacher students with guardian timezone', enrichErr && enrichErr.message);
     }
 
-  res.json({ students });
+    res.json({ students });
   } catch (error) {
     console.error('Admin fetch all students error:', error);
     res.status(500).json({ message: 'Failed to fetch all students', error: error.message });

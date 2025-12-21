@@ -9,6 +9,7 @@ import FirstClassFeedbackModal from '../feedback/FirstClassFeedbackModal';
 import MonthlyFeedbackModal from '../feedback/MonthlyFeedbackModal';
 import GuardianFollowUpModal from '../meetings/GuardianFollowUpModal';
 import TeacherSyncModal from '../meetings/TeacherSyncModal';
+import Toast from '../ui/Toast';
 import {
   Users,
   GraduationCap,
@@ -179,6 +180,8 @@ const DashboardHome = () => {
   const [guardianBookingSuccess, setGuardianBookingSuccess] = useState(null);
   const [showTeacherSyncModal, setShowTeacherSyncModal] = useState(false);
   const [teacherSyncSuccess, setTeacherSyncSuccess] = useState(null);
+  const [feedbackToast, setFeedbackToast] = useState({ show: false, type: 'success', message: '' });
+  const [latestFeedback, setLatestFeedback] = useState(null);
 
   useEffect(() => {
     if (!promptsLoading) {
@@ -227,10 +230,35 @@ const DashboardHome = () => {
     return () => window.removeEventListener('popstate', onPop);
   }, [showFirstClassModal, showMonthlyModal]);
 
-  const handleFeedbackSubmitted = () => {
-    // refresh prompts so the modal doesn't reappear
+  const handleFeedbackSubmitted = React.useCallback((result) => {
     refresh();
-  };
+    if (!result) return;
+
+    const friendlyLabel = result.type === 'monthly' ? 'Monthly check-in' : 'First class';
+
+    if (result.action === 'submitted') {
+      const summary = result.feedback || {};
+      const teacherName = summary.teacherName
+        || `${summary.teacher?.firstName || ''} ${summary.teacher?.lastName || ''}`.trim()
+        || 'Teacher';
+
+      setLatestFeedback({
+        type: result.type,
+        teacherName,
+        notes: summary.notes || summary.message || '',
+        rating: summary.teacherRating || summary.teacherPerformanceRating || summary.firstClassRating || null,
+        classRating: summary.classRating || null,
+        progressEvaluation: typeof summary.progressEvaluation === 'number' ? summary.progressEvaluation : null,
+        submittedAt: summary.createdAt || new Date().toISOString(),
+      });
+
+      setFeedbackToast({ show: true, type: 'success', message: `${friendlyLabel} feedback submitted.` });
+    } else if (result.action === 'dismissed') {
+      setFeedbackToast({ show: true, type: 'info', message: `${friendlyLabel} feedback snoozed. We'll remind you later.` });
+    } else if (result.action === 'error') {
+      setFeedbackToast({ show: true, type: 'error', message: `${friendlyLabel} feedback could not be updated. Please try again.` });
+    }
+  }, [refresh]);
 
   const handleGuardianFollowUpBooked = React.useCallback((payload) => {
     setGuardianBookingSuccess(payload);
@@ -1033,6 +1061,50 @@ const DashboardHome = () => {
   // ----- Final render (role-based) -----
   return (
     <div className="p-6">
+      {latestFeedback && (
+        <div className="mb-6 rounded-2xl border border-border bg-card p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-medium tracking-wide text-muted-foreground">Last submitted feedback</p>
+              <h3 className="text-lg font-semibold text-foreground">{latestFeedback.teacherName}</h3>
+              <p className="text-xs text-muted-foreground">{latestFeedback.type === 'monthly' ? 'Monthly check-in' : 'First class'} • {formatDateDDMMMYYYY(latestFeedback.submittedAt)}</p>
+            </div>
+            {typeof isAdmin === 'function' && isAdmin() && (
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard/feedbacks')}
+                className="inline-flex items-center rounded-full border border-primary/40 px-4 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10"
+              >
+                View Feedback Inbox
+              </button>
+            )}
+          </div>
+          <div className="mt-3 grid gap-3 text-sm text-muted-foreground md:grid-cols-3">
+            {typeof latestFeedback.rating === 'number' && (
+              <div className="rounded-xl border border-border/60 bg-background px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Teacher rating</p>
+                <p className="text-base font-semibold text-foreground">{Math.round(latestFeedback.rating)} / 10</p>
+              </div>
+            )}
+            {typeof latestFeedback.classRating === 'number' && (
+              <div className="rounded-xl border border-border/60 bg-background px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Class rating</p>
+                <p className="text-base font-semibold text-foreground">{Math.round(latestFeedback.classRating)} / 10</p>
+              </div>
+            )}
+            {typeof latestFeedback.progressEvaluation === 'number' && (
+              <div className="rounded-xl border border-border/60 bg-background px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Progress</p>
+                <p className="text-base font-semibold text-foreground">{latestFeedback.progressEvaluation} / 10</p>
+              </div>
+            )}
+          </div>
+          {latestFeedback.notes && (
+            <p className="mt-3 rounded-lg bg-muted/40 p-3 text-sm text-muted-foreground">{latestFeedback.notes}</p>
+          )}
+        </div>
+      )}
+
       {isAdmin() && renderAdminDashboard()}
       {isTeacher() && renderTeacherDashboard()}
       {isGuardian() && renderGuardianDashboard()}
@@ -1116,6 +1188,14 @@ const DashboardHome = () => {
         prompt={activeMonthlyPrompt}
         onSubmitted={handleFeedbackSubmitted}
       />
+
+      {feedbackToast.show && (
+        <Toast
+          type={feedbackToast.type}
+          message={feedbackToast.message}
+          onClose={() => setFeedbackToast((prev) => ({ ...prev, show: false }))}
+        />
+      )}
     </div>
   );
 };

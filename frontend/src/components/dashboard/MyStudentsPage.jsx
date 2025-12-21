@@ -6,13 +6,37 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Filter, SortAsc, SortDesc, Users, MessageCircle, Mail, ChevronDown, ChevronUp, UserX, UserCheck, LogIn } from 'lucide-react';
+import { Users, MessageCircle, Mail, ChevronUp, UserX, UserCheck } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import AddStudentModal from './AddStudentModal';
 import EditStudentModal from '../students/EditStudentModal';
 import api from '../../api/axios';
+
+
+const STATUS_TABS = [
+  { id: 'active', label: 'Active' },
+  { id: 'inactive', label: 'Inactive' },
+  { id: 'all', label: 'All' }
+];
+
+const STUDENTS_PER_PAGE = 30;
+
+const isStudentActive = (student = {}) => {
+  const infoStatus = (student.studentInfo?.status || '').toLowerCase();
+  if (infoStatus === 'inactive' || infoStatus === 'suspended') {
+    return false;
+  }
+  if (infoStatus === 'active') {
+    return true;
+  }
+  if (typeof student.isActive === 'boolean') {
+    return student.isActive;
+  }
+  return student.isActive !== false;
+};
+
 
 const MyStudentsPage = () => {
   const { user, isAdmin, isTeacher, isGuardian, loading, loginAsUser } = useAuth();
@@ -32,6 +56,8 @@ const MyStudentsPage = () => {
   const [classesHoursMap, setClassesHoursMap] = useState({});
   const [sortBy, setSortBy] = useState('firstName');
   const [sortOrder, setSortOrder] = useState('asc');
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [currentPage, setCurrentPage] = useState(1);
 
   const deriveStudentTimezone = (s) => {
     return s?.guardianTimezone || s?.timezone || s?.studentInfo?.guardianTimezone || s?.studentInfo?.timezone || 'UTC';
@@ -40,6 +66,10 @@ const MyStudentsPage = () => {
   const getStatusColor = (isActive) => {
     return isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
   };
+
+  const effectiveSearchTerm = useMemo(() => (
+    useGlobalSearch ? (searchTerm || '') : (localSearchTerm || '')
+  ), [useGlobalSearch, searchTerm, localSearchTerm]);
 
   // Debounce localSearchTerm
   useEffect(() => {
@@ -55,6 +85,10 @@ const MyStudentsPage = () => {
       if (!isGuardian || !isGuardian()) fetchGuardiansList();
     }
   }, [user, loading, debouncedSearch, guardianFilter, sortBy, sortOrder]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, guardianFilter, effectiveSearchTerm]);
 
 
 const fetchStudents = async () => {
@@ -413,9 +447,12 @@ const fetchGuardiansList = async () => {
 
   const filteredStudents = useMemo(() => {
     let result = students || [];
-    
-    // Apply search based on guardian's preference
-    const effectiveSearchTerm = useGlobalSearch ? searchTerm : localSearchTerm;
+
+    if (statusFilter !== 'all') {
+      const desiredActive = statusFilter === 'active';
+      result = result.filter((student) => isStudentActive(student) === desiredActive);
+    }
+
     try {
       console.log('[MyStudentsPage] filtering', {
         incoming: (students || []).length,
@@ -425,10 +462,10 @@ const fetchGuardiansList = async () => {
         effectiveSearchTerm
       });
     } catch(_) {}
-    
-    if (effectiveSearchTerm.trim()) {
-      const term = effectiveSearchTerm.toLowerCase();
-      const parts = term.split(/\s+/).filter(Boolean);
+
+    const trimmedTerm = (effectiveSearchTerm || '').trim().toLowerCase();
+    if (trimmedTerm) {
+      const parts = trimmedTerm.split(/\s+/).filter(Boolean);
       result = result.filter((s) => {
         const firstName = (s.firstName || '').toLowerCase();
         const lastName = (s.lastName || '').toLowerCase();
@@ -443,12 +480,12 @@ const fetchGuardiansList = async () => {
         ));
 
         return partsMatchName || 
-               email.includes(term) || 
-               phone.includes(term) || 
-               fullName.includes(term) ||
-               guardianName.includes(term) ||
-               className.includes(term) ||
-               String(s._id).includes(term);
+               email.includes(trimmedTerm) || 
+               phone.includes(trimmedTerm) || 
+               fullName.includes(trimmedTerm) ||
+               guardianName.includes(trimmedTerm) ||
+               className.includes(trimmedTerm) ||
+               String(s._id).includes(trimmedTerm);
       });
     }
 
@@ -473,7 +510,49 @@ const fetchGuardiansList = async () => {
     } catch(_) {}
     
     return result;
-  }, [students, searchTerm, localSearchTerm, useGlobalSearch, globalFilter]);
+  }, [students, effectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter]);
+
+  const sortedStudents = useMemo(() => {
+    const list = [...(filteredStudents || [])];
+    const buildNameKey = (student) => {
+      const first = (student.firstName || '').trim().toLowerCase();
+      const last = (student.lastName || '').trim().toLowerCase();
+      if (sortBy === 'lastName') {
+        return `${last} ${first}`.trim() || last || first;
+      }
+      return `${first} ${last}`.trim();
+    };
+
+    list.sort((a, b) => {
+      const keyA = buildNameKey(a);
+      const keyB = buildNameKey(b);
+      if (keyA === keyB) {
+        return (a.lastName || '').localeCompare(b.lastName || '', undefined, { sensitivity: 'base' });
+      }
+      return keyA.localeCompare(keyB, undefined, { sensitivity: 'base' });
+    });
+
+    if (sortOrder === 'desc') {
+      list.reverse();
+    }
+
+    return list;
+  }, [filteredStudents, sortBy, sortOrder]);
+
+  const totalPages = useMemo(() => (
+    sortedStudents.length ? Math.ceil(sortedStudents.length / STUDENTS_PER_PAGE) : 1
+  ), [sortedStudents]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages || 1);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedStudents = useMemo(() => {
+    const start = (currentPage - 1) * STUDENTS_PER_PAGE;
+    return sortedStudents.slice(start, start + STUDENTS_PER_PAGE);
+  }, [sortedStudents, currentPage]);
 
 
 
@@ -599,14 +678,19 @@ const fetchGuardiansList = async () => {
 
   // Derived student counts for header counters
   const totalStudents = (students || []).length;
-  const activeStudents = (students || []).filter(s => s.isActive !== false).length;
+  const activeStudents = (students || []).filter((student) => isStudentActive(student)).length;
   const inactiveStudents = totalStudents - activeStudents;
+  const statusCounts = {
+    active: activeStudents,
+    inactive: inactiveStudents,
+    all: totalStudents
+  };
 
   return (
-    <div className="p-6 bg-background min-h-screen">
+    <div className="p-5 bg-background min-h-screen">
       <div className="max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-4">
         <div>
           {/* Top counters: total students / active / inactive (replaces total hours) */}
           <div className="flex items-center space-x-6">
@@ -639,10 +723,32 @@ const fetchGuardiansList = async () => {
                             </button>
                           ) : null}
       </div>
+
+      <div className="flex flex-wrap gap-2 mb-4">
+        {STATUS_TABS.map((tab) => {
+          const isSelected = statusFilter === tab.id;
+          const count = statusCounts[tab.id];
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setStatusFilter(tab.id)}
+              className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
+                isSelected
+                  ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                  : 'bg-transparent border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <span>{tab.label}</span>
+              <span className="ml-2 text-xs text-muted-foreground">{count}</span>
+            </button>
+          );
+        })}
+      </div>
       
       {/* Students List */}
-  {filteredStudents.length === 0 ? (
-        <div className="text-center py-12">
+  {sortedStudents.length === 0 ? (
+        <div className="text-center py-10">
           <div className="text-muted-foreground mb-4">
             <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
@@ -662,11 +768,11 @@ const fetchGuardiansList = async () => {
           ) : null}
         </div>
       ) : (
-        <div className="space-y-4">
-          {filteredStudents.map((student) => (
+        <div className="space-y-3">
+          {paginatedStudents.map((student) => (
             <div key={student._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
               {/* Student Header */}
-              <div className="p-4">
+              <div className="p-3">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center space-x-4">
                     <div className="flex-shrink-0">
@@ -814,7 +920,7 @@ const fetchGuardiansList = async () => {
 
               {/* Expanded Details */}
               {expandedStudent === student._id && (
-                <div className="border-t border-border bg-muted/30 p-4 space-y-6">
+                <div className="border-t border-border bg-muted/30 p-3 space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2">Contact Information</h4>
@@ -876,6 +982,28 @@ const fetchGuardiansList = async () => {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {sortedStudents.length > 0 && totalPages > 1 && (
+        <div className="flex justify-center items-center space-x-2 mt-4">
+          <button
+            onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+            disabled={currentPage === 1}
+            className="px-3 py-2 border border-border rounded-md bg-input text-foreground disabled:opacity-50 disabled:cursor-not-allowed hover:bg-muted transition-colors"
+          >
+            Previous
+          </button>
+          <span className="px-3 py-2 text-sm text-muted-foreground">
+            Page {currentPage} of {totalPages}
+          </span>
+          <button
+            onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+            disabled={currentPage === totalPages}
+            className="px-3 py-2 border border-border rounded-md bg-input text-foreground disabled:opacity-50 disabled:cursor-not-allowed hover:bg-muted transition-colors"
+          >
+            Next
+          </button>
         </div>
       )}
 

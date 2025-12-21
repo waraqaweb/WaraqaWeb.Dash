@@ -91,7 +91,7 @@ const studentSchema = new mongoose.Schema({
   gender: {
     type: String,
     enum: ["male", "female"],
-    default: "prefer_not_to_say",
+    default: "male",
   },
   timezone: {
     type: String,

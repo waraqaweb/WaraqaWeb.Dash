@@ -11,6 +11,7 @@
     "upsert-admin": "node scripts/upsertAdmin.js",
     "create-users": "node scripts/seedUsers.js",
     "migrate:remove-guardian-bio": "node scripts/removeGuardianBioInstapay.js",
+    "import-legacy-csv": "node scripts/importLegacyCsv.js",
     "test": "mocha --recursive --exit"
   },
   "keywords": [
@@ -25,6 +26,7 @@
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
+    "csv-parse": "^5.6.0",
     "dayjs": "^1.11.18",
     "docx": "^9.5.1",
     "dotenv": "^16.3.1",

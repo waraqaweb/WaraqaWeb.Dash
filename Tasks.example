@@ -1,14 +1,19 @@
+Local dev helpers / notes (DO NOT COMMIT REAL PASSWORDS)
+
+MongoDB local run (example):
 mongod --dbpath "C:\data\db"
 
+Seed/admin scripts (example):
 node scripts/seedUsers.js
 node scripts/createAdmin.js
 
+Admin credentials (example placeholders):
+ADMIN EMAIL: your-admin@email.com
+ADMIN PASSWORD: <set-a-strong-password>
 
-ADMIN EMAIL: waraqainc@gmail.com
-ADMIN PASSWORD: qTBzcA/4uhKQlmYN8ipd+mXH
-
+Mongo-express (DB panel) basic auth (example placeholders):
 DB_PANEL_USER=admin
-DB_PANEL_PASSWORD=qsY5542R0fvi82xoYNUot9lJXDoicyWn
+DB_PANEL_PASSWORD=<strong-password>
 
 3) Safe “push local changes → pull on server → rebuild both React + Next”
 This avoids “corrupting” builds by always rebuilding containers from source.

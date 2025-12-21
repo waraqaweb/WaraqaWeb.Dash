@@ -55,6 +55,10 @@ Desktop.ini
 tmp/
 Trash/
 
+# Local ops notes / credentials (never commit)
+Tasks
+Tasks.local
+
 # Stray root artifacts (do not commit)
 {console.error(e)
 class process

@@ -20,6 +20,7 @@ const sectionSchema = new mongoose.Schema(
     dataFilters: { type: mongoose.Schema.Types.Mixed, default: {} },
     limit: { type: Number, default: 0 },
     settings: {
+      heroCopySource: { type: String, trim: true, enum: ['site', 'custom'], default: 'site' },
       kicker: { type: String, trim: true },
       headline: { type: String, trim: true },
       subheading: { type: String, trim: true },

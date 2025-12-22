@@ -1,4 +1,5 @@
 import { PricingPlan } from '../lib/marketingClient';
+import { resolveWaraqaHref } from '@/lib/links';
 
 const formatPrice = (plan: PricingPlan) => {
   if (!plan.price) return 'Custom';
@@ -15,7 +16,7 @@ const formatPrice = (plan: PricingPlan) => {
 export const PricingSection = ({ plans }: { plans: PricingPlan[] }) => {
   if (!plans.length) {
     return (
-      <section className="py-24">
+      <section className="py-16 sm:py-24">
         <div className="mx-auto max-w-2xl rounded-xl border border-slate-200 bg-white/30 p-12 text-center shadow-sm">
           <p className="text-lg text-slate-600">Pricing will be published here once plans go live.</p>
         </div>
@@ -24,11 +25,11 @@ export const PricingSection = ({ plans }: { plans: PricingPlan[] }) => {
   }
 
   return (
-    <section className="py-24" id="pricing">
+    <section className="py-16 sm:py-24" id="pricing">
       <div className="mx-auto max-w-6xl px-6">
         <div className="mx-auto max-w-3xl text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-sky-500">Tuition Options</p>
-          <h1 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900">Pick the plan that matches your teaching goals</h1>
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Pick the plan that matches your teaching goals</h1>
           <p className="mt-4 text-lg text-slate-600">Transparent plans curated in the Marketing Hub automatically flow here, so families always see the latest tuition details.</p>
         </div>
 
@@ -65,7 +66,7 @@ export const PricingSection = ({ plans }: { plans: PricingPlan[] }) => {
 
               {plan.ctaHref && plan.ctaLabel && (
                 <a
-                  href={plan.ctaHref}
+                  href={resolveWaraqaHref(plan.ctaHref)}
                   className={`mt-8 inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
                     plan.highlight
                       ? 'bg-sky-500 text-white hover:bg-sky-600 focus-visible:outline-sky-500'

@@ -1,10 +1,5 @@
 import Link from 'next/link';
-
-const dashboardBaseUrl = (
-  process.env.NEXT_PUBLIC_DASHBOARD_BASE_URL ||
-  (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : 'https://app.waraqa.com')
-).replace(/\/$/, '');
-const dashboardHref = (path: string) => `${dashboardBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+import { dashboardHref } from '@/lib/links';
 
 const GlobalEvaluationCta = () => (
   <div className="pointer-events-none fixed bottom-5 right-5 z-40 flex flex-col items-end gap-2">

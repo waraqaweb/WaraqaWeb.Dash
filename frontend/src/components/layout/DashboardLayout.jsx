@@ -27,7 +27,7 @@ const VIEW_TITLE_MAP = {
   salaries: 'Salaries',
   'teacher-salaries': 'Teacher Salaries',
   'teacher-salary': 'My Salary',
-  marketing: 'I want to Marketing Hub',
+  marketing: 'Website settings',
   'vacation-management': 'Vacations',
   availability: 'My Availability',
   settings: 'Settings',
@@ -55,6 +55,16 @@ const DashboardLayoutShell = ({ children, activeView = null, pageTitle }) => {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      {/* Mobile backdrop: keeps sidebar readable, dismissible, and blocks content interaction */}
+      {sidebarOpen ? (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-slate-950/50 md:hidden"
+        />
+      ) : null}
+
       {/* Sidebar */}
       <Sidebar
         isOpen={sidebarOpen}

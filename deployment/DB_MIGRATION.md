@@ -9,6 +9,7 @@ This is the safest way to upload your local MongoDB data (after you imported fro
 ## A) Safest method (backup on droplet, then restore)
 
 ### A1) On the droplet: create a backup file first
+
 ```bash
 cd /opt/waraqa/app
 
@@ -26,6 +27,7 @@ echo "Backup written: /opt/waraqa/backups/online-class-manager.$TS.archive.gz"
 ### A2) On your Windows PC: create a dump from your local MongoDB
 
 If your local DB runs on default port:
+
 ```powershell
 Set-Location -Path "C:\waraqa"
 
@@ -34,17 +36,20 @@ mongodump --db online-class-manager --archive="C:\waraqa\online-class-manager.ar
 ```
 
 If you need a URI:
+
 ```powershell
 mongodump --uri "mongodb://127.0.0.1:27017/online-class-manager" --archive="C:\waraqa\online-class-manager.archive.gz" --gzip
 ```
 
 ### A3) Copy the archive to the droplet
+
 ```powershell
 # Requires OpenSSH client in Windows
 scp "C:\waraqa\online-class-manager.archive.gz" root@<DROPLET_IP>:/tmp/
 ```
 
 ### A4) Restore into the droplet’s Mongo container (replaces DB)
+
 ```bash
 cd /opt/waraqa/app
 
@@ -61,6 +66,7 @@ docker exec -i "$MONGO_ID" rm -f /tmp/online-class-manager.archive.gz
 ```
 
 ### A5) Restart backend and confirm
+
 ```bash
 cd /opt/waraqa/app
 
@@ -74,6 +80,7 @@ docker compose logs -n 80 backend
 ## B) Fast method (pipe dump over SSH, no intermediate files)
 
 Run from your Windows PC (PowerShell). This requires:
+
 - `mongodump` installed locally
 - SSH access to the droplet
 

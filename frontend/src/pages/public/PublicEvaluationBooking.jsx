@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarDays, Clock, Sparkles, PhoneCall, Users, RefreshCw } from 'lucide-react';
+import PublicSiteHeader from '../../components/public/PublicSiteHeader';
 import Input from '../../components/ui/Input';
 import Select from '../../components/ui/Select';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
@@ -109,6 +110,9 @@ const PublicEvaluationBooking = () => {
       return map;
     }, {});
   }, [availability, guardian.timezone]);
+
+  // Render the marketing-style header for public users
+  // so /book/evaluation feels like part of the main website.
 
   const loadAvailability = useCallback(async () => {
     setAvailabilityLoading(true);
@@ -241,13 +245,14 @@ const PublicEvaluationBooking = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FFFCF2]">
+      <PublicSiteHeader />
       <section className="relative isolate overflow-hidden bg-gradient-to-br from-[#fff9d2] via-[#fff4bf] to-[#ffe8a3]">
         <div className="max-w-5xl mx-auto px-6 pt-14 pb-10 text-center">
           <p className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/70 px-4 py-1 text-xs uppercase tracking-[0.2em] text-amber-700">
             <Sparkles className="h-4 w-4" /> New families welcome
           </p>
           <h1 className="mt-5 text-4xl sm:text-5xl font-semibold text-[#352500]" style={heroFont}>
-            Schedule a {MEETING_TYPE_LABELS[MEETING_TYPES.NEW_STUDENT_EVALUATION].toLowerCase()}
+            Schedule your {MEETING_TYPE_LABELS[MEETING_TYPES.NEW_STUDENT_EVALUATION].toLowerCase()}
           </h1>
           <p className="mt-4 text-base leading-relaxed text-[#6b4d01]">
             {MEETING_TYPE_DESCRIPTIONS[MEETING_TYPES.NEW_STUDENT_EVALUATION]} Choose a highlighted slot below to receive instant confirmation, the meeting link, and an import-ready calendar file.

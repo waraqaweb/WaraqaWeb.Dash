@@ -56,11 +56,12 @@ const landingSectionBlueprints = [
     dataFilters: {},
     limit: 1,
     settings: {
-      kicker: 'Learning without limits',
-      headline: 'Personalized Quran, Arabic, and Islamic studies',
-      subheading: 'Hero copy mirrors the Site Settings hero unless overridden here.',
-      primaryCta: { label: 'Browse courses', href: '/courses' },
-      secondaryCta: { label: 'Talk to admissions', href: '/contact' }
+      heroCopySource: 'site',
+      kicker: '',
+      headline: '',
+      subheading: '',
+      primaryCta: { label: '', href: '' },
+      secondaryCta: { label: '', href: '' }
     }
   },
   {
@@ -204,6 +205,10 @@ const sanitizeSections = (sections = []) =>
   sections.map((section, index) => {
     const limitValue = Number(section.limit);
     const rawSettings = section?.settings || {};
+    const defaultHeroCopySource = section.dataSource === 'site-hero' ? 'site' : 'custom';
+    const heroCopySource = rawSettings.heroCopySource === 'custom' || rawSettings.heroCopySource === 'site'
+      ? rawSettings.heroCopySource
+      : defaultHeroCopySource;
     const backgroundMedia = normalizeMediaValue(rawSettings.backgroundMedia || rawSettings.media);
     const boxMedia = normalizeMediaValue(rawSettings.boxMedia);
     return {
@@ -217,6 +222,7 @@ const sanitizeSections = (sections = []) =>
       dataFilters: section.dataFilters || {},
       limit: Number.isFinite(limitValue) ? limitValue : 0,
       settings: {
+        heroCopySource,
         kicker: rawSettings.kicker || '',
         headline: rawSettings.headline || '',
         subheading: rawSettings.subheading || '',
@@ -278,6 +284,38 @@ const handleError = (res, error, fallback = 'Unexpected marketing service error'
   res.status(status).json({ message: fallback });
 };
 
+const isDuplicateKeyError = (error) => {
+  if (!error) return false;
+  if (error.code === 11000) return true;
+  const msg = error.message || '';
+  return typeof msg === 'string' && msg.includes('E11000 duplicate key');
+};
+
+const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const getUniqueSlug = async (Model, baseSlug, { excludeId } = {}) => {
+  const cleanBase = String(baseSlug || '').trim().toLowerCase();
+  const base = cleanBase.slice(0, 110) || `post-${Date.now().toString(36)}`;
+
+  const baseQuery = excludeId ? { _id: { $ne: excludeId } } : {};
+  const exists = await Model.findOne({ slug: base, ...baseQuery }).select('_id').lean();
+  if (!exists) return base;
+
+  // Try incrementing suffixes: my-title-2, my-title-3, ...
+  const pattern = new RegExp(`^${escapeRegex(base)}-(\\d+)$`);
+  const existing = await Model.find({ slug: { $regex: new RegExp(`^${escapeRegex(base)}(-\\d+)?$`) }, ...baseQuery })
+    .select('slug')
+    .lean();
+  const used = new Set(existing.map((d) => d.slug));
+  for (let n = 2; n <= 50; n += 1) {
+    const candidate = `${base}-${n}`;
+    if (!used.has(candidate)) return candidate;
+  }
+
+  // Extremely unlikely fallback.
+  return `${base}-${Math.random().toString(36).slice(2, 6)}`;
+};
+
 const ensureSlug = (value, fallbackPrefix) => slugify(value || '', { fallbackPrefix });
 
 const stripHtml = (value = '') =>
@@ -306,6 +344,44 @@ const normalizeArticleSections = (sections = []) => {
     .slice(0, 8);
 };
 
+const normalizeCourseLevels = (levels = []) => {
+  if (!Array.isArray(levels)) return [];
+  const used = new Set();
+  const slugifyLocal = (value, fallbackPrefix) => slugify(value || '', { fallbackPrefix });
+  const uniqueWithin = (base) => {
+    let safe = base;
+    let n = 2;
+    while (used.has(safe) && n <= 50) {
+      safe = `${base}-${n}`;
+      n += 1;
+    }
+    used.add(safe);
+    return safe;
+  };
+
+  return levels
+    .map((item = {}, index) => {
+      const title = typeof item.title === 'string' ? item.title.trim().slice(0, 160) : '';
+      const providedSlug = typeof item.slug === 'string' ? item.slug.trim().toLowerCase() : '';
+      const base = providedSlug || slugifyLocal(title, `level-${index + 1}`);
+      const slug = uniqueWithin(base);
+
+      return {
+        title,
+        slug,
+        description: typeof item.description === 'string' ? item.description.trim().slice(0, 800) : '',
+        thumbnailMedia: typeof item.thumbnailMedia === 'string' ? item.thumbnailMedia : undefined,
+        heroMedia: typeof item.heroMedia === 'string' ? item.heroMedia : undefined,
+        articleIntro: typeof item.articleIntro === 'string' ? item.articleIntro : '',
+        articleSections: normalizeArticleSections(item.articleSections),
+        published: typeof item.published === 'boolean' ? item.published : true,
+        order: typeof item.order === 'number' ? item.order : index
+      };
+    })
+    .filter((item) => item.title)
+    .slice(0, 60);
+};
+
 const estimateReadingTime = (content) => {
   if (!content) return 1;
   let raw = '';
@@ -319,6 +395,11 @@ const estimateReadingTime = (content) => {
 router.get('/site-settings', async (req, res) => {
   try {
     const settings = await MarketingSiteSettings.findOne().lean();
+    if (settings?.publishedSnapshot) {
+      res.json({ ...settings.publishedSnapshot, lastPublishedAt: settings.lastPublishedAt });
+      return;
+    }
+    // Backward-compatible fallback: until the first publish occurs, serve the draft document.
     res.json(settings || buildDefaultSettings());
   } catch (error) {
     handleError(res, error, 'Failed to load marketing site settings');
@@ -339,13 +420,73 @@ router.put('/site-settings', authenticateToken, requireAdmin, async (req, res) =
   }
 });
 
+router.get('/admin/site-settings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const settings = await MarketingSiteSettings.findOne().lean();
+    res.json(settings || buildDefaultSettings());
+  } catch (error) {
+    handleError(res, error, 'Failed to load marketing site settings');
+  }
+});
+
+router.put('/admin/site-settings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const payload = { ...req.body, updatedBy: req.user._id };
+    const settings = await MarketingSiteSettings.findOneAndUpdate({}, payload, {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true
+    });
+    res.json(settings);
+  } catch (error) {
+    handleError(res, error, 'Failed to save marketing site settings');
+  }
+});
+
+const isPreviewAuthorized = (req) => {
+  const token = typeof req.query?.token === 'string' ? req.query.token : '';
+  const previewToken = process.env.MARKETING_PREVIEW_TOKEN;
+  if (!previewToken) return process.env.NODE_ENV !== 'production';
+  return Boolean(token) && token === previewToken;
+};
+
+const buildSettingsSnapshot = (settings) => {
+  if (!settings) return buildDefaultSettings();
+  return {
+    hero: settings.hero,
+    primaryNavigation: settings.primaryNavigation,
+    secondaryNavigation: settings.secondaryNavigation,
+    contactInfo: settings.contactInfo,
+    socialLinks: settings.socialLinks,
+    seoDefaults: settings.seoDefaults,
+    structuredData: settings.structuredData,
+    assetLibrary: settings.assetLibrary,
+    announcement: settings.announcement,
+    lastPublishedAt: settings.lastPublishedAt
+  };
+};
+
+router.get('/site-settings/preview', async (req, res) => {
+  try {
+    if (!isPreviewAuthorized(req)) return res.status(403).json({ message: 'Preview not authorized' });
+    const settings = await MarketingSiteSettings.findOne().lean();
+    res.json(settings || buildDefaultSettings());
+  } catch (error) {
+    handleError(res, error, 'Failed to load preview marketing site settings');
+  }
+});
+
 router.post('/publish', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const settings = await MarketingSiteSettings.findOneAndUpdate(
-      {},
-      { lastPublishedAt: new Date(), updatedBy: req.user._id },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
-    );
+    const now = new Date();
+    let settings = await MarketingSiteSettings.findOne();
+    if (!settings) {
+      settings = await MarketingSiteSettings.create({ ...buildDefaultSettings(), updatedBy: req.user._id });
+    }
+    settings.lastPublishedAt = now;
+    settings.updatedBy = req.user._id;
+    settings.publishedSnapshot = buildSettingsSnapshot(settings.toObject());
+    await settings.save();
     res.json({ message: 'Marketing content marked as published', lastPublishedAt: settings.lastPublishedAt });
   } catch (error) {
     handleError(res, error, 'Failed to publish marketing content');
@@ -393,7 +534,20 @@ router.post('/landing-pages', authenticateToken, requireAdmin, async (req, res) 
 
 router.put('/landing-pages/:pageId', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const updates = {
+    const existing = await MarketingLandingPage.findById(req.params.pageId).lean();
+    if (!existing) return res.status(404).json({ message: 'Landing page not found' });
+
+    const snapshot = {
+      title: existing.title,
+      slug: existing.slug,
+      description: existing.description,
+      heroVariant: existing.heroVariant,
+      status: existing.status,
+      sections: existing.sections,
+      lastPublishedAt: existing.lastPublishedAt
+    };
+
+    const set = {
       title: req.body.title,
       description: req.body.description,
       heroVariant: req.body.heroVariant,
@@ -401,9 +555,14 @@ router.put('/landing-pages/:pageId', authenticateToken, requireAdmin, async (req
       updatedBy: req.user._id
     };
     if (Array.isArray(req.body.sections)) {
-      updates.sections = sanitizeSections(req.body.sections);
+      set.sections = sanitizeSections(req.body.sections);
     }
-    const page = await MarketingLandingPage.findByIdAndUpdate(req.params.pageId, updates, { new: true });
+
+    const page = await MarketingLandingPage.findByIdAndUpdate(
+      req.params.pageId,
+      { $set: set, $push: { revisions: { snapshot, updatedAt: new Date(), updatedBy: req.user._id } } },
+      { new: true }
+    );
     if (!page) return res.status(404).json({ message: 'Landing page not found' });
     res.json(page);
   } catch (error) {
@@ -413,12 +572,28 @@ router.put('/landing-pages/:pageId', authenticateToken, requireAdmin, async (req
 
 router.post('/landing-pages/:pageId/publish', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const updates = {
-      status: 'published',
-      lastPublishedAt: new Date(),
-      updatedBy: req.user._id
+    const existing = await MarketingLandingPage.findById(req.params.pageId).lean();
+    if (!existing) return res.status(404).json({ message: 'Landing page not found' });
+
+    const snapshot = {
+      title: existing.title,
+      slug: existing.slug,
+      description: existing.description,
+      heroVariant: existing.heroVariant,
+      status: existing.status,
+      sections: existing.sections,
+      lastPublishedAt: existing.lastPublishedAt
     };
-    const page = await MarketingLandingPage.findByIdAndUpdate(req.params.pageId, updates, { new: true });
+
+    const now = new Date();
+    const page = await MarketingLandingPage.findByIdAndUpdate(
+      req.params.pageId,
+      {
+        $set: { status: 'published', lastPublishedAt: now, updatedBy: req.user._id },
+        $push: { revisions: { snapshot, updatedAt: now, updatedBy: req.user._id } }
+      },
+      { new: true }
+    );
     if (!page) return res.status(404).json({ message: 'Landing page not found' });
     res.json(page);
   } catch (error) {
@@ -429,7 +604,18 @@ router.post('/landing-pages/:pageId/publish', authenticateToken, requireAdmin, a
 router.get('/landing-pages/:slug', async (req, res) => {
   try {
     await ensureLandingPageSeed();
-    const page = await MarketingLandingPage.findOne({ slug: req.params.slug.toLowerCase(), status: { $ne: 'archived' } }).lean();
+    const slug = req.params.slug.toLowerCase();
+    const preview = req.query?.preview === '1' && isPreviewAuthorized(req);
+    const query = preview ? { slug, status: { $ne: 'archived' } } : { slug, status: 'published' };
+
+    let page = await MarketingLandingPage.findOne(query).lean();
+    if (!page && !preview) {
+      // Safe fallback for first-time setup: if nothing is published yet, serve the latest non-archived version.
+      page = await MarketingLandingPage.findOne({ slug, status: { $ne: 'archived' } })
+        .sort({ updatedAt: -1 })
+        .lean();
+    }
+
     if (!page) return res.status(404).json({ message: 'Landing page not found' });
     res.json(page);
   } catch (error) {
@@ -458,6 +644,7 @@ router.post('/courses', authenticateToken, requireAdmin, async (req, res) => {
       payload.articleIntro = req.body.articleIntro;
     }
     payload.articleSections = normalizeArticleSections(req.body.articleSections);
+    payload.curriculum = normalizeCourseLevels(req.body.curriculum);
     const course = await MarketingCourse.create(payload);
     res.status(201).json(course);
   } catch (error) {
@@ -476,6 +663,7 @@ router.put('/courses/:courseId', authenticateToken, requireAdmin, async (req, re
       updates.articleIntro = req.body.articleIntro;
     }
     updates.articleSections = normalizeArticleSections(req.body.articleSections);
+    updates.curriculum = normalizeCourseLevels(req.body.curriculum);
     const course = await MarketingCourse.findByIdAndUpdate(req.params.courseId, updates, { new: true });
     res.json(course);
   } catch (error) {
@@ -716,9 +904,23 @@ router.get('/admin/blog', authenticateToken, requireAdmin, async (req, res) => {
 
 router.post('/blog', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    const rawSlug = typeof req.body.slug === 'string' ? req.body.slug.trim() : '';
+    const hasExplicitSlug = Boolean(rawSlug);
+    const baseSlug = hasExplicitSlug ? ensureSlug(rawSlug, 'post') : ensureSlug(req.body.title, 'post');
+    const slug = hasExplicitSlug
+      ? baseSlug
+      : await getUniqueSlug(MarketingBlogPost, baseSlug);
+
+    if (hasExplicitSlug) {
+      const conflict = await MarketingBlogPost.findOne({ slug }).select('_id').lean();
+      if (conflict) {
+        return res.status(409).json({ message: 'Slug already exists. Please choose a different slug.' });
+      }
+    }
+
     const payload = {
       ...req.body,
-      slug: req.body.slug || ensureSlug(req.body.title, 'post'),
+      slug,
       updatedBy: req.user._id
     };
     payload.language = payload.language || 'en';
@@ -731,15 +933,32 @@ router.post('/blog', authenticateToken, requireAdmin, async (req, res) => {
     const post = await MarketingBlogPost.create(payload);
     res.status(201).json(post);
   } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      return res.status(409).json({ message: 'A blog post with this slug already exists. Please choose a different slug.' });
+    }
     handleError(res, error, 'Failed to create blog post');
   }
 });
 
 router.put('/blog/:postId', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    const rawSlug = typeof req.body.slug === 'string' ? req.body.slug.trim() : '';
+    const hasExplicitSlug = Boolean(rawSlug);
+    const baseSlug = hasExplicitSlug ? ensureSlug(rawSlug, 'post') : ensureSlug(req.body.title, 'post');
+    const slug = hasExplicitSlug
+      ? baseSlug
+      : await getUniqueSlug(MarketingBlogPost, baseSlug, { excludeId: req.params.postId });
+
+    if (hasExplicitSlug) {
+      const conflict = await MarketingBlogPost.findOne({ slug, _id: { $ne: req.params.postId } }).select('_id').lean();
+      if (conflict) {
+        return res.status(409).json({ message: 'Slug already exists. Please choose a different slug.' });
+      }
+    }
+
     const updates = {
       ...req.body,
-      slug: req.body.slug || ensureSlug(req.body.title, 'post'),
+      slug,
       updatedBy: req.user._id
     };
     updates.language = updates.language || 'en';
@@ -754,6 +973,9 @@ router.put('/blog/:postId', authenticateToken, requireAdmin, async (req, res) =>
     const post = await MarketingBlogPost.findByIdAndUpdate(req.params.postId, updates, { new: true });
     res.json(post);
   } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      return res.status(409).json({ message: 'A blog post with this slug already exists. Please choose a different slug.' });
+    }
     handleError(res, error, 'Failed to update blog post');
   }
 });

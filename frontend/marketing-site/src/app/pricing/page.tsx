@@ -2,10 +2,12 @@ import MarketingHeader from '../../components/MarketingHeader';
 import MarketingFooter from '../../components/MarketingFooter';
 import { PricingSection } from '../../components/PricingSection';
 import { getPricingPlans, getSiteSettings } from '../../lib/marketingClient';
+import { getMarketingPreviewOptions } from '../../lib/preview';
 
 const PricingPage = async () => {
+  const previewOptions = await getMarketingPreviewOptions();
   const [siteSettings, plans] = await Promise.all([
-    getSiteSettings(),
+    getSiteSettings(previewOptions),
     getPricingPlans(),
   ]);
   return (

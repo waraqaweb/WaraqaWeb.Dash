@@ -132,6 +132,10 @@ a {
   text-decoration: none;
 }
 
+summary::-webkit-details-marker {
+  display: none;
+}
+
 img {
   transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), filter 0.4s ease;
   will-change: transform;

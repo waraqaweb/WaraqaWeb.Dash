@@ -34,7 +34,7 @@ const parseList = (value = '') =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-const TeacherProfileModal = ({ open, onClose, teacher, onSaved, onDeleted }) => {
+const TeacherProfileModal = ({ open, onClose, teacher, onSaved, onDeleted, variant = 'modal' }) => {
   const [formState, setFormState] = useState(defaultTeacher);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -126,9 +126,10 @@ const TeacherProfileModal = ({ open, onClose, teacher, onSaved, onDeleted }) => 
     }
   };
 
+  const isDrawer = variant === 'drawer';
   const modalClasses = useMemo(
-    () => `fixed inset-0 z-50 ${open ? 'visible' : 'invisible'} flex items-center justify-center p-4 sm:p-10`,
-    [open]
+    () => `fixed inset-0 z-50 ${open ? 'visible' : 'invisible'} flex ${isDrawer ? 'items-stretch justify-end' : 'items-center justify-center'} ${isDrawer ? 'p-0' : 'p-4 sm:p-10'}`,
+    [open, isDrawer]
   );
 
   if (!open) return null;
@@ -136,8 +137,8 @@ const TeacherProfileModal = ({ open, onClose, teacher, onSaved, onDeleted }) => 
   return (
     <div className={modalClasses}>
       <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-4xl">
-        <div className="flex min-h-[70vh] max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-[32px] border border-white/30 bg-gradient-to-br from-white via-slate-50 to-slate-100 shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
+      <div className={`relative z-10 w-full ${isDrawer ? 'h-full max-w-[620px]' : 'max-w-4xl'}`}>
+        <div className={`flex min-h-0 flex-col overflow-hidden border border-white/30 bg-gradient-to-br from-white via-slate-50 to-slate-100 shadow-[0_30px_90px_rgba(15,23,42,0.18)] ${isDrawer ? 'min-h-full max-h-full rounded-none sm:rounded-l-[32px]' : 'min-h-[70vh] max-h-[calc(100vh-2rem)] rounded-[32px]'}`}>
           <div className="flex items-start justify-between border-b border-white/60 bg-white/80 px-6 py-4 backdrop-blur sm:px-8 sm:py-5">
             <div>
               <p className="text-xs uppercase tracking-[0.4em] text-slate-400">{isEdit ? 'Update teacher' : 'Create teacher'}</p>
@@ -149,8 +150,8 @@ const TeacherProfileModal = ({ open, onClose, teacher, onSaved, onDeleted }) => 
             </button>
           </div>
 
-          <form className="flex h-full flex-col" onSubmit={handleSubmit}>
-            <div className="flex-1 overflow-y-auto px-6 py-4 sm:px-8 sm:py-6">
+          <form className="flex min-h-0 h-full flex-col" onSubmit={handleSubmit}>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4 sm:px-8 sm:py-6">
               {error && (
                 <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   {error}

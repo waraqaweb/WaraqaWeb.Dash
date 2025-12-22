@@ -58,6 +58,7 @@ const SiteSettingsPanel = forwardRef(({ onDirtyChange, onSaved }, ref) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingHeroMedia, setUploadingHeroMedia] = useState({ card: false, background: false });
+  const [uploadingAssets, setUploadingAssets] = useState({});
   const [status, setStatus] = useState({ type: '', message: '' });
   const [dirty, setDirty] = useState(false);
 
@@ -134,6 +135,27 @@ const SiteSettingsPanel = forwardRef(({ onDirtyChange, onSaved }, ref) => {
       });
     } finally {
       setUploadingHeroMedia((prev) => ({ ...prev, [kind]: false }));
+    }
+  };
+
+  const handleAssetLibraryUpload = async ({ field, file }) => {
+    if (!file) return;
+
+    setStatus({ type: '', message: '' });
+    setUploadingAssets((prev) => ({ ...prev, [field]: true }));
+
+    try {
+      const uploaded = await uploadMediaAsset({ file, tags: ['asset-library', field] });
+      if (!uploaded?.url) throw new Error('Upload succeeded but no URL returned');
+      handleNestedChange(['assetLibrary', field], uploaded.url);
+    } catch (error) {
+      console.error('Asset upload failed', error);
+      setStatus({
+        type: 'error',
+        message: error?.response?.data?.message || error?.message || 'Failed to upload asset. Please try again.'
+      });
+    } finally {
+      setUploadingAssets((prev) => ({ ...prev, [field]: false }));
     }
   };
 
@@ -225,6 +247,10 @@ const SiteSettingsPanel = forwardRef(({ onDirtyChange, onSaved }, ref) => {
           </div>
           <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Homepage hero</span>
         </header>
+
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-xs text-slate-600">
+          These values are the default hero copy for landing pages set to <span className="font-semibold">Use Site Settings</span> in the Landing Builder. Pages set to <span className="font-semibold">Custom for this page</span> will not change when you edit these fields.
+        </div>
 
         <div className="mt-4 grid gap-4 lg:grid-cols-3">
           <label className={labelClass}>
@@ -463,18 +489,47 @@ const SiteSettingsPanel = forwardRef(({ onDirtyChange, onSaved }, ref) => {
           ))}
         </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {Object.entries(formState.assetLibrary || {}).map(([field, value]) => (
-            <label key={field} className={labelClass}>
-              {field}
-              <input
-                type="text"
-                value={value || ''}
-                onChange={(e) => handleNestedChange(['assetLibrary', field], e.target.value)}
-                className={inputClass}
-                placeholder="https://cdn..."
-              />
-            </label>
-          ))}
+          {Object.entries(formState.assetLibrary || {}).map(([field, value]) => {
+            const inputId = `asset-${field}`;
+            const uploading = Boolean(uploadingAssets[field]);
+            const accept = field === 'favicon'
+              ? 'image/*,.ico'
+              : 'image/*';
+            return (
+              <label key={field} className={labelClass}>
+                {field}
+                <div className="mt-1 flex items-start gap-2">
+                  <input
+                    type="text"
+                    value={value || ''}
+                    onChange={(e) => handleNestedChange(['assetLibrary', field], e.target.value)}
+                    className={`${inputClassNoTop} flex-1`}
+                    placeholder="Upload or paste a URL"
+                  />
+                  <input
+                    id={inputId}
+                    type="file"
+                    accept={accept}
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files && e.target.files[0];
+                      e.target.value = '';
+                      handleAssetLibraryUpload({ field, file });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className={`${chipButtonClass} normal-case mt-2`}
+                    onClick={() => document.getElementById(inputId)?.click()}
+                    disabled={uploading}
+                  >
+                    {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                    Upload
+                  </button>
+                </div>
+              </label>
+            );
+          })}
         </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {['message', 'href'].map((field) => (

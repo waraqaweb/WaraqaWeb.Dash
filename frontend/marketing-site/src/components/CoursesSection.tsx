@@ -1,57 +1,13 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import type { MarketingCourse } from '@/lib/marketingClient';
-import { levelLabel } from './CourseNarrative';
-
-const normalizeLevel = (level?: string) => (level || '').toLowerCase();
-
-const levelGroups = [
-  {
-    key: 'beginner',
-    eyebrow: 'Start here',
-    title: 'Beginner foundations',
-    description: 'Get comfortable with the tools, vocabulary, and muscle memory that make future lessons easier.'
-  },
-  {
-    key: 'intermediate',
-    eyebrow: 'Keep momentum',
-    title: 'Intermediate pathways',
-    description: 'Dive deeper into project work, layered feedback, and the rituals that mimic real studio expectations.'
-  },
-  {
-    key: 'advanced',
-    eyebrow: 'Push limits',
-    title: 'Advanced cohorts',
-    description: 'Ship polished case studies with director-level critique and cross-functional collaboration drills.'
-  }
-];
-
-const buildGroupedCourses = (courses: MarketingCourse[]) => {
-  const grouped = levelGroups.map((group) => ({
-    ...group,
-    courses: courses.filter((course) => normalizeLevel(course.level) === group.key)
-  }));
-
-  const leftovers = courses.filter((course) => !levelGroups.some((group) => normalizeLevel(course.level) === group.key));
-  if (leftovers.length) {
-    grouped.push({
-      key: 'mixed',
-      eyebrow: 'Multi-level',
-      title: 'Mixed & specialty sprints',
-      description: 'Cross-level intensives and niche topics that pair well with any learning track.',
-      courses: leftovers
-    });
-  }
-
-  return grouped.filter((group) => group.courses.length > 0);
-};
 
 const CardMedia = ({ course }: { course: MarketingCourse }) => {
-  if (course.heroMedia) {
+  if (course.thumbnailMedia || course.heroMedia) {
     return (
       <Image
-        src={course.heroMedia}
-        alt={`${course.title} hero`}
+        src={course.thumbnailMedia || course.heroMedia || ''}
+        alt={`${course.title} thumbnail`}
         fill
         sizes="(min-width: 768px) 33vw, 100vw"
         className="rounded-[24px] object-cover"
@@ -73,7 +29,6 @@ const CourseCard = ({ course }: { course: MarketingCourse }) => (
     </div>
     <div className="flex flex-1 flex-col gap-4 p-6">
       <div className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-400">{levelLabel(course.level)}</p>
         <h3 className="text-xl font-semibold text-slate-900">{course.title}</h3>
         <p className="text-sm text-slate-600">
           {course.excerpt || 'Add an excerpt in the Marketing Hub to finish this card.'}
@@ -90,7 +45,7 @@ const CourseCard = ({ course }: { course: MarketingCourse }) => (
         href={`/courses/${course.slug || course._id}`}
         className="inline-flex items-center justify-center rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow transition hover:-translate-y-0.5 hover:bg-slate-800"
       >
-        Know more
+        View subject
       </Link>
     </div>
   </article>
@@ -114,8 +69,6 @@ const CoursesSection = ({ courses }: { courses: MarketingCourse[] }) => {
     return <EmptyState />;
   }
 
-  const grouped = buildGroupedCourses(courses);
-
   return (
     <section className="relative isolate py-24" id="courses">
       <div className="parallax-grid" aria-hidden />
@@ -123,33 +76,17 @@ const CoursesSection = ({ courses }: { courses: MarketingCourse[] }) => {
       <div className="relative mx-auto max-w-6xl px-6">
         <div className="mx-auto max-w-4xl text-center">
           <p className="text-xs font-semibold uppercase tracking-[0.6em] text-emerald-500">Course catalog</p>
-          <h1 className="font-display text-4xl text-slate-900 md:text-5xl">Pick a track that matches your momentum</h1>
+          <h1 className="font-display text-4xl text-slate-900 md:text-5xl">Browse subjects we teach</h1>
           <p className="mt-4 text-lg text-slate-600">
-            Every course card pulls live data from the Marketing Hub. Add a hero thumbnail, short excerpt, and level to guide learners
-            to the right cohort.
+            Each subject pulls live data from the Marketing Hub. Set a subject thumbnail, intro, and levels to populate these pages.
           </p>
         </div>
 
-        {grouped.map((group) => (
-          <section key={group.key} className="mt-16 rounded-[40px] border border-slate-100 bg-white/80 p-8 shadow-[0_35px_120px_rgba(15,23,42,0.08)]">
-            <div className="flex flex-col gap-4 border-b border-slate-100 pb-6 text-center md:text-left">
-              <p className="text-xs font-semibold uppercase tracking-[0.5em] text-emerald-400">{group.eyebrow}</p>
-              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                <div>
-                  <h2 className="font-display text-3xl text-slate-900">{group.title}</h2>
-                  <p className="mt-2 max-w-2xl text-sm text-slate-600">{group.description}</p>
-                </div>
-                <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">{group.courses.length} course(s)</p>
-              </div>
-            </div>
-
-            <div className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {group.courses.map((course) => (
-                <CourseCard key={course._id} course={course} />
-              ))}
-            </div>
-          </section>
-        ))}
+        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {courses.map((course) => (
+            <CourseCard key={course._id} course={course} />
+          ))}
+        </div>
       </div>
     </section>
   );

@@ -11,7 +11,32 @@ module.exports = {
           DEFAULT: '#2C736C',
           soft: 'rgba(44, 115, 108, 0.3)',
           softer: 'rgba(44, 115, 108, 0.5)'
-        }
+        },
+
+        // App theme tokens
+        background: 'var(--background)',
+        foreground: 'var(--foreground)',
+        primary: 'var(--primary)',
+        'primary-foreground': 'var(--primary-foreground)',
+        destructive: 'var(--destructive)',
+        'destructive-foreground': 'var(--destructive-foreground)',
+        muted: 'var(--muted)',
+        'muted-foreground': 'var(--muted-foreground)',
+        border: 'var(--border)',
+        input: 'var(--input)',
+        ring: 'var(--ring)',
+        card: 'var(--card)',
+        'card-foreground': 'var(--card-foreground)',
+
+        // Sidebar theme tokens (used by Sidebar.jsx via classes like bg-sidebar)
+        sidebar: 'var(--sidebar)',
+        'sidebar-foreground': 'var(--sidebar-foreground)',
+        'sidebar-primary': 'var(--sidebar-primary)',
+        'sidebar-primary-foreground': 'var(--sidebar-primary-foreground)',
+        'sidebar-accent': 'var(--sidebar-accent)',
+        'sidebar-accent-foreground': 'var(--sidebar-accent-foreground)',
+        'sidebar-border': 'var(--sidebar-border)',
+        'sidebar-ring': 'var(--sidebar-ring)'
       },
       fontFamily: {
         sans: [
@@ -32,21 +57,6 @@ module.exports = {
         md: 'calc(var(--radius) - 2px)',
         lg: 'var(--radius)',
         xl: 'calc(var(--radius) + 4px)',
-      },
-      colors: {
-        background: 'var(--background)',
-        foreground: 'var(--foreground)',
-        primary: 'var(--primary)',
-        'primary-foreground': 'var(--primary-foreground)',
-        destructive: 'var(--destructive)',
-        'destructive-foreground': 'var(--destructive-foreground)',
-        muted: 'var(--muted)',
-        'muted-foreground': 'var(--muted-foreground)',
-        border: 'var(--border)',
-        input: 'var(--input)',
-        ring: 'var(--ring)',
-        card: 'var(--card)',
-        'card-foreground': 'var(--card-foreground)',
       },
       keyframes: {
         'slide-up': {

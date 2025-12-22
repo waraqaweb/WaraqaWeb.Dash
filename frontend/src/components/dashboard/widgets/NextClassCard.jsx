@@ -25,16 +25,16 @@ const buildStudentLabel = (nextClass) => {
 const NextClassCard = ({ nextClass }) => {
   if (!nextClass) {
     return (
-      <div className="bg-card rounded-lg border border-border p-6">
-        <h3 className="text-lg font-semibold text-foreground mb-2">Next Class</h3>
+      <div className="bg-card rounded-lg border border-border p-4 sm:p-6">
+        <h3 className="text-base sm:text-lg font-semibold text-foreground mb-2">Next Class</h3>
         <div className="text-sm text-muted-foreground">No upcoming classes</div>
       </div>
     );
   }
 
   return (
-    <div className="bg-card rounded-lg border border-border p-6">
-      <h3 className="text-lg font-semibold text-foreground mb-2">Next Class</h3>
+    <div className="bg-card rounded-lg border border-border p-4 sm:p-6">
+      <h3 className="text-base sm:text-lg font-semibold text-foreground mb-2">Next Class</h3>
       <div>
         <div className="text-sm text-muted-foreground">{formatClassDate(nextClass.scheduledDate)}</div>
         <div className="text-base font-medium">{buildStudentLabel(nextClass)}</div>

@@ -1,9 +1,5 @@
 import Link from 'next/link';
-const dashboardBaseUrl = (
-  process.env.NEXT_PUBLIC_DASHBOARD_BASE_URL ||
-  (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : 'https://app.waraqa.com')
-).replace(/\/$/, '');
-const dashboardHref = (path: string) => `${dashboardBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+import { dashboardHref } from '@/lib/links';
 import clsx from 'clsx';
 import Image from 'next/image';
 import type { MarketingCourse } from '@/lib/marketingClient';
@@ -89,7 +85,7 @@ const CourseNarrative = ({ course, index = 0 }: { course: MarketingCourse; index
     >
       <div className="relative z-10 mx-auto max-w-5xl text-center">
         <p className="text-xs font-semibold uppercase tracking-[0.5em] text-slate-400">Course {index + 1}</p>
-        <h1 className="font-display text-4xl text-slate-900 md:text-5xl">{course.title}</h1>
+        <h1 className="font-display text-3xl text-slate-900 sm:text-4xl md:text-5xl">{course.title}</h1>
         <p className="mt-4 text-lg text-slate-600">
           {course.excerpt || 'This course description will appear once the marketing team completes it.'}
         </p>
@@ -139,7 +135,7 @@ const CourseNarrative = ({ course, index = 0 }: { course: MarketingCourse; index
                   </span>
                   <span className={clsx('h-1.5 w-1.5 rounded-full', accent.dot)} />
                 </div>
-                <h2 className="font-display text-3xl text-slate-900">{section.heading}</h2>
+                <h2 className="font-display text-2xl text-slate-900 sm:text-3xl">{section.heading}</h2>
                 {renderRichContent(section.body || '', 'space-y-3')}
               </div>
               <div className={clsx('relative', imageLeft ? 'lg:order-1' : 'lg:order-2')}>

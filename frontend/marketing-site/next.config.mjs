@@ -11,6 +11,17 @@ const nextConfig = {
 			{ protocol: 'https', hostname: '**', pathname: '/**' },
 			{ protocol: 'http', hostname: '**', pathname: '/**' }
 		]
+	},
+	webpack: (config) => {
+		config.ignoreWarnings = [
+			...(config.ignoreWarnings || []),
+			// Windows path casing (C:\ vs c:\) can trigger noisy cache dependency warnings.
+			(warning) =>
+				typeof warning?.message === 'string' &&
+				warning.message.includes("webpack.cache.PackFileCacheStrategy/webpack.FileSystemInfo") &&
+				warning.message.includes("Resolving '../../../typescript/lib/typescript'")
+		];
+		return config;
 	}
 };
 

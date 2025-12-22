@@ -1,11 +1,15 @@
 import React from 'react';
 
 const StatCard = ({ title, value, Icon, color = 'bg-card text-foreground', trend = null, compact = false }) => {
-  const containerClass = compact ? 'bg-card rounded p-3 shadow-sm border border-border' : 'bg-card rounded-lg border border-border p-6 shadow-sm';
+  const containerClass = compact
+    ? 'bg-card rounded p-3 shadow-sm border border-border'
+    : 'bg-card rounded-lg border border-border p-4 sm:p-6 shadow-sm';
   const titleClass = compact ? 'text-xs font-medium text-muted-foreground' : 'text-sm font-medium text-muted-foreground';
-  const valueClass = compact ? 'text-lg font-bold text-foreground' : 'text-2xl font-bold text-foreground';
-  const iconSize = compact ? 'h-4 w-4' : 'h-6 w-6';
-  const iconContainer = compact ? `h-8 w-8 rounded-full flex items-center justify-center ${color}` : `h-12 w-12 rounded-full flex items-center justify-center ${color}`;
+  const valueClass = compact ? 'text-lg font-bold text-foreground' : 'text-xl sm:text-2xl font-bold text-foreground';
+  const iconSize = compact ? 'h-4 w-4' : 'h-5 w-5 sm:h-6 sm:w-6';
+  const iconContainer = compact
+    ? `h-8 w-8 rounded-full flex items-center justify-center ${color}`
+    : `h-10 w-10 sm:h-12 sm:w-12 rounded-full flex items-center justify-center ${color}`;
 
   // Defensive: avoid rendering raw objects/arrays as children
   let safeValue = value;

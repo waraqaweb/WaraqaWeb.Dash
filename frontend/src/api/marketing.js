@@ -1,12 +1,12 @@
 import api from './axios';
 
 export const getSiteSettings = async () => {
-  const { data } = await api.get('/marketing/site-settings');
+  const { data } = await api.get('/marketing/admin/site-settings');
   return data;
 };
 
 export const updateSiteSettings = async (payload) => {
-  const { data } = await api.put('/marketing/site-settings', payload);
+  const { data } = await api.put('/marketing/admin/site-settings', payload);
   return data;
 };
 

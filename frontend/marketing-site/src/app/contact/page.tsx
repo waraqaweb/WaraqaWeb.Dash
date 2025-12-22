@@ -1,11 +1,13 @@
 import MarketingHeader from '../../components/MarketingHeader';
 import MarketingFooter from '../../components/MarketingFooter';
 import { getSiteSettings } from '../../lib/marketingClient';
+import { getMarketingPreviewOptions } from '../../lib/preview';
 
 const normalizeTel = (phone?: string) => (phone ? phone.replace(/[^+\d]/g, '') : '');
 
 const ContactPage = async () => {
-  const siteSettings = await getSiteSettings();
+  const previewOptions = await getMarketingPreviewOptions();
+  const siteSettings = await getSiteSettings(previewOptions);
   const contactInfo = siteSettings?.contactInfo || {};
   const socialLinks = siteSettings?.socialLinks || [];
 

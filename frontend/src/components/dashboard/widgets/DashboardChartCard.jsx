@@ -9,7 +9,7 @@ const DashboardChartCard = ({ title, children, subtitle }) => {
           {subtitle && <div className="text-xs text-muted-foreground">{subtitle}</div>}
         </div>
       </div>
-      <div style={{ width: '100%', height: 220 }}>
+      <div className="w-full h-[200px] sm:h-[220px]">
         {children}
       </div>
     </div>

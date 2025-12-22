@@ -2,10 +2,12 @@ import MarketingHeader from '../../components/MarketingHeader';
 import MarketingFooter from '../../components/MarketingFooter';
 import { BlogListSection } from '../../components/BlogListSection';
 import { getBlogPosts, getSiteSettings } from '../../lib/marketingClient';
+import { getMarketingPreviewOptions } from '../../lib/preview';
 
 const BlogPage = async () => {
+  const previewOptions = await getMarketingPreviewOptions();
   const [siteSettings, blogData] = await Promise.all([
-    getSiteSettings(),
+    getSiteSettings(previewOptions),
     getBlogPosts({ limit: 12 })
   ]);
   const posts = blogData.posts || [];

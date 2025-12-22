@@ -2,10 +2,12 @@ import MarketingHeader from '../../components/MarketingHeader';
 import MarketingFooter from '../../components/MarketingFooter';
 import { TeachersSection } from '../../components/TeachersSection';
 import { getSiteSettings, getTeachers } from '../../lib/marketingClient';
+import { getMarketingPreviewOptions } from '../../lib/preview';
 
 const TeachersPage = async () => {
+  const previewOptions = await getMarketingPreviewOptions();
   const [siteSettings, teachers] = await Promise.all([
-    getSiteSettings(),
+    getSiteSettings(previewOptions),
     getTeachers()
   ]);
   return (

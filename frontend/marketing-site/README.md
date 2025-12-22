@@ -7,6 +7,7 @@ Next.js App Router build-out for the public marketing surface.
 - Node 18+
 - Backend server running (`cd backend && npm install && npm run dev`)
 - `.env` file with `NEXT_PUBLIC_API_BASE_URL` pointing at the Express API (defaults to `http://localhost:5000/api`).
+- If the marketing site and dashboard run on different origins in your environment (e.g. ports 4000 + 3000), set `NEXT_PUBLIC_DASHBOARD_URL` (or legacy `NEXT_PUBLIC_DASHBOARD_BASE_URL`) to the dashboard origin (e.g. `http://localhost:3000`).
 
 ## Getting Started
 

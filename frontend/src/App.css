@@ -2,6 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Global layout/overflow guards (mobile-first)
+   - Prevent page-wide horizontal scrolling
+   - Ensure predictable sizing inside flex/grid containers */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+img,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
 /* Bidi-friendly defaults (Arabic/RTL + mixed text) */
 html,
 body {

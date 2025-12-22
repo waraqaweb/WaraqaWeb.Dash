@@ -18,6 +18,7 @@ import {
   type PricingPlan,
   type SiteSettings
 } from '../lib/marketingClient';
+import { getMarketingPreviewOptions } from '../lib/preview';
 import { LandingCoursesRail } from '../components/landing/LandingCoursesRail';
 import { LandingPricingPeek } from '../components/landing/LandingPricingPeek';
 import { LandingTeachersSpotlight } from '../components/landing/LandingTeachersSpotlight';
@@ -29,10 +30,11 @@ import { LandingFallbackSection } from '../components/landing/LandingFallbackSec
 export const dynamic = 'force-dynamic';
 
 const HomePage = async () => {
+  const previewOptions = await getMarketingPreviewOptions();
   const [siteSettings, heroCourses, landingPage] = await Promise.all([
-    getSiteSettings(),
+    getSiteSettings(previewOptions),
     getHeroCourses(),
-    getLandingPage('home')
+    getLandingPage('home', previewOptions)
   ]);
 
   const activeSections = (landingPage?.sections || []).filter((section) => section.enabled !== false);

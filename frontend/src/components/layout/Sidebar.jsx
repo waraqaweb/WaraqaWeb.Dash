@@ -23,7 +23,8 @@ import {
   DollarSign,
   Clock,
   BookOpen,
-  Megaphone
+  Megaphone,
+  X
 } from 'lucide-react';
 
 const Sidebar = ({ isOpen, onClose, activeView, onViewChange, onOpenProfileModal }) => {
@@ -138,13 +139,16 @@ const Sidebar = ({ isOpen, onClose, activeView, onViewChange, onOpenProfileModal
   return (
     <>
       {/* Sidebar */}
-      <div className={`
+      <div
+        className={`
         fixed md:relative inset-y-0 left-0 z-50 w-64 bg-sidebar border-r border-sidebar-border transform transition-transform duration-300 ease-in-out
         ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-      `}>
+      `}
+        style={{ backgroundColor: 'var(--sidebar)', color: 'var(--sidebar-foreground)' }}
+      >
         <div className="flex flex-col h-full">
           {/* Logo/Header */}
-          <div className="flex items-center justify-center h-16 px-4 bg-sidebar border-b border-sidebar-border">
+          <div className="flex items-center justify-between h-16 px-4 bg-sidebar border-b border-sidebar-border">
             <div className="flex items-center space-x-2">
                 {/* Branding: logo (if provided) or fallback icon. Support cloudinary url or base64 dataUri fallback. */}
                 {branding?.logo?.url ? (
@@ -161,6 +165,18 @@ const Sidebar = ({ isOpen, onClose, activeView, onViewChange, onOpenProfileModal
                   <p className="text-xs text-sidebar-foreground/70">{branding?.slogan || 'Dashboard'}</p>
                 </div>
             </div>
+
+            {/* Mobile-only close button (backdrop blocks header toggle while open) */}
+            <button
+              type="button"
+              onClick={() => {
+                if (onClose && typeof onClose === 'function') onClose();
+              }}
+              className="md:hidden inline-flex h-11 w-11 items-center justify-center rounded-lg text-sidebar-foreground/70 hover:bg-sidebar-accent"
+              aria-label="Close sidebar"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
 
           {/* User Info */}
@@ -218,7 +234,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onViewChange, onOpenProfileModal
                     }
                   }}
                   className={`
-                    w-full flex items-center space-x-3 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 cursor-pointer
+                    w-full flex min-h-[44px] items-center space-x-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors duration-200 cursor-pointer
                     ${isActive 
                       ? 'bg-sidebar-primary text-sidebar-primary-foreground' 
                       : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'

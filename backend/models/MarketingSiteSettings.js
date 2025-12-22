@@ -81,6 +81,7 @@ const marketingSiteSettingsSchema = new mongoose.Schema(
       href: { type: String, trim: true },
       active: { type: Boolean, default: false }
     },
+    publishedSnapshot: { type: mongoose.Schema.Types.Mixed },
     lastPublishedAt: { type: Date },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },

@@ -96,7 +96,7 @@ const parseTags = (value = '') =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-const BlogPostModal = ({ open, onClose, post, onSaved, onDeleted }) => {
+const BlogPostModal = ({ open, onClose, post, onSaved, onDeleted, variant = 'modal' }) => {
   const [formState, setFormState] = useState(defaultPost);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -207,7 +207,9 @@ const BlogPostModal = ({ open, onClose, post, onSaved, onDeleted }) => {
       if (onSaved) onSaved(result);
       onClose();
     } catch (err) {
-      setError(err?.response?.data?.message || 'Failed to save blog post');
+      const msg = err?.response?.data?.message;
+      const detail = err?.response?.data?.error;
+      setError((detail && msg ? `${msg}: ${detail}` : msg) || err?.message || 'Failed to save blog post');
     } finally {
       setSaving(false);
     }
@@ -223,15 +225,18 @@ const BlogPostModal = ({ open, onClose, post, onSaved, onDeleted }) => {
       if (onDeleted) onDeleted(post._id);
       onClose();
     } catch (err) {
-      setError(err?.response?.data?.message || 'Failed to delete blog post');
+      const msg = err?.response?.data?.message;
+      const detail = err?.response?.data?.error;
+      setError((detail && msg ? `${msg}: ${detail}` : msg) || err?.message || 'Failed to delete blog post');
     } finally {
       setDeleting(false);
     }
   };
 
+  const isDrawer = variant === 'drawer';
   const modalClasses = useMemo(
-    () => `fixed inset-0 z-50 ${open ? 'visible' : 'invisible'} flex items-center justify-center p-4 sm:p-10`,
-    [open]
+    () => `fixed inset-0 z-50 ${open ? 'visible' : 'invisible'} flex ${isDrawer ? 'items-stretch justify-end' : 'items-center justify-center'} ${isDrawer ? 'p-0' : 'p-4 sm:p-10'}`,
+    [open, isDrawer]
   );
 
   if (!open) return null;
@@ -239,8 +244,8 @@ const BlogPostModal = ({ open, onClose, post, onSaved, onDeleted }) => {
   return (
     <div className={modalClasses}>
       <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-6xl">
-        <div className="flex min-h-[74vh] max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-[32px] border border-white/30 bg-gradient-to-br from-white via-slate-50 to-slate-100 shadow-[0_30px_90px_rgba(15,23,42,0.18)]">
+      <div className={`relative z-10 w-full ${isDrawer ? 'h-full max-w-[720px]' : 'max-w-6xl'}`}>
+        <div className={`flex min-h-0 flex-col overflow-hidden border border-white/30 bg-gradient-to-br from-white via-slate-50 to-slate-100 shadow-[0_30px_90px_rgba(15,23,42,0.18)] ${isDrawer ? 'min-h-full max-h-full rounded-none sm:rounded-l-[32px]' : 'min-h-[76vh] max-h-[calc(100vh-2rem)] rounded-[32px]'}`}>
           <div className="flex items-start justify-between border-b border-white/60 bg-white/70 px-6 py-4 backdrop-blur sm:px-8 sm:py-5">
             <div>
               <p className="text-xs uppercase tracking-[0.4em] text-slate-400">{isEdit ? 'Update blog post' : 'Create blog post'}</p>
@@ -252,8 +257,8 @@ const BlogPostModal = ({ open, onClose, post, onSaved, onDeleted }) => {
             </button>
           </div>
 
-          <form className="flex h-full flex-col" onSubmit={handleSubmit}>
-            <div className="flex-1 overflow-y-auto px-6 py-4 sm:px-8 sm:py-6">
+          <form className="flex min-h-0 h-full flex-col" onSubmit={handleSubmit}>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4 sm:px-8 sm:py-6">
             {error && (
               <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {error}

@@ -440,10 +440,10 @@ const DashboardHome = () => {
             const unpaidBalance = data.revenue?.unpaidBalanceTotal ?? data.unpaidBalanceTotal ?? 0;
 
             return (
-              <div className="space-y-4">
+              <div className="space-y-3 sm:space-y-4">
                 <div className="flex items-center justify-between">
                       <div>
-                        <h2 className="text-2xl font-bold">{greetingTitle}</h2>
+                        <h2 className="text-xl sm:text-2xl font-bold">{greetingTitle}</h2>
                         {greetingSubtitle ? (
                           <p className="text-sm text-muted-foreground">{greetingSubtitle}</p>
                         ) : (
@@ -477,32 +477,32 @@ const DashboardHome = () => {
                       <div className="grid grid-cols-1 gap-3">
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Upcoming (30 days)</div>
-                          <div className="text-lg font-semibold">{data.classes?.upcomingNext30 ?? data.upcomingClasses30 ?? data.upcomingClasses ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{data.classes?.upcomingNext30 ?? data.upcomingClasses30 ?? data.upcomingClasses ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Expected (30 days)</div>
-                          <div className="text-lg font-semibold">{data.classes?.expectedNext30 ?? data.expectedClasses ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{data.classes?.expectedNext30 ?? data.expectedClasses ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Scheduled Today</div>
-                          <div className="text-lg font-semibold">{classesToday ?? data.classesToday ?? data.scheduledToday ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{classesToday ?? data.classesToday ?? data.scheduledToday ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Next 7 Days</div>
-                          <div className="text-lg font-semibold">{classesNext7Days ?? data.classesNext7Days ?? data.scheduledNext7 ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{classesNext7Days ?? data.classesNext7Days ?? data.scheduledNext7 ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Completed (month)</div>
-                          <div className="text-lg font-semibold">{Number(data.completedHoursThisMonth ?? 0).toFixed(2)} hrs</div>
+                          <div className="text-base sm:text-lg font-semibold">{Number(data.completedHoursThisMonth ?? 0).toFixed(2)} hrs</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Cancellations (month)</div>
-                          <div className="text-lg font-semibold">{Number(data.cancelledHoursThisMonth ?? 0).toFixed(2)} hrs</div>
+                          <div className="text-base sm:text-lg font-semibold">{Number(data.cancelledHoursThisMonth ?? 0).toFixed(2)} hrs</div>
                         </div>
 
                         <div className="flex items-center justify-between">
@@ -520,37 +520,37 @@ const DashboardHome = () => {
                       <div className="grid grid-cols-1 gap-3">
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Total users</div>
-                          <div className="text-lg font-semibold">{totalUsers}</div>
+                          <div className="text-base sm:text-lg font-semibold">{totalUsers}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Teachers</div>
-                          <div className="text-lg font-semibold">{totalTeachers}</div>
+                          <div className="text-base sm:text-lg font-semibold">{totalTeachers}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">New users (this month)</div>
-                          <div className="text-lg font-semibold">{newUsersThisMonth ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{newUsersThisMonth ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Active users (by schedule)</div>
-                          <div className="text-lg font-semibold">{activeUsersByScheduleCount ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{activeUsersByScheduleCount ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Unique users (today)</div>
-                          <div className="text-lg font-semibold">{dailyUniqueDashboardUsers ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{dailyUniqueDashboardUsers ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Unique users (last 30 days)</div>
-                          <div className="text-lg font-semibold">{uniqueUsersLast30Days ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{uniqueUsersLast30Days ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Currently online (dashboard)</div>
-                          <div className="text-lg font-semibold">{currentActiveDashboardUsers ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{currentActiveDashboardUsers ?? 0}</div>
                         </div>
                       </div>
                     </div>
@@ -563,27 +563,27 @@ const DashboardHome = () => {
                       <div className="grid grid-cols-1 gap-3">
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Monthly Revenue</div>
-                          <div className="text-lg font-semibold">${monthlyRevenue ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">${monthlyRevenue ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Unpaid Balance</div>
-                          <div className="text-lg font-semibold">${unpaidBalance ?? data.unpaidBalanceTotal ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">${unpaidBalance ?? data.unpaidBalanceTotal ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Pending Invoices</div>
-                          <div className="text-lg font-semibold">{data.pendingInvoicesCount ?? data.revenue?.pendingInvoicesCount ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{data.pendingInvoicesCount ?? data.revenue?.pendingInvoicesCount ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Overdue invoices</div>
-                          <div className="text-lg font-semibold">{data.overdueInvoicesCount ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">{data.overdueInvoicesCount ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">YTD Revenue</div>
-                          <div className="text-lg font-semibold">${data.ytdRevenue ?? data.revenue?.ytd ?? 0}</div>
+                          <div className="text-base sm:text-lg font-semibold">${data.ytdRevenue ?? data.revenue?.ytd ?? 0}</div>
                         </div>
                       </div>
                     </div>
@@ -655,7 +655,7 @@ const DashboardHome = () => {
                             <YAxis />
                             <Tooltip />
                             <Line type="monotone" dataKey="activeUsers" stroke="#f59e0b" strokeWidth={2} dot={false} />
-                            <Line type="monotone" dataKey="teachers" stroke="#focus:ring-custom-teal" strokeWidth={2} dot={false} />
+                            <Line type="monotone" dataKey="teachers" stroke="#2C736C" strokeWidth={2} dot={false} />
                           </LineChart>
                         </ResponsiveContainer>
                       );
@@ -714,9 +714,9 @@ const DashboardHome = () => {
       ? data.upcomingClasses.length
       : Number(data.upcomingClasses || 0);
     return (
-      <div className="space-y-6">
-        <div className="bg-card rounded-lg p-6 border border-border">
-          <h2 className="text-2xl font-semibold mb-2 text-foreground">{greetingTitle}</h2>
+      <div className="space-y-4 sm:space-y-6">
+        <div className="bg-card rounded-lg p-4 sm:p-6 border border-border">
+          <h2 className="text-xl sm:text-2xl font-semibold mb-1 sm:mb-2 text-foreground">{greetingTitle}</h2>
           {greetingSubtitle ? (
             <p className="text-sm text-muted-foreground">{greetingSubtitle}</p>
           ) : (
@@ -784,7 +784,7 @@ const DashboardHome = () => {
           <StatCard title="Classes (this month)" value={data.classesCompletedThisMonth || 0} Icon={Calendar} color="bg-violet-50 text-violet-700" />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           <div className="lg:col-span-1">
             <NextClassCard nextClass={data.nextClass} />
           </div>
@@ -796,7 +796,7 @@ const DashboardHome = () => {
               )}
 
               <div className="bg-card rounded-lg border border-border p-6">
-                <h3 className="text-lg font-semibold text-foreground mb-2">Pending Reports ({data.pendingReportsCount || (data.pendingReports || []).length || 0})</h3>
+                <h3 className="text-base sm:text-lg font-semibold text-foreground mb-2">Pending Reports ({data.pendingReportsCount || (data.pendingReports || []).length || 0})</h3>
                   <PendingReportsList
                     reports={[...(data.pendingReports || []), ...(data.overdueReports || []).map(x => ({ ...x, _isOverdue: true }))]}
                     onOpen={(r) => navigate(`/classes/${r._id || r.id}/report`, { state: { background: location, reportClass: r } })}
@@ -842,8 +842,8 @@ const DashboardHome = () => {
     // (greeting computed globally as greetingTitle/greetingSubtitle)
 
     return (
-      <div className="space-y-6">
-        <div className="bg-gradient-to-r from-[#eaf5f2] to-[#2c736c] rounded-lg p-5 text-foreground">
+      <div className="space-y-4 sm:space-y-6">
+        <div className="bg-gradient-to-r from-[#eaf5f2] to-[#2c736c] rounded-lg p-4 sm:p-5 text-foreground">
           <h2 className="text-xl font-semibold mb-1">{greetingTitle}</h2>
           {greetingSubtitle ? (
             <p className="text-sm opacity-85">{greetingSubtitle}</p>
@@ -905,14 +905,14 @@ const DashboardHome = () => {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           <StatCard title="My Students" value={myChildrenCount} Icon={Users} color="bg-slate-50 text-slate-700" />
           {/* Combined Hours card: total hours + small per-student list */}
           <div className="bg-card rounded-lg border border-border p-4">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Hours (last 30 days)</p>
-                <p className="text-xl font-semibold text-foreground">{(data.totalHoursLast30 ?? 0)} hrs</p>
+                <p className="text-lg sm:text-xl font-semibold text-foreground">{(data.totalHoursLast30 ?? 0)} hrs</p>
                 {/* small per-student list inside the same card (full list, small font) */}
                 {Array.isArray(data.recentStudentHours) && data.recentStudentHours.length > 0 ? (
                   <div className="mt-2 space-y-1 max-h-40 overflow-auto">
@@ -948,7 +948,7 @@ const DashboardHome = () => {
             <p className="text-sm font-medium text-muted-foreground">Last paid hours</p>
             {lastPaid && (lastPaid.hours != null) ? (
               <div className="mt-2">
-                <div className="text-xl font-semibold text-foreground">{lastPaid.hours} hrs</div>
+                <div className="text-lg sm:text-xl font-semibold text-foreground">{lastPaid.hours} hrs</div>
                 <div className="text-xs text-muted-foreground mt-1">from {lastPaid.fromDate ? formatClassDate(lastPaid.fromDate) : (lastPaid.from ? formatClassDate(lastPaid.from) : '—')}</div>
               </div>
             ) : (
@@ -1029,10 +1029,10 @@ const DashboardHome = () => {
   // ----- Loading state -----
   if (stats.loading) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <div className="animate-pulse space-y-6">
           <div className="h-32 bg-muted rounded-lg"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
             {[...Array(4)].map((_, i) => (
               <div key={i} className="h-24 bg-muted rounded-lg"></div>
             ))}
@@ -1045,7 +1045,7 @@ const DashboardHome = () => {
   // ----- Error state -----
   if (stats.error) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <div className="bg-card rounded-lg border border-border p-6">
           <h3 className="text-lg font-semibold text-foreground mb-2">Failed to load dashboard</h3>
           <p className="text-sm text-muted-foreground mb-4">{stats.error}</p>
@@ -1060,7 +1060,7 @@ const DashboardHome = () => {
 
   // ----- Final render (role-based) -----
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       {latestFeedback && (
         <div className="mb-6 rounded-2xl border border-border bg-card p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1114,7 +1114,7 @@ const DashboardHome = () => {
       {showWelcome && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black opacity-40" onClick={() => { setShowWelcome(false); }}></div>
-          <div className="bg-white rounded-lg shadow-xl max-w-xl w-full p-6 z-10" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+          <div className="bg-white rounded-lg shadow-xl max-w-xl w-[calc(100%-2rem)] max-h-[85vh] overflow-y-auto p-5 sm:p-6 z-10" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
             <div className="flex items-start gap-4">
               <div className="flex-1">
                 <h3 id="welcome-title" className="text-2xl font-bold">Welcome to Waraqa platform{user?.firstName ? `, ${user.firstName}` : ''}!</h3>

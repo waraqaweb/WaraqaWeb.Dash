@@ -15,6 +15,7 @@ const DEFAULT_API_BASE = 'http://localhost:5000/api';
 
 const getApiBase = () => {
   return (
+    process.env.NEXT_PUBLIC_MARKETING_API_BASE_URL ||
     process.env.NEXT_PUBLIC_API_BASE_URL ||
     process.env.MARKETING_API_BASE_URL ||
     DEFAULT_API_BASE

@@ -1,9 +1,44 @@
 const API_BASE_URL =
   process.env.MARKETING_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_MARKETING_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   'http://localhost:5000/api';
 
-const DEFAULT_TIMEOUT_MS = Number(process.env.MARKETING_API_TIMEOUT_MS || 10000);
+const DEFAULT_TIMEOUT_MS = Number(
+  process.env.MARKETING_API_TIMEOUT_MS || (process.env.NODE_ENV === 'production' ? 10000 : 1500)
+);
+
+const SHOULD_LOG_FETCH_ERRORS =
+  process.env.MARKETING_API_LOG_ERRORS != null
+    ? process.env.MARKETING_API_LOG_ERRORS !== 'false'
+    : process.env.NODE_ENV === 'production';
+const loggedFailures = new Set<string>();
+
+const describeFetchError = (error: unknown): { kind: string; code?: string; message?: string } => {
+  const err = error as unknown as {
+    name?: unknown;
+    message?: unknown;
+    code?: unknown;
+    cause?: unknown;
+  };
+
+  const cause = err?.cause as unknown as { code?: unknown } | undefined;
+
+  const name = typeof err?.name === 'string' ? err.name : undefined;
+  const message = typeof err?.message === 'string' ? err.message : undefined;
+  const code =
+    (typeof cause?.code === 'string' ? cause.code : undefined) || (typeof err?.code === 'string' ? err.code : undefined);
+
+  if (name === 'AbortError') {
+    return { kind: 'timeout', code, message };
+  }
+
+  if (code) {
+    return { kind: code, code, message };
+  }
+
+  return { kind: name || 'error', code, message };
+};
 
 const handleResponse = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
@@ -25,31 +60,41 @@ const fetchJson = async <T>(path: string, init?: RequestInit, fallback?: T): Pro
     // NOTE: We must await here so non-OK responses are caught by this try/catch.
     return await handleResponse<T>(res);
   } catch (error) {
-    console.error('Marketing API fetch failed', {
-      path,
-      baseUrl: API_BASE_URL,
-      error
-    });
+    if (SHOULD_LOG_FETCH_ERRORS) {
+      const key = `${API_BASE_URL}${path}`;
+      if (!loggedFailures.has(key)) {
+        loggedFailures.add(key);
+        const info = describeFetchError(error);
+        const level = typeof fallback !== 'undefined' ? 'warn' : 'error';
+        const label = info.code && info.kind !== info.code ? `${info.kind}:${info.code}` : info.kind;
+        console[level](`[marketing] API fetch failed (${label}) ${key}`);
+      }
+    }
 
     if (typeof fallback !== 'undefined') {
       return fallback;
     }
 
     const hint =
-      'Failed to reach the marketing API. Ensure the backend server is running and NEXT_PUBLIC_API_BASE_URL (or MARKETING_API_BASE_URL) is configured.';
+      'Failed to reach the marketing API. Ensure the backend server is running and NEXT_PUBLIC_MARKETING_API_BASE_URL (or NEXT_PUBLIC_API_BASE_URL / MARKETING_API_BASE_URL) is configured.';
     throw new Error(hint);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
 };
 
-export const getSiteSettings = () => fetchJson<SiteSettings>('/marketing/site-settings', undefined, {});
+export const getSiteSettings = (options: { preview?: boolean; token?: string } = {}) => {
+  const token = typeof options.token === 'string' ? options.token : '';
+  const qs = options.preview ? `?token=${encodeURIComponent(token)}` : '';
+  const path = options.preview ? `/marketing/site-settings/preview${qs}` : '/marketing/site-settings';
+  return fetchJson<SiteSettings>(path, undefined, {});
+};
 
 // Landing page payloads can be large (builder JSON) and can exceed Next.js data cache limits.
 // Avoid Next data cache for these requests.
-export const getLandingPage = (slug: string) =>
+export const getLandingPage = (slug: string, options: { preview?: boolean; token?: string } = {}) =>
   fetchJson<LandingPage>(
-    `/marketing/landing-pages/${slug}`,
+    `/marketing/landing-pages/${slug}${options.preview ? `?preview=1&token=${encodeURIComponent(options.token || '')}` : ''}`,
     { cache: 'no-store' },
     {
       _id: `fallback-${slug}`,
@@ -84,6 +129,18 @@ export const getCourses = async (query: CourseQuery = {}) => {
   if (typeof query.featured === 'boolean') params.append('featured', String(query.featured));
   const suffix = params.toString();
   return loadCourses(suffix);
+};
+
+export const getCourse = async (slug: string): Promise<MarketingCourse | null> => {
+  try {
+    return await fetchJson<MarketingCourse>(`/marketing/courses/${encodeURIComponent(slug)}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message.includes('Marketing API error: 404')) {
+      return null;
+    }
+    throw error;
+  }
 };
 
 export const getPricingPlans = async () => {
@@ -165,6 +222,7 @@ export type LandingSection = {
   dataFilters?: Record<string, unknown>;
   limit?: number;
   settings?: {
+    heroCopySource?: 'site' | 'custom';
     kicker?: string;
     headline?: string;
     subheading?: string;
@@ -216,12 +274,31 @@ export type MarketingCourse = {
   excerpt?: string;
   level?: string;
   badge?: string;
+  thumbnailMedia?: string;
   heroMedia?: string;
   scheduleOption?: string;
   tracks?: string[];
   tags?: string[];
   outcomes?: string[];
-  curriculum?: Array<{ title?: string; description?: string; order?: number }>;
+  curriculum?: Array<{
+    title?: string;
+    slug?: string;
+    description?: string;
+    thumbnailMedia?: string;
+    heroMedia?: string;
+    articleIntro?: string;
+    articleSections?: Array<{
+      kicker?: string;
+      heading?: string;
+      body?: string;
+      media?: string;
+      align?: 'left' | 'right';
+      accent?: string;
+      order?: number;
+    }>;
+    published?: boolean;
+    order?: number;
+  }>;
   articleIntro?: string;
   articleSections?: Array<{
     kicker?: string;

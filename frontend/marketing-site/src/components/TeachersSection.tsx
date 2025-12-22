@@ -31,20 +31,24 @@ const TeachersSection = ({ teachers }: { teachers: MarketingTeacher[] }) => {
     return { languageOptions: options, filteredTeachers: filtered };
   }, [teachers, languageFilter]);
 
-  const renderList = (label: string, items?: string[]) => (
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">{label}</p>
-      {items && items.length > 0 ? (
+  const renderList = (label: string, items?: string[]) => {
+    const filtered = (items || [])
+      .map((item) => item?.trim())
+      .filter((item): item is string => Boolean(item));
+
+    if (!filtered.length) return null;
+
+    return (
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">{label}</p>
         <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">
-          {items.map((item) => (
+          {filtered.map((item) => (
             <li key={item}>{item}</li>
           ))}
         </ul>
-      ) : (
-        <p className="mt-2 text-sm text-slate-400">Not provided yet.</p>
-      )}
-    </div>
-  );
+      </div>
+    );
+  };
 
   if (!teachers.length) {
     return (
@@ -121,13 +125,23 @@ const TeachersSection = ({ teachers }: { teachers: MarketingTeacher[] }) => {
 
               <p className="mt-4 text-sm text-slate-600">{teacher.bio || 'Bio coming soon from the marketing team.'}</p>
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                {(teacher.languages || []).map((lang) => (
-                  <span key={lang} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                    {lang}
-                  </span>
-                ))}
-              </div>
+              {(() => {
+                const languages = (teacher.languages || [])
+                  .map((lang) => lang?.trim())
+                  .filter((lang): lang is string => Boolean(lang));
+
+                if (!languages.length) return null;
+
+                return (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {languages.map((lang) => (
+                      <span key={lang} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                        {lang}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
 
               <div className="mt-6 grid gap-6">
                 {renderList('Certificates', teacher.credentials)}

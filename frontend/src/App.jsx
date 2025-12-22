@@ -43,7 +43,7 @@ import TeacherSalaries from './pages/admin/TeacherSalaries';
 import TeacherSalaryDashboard from './pages/teacher/SalaryDashboard';
 import LibraryDashboard from './pages/library/LibraryDashboard';
 import PublicEvaluationBooking from './pages/public/PublicEvaluationBooking';
-import MarketingHub from './pages/admin/MarketingHub';
+import MarketingHub from './pages/admin/marketing/MarketingHub';
 
 /**
  * Protected Route Component
@@ -391,7 +391,7 @@ const AppRoutes = () => {
         }
       />
       <Route
-        path="/admin/marketing"
+        path="/admin/marketing/*"
         element={
           <ProtectedRoute requiredRole="admin">
             <DashboardLayout activeView="marketing">

@@ -1,6 +1,6 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, LayoutPanelLeft, Loader2, Plus, Sparkles, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react';
-import { getLandingPages, publishLandingPage, updateLandingPage } from '../../../api/marketing';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, LayoutPanelLeft, Loader2, Plus, Sparkles, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react';
+import { getLandingPages, getSiteSettings, publishLandingPage, updateLandingPage, updateSiteSettings, uploadMediaAsset } from '../../../api/marketing';
 import MediaUploadInput from './MediaUploadInput';
 
 const layoutOptions = [
@@ -59,12 +59,19 @@ const filterFields = [
 
 const deepClone = (value) => JSON.parse(JSON.stringify(value));
 
-const labelClass = 'block text-[0.78rem] font-semibold uppercase tracking-[0.08em] text-slate-500';
-const inputClass = 'mt-1.5 w-full rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2.5 text-sm text-slate-900 shadow-inner focus:border-slate-500 focus:ring-2 focus:ring-slate-200';
-const selectClass = 'mt-1.5 w-full rounded-2xl border border-slate-200/80 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-slate-500 focus:ring-2 focus:ring-slate-200';
-const textareaClass = `${inputClass} min-h-[90px]`;
-const sectionShellClass = 'rounded-[30px] border border-slate-200 bg-white/80 p-6 shadow-sm';
-const asideShellClass = 'rounded-[26px] border border-slate-200 bg-white/80 p-5 shadow-sm';
+const formatWhen = (value) => {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return 'Unknown time';
+  return date.toLocaleString();
+};
+
+const labelClass = 'block text-xs font-semibold text-slate-600';
+const inputClass = 'mt-1 w-full rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2 text-sm text-slate-900 shadow-inner focus:border-slate-500 focus:ring-2 focus:ring-slate-200';
+const inputClassNoTop = 'w-full rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2 text-sm text-slate-900 shadow-inner focus:border-slate-500 focus:ring-2 focus:ring-slate-200';
+const selectClass = 'mt-1 w-full rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:ring-2 focus:ring-slate-200';
+const textareaClass = `${inputClass} min-h-[86px]`;
+const sectionShellClass = 'rounded-[26px] border border-slate-200 p-4 shadow-sm';
+const asideShellClass = 'rounded-[24px] border border-slate-200 bg-white/80 p-4 shadow-sm';
 const iconButtonClass = 'rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 disabled:opacity-30';
 const chipButtonClass = 'inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 disabled:opacity-40';
 const colorSwatchClass = 'h-10 w-12 cursor-pointer rounded-2xl border border-slate-200 bg-white/80 shadow-inner focus:outline-none';
@@ -73,11 +80,29 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
   const [pages, setPages] = useState([]);
   const [selectedPageId, setSelectedPageId] = useState('');
   const [formState, setFormState] = useState(null);
+  const [activePanel, setActivePanel] = useState('editor');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [status, setStatus] = useState({ type: '', message: '' });
   const [dirty, setDirty] = useState(false);
+  const [expandedSections, setExpandedSections] = useState({});
+
+  const [siteSettingsDraft, setSiteSettingsDraft] = useState(null);
+  const [siteHeroStatus, setSiteHeroStatus] = useState({ type: '', message: '' });
+  const [siteHeroDirty, setSiteHeroDirty] = useState(false);
+  const [savingSiteHero, setSavingSiteHero] = useState(false);
+  const [uploadingSiteHero, setUploadingSiteHero] = useState({ card: false, background: false });
+  const siteHeroCardInputRef = useRef(null);
+  const siteHeroBackgroundInputRef = useRef(null);
+
+  const initExpanded = (nextSections) => {
+    const initial = {};
+    if (Array.isArray(nextSections) && nextSections.length) {
+      initial[nextSections[0].key] = true;
+    }
+    return initial;
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -92,6 +117,7 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
           const preferred = landingPages.find((page) => page.slug === 'home') || landingPages[0];
           setSelectedPageId(preferred._id);
           setFormState(deepClone(preferred));
+          setExpandedSections(initExpanded(preferred.sections || []));
           setDirty(false);
           onDirtyChange?.(false);
         } else {
@@ -109,9 +135,44 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const data = await getSiteSettings();
+        if (!mounted) return;
+        const next = {
+          ...data,
+          hero: {
+            eyebrow: '',
+            headline: '',
+            subheading: '',
+            media: '',
+            backgroundMedia: '',
+            mediaMode: 'card',
+            ctas: [],
+            ...(data?.hero || {})
+          }
+        };
+        setSiteSettingsDraft(next);
+        setSiteHeroDirty(false);
+        setSiteHeroStatus({ type: '', message: '' });
+      } catch (error) {
+        if (!mounted) return;
+        setSiteHeroStatus({ type: 'error', message: 'Failed to load Site Settings hero fields.' });
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
   const currentPage = useMemo(() => pages.find((page) => page._id === selectedPageId), [pages, selectedPageId]);
   const sections = formState?.sections || [];
-  const disabledBlocks = useMemo(() => new Set(sections.map((section) => section.key)), [sections]);
+  const disabledSingletonBlocks = useMemo(() => {
+    const disabled = new Set();
+    if (sections.some((section) => section.key === 'hero')) disabled.add('hero');
+    if (sections.some((section) => section.key === 'contact')) disabled.add('contact');
+    return disabled;
+  }, [sections]);
 
   const selectPage = (pageId) => {
     if (!pageId || pageId === selectedPageId) return;
@@ -119,9 +180,74 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
     if (!next) return;
     setSelectedPageId(pageId);
     setFormState(deepClone(next));
+    setExpandedSections(initExpanded(next.sections || []));
     setStatus({ type: '', message: '' });
     setDirty(false);
     onDirtyChange?.(false);
+    setActivePanel('editor');
+  };
+
+  const toggleExpanded = (sectionKey) => {
+    if (!sectionKey) return;
+    setExpandedSections((prev) => ({ ...prev, [sectionKey]: !prev[sectionKey] }));
+  };
+
+  const updateSiteHeroField = (field, value) => {
+    if (!siteHeroDirty) setSiteHeroDirty(true);
+    setSiteSettingsDraft((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        hero: {
+          eyebrow: '',
+          headline: '',
+          subheading: '',
+          media: '',
+          backgroundMedia: '',
+          mediaMode: 'card',
+          ctas: [],
+          ...(prev.hero || {}),
+          [field]: value
+        }
+      };
+    });
+  };
+
+  const saveSiteHero = async () => {
+    if (!siteSettingsDraft) return;
+    setSavingSiteHero(true);
+    setSiteHeroStatus({ type: '', message: '' });
+    try {
+      const saved = await updateSiteSettings(siteSettingsDraft);
+      setSiteSettingsDraft(saved);
+      setSiteHeroDirty(false);
+      setSiteHeroStatus({ type: 'success', message: 'Site Settings hero saved (draft). Publish to apply publicly.' });
+    } catch (error) {
+      setSiteHeroStatus({
+        type: 'error',
+        message: error?.response?.data?.message || error?.message || 'Failed to save Site Settings hero.'
+      });
+    } finally {
+      setSavingSiteHero(false);
+    }
+  };
+
+  const handleSiteHeroImageUpload = async ({ file, targetField, kind }) => {
+    if (!file) return;
+    setSiteHeroStatus({ type: '', message: '' });
+    setUploadingSiteHero((prev) => ({ ...prev, [kind]: true }));
+    try {
+      const uploaded = await uploadMediaAsset({ file, tags: ['hero', kind] });
+      if (!uploaded?.url) throw new Error('Upload succeeded but no URL returned');
+      updateSiteHeroField(targetField, uploaded.url);
+    } catch (error) {
+      setSiteHeroStatus({
+        type: 'error',
+        message: error?.response?.data?.message || error?.message || 'Failed to upload image.'
+      });
+    } finally {
+      setUploadingSiteHero((prev) => ({ ...prev, [kind]: false }));
+    }
   };
 
   const mutateSections = (updater) => {
@@ -205,12 +331,31 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
   };
 
   const removeSection = (index) => {
+    const keyToRemove = sections[index]?.key;
     mutateSections((prev) => prev.filter((_, idx) => idx !== index));
+    if (keyToRemove) {
+      setExpandedSections((prev) => {
+        const next = { ...prev };
+        delete next[keyToRemove];
+        return next;
+      });
+    }
   };
 
   const addBlock = (key) => {
     const template = blockLibrary.find((block) => block.key === key);
     if (!template) return;
+    // Keep singleton blocks singleton.
+    if ((key === 'hero' || key === 'contact') && sections.some((section) => section.key === key)) return;
+
+    // Allow multiple blocks for repeatable templates by making keys unique.
+    const buildUniqueKey = (baseKey) => {
+      if (!sections.some((section) => section.key === baseKey)) return baseKey;
+      let index = 2;
+      while (sections.some((section) => section.key === `${baseKey}-${index}`)) index += 1;
+      return `${baseKey}-${index}`;
+    };
+
     const defaultFilters = () => {
       if (['courses', 'teachers', 'testimonials'].includes(key)) return { featured: true };
       if (key === 'pricing') return { highlight: true };
@@ -219,15 +364,17 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
     };
     const limitByKey = () => {
       if (key === 'hero' || key === 'contact') return 1;
-      if (key === 'courses') return 3;
+      if (key === 'courses') return 4;
       if (key === 'pricing') return 2;
       if (key === 'teachers') return 6;
       if (key === 'testimonials') return 4;
       if (key === 'blog') return 3;
       return 0;
     };
+    const heroCopySource = key === 'hero' ? 'site' : 'custom';
+    const uniqueKey = buildUniqueKey(template.key);
     mutateSections((prev) => [...prev, deepClone({
-      key: template.key,
+      key: uniqueKey,
       label: template.label,
       description: template.description,
       enabled: true,
@@ -237,18 +384,24 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
       dataFilters: defaultFilters(),
       limit: limitByKey(),
       settings: {
-        kicker: template.label,
-        headline: template.description,
+        heroCopySource,
+        kicker: key === 'hero' ? '' : template.label,
+        headline: key === 'hero' ? '' : template.description,
         subheading: '',
         primaryCta: { label: '', href: '' },
         secondaryCta: { label: '', href: '' }
       }
     })]);
+
+    setExpandedSections((prev) => ({ ...prev, [uniqueKey]: true }));
+
+    setActivePanel('editor');
   };
 
   const addCustomBlock = () => {
+    const key = `custom-${sections.length + 1}`;
     mutateSections((prev) => [...prev, {
-      key: `custom-${prev.length + 1}`,
+      key,
       label: 'Custom section',
       description: 'Describe what this block should cover.',
       enabled: true,
@@ -265,6 +418,8 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
         secondaryCta: { label: '', href: '' }
       }
     }]);
+
+    setExpandedSections((prev) => ({ ...prev, [key]: true }));
   };
 
   const handleSave = async () => {
@@ -312,12 +467,37 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
     }
   };
 
+  const restoreRevision = (revision) => {
+    const snapshot = revision?.snapshot;
+    if (!snapshot || !formState?._id) return;
+    const next = {
+      ...deepClone(formState),
+      ...deepClone(snapshot),
+      _id: formState._id,
+      slug: formState.slug,
+      revisions: formState.revisions
+    };
+    setFormState(next);
+    setStatus({ type: 'success', message: 'Revision restored into the editor. Click Save to keep it.' });
+    if (!dirty) {
+      setDirty(true);
+      onDirtyChange?.(true);
+    }
+  };
+
   useImperativeHandle(ref, () => ({
     save: handleSave,
     publish: handlePublish,
     isDirty: () => dirty,
     isSaving: () => saving,
-    isPublishing: () => publishing
+    isPublishing: () => publishing,
+    getSelectedSlug: () => currentPage?.slug || '',
+    getPreviewPath: () => {
+      const slug = currentPage?.slug;
+      if (!slug || slug === 'home') return '/';
+      // Marketing site currently renders the builder only on home; keep preview safe.
+      return '/';
+    }
   }), [dirty, saving, publishing, formState]);
 
   if (loading) {
@@ -338,92 +518,146 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
 
   return (
     <div className="space-y-8">
-      <div className="rounded-[32px] border border-slate-900/10 bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-900 p-5 text-white shadow-xl">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="max-w-2xl">
-            <p className="text-[0.75rem] font-semibold uppercase tracking-[0.35em] text-white/60">Landing builder</p>
-            <h2 className="mt-3 text-2xl font-semibold tracking-tight">Structure every surface without touching code</h2>
-            <p className="mt-2 text-sm text-white/70">Set hierarchies, connect data sources, and preview hero mixes in one place.</p>
-          </div>
-        </div>
-      </div>
-
       {status.message && (
         <div className={`rounded-2xl border px-4 py-3 text-sm ${status.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
           {status.message}
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[320px,1fr]">
-        <aside className="space-y-5">
-          <div className={asideShellClass}>
-            <div className="flex items-center gap-2 text-slate-500">
-              <LayoutPanelLeft className="h-4 w-4" />
-              <p className="text-[0.7rem] font-semibold uppercase tracking-[0.3em] text-slate-400">Pages</p>
-            </div>
-            <div className="mt-4 max-h-[360px] space-y-2 overflow-y-auto pr-1">
-              {pages.map((page) => (
-                <button
-                  type="button"
-                  key={page._id}
-                  onClick={() => selectPage(page._id)}
-                  className={`w-full rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${
-                    page._id === selectedPageId
-                      ? 'border-slate-900 bg-slate-900 text-white shadow'
-                      : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-white'
+      <div className="rounded-[28px] border border-slate-200 bg-white/80 p-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+            {pages.map((page) => (
+              <button
+                key={page._id}
+                type="button"
+                onClick={() => selectPage(page._id)}
+                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                  page._id === selectedPageId && activePanel === 'editor'
+                    ? 'border-slate-900 bg-slate-900 text-white'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span className="max-w-[220px] truncate">{page.title}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-[0.25em] ${
+                    page.status === 'published' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate">{page.title}</span>
-                    <span className="rounded-full bg-white/10 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-[0.25em] text-white/80">
-                      {page.status === 'published' ? 'Live' : page.status}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <div className="mt-4 space-y-1 text-xs text-slate-400">
-              {currentPage?.updatedAt && (
-                <p>Last updated {new Date(currentPage.updatedAt).toLocaleString()}</p>
-              )}
-              {currentPage?.lastPublishedAt && (
-                <p>Last published {new Date(currentPage.lastPublishedAt).toLocaleString()}</p>
-              )}
-            </div>
+                  {page.status === 'published' ? 'Live' : page.status}
+                </span>
+              </button>
+            ))}
           </div>
 
-          <div className={asideShellClass}>
-            <div className="flex items-center gap-2 text-slate-500">
-              <Sparkles className="h-4 w-4" />
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActivePanel('blocks')}
+              className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                activePanel === 'blocks' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              Blocks
+            </button>
+            <button
+              type="button"
+              onClick={() => setActivePanel('history')}
+              className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                activePanel === 'history' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              History
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 px-1 text-xs text-slate-500">
+          {currentPage?.updatedAt ? <span>Updated {new Date(currentPage.updatedAt).toLocaleString()}</span> : null}
+          {currentPage?.lastPublishedAt ? <span>Published {new Date(currentPage.lastPublishedAt).toLocaleString()}</span> : null}
+        </div>
+      </div>
+
+      {activePanel === 'blocks' ? (
+        <div className="rounded-[28px] border border-slate-200 bg-white/80 p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
               <p className="text-[0.7rem] font-semibold uppercase tracking-[0.3em] text-slate-400">Block library</p>
-            </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {blockLibrary.map((block) => (
-                <div key={block.key} className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
-                  <p className="text-sm font-semibold text-slate-900">{block.label}</p>
-                  <p className="text-xs text-slate-500">{block.description}</p>
-                  <div className="mt-2 text-[0.65rem] font-semibold uppercase tracking-[0.25em] text-slate-400">{block.dataSource}</div>
-                  <button
-                    type="button"
-                    onClick={() => addBlock(block.key)}
-                    disabled={disabledBlocks.has(block.key)}
-                    className={`${chipButtonClass} mt-3`}
-                  >
-                    <Plus className="h-3 w-3" /> Add block
-                  </button>
-                </div>
-              ))}
+              <p className="mt-1 text-sm text-slate-600">Add sections to the selected page.</p>
             </div>
             <button
               type="button"
               onClick={addCustomBlock}
-              className="mt-4 inline-flex items-center gap-2 rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-400"
+              className="inline-flex items-center gap-2 rounded-full border border-dashed border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
             >
-              <Plus className="h-3 w-3" /> Custom block
+              <Plus className="h-4 w-4" /> Custom block
             </button>
           </div>
-        </aside>
 
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {blockLibrary.map((block) => (
+              <div key={block.key} className="rounded-2xl border border-slate-100 bg-slate-50/80 p-4">
+                <p className="text-sm font-semibold text-slate-900">{block.label}</p>
+                <p className="mt-1 text-xs text-slate-500">{block.description}</p>
+                <button
+                  type="button"
+                  onClick={() => addBlock(block.key)}
+                  disabled={disabledSingletonBlocks.has(block.key)}
+                  className={`${chipButtonClass} mt-3 ${disabledSingletonBlocks.has(block.key) ? 'opacity-50' : ''}`}
+                >
+                  <Plus className="h-3 w-3" /> Add block
+                </button>
+                {disabledSingletonBlocks.has(block.key) ? (
+                  <p className="mt-2 text-[0.7rem] text-slate-500">Only one allowed per page.</p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {activePanel === 'history' ? (
+        <div className="rounded-[28px] border border-slate-200 bg-white/80 p-5 shadow-sm">
+          <div>
+            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.3em] text-slate-400">History</p>
+            <p className="mt-1 text-sm text-slate-600">Restore a previous version into the editor.</p>
+            <p className="mt-2 text-xs text-slate-500">Restoring does not change the live site until you Save/Publish.</p>
+          </div>
+          <div className="mt-4 space-y-2">
+            {Array.isArray(formState?.revisions) && formState.revisions.length ? (
+              [...formState.revisions]
+                .slice(-12)
+                .reverse()
+                .map((rev, idx) => (
+                  <div key={`${rev.updatedAt || idx}`} className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-900">{formatWhen(rev.updatedAt)}</p>
+                        <p className="truncate text-xs text-slate-500">{rev.snapshot?.status ? `Status: ${rev.snapshot.status}` : 'Snapshot'}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          restoreRevision(rev);
+                          setActivePanel('editor');
+                        }}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Restore
+                      </button>
+                    </div>
+                  </div>
+                ))
+            ) : (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-4 py-4 text-sm text-slate-500">
+                No revisions yet. Revisions are captured on Save and Publish.
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {activePanel === 'editor' ? (
         <section className="space-y-6">
           <article className={sectionShellClass}>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -497,7 +731,7 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
               { key: 'subheadingColor', label: 'Subheading text color', fallback: '#cbd5f5' }
             ];
             const readNumberSetting = (key, fallback) => (typeof section.settings?.[key] === 'number' ? section.settings[key] : fallback);
-            const isHeroSection = section.key === 'hero';
+            const isHeroSection = (section.dataSource || '') === 'site-hero';
             const heroControls = {
               contentWidthRatio: readNumberSetting('contentWidthRatio', 0.55),
               heroMaxWidth: readNumberSetting('heroMaxWidth', 72),
@@ -512,14 +746,43 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
             };
             const contentAlignmentValue = section.settings?.contentAlignment || 'left';
             const fontFamilyValue = section.settings?.fontFamily || 'sans';
+            const expanded = expandedSections[section.key] ?? index === 0;
+            const dataSourceLabel = dataSourceOptions.find((opt) => opt.value === (section.dataSource || 'custom'))?.label || (section.dataSource || 'Custom');
+            const themeLabel = themeOptions.find((opt) => opt.value === (section.theme || 'light'))?.label || (section.theme || 'Light');
+
+            const editorTonePalette = [
+              { bg: 'bg-white/80', title: 'text-slate-900' },
+              { bg: 'bg-slate-50/80', title: 'text-slate-900' },
+              { bg: 'bg-amber-50/70', title: 'text-amber-900' },
+              { bg: 'bg-emerald-50/60', title: 'text-emerald-900' },
+              { bg: 'bg-slate-100/70', title: 'text-slate-900' },
+              { bg: 'bg-amber-100/40', title: 'text-amber-900' }
+            ];
+            const editorTone = editorTonePalette[index % editorTonePalette.length];
             return (
-            <article key={`${section.key}-${index}`} className={sectionShellClass}>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-[0.7rem] font-semibold uppercase tracking-[0.3em] text-slate-400">Section {index + 1}</p>
-                  <h3 className="text-lg font-semibold text-slate-900">{section.label}</h3>
-                  <p className="text-sm text-slate-500">{section.description}</p>
-                </div>
+            <article key={section.key} className={`${sectionShellClass} ${editorTone.bg}`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => toggleExpanded(section.key)}
+                  className="flex min-w-[240px] flex-1 items-start gap-3 text-left"
+                >
+                  <span className="mt-0.5 text-slate-400">{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">Section {index + 1}</p>
+                      <span className="rounded-full border border-slate-200 bg-white/70 px-2 py-0.5 text-[0.7rem] font-semibold text-slate-600">{dataSourceLabel}</span>
+                      <span className="rounded-full border border-slate-200 bg-white/70 px-2 py-0.5 text-[0.7rem] font-semibold text-slate-600">{themeLabel}</span>
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[0.7rem] font-semibold ${section.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-500'}`}
+                      >
+                        {section.enabled ? 'Enabled' : 'Hidden'}
+                      </span>
+                    </div>
+                    <h3 className={`mt-1 text-base font-semibold ${editorTone.title}`}>{section.label}</h3>
+                    {section.description ? <p className="mt-0.5 text-sm text-slate-500">{section.description}</p> : null}
+                  </div>
+                </button>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -551,224 +814,431 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
                 </div>
               </div>
 
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                <label className={labelClass}>
-                  Internal label
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={section.label}
-                    onChange={(e) => updateSectionField(index, 'label', e.target.value)}
-                  />
-                </label>
-                <label className={labelClass}>
-                  Description
-                  <textarea
-                    rows={2}
-                    className={textareaClass}
-                    value={section.description || ''}
-                    onChange={(e) => updateSectionField(index, 'description', e.target.value)}
-                  />
-                </label>
-              </div>
+              {expanded ? (
+                <>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                      <p className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">Admin (not on website)</p>
+                      <label className={`${labelClass} mt-3`}>
+                        Admin label
+                        <input
+                          type="text"
+                          className={inputClass}
+                          value={section.label}
+                          onChange={(e) => updateSectionField(index, 'label', e.target.value)}
+                        />
+                      </label>
+                      <label className={`${labelClass} mt-3`}>
+                        Admin note
+                        <textarea
+                          rows={2}
+                          className={textareaClass}
+                          value={section.description || ''}
+                          onChange={(e) => updateSectionField(index, 'description', e.target.value)}
+                        />
+                      </label>
+                    </div>
 
-              <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <label className={labelClass}>
-                  Layout
-                  <select
-                    className={selectClass}
-                    value={section.layout || 'full'}
-                    onChange={(e) => updateSectionField(index, 'layout', e.target.value)}
-                  >
-                    {layoutOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className={labelClass}>
-                  Theme
-                  <select
-                    className={selectClass}
-                    value={section.theme || 'light'}
-                    onChange={(e) => updateSectionField(index, 'theme', e.target.value)}
-                  >
-                    {themeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className={labelClass}>
-                  Data source
-                  <select
-                    className={selectClass}
-                    value={section.dataSource || 'custom'}
-                    onChange={(e) => updateSectionField(index, 'dataSource', e.target.value)}
-                  >
-                    {dataSourceOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className={labelClass}>
-                  Limit
-                  <input
-                    type="number"
-                    min="0"
-                    className={inputClass}
-                    value={section.limit || 0}
-                    onChange={(e) => updateSectionField(index, 'limit', Number(e.target.value) || 0)}
-                  />
-                </label>
-              </div>
-
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                <label className={labelClass}>
-                  Kicker
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={section.settings?.kicker || ''}
-                    onChange={(e) => updateSectionSetting(index, 'kicker', e.target.value)}
-                  />
-                </label>
-                <label className={labelClass}>
-                  Headline
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={section.settings?.headline || ''}
-                    onChange={(e) => updateSectionSetting(index, 'headline', e.target.value)}
-                  />
-                </label>
-                <label className={`${labelClass} sm:col-span-2`}>
-                  Subheading
-                  <textarea
-                    rows={2}
-                    className={textareaClass}
-                    value={section.settings?.subheading || ''}
-                    onChange={(e) => updateSectionSetting(index, 'subheading', e.target.value)}
-                  />
-                </label>
-              </div>
-
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                {(['primaryCta', 'secondaryCta']).map((slot) => (
-                  <div key={slot} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
-                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.3em] text-slate-400">{slot === 'primaryCta' ? 'Primary CTA' : 'Secondary CTA'}</p>
-                    <input
-                      type="text"
-                      placeholder="Label"
-                      className={`${inputClass} mt-3`}
-                      value={section.settings?.[slot]?.label || ''}
-                      onChange={(e) => updateSectionCta(index, slot, 'label', e.target.value)}
-                    />
-                    <input
-                      type="text"
-                      placeholder="/contact"
-                      className={`${inputClass} mt-2`}
-                      value={section.settings?.[slot]?.href || ''}
-                      onChange={(e) => updateSectionCta(index, slot, 'href', e.target.value)}
-                    />
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                      <p className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">Behavior</p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <label className={labelClass}>
+                          Theme
+                          <select
+                            className={selectClass}
+                            value={section.theme || 'light'}
+                            onChange={(e) => updateSectionField(index, 'theme', e.target.value)}
+                          >
+                            {themeOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className={labelClass}>
+                          Data source
+                          <select
+                            className={selectClass}
+                            value={section.dataSource || 'custom'}
+                            onChange={(e) => updateSectionField(index, 'dataSource', e.target.value)}
+                          >
+                            {dataSourceOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className={labelClass}>
+                          Limit
+                          <input
+                            type="number"
+                            min="0"
+                            className={inputClass}
+                            value={section.limit || 0}
+                            onChange={(e) => updateSectionField(index, 'limit', Number(e.target.value) || 0)}
+                          />
+                        </label>
+                        <label className={labelClass}>
+                          Layout (stored)
+                          <select
+                            className={`${selectClass} opacity-60`}
+                            value={section.layout || 'full'}
+                            onChange={(e) => updateSectionField(index, 'layout', e.target.value)}
+                            disabled
+                            title="Layout is stored but not currently used by the website renderer."
+                          >
+                            {layoutOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <p className="mt-3 text-xs text-slate-500">Theme, data source, and limit affect the website. Layout is saved but not used yet.</p>
+                    </div>
                   </div>
-                ))}
-              </div>
 
-              <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
-                <p className="text-[0.7rem] font-semibold uppercase tracking-[0.3em] text-slate-400">Appearance</p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <MediaUploadInput
-                    label="Section background"
-                    value={section.settings?.backgroundMedia || ''}
-                    onChange={(val) => updateSectionSetting(index, 'backgroundMedia', val)}
-                    helperText="Spans the entire hero banner edge-to-edge."
-                  />
-                  <div>
-                    <p className={labelClass}>Background overlay</p>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      className="mt-1 w-full"
-                      value={typeof section.settings?.backgroundOpacity !== 'undefined' ? section.settings.backgroundOpacity : 0.22}
-                      onChange={(e) => updateSectionSetting(index, 'backgroundOpacity', Number(e.target.value))}
-                    />
-                    <div className="mt-1 text-xs text-slate-500">{Math.round((typeof section.settings?.backgroundOpacity !== 'undefined' ? section.settings.backgroundOpacity : 0.22) * 100)}% overlay</div>
-                  </div>
-                  <MediaUploadInput
-                    label="Hero spotlight background"
-                    value={section.settings?.boxMedia || ''}
-                    onChange={(val) => updateSectionSetting(index, 'boxMedia', val)}
-                    helperText="Extends across the entire hero copy area (kicker, headline, CTAs)."
-                  />
-                  <div>
-                    <p className={labelClass}>Box opacity</p>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      className="mt-1 w-full"
-                      value={typeof section.settings?.boxOpacity !== 'undefined' ? section.settings.boxOpacity : 0.9}
-                      onChange={(e) => updateSectionSetting(index, 'boxOpacity', Number(e.target.value))}
-                    />
-                    <div className="mt-1 text-xs text-slate-500">{Math.round((typeof section.settings?.boxOpacity !== 'undefined' ? section.settings.boxOpacity : 0.9) * 100)}% opacity</div>
-                  </div>
-                  <label className={labelClass}>
-                    Text color variant
-                    <select
-                      className={selectClass}
-                      value={section.settings?.textVariant || 'auto'}
-                      onChange={(e) => updateSectionSetting(index, 'textVariant', e.target.value)}
-                    >
-                      <option value="auto">Auto (contrast)</option>
-                      <option value="light">Light text</option>
-                      <option value="dark">Dark text</option>
-                    </select>
-                  </label>
-                  <div className="sm:col-span-2">
-                    <p className={`${labelClass} mb-2`}>Custom text colors</p>
-                    <div className="grid gap-3 md:grid-cols-3">
-                      {textColorControls.map(({ key, label, fallback }) => {
-                        const currentValue = section.settings?.[key] || '';
-                        const previewValue = currentValue || fallback;
-                        return (
-                          <div key={key} className="rounded-2xl border border-slate-100 bg-white/80 p-3">
-                            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.3em] text-slate-400">{label}</p>
-                            <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    {section.dataSource === 'site-hero' ? (
+                      <div className="sm:col-span-2 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                        <p className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">Hero copy source</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => updateSectionSetting(index, 'heroCopySource', 'site')}
+                        className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                          (section.settings?.heroCopySource || 'site') !== 'custom'
+                            ? 'border-slate-900 bg-slate-900 text-white'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Use Site Settings
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateSectionSetting(index, 'heroCopySource', 'custom')}
+                        className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                          (section.settings?.heroCopySource || 'site') === 'custom'
+                            ? 'border-slate-900 bg-slate-900 text-white'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Custom for this page
+                      </button>
+                    </div>
+                    {(section.settings?.heroCopySource || 'site') === 'custom' ? (
+                      <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        This page is overriding the hero copy. Updates in <span className="font-semibold">Site Settings → Hero Banner</span> will not change the kicker/headline/subheading or CTAs for this page.
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-2xl border border-slate-200 bg-white/70 px-3 py-2 text-xs text-slate-600">
+                        This page is using the hero copy from <span className="font-semibold">Site Settings → Hero Banner</span>. Changing Site Settings will update this page (and any other pages using Site Settings) after publishing.
+                      </div>
+                    )}
+                    <p className="mt-3 text-xs text-slate-500">
+                      Appearance controls (backgrounds, opacity, alignment) are always per-page.
+                    </p>
+                      </div>
+                    ) : null}
+
+                    {section.dataSource === 'site-hero' ? (
+                      <div className="sm:col-span-2 rounded-2xl border border-slate-100 bg-white/70 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900">Hero Banner</h4>
+                            <p className="text-xs text-slate-500">Control the headline, media, and hero image layout.</p>
+                          </div>
+                          <span className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">Homepage hero (Site Settings)</span>
+                        </div>
+
+                        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-600">
+                          These values are the default hero copy for landing pages set to <span className="font-semibold">Use Site Settings</span>. Pages set to <span className="font-semibold">Custom for this page</span> will not change.
+                        </div>
+
+                        {siteHeroStatus.message ? (
+                          <div className={`mt-3 rounded-2xl border px-3 py-2 text-xs ${siteHeroStatus.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                            {siteHeroStatus.message}
+                          </div>
+                        ) : null}
+
+                        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                          <label className={labelClass}>
+                            Eyebrow
+                            <input
+                              type="text"
+                              value={siteSettingsDraft?.hero?.eyebrow || ''}
+                              onChange={(e) => updateSiteHeroField('eyebrow', e.target.value)}
+                              className={inputClass}
+                            />
+                          </label>
+                          <label className={labelClass}>
+                            Headline
+                            <input
+                              type="text"
+                              value={siteSettingsDraft?.hero?.headline || ''}
+                              onChange={(e) => updateSiteHeroField('headline', e.target.value)}
+                              className={inputClass}
+                            />
+                          </label>
+                          <label className={labelClass}>
+                            Subheading
+                            <input
+                              type="text"
+                              value={siteSettingsDraft?.hero?.subheading || ''}
+                              onChange={(e) => updateSiteHeroField('subheading', e.target.value)}
+                              className={inputClass}
+                            />
+                          </label>
+
+                          <label className={labelClass}>
+                            Hero image mode
+                            <select
+                              value={siteSettingsDraft?.hero?.mediaMode || 'card'}
+                              onChange={(e) => updateSiteHeroField('mediaMode', e.target.value)}
+                              className={selectClass}
+                            >
+                              <option value="card">Card beside the text</option>
+                              <option value="background">Full-width background behind text</option>
+                            </select>
+                          </label>
+
+                          <label className={labelClass}>
+                            Hero card image URL
+                            <div className="mt-1 flex items-start gap-2">
                               <input
-                                type="color"
-                                className={colorSwatchClass}
-                                value={previewValue}
-                                onChange={(e) => updateSectionSetting(index, key, e.target.value)}
+                                type="text"
+                                value={siteSettingsDraft?.hero?.media || ''}
+                                onChange={(e) => updateSiteHeroField('media', e.target.value)}
+                                className={`${inputClassNoTop} flex-1`}
+                                placeholder="Upload an image (or paste a URL)"
+                              />
+                              <input
+                                ref={siteHeroCardInputRef}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files && e.target.files[0];
+                                  e.target.value = '';
+                                  handleSiteHeroImageUpload({ file, targetField: 'media', kind: 'card' });
+                                }}
                               />
                               <button
                                 type="button"
-                                className={`${chipButtonClass} whitespace-nowrap`}
-                                onClick={() => updateSectionSetting(index, key, '')}
+                                className={`${chipButtonClass} normal-case mt-2.5`}
+                                onClick={() => siteHeroCardInputRef.current?.click()}
+                                disabled={uploadingSiteHero.card}
                               >
-                                Reset
+                                {uploadingSiteHero.card ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                                Upload image
                               </button>
                             </div>
-                            <p className="mt-1 text-xs text-slate-500">{currentValue || 'Auto contrast'}</p>
+                          </label>
+
+                          <label className={labelClass}>
+                            Hero background image URL
+                            <div className="mt-1 flex items-start gap-2">
+                              <input
+                                type="text"
+                                value={siteSettingsDraft?.hero?.backgroundMedia || ''}
+                                onChange={(e) => updateSiteHeroField('backgroundMedia', e.target.value)}
+                                className={`${inputClassNoTop} flex-1`}
+                                placeholder="Upload an image (or paste a URL)"
+                              />
+                              <input
+                                ref={siteHeroBackgroundInputRef}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files && e.target.files[0];
+                                  e.target.value = '';
+                                  handleSiteHeroImageUpload({ file, targetField: 'backgroundMedia', kind: 'background' });
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className={`${chipButtonClass} normal-case mt-2.5`}
+                                onClick={() => siteHeroBackgroundInputRef.current?.click()}
+                                disabled={uploadingSiteHero.background}
+                              >
+                                {uploadingSiteHero.background ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                                Upload image
+                              </button>
+                            </div>
+                          </label>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={saveSiteHero}
+                            disabled={!siteHeroDirty || savingSiteHero || !siteSettingsDraft}
+                            className={`${chipButtonClass} ${siteHeroDirty ? 'border-slate-300' : ''}`}
+                          >
+                            {savingSiteHero ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                            Save homepage hero
+                          </button>
+                          <p className="text-xs text-slate-500">Saved as draft. Use Publish (top bar) to apply publicly.</p>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="sm:col-span-2 rounded-2xl border border-slate-100 bg-white/80 p-4">
+                      <p className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">Website copy</p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <label className={labelClass}>
+                          Kicker
+                  <input
+                    type="text"
+                    disabled={section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom'}
+                    className={`${inputClass} ${section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom' ? 'opacity-60' : ''}`}
+                    value={section.settings?.kicker || ''}
+                    onChange={(e) => updateSectionSetting(index, 'kicker', e.target.value)}
+                  />
+                        </label>
+                        <label className={labelClass}>
+                          Headline
+                  <input
+                    type="text"
+                    disabled={section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom'}
+                    className={`${inputClass} ${section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom' ? 'opacity-60' : ''}`}
+                    value={section.settings?.headline || ''}
+                    onChange={(e) => updateSectionSetting(index, 'headline', e.target.value)}
+                  />
+                        </label>
+                        <label className={`${labelClass} sm:col-span-2`}>
+                          Subheading
+                  <textarea
+                    rows={2}
+                    disabled={section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom'}
+                    className={`${textareaClass} ${section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom' ? 'opacity-60' : ''}`}
+                    value={section.settings?.subheading || ''}
+                    onChange={(e) => updateSectionSetting(index, 'subheading', e.target.value)}
+                  />
+                        </label>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {(['primaryCta', 'secondaryCta']).map((slot) => (
+                          <div key={slot} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">{slot === 'primaryCta' ? 'Primary CTA' : 'Secondary CTA'}</p>
+                            <input
+                              type="text"
+                              placeholder="Label"
+                              disabled={section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom'}
+                              className={`${inputClass} mt-3 ${section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom' ? 'opacity-60' : ''}`}
+                              value={section.settings?.[slot]?.label || ''}
+                              onChange={(e) => updateSectionCta(index, slot, 'label', e.target.value)}
+                            />
+                            <input
+                              type="text"
+                              placeholder="/contact"
+                              disabled={section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom'}
+                              className={`${inputClass} mt-2 ${section.dataSource === 'site-hero' && (section.settings?.heroCopySource || 'site') !== 'custom' ? 'opacity-60' : ''}`}
+                              value={section.settings?.[slot]?.href || ''}
+                              onChange={(e) => updateSectionCta(index, slot, 'href', e.target.value)}
+                            />
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
 
-              {isHeroSection && (
-                <div className="mt-6 rounded-2xl border border-slate-100 bg-white/85 p-4">
-                  <p className="text-[0.7rem] font-semibold uppercase tracking-[0.3em] text-slate-400">Hero layout controls</p>
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  {isHeroSection ? (
+                    <>
+                      <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
+                        <p className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">Hero appearance</p>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <MediaUploadInput
+                            label="Section background"
+                            value={section.settings?.backgroundMedia || ''}
+                            onChange={(val) => updateSectionSetting(index, 'backgroundMedia', val)}
+                            helperText="Spans the entire hero banner edge-to-edge."
+                          />
+                          <div>
+                            <p className={labelClass}>Background overlay</p>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              className="mt-1 w-full"
+                              value={typeof section.settings?.backgroundOpacity !== 'undefined' ? section.settings.backgroundOpacity : 0.22}
+                              onChange={(e) => updateSectionSetting(index, 'backgroundOpacity', Number(e.target.value))}
+                            />
+                            <div className="mt-1 text-xs text-slate-500">{Math.round((typeof section.settings?.backgroundOpacity !== 'undefined' ? section.settings.backgroundOpacity : 0.22) * 100)}% overlay</div>
+                          </div>
+                          <MediaUploadInput
+                            label="Hero spotlight background"
+                            value={section.settings?.boxMedia || ''}
+                            onChange={(val) => updateSectionSetting(index, 'boxMedia', val)}
+                            helperText="Extends across the entire hero copy area (kicker, headline, CTAs)."
+                          />
+                          <div>
+                            <p className={labelClass}>Box opacity</p>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              className="mt-1 w-full"
+                              value={typeof section.settings?.boxOpacity !== 'undefined' ? section.settings.boxOpacity : 0.9}
+                              onChange={(e) => updateSectionSetting(index, 'boxOpacity', Number(e.target.value))}
+                            />
+                            <div className="mt-1 text-xs text-slate-500">{Math.round((typeof section.settings?.boxOpacity !== 'undefined' ? section.settings.boxOpacity : 0.9) * 100)}% opacity</div>
+                          </div>
+                          <label className={labelClass}>
+                            Text color variant
+                            <select
+                              className={selectClass}
+                              value={section.settings?.textVariant || 'auto'}
+                              onChange={(e) => updateSectionSetting(index, 'textVariant', e.target.value)}
+                            >
+                              <option value="auto">Auto (contrast)</option>
+                              <option value="light">Light text</option>
+                              <option value="dark">Dark text</option>
+                            </select>
+                          </label>
+                          <div className="sm:col-span-2">
+                            <p className={`${labelClass} mb-2`}>Custom text colors</p>
+                            <div className="grid gap-3 md:grid-cols-3">
+                              {textColorControls.map(({ key, label, fallback }) => {
+                                const currentValue = section.settings?.[key] || '';
+                                const previewValue = currentValue || fallback;
+                                return (
+                                  <div key={key} className="rounded-2xl border border-slate-100 bg-white/80 p-3">
+                                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">{label}</p>
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <input
+                                        type="color"
+                                        className={colorSwatchClass}
+                                        value={previewValue}
+                                        onChange={(e) => updateSectionSetting(index, key, e.target.value)}
+                                      />
+                                      <button
+                                        type="button"
+                                        className={`${chipButtonClass} whitespace-nowrap`}
+                                        onClick={() => updateSectionSetting(index, key, '')}
+                                      >
+                                        Reset
+                                      </button>
+                                    </div>
+                                    <p className="mt-1 text-xs text-slate-500">{currentValue || 'Auto contrast'}</p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 rounded-2xl border border-slate-100 bg-white/85 p-4">
+                        <p className="text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-slate-400">Hero layout controls</p>
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
                     <div>
                       <p className={labelClass}>Content vs media width</p>
                       <input
@@ -936,7 +1406,8 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
                     </div>
                   </div>
                 </div>
-              )}
+              </>
+            ) : null}
 
               <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
                 <p className="text-[0.7rem] font-semibold uppercase tracking-[0.3em] text-slate-400">Filters</p>
@@ -970,11 +1441,13 @@ const LandingBuilderPanel = forwardRef(({ onDirtyChange, onSaved, onPublished },
                   ))}
                 </div>
               </div>
+                </>
+              ) : null}
             </article>
           );
           })}
         </section>
-      </div>
+      ) : null}
     </div>
   );
 });

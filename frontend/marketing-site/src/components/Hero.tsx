@@ -1,13 +1,9 @@
 import Link from 'next/link';
-const dashboardBaseUrl = (
-  process.env.NEXT_PUBLIC_DASHBOARD_BASE_URL ||
-  (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : 'https://app.waraqa.com')
-).replace(/\/$/, '');
-const dashboardHref = (path: string) => `${dashboardBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 import Image from 'next/image';
 import type { CSSProperties } from 'react';
 import type { HeroCTA, SiteSettings, MarketingCourse, LandingSection } from '../lib/marketingClient';
 import HeroArt from './HeroArt';
+import { dashboardHref, resolveWaraqaHref } from '@/lib/links';
 
 type Props = {
   siteSettings: SiteSettings;
@@ -43,10 +39,14 @@ type HeroAdvancedSettings = NonNullable<LandingSection['settings']> & {
 const Hero = ({ siteSettings, courses, section }: Props) => {
   const heroDefaults = siteSettings.hero || {};
   const overrides = section?.settings || {};
-  const normalizedCtas = normalizeCtas(overrides, heroDefaults);
-  const kicker = (overrides.kicker || heroDefaults.eyebrow || defaultCopy.kicker).trim();
-  const headline = (overrides.headline || heroDefaults.headline || defaultCopy.headline).trim();
-  const subheading = (overrides.subheading || heroDefaults.subheading || defaultCopy.subheading).trim();
+  const heroCopySource = overrides.heroCopySource === 'custom' ? 'custom' : 'site';
+  const copyOverridesEnabled = heroCopySource === 'custom';
+  const normalizedCtas = copyOverridesEnabled
+    ? normalizeCtas(overrides, heroDefaults)
+    : (heroDefaults?.ctas?.length ? (heroDefaults.ctas as HeroCTA[]) : defaultCtas);
+  const kicker = ((copyOverridesEnabled ? overrides.kicker : '') || heroDefaults.eyebrow || defaultCopy.kicker).trim();
+  const headline = ((copyOverridesEnabled ? overrides.headline : '') || heroDefaults.headline || defaultCopy.headline).trim();
+  const subheading = ((copyOverridesEnabled ? overrides.subheading : '') || heroDefaults.subheading || defaultCopy.subheading).trim();
 
   // Additional optional settings (can be provided via landing section settings or siteSettings.hero)
   const s = overrides as HeroAdvancedSettings;
@@ -95,16 +95,16 @@ const Hero = ({ siteSettings, courses, section }: Props) => {
   const contentAlignClass = contentAlignment === 'center' ? 'text-center' : contentAlignment === 'right' ? 'text-right' : 'text-left';
   const ctaAlignClass = contentAlignment === 'center' ? 'justify-center' : contentAlignment === 'right' ? 'md:justify-end justify-start' : 'justify-start';
   const kickerStyle: CSSProperties = {
-    fontSize: `${kickerSize}px`,
+    fontSize: `clamp(0.75rem, 2.6vw, ${kickerSize}px)`,
     color: kickerColor || undefined
   };
   const headlineStyle: CSSProperties = {
-    fontSize: `${headlineSize}px`,
+    fontSize: `clamp(2rem, 6.5vw, ${headlineSize}px)`,
     marginTop: `${headingSpacing}px`,
     color: headlineColor || undefined
   };
   const subheadingStyle: CSSProperties = {
-    fontSize: `${subheadingSize}px`,
+    fontSize: `clamp(1rem, 3.6vw, ${subheadingSize}px)`,
     marginTop: `${subheadingSpacing}px`,
     color: subheadingColor || undefined
   };
@@ -172,7 +172,7 @@ const Hero = ({ siteSettings, courses, section }: Props) => {
             ))}
           </div>
           <div
-            className="mt-10 rounded-2xl border p-6"
+            className="mt-8 rounded-2xl border p-4 md:mt-10 md:p-6"
             style={{
               background: boxImage
                 ? `url(${boxImage}) center/cover no-repeat, rgba(255,255,255,${boxOpacity})`
@@ -181,7 +181,7 @@ const Hero = ({ siteSettings, courses, section }: Props) => {
             }}
           >
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Featured tracks</p>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {courses.slice(0, 4).map((course) => (
                 <div key={course._id} className="rounded-xl bg-white px-4 py-3 shadow-sm">
                   <p className="text-sm font-semibold text-slate-900">{course.title}</p>
@@ -213,7 +213,7 @@ const Hero = ({ siteSettings, courses, section }: Props) => {
 const CTAButton = ({ cta }: { cta: HeroCTA }) => {
   const style = cta.style === 'secondary' ? 'border border-slate-200 text-slate-700 hover:border-slate-400' : 'bg-brand text-white shadow hover:bg-brand-dark';
   return (
-    <Link href={cta.href} className={`rounded-full px-5 py-2 text-sm font-semibold ${style}`}>
+    <Link href={resolveWaraqaHref(cta.href)} className={`rounded-full px-5 py-2 text-sm font-semibold ${style}`}>
       {cta.label}
     </Link>
   );

@@ -12,15 +12,6 @@ const seoSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const curriculumItemSchema = new mongoose.Schema(
-  {
-    title: { type: String, trim: true },
-    description: { type: String, trim: true },
-    order: { type: Number, default: 0 }
-  },
-  { _id: false }
-);
-
 const articleSectionSchema = new mongoose.Schema(
   {
     kicker: { type: String, trim: true },
@@ -29,6 +20,21 @@ const articleSectionSchema = new mongoose.Schema(
     media: { type: String, trim: true },
     align: { type: String, enum: ['left', 'right'], default: 'right' },
     accent: { type: String, trim: true, default: 'emerald' },
+    order: { type: Number, default: 0 }
+  },
+  { _id: false }
+);
+
+const curriculumItemSchema = new mongoose.Schema(
+  {
+    title: { type: String, trim: true },
+    slug: { type: String, trim: true, lowercase: true },
+    description: { type: String, trim: true },
+    thumbnailMedia: { type: String, trim: true },
+    heroMedia: { type: String, trim: true },
+    articleIntro: { type: String, trim: true },
+    articleSections: [articleSectionSchema],
+    published: { type: Boolean, default: true },
     order: { type: Number, default: 0 }
   },
   { _id: false }
@@ -52,6 +58,7 @@ const marketingCourseSchema = new mongoose.Schema(
     lessonsPerWeek: { type: Number, min: 0 },
     scheduleOption: { type: String, trim: true },
     pricingPlan: { type: mongoose.Schema.Types.ObjectId, ref: 'MarketingPricingPlan' },
+    thumbnailMedia: { type: String, trim: true },
     heroMedia: { type: String, trim: true },
     badge: { type: String, trim: true },
     featured: { type: Boolean, default: false },

@@ -135,7 +135,7 @@ const Dashboard = () => {
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Bar */}
-        <header className="bg-card border-b border-border px-4 py-3 flex items-center justify-between">
+        <header className="bg-card border-b border-border px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between">
           <div className="flex items-center space-x-4">
             {/* Mobile menu button */}
             <button
@@ -150,7 +150,7 @@ const Dashboard = () => {
             </button>
 
             {/* Page title */}
-            <h1 className="text-xl font-semibold text-foreground">
+            <h1 className="text-lg sm:text-xl font-semibold text-foreground">
               {getPageTitle()}
             </h1>
           </div>

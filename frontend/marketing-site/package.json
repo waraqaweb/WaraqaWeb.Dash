@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('.next', { recursive: true, force: true })\"",
+    "predev": "npm run clean",
+    "prebuild": "node -e \"require('fs').mkdirSync('.next/server/pages', { recursive: true }); require('fs').writeFileSync('.next/server/pages/500.js', '', 'utf8')\"",
     "dev": "next dev -H 0.0.0.0 -p 4000",
     "build": "cross-env NEXT_FONT_GOOGLE_MOCKED=1 NEXT_DISABLE_FONT_DOWNLOADS=1 next build",
     "start": "next start -H 0.0.0.0 -p 4000",

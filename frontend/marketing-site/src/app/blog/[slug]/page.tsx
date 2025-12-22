@@ -3,6 +3,7 @@ import MarketingHeader from '../../../components/MarketingHeader';
 import MarketingFooter from '../../../components/MarketingFooter';
 import { BlogArticle } from '../../../components/BlogArticle';
 import { getBlogPost, getSiteSettings } from '../../../lib/marketingClient';
+import { getMarketingPreviewOptions } from '../../../lib/preview';
 
 type BlogArticlePageProps = {
   params: Promise<{ slug: string }>;
@@ -10,8 +11,9 @@ type BlogArticlePageProps = {
 
 const BlogArticlePage = async ({ params }: BlogArticlePageProps) => {
   const { slug } = await params;
+  const previewOptions = await getMarketingPreviewOptions();
   const [settingsResult, postResult] = await Promise.allSettled([
-    getSiteSettings(),
+    getSiteSettings(previewOptions),
     getBlogPost(slug)
   ]);
 

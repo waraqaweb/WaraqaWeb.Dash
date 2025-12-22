@@ -101,7 +101,6 @@ const MarketingMediaPage = () => {
                 className="group rounded-2xl border border-slate-200 bg-white/80 p-3 shadow-sm hover:border-slate-300"
               >
                 <div className="aspect-[16/10] overflow-hidden rounded-xl bg-slate-100">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={asset.url}
                     alt={asset.altText || 'Media asset'}

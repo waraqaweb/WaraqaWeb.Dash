@@ -1,122 +1,191 @@
-الدفع يساوي تماما عدد الساعات المدفوع
-يظهر عدد الساعات المدفوعة بعد طرح ما تم حضوره
-ماذا لو تم تحديد الفاتورة كغير مدفوع مرة ثانية
-كيفية ارجاع مبلغ تم دفعه بالفعل
-ماذا لو تم حذف درس مدفوع يجب أن يضاف مكانه أقرب درس غير مدفوع
-ماذا لو تم تغيير حالة من حضور أو غياب إلى ملغى
-الدروس التي تظ
-الدفع أقل من الدروس التي تم حضورها
-الدفع أكثر من الدروس المحددة في بيانات الفاتورة
-تعديل بيانات الفاتورة بعد دفعها
+1️⃣ What went wrong today (in simple words)
 
-Hours paid
-this field need to be calculated everytime I open the modal to be a calculation of the number of classes practically existing in the view invoice modal currently whether it's save in the front end or in the database. that number should be the same number of hours specifed by eith max hours or end date in view invoice modal and any change there should instantly update this number here even without opening the modal and changing the number in the record payment modal should change the number or extend the end date or whatever method is used to cover the number entered in this modal. so they are completing each other.
+Issue:
 
-the scienario that needs me to do this is
-sometimes after I send an invoice to a guardian for 30 days he tells me that he will cancel some classes and I update the invoice in paypal to cover the number of classes he wanted when he pays, I want to come directly to the record payment without needing to open view invoice modal again to update it with what the guardian wanted I want to enter the number of classes he paid and it should update the classes list in view invoice modal to or he may ask to pay more than what we sent for him and this case you should add more classes to the list to cover all the classes he paid.
-so what I need is a dynamic instant sycncing between the hours paid field in record payment modal and (max hours/end date ) in view invoice modal so no need to enter the data twice they should be linked together and instantly updated in all parts of the dashboard
+The domain was opening with https://
 
-Editable Fields & Permissions
+But the server only had HTTP (port 80) configured
 
-Prompt:
+No SSL certificate existed yet
 
-Continue with the Profile Page.
+Result:
 
-All users can update all fields except:
-hourly rate (admin only), email, and other financial fields.
-bonous for teachers
-Bank details → editable by user → triggers admin notification.
+Browser → tries HTTPS (443)
 
-Active/Inactive status → admin only.
+Server → nothing listening there
 
-add Transfer fees → admin only (others read-only). an amount of usd or percent of the toatal invoice amount this will be called in the invoice for calcualtions
+Browser shows:
+❌ ERR_CONNECTION_REFUSED
 
-Total hours → admin only (others read-only).
+Important lesson:
 
-Hourly rate defaults to 10 USD for new Guardians.
+❗ Ping working ≠ Website working
+❗ DNS correct ≠ HTTPS ready
 
-I tried to gather all the information I need for each user along with the ones above
-guardian information
-Basic Information
-First Name (editable by admin and the user himself)
-Last Name (editable by admin and the user himself)
-Email (editable by admin and the user himself)
+2️⃣ How we diagnosed it (this is the method)
 
-Password (editable by admin and the user himself)
-Role (editable by admin only)
+We never guessed. We proved everything step by step.
 
-isActive (editable by admin only)
+Step A — Network
+ping 165.227.187.206
 
-isEmailVerified (editable by admin only)
 
-Contact Info
-Phone(editable by admin and the user himself)
-Address - Street (editable by admin and the user himself)
-City (editable by admin and the user himself)
-State (editable by admin and the user himself)
-Country (choose from a list)
-Zip Code (delete it for all users we don't need it)
-Profile Info
-Profile Picture (editable by admin and the user himself)
-Date of Birth (date picker) (editable by admin and the user himself)
-Gender (dropdownlist) (editable by admin and the user himself)
+✔ Server reachable
 
-Timezone (from the system timezone) (editable by admin and the user himself) with an option to detect timezone
+Step B — Firewall
+sudo ufw allow 80
+sudo ufw allow 443
+sudo ufw reload
 
-System Fields
-Last Login (read only calls actual data)
-Login Attempts (read only calls actual data)  
-Lock Until (delete for all users)
-Notifications (editable by admin and the user himself)
-Email Notifications
-true
-SMS Notifications
-false
-Push Notifications
-true
-Virtuals no need for that
-Full Name
-isLocked (editable by admin only)
 
-Guardian Info
-Relationship (delete for all users)
-Emergency Contact (delete for all users)
-Payment Method dropdown includes (Paypal - Bank account - Wise Transfer)
-Hourly Rate (editable by admin only)
-Billing Address (delete for all users)
-Total Hours (editable by admin only)
-Students (fetch students)
+✔ Ports open
 
----
+Step C — Is Nginx running?
+sudo systemctl status nginx
 
-teacher's information
 
-First Name(editable by admin and the user himself)
-Last Name(editable by admin and the user himself)
-Email(editable by admin and the user himself)
-Password(editable by admin and the user himself)
-Role (editable by admin)
-Phone(editable by admin and the user himself)
-Address - Street(editable by admin and the user himself)
-City(editable by admin and the user himself)
-isActive (editable by admin)
-isEmailVerified (editable by admin)
-Last Login (read only with real data)
-Login Attempts (read only with real data)
-createdAt (read only with real data)
+✔ Running
 
-Hourly Rate is calculated automtaically based on the teachers hour rate in backend (editable by admin only) and its monthly changing
-Monthly Rate (delete this for teacher)
-Bonus (total number of bonuses collected from teachers invoices)
-Instapay Name
-Bank Details
-Bank Name
-Account Number
-IBAN
-SWIFT / BIC
+Step D — Is Nginx listening?
+sudo ss -tulnp | grep nginx
 
-educational Qualifications (teachers can update this field)
-bio, certificates, courses he teaches fetched from the courses list in the project and all the avilable information
 
-and almost the teacher's infrmatoion are the same data for admin except for payment and educational qualifications for admin
-and reasonable fields like admin cant be activated or locked to not corrupt the system
+✔ Listening on :80
+
+Step E — What is Nginx actually serving?
+curl -I http://localhost
+curl -I http://test.waraqaweb.com
+curl -I http://165.227.187.206
+
+
+✔ All returned 200 OK
+✔ Same Next.js app
+
+➡️ Conclusion:
+The site worked on HTTP → problem was HTTPS only.
+
+3️⃣ Emergency checklist (when a site doesn’t load)
+
+Whenever this happens again, follow this in order:
+
+🔹 1. DNS
+ping yourdomain.com
+
+🔹 2. Server
+ssh root@SERVER_IP
+
+🔹 3. Nginx
+sudo systemctl status nginx
+sudo nginx -t
+
+🔹 4. Ports
+sudo ss -tulnp | grep -E '80|443'
+
+🔹 5. Firewall
+sudo ufw status
+
+🔹 6. HTTP vs HTTPS
+
+Try explicitly:
+
+http://domain.com
+https://domain.com
+
+
+👉 90% of issues are found by step 6.
+
+4️⃣ Deployment flow (Computer → GitHub → DigitalOcean)
+
+This is the clean workflow you should always use.
+
+A) On your computer (local)
+git status
+git add .
+git commit -m "Describe the change"
+git push origin main
+
+
+✔ Code is now safely on GitHub
+
+B) On DigitalOcean server
+cd /opt/waraqa/app   # or your project folder
+git pull origin main
+
+If using Docker:
+docker compose build
+docker compose up -d
+
+If NOT using Docker (Node.js):
+npm install
+npm run build
+pm2 restart all
+
+5️⃣ Nginx setup (what goes where)
+📁 Config location
+/etc/nginx/sites-available/
+
+Example: test.waraqaweb.com
+server {
+    listen 80;
+    server_name test.waraqaweb.com;
+
+    location / {
+        proxy_pass http://localhost:3000; # or docker container
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+    }
+}
+
+
+Enable it:
+
+ln -s /etc/nginx/sites-available/test.waraqaweb.com /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+
+6️⃣ SSL / HTTPS (always do this)
+Install Certbot
+sudo apt update
+sudo apt install certbot python3-certbot-nginx -y
+
+Issue certificate
+sudo certbot --nginx -d test.waraqaweb.com
+
+
+Choose:
+✔ Redirect HTTP → HTTPS
+
+Auto-renew check
+sudo systemctl status certbot.timer
+
+7️⃣ Database config (clean & correct)
+Dashboard (MongoDB example)
+
+.env file:
+
+MONGO_URI=mongodb://127.0.0.1:27017/waraqa_dashboard
+NODE_ENV=production
+
+Website (separate DB recommended)
+MONGO_URI=mongodb://127.0.0.1:27017/waraqa_website
+
+
+👉 Rule:
+One database per app
+Never mix dashboard + marketing data
+
+8️⃣ Golden rules (print these mentally)
+
+Always test HTTP first
+
+Never assume HTTPS exists
+
+curl never lies — browsers do
+
+Nginx running ≠ site configured
+
+One app = one port = one config
+
+If frustrated → go back to checklist

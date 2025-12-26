@@ -1,20 +1,13 @@
-FROM node:20-alpine AS frontend_build
-
-WORKDIR /app
-
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
-
-COPY frontend/ ./
-
-# Ensure assets are built to work under /dashboard
-ENV PUBLIC_URL=/dashboard
-ENV GENERATE_SOURCEMAP=false
-ENV NODE_OPTIONS=--max_old_space_size=2048
-RUN npm run build
-
-
 FROM nginx:1.27-alpine
 
-COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
-COPY --from=frontend_build /app/build /usr/share/nginx/html/dashboard
+# envsubst is provided by gettext
+RUN apk add --no-cache gettext
+
+COPY deploy/nginx/default.http.conf.template /etc/nginx/templates/default.http.conf.template
+COPY deploy/nginx/default.https.conf.template /etc/nginx/templates/default.https.conf.template
+COPY deploy/nginx/docker-entrypoint.sh /docker-entrypoint.sh
+
+RUN chmod +x /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["nginx", "-g", "daemon off;"]

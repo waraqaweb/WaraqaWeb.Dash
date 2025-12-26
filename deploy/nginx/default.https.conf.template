@@ -1,0 +1,80 @@
+upstream backend_upstream {
+  server backend:5000;
+}
+
+upstream frontend_upstream {
+  server frontend:80;
+}
+
+# Basic, practical abuse protection (lightweight)
+limit_req_zone $binary_remote_addr zone=req_per_ip:10m rate=10r/s;
+limit_conn_zone $binary_remote_addr zone=conn_per_ip:10m;
+
+server {
+  listen 80;
+  server_name ${DOMAIN};
+
+  # ACME challenge for Let's Encrypt (certbot)
+  location ^~ /.well-known/acme-challenge/ {
+    root /var/www/certbot;
+    default_type "text/plain";
+  }
+
+  # Force HTTPS
+  location / {
+    return 301 https://$host$request_uri;
+  }
+}
+
+server {
+  listen 443 ssl http2;
+  server_name ${DOMAIN};
+
+  ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+  ssl_session_cache shared:SSL:10m;
+  ssl_session_timeout 10m;
+  ssl_protocols TLSv1.2 TLSv1.3;
+
+  server_tokens off;
+  client_max_body_size 20m;
+
+  # Very light limits (keeps scanners from hammering)
+  limit_conn conn_per_ip 30;
+  limit_req zone=req_per_ip burst=20 nodelay;
+
+  add_header X-Content-Type-Options nosniff always;
+  add_header X-Frame-Options SAMEORIGIN always;
+  add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+  # Backend API
+  location ^~ /api/ {
+    proxy_pass http://backend_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+
+  # Socket.io (websockets)
+  location ^~ /socket.io/ {
+    proxy_pass http://backend_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+
+  # Everything else -> dashboard container
+  location / {
+    proxy_pass http://frontend_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+}

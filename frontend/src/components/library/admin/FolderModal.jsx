@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import flattenFolders from './folderUtils';
-import { subjects } from '../../dashboard/subjects';
+import { subjects } from '../../../constants/reportTopicsConfig';
 
 const LEVEL_OPTIONS = ['Beginner', 'Intermediate', 'Advanced', 'Special'];
 

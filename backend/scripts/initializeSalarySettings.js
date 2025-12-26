@@ -140,7 +140,7 @@ async function initializeSalarySettings() {
 // Connect to database and run
 async function main() {
   try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqa';
+    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
     
     console.log('🔌 Connecting to MongoDB...');
     console.log(`   URI: ${mongoUri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:****@')}`);

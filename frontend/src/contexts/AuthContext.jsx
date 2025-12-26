@@ -5,7 +5,7 @@
  * Provides login, logout, and user data to all components
  */
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import api from '../api/axios';
 import { io } from 'socket.io-client';
 
@@ -34,6 +34,29 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [socket, setSocket] = useState(globalSocket); // Use global socket
+  const hasCheckedAuthRef = useRef(false);
+
+  // If the backend tells us the token is invalid/expired during an active session,
+  // clear auth state so the UI can redirect back to login.
+  useEffect(() => {
+    const interceptorId = api.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        const status = error?.response?.status;
+        const apiError = error?.response?.data?.error || error?.authErrorCode;
+        if (status === 401 && (apiError === 'INVALID_TOKEN' || apiError === 'TOKEN_EXPIRED')) {
+          try { localStorage.removeItem('token'); } catch (e) {}
+          setToken(null);
+          setUser(null);
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    return () => {
+      api.interceptors.response.eject(interceptorId);
+    };
+  }, []);
 
   const initializeSocket = (token, user) => {
     // Prevent multiple initializations with stronger checks
@@ -195,8 +218,9 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    // Only run if we don't already have a user
-    if (!user && !isSocketInitializing) {
+    // Only run if we don't already have a user (and only once)
+    if (!user && !hasCheckedAuthRef.current) {
+      hasCheckedAuthRef.current = true;
       checkAuth();
     } else {
       setLoading(false);
@@ -206,7 +230,7 @@ export const AuthProvider = ({ children }) => {
       isComponentMounted = false;
       // Don't disconnect global socket on cleanup, let logout handle it
     };
-  }, []); // No dependencies to prevent re-runs
+  }, [user]);
 
   /**
    * Login function for regular users (teacher, guardian, student)
@@ -306,9 +330,16 @@ export const AuthProvider = ({ children }) => {
       
     } catch (error) {
       console.error('Registration error:', error);
-      
-      const errorMessage = error.response?.data?.message || 'Registration failed';
-      return { success: false, error: errorMessage };
+
+      const data = error.response?.data;
+      const errorMessage = data?.message || 'Registration failed';
+      return {
+        success: false,
+        error: errorMessage,
+        fieldErrors: data?.fieldErrors,
+        errors: data?.errors,
+        status: error.response?.status,
+      };
     }
   };
 

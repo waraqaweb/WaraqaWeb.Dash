@@ -8,7 +8,7 @@
 import React, { useState } from 'react';
 import api from '../../api/axios';
 import LoadingSpinner from '../ui/LoadingSpinner';
-import { AlertCircle, Check, Eye, X } from 'lucide-react';
+import { AlertCircle, Check, Eye } from 'lucide-react';
 
 const PublishInvoiceDialog = ({ invoice, onClose, onSuccess }) => {
   const [loading, setLoading] = useState(false);

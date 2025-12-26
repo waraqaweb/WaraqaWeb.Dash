@@ -6,7 +6,7 @@ const Class = require('../models/Class');
 const Invoice = require('../models/Invoice');
 const { Types } = mongoose;
 
-const MONGO = process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager';
+const MONGO = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
 
 async function main() {
   await mongoose.connect(MONGO, { useNewUrlParser: true, useUnifiedTopology: true });

@@ -15,13 +15,6 @@ import {
   BookOpen,
   Repeat,
   CalendarCheck,
-  Trash2,
-  Pencil,
-  Copy,
-  FileText,
-  AlertCircle,
-  XCircle,
-  Calendar,
   Eye,
   EyeOff
 } from "lucide-react";
@@ -248,7 +241,6 @@ const EventCard = ({ event }) => {
     return null;
   }
 
-  const borderColor = resource.eventColors?.border || EVENT_COLORS.border;
   const primaryTextColor = resource.eventColors?.primaryText || EVENT_COLORS.primaryText;
   const secondaryTextColor = resource.eventColors?.secondaryText || EVENT_COLORS.secondaryText;
   const metaTextColor = resource.eventColors?.metaText || EVENT_COLORS.metaText;
@@ -448,7 +440,7 @@ const ClassesCalendarView = ({
         };
       })
       .sort((a, b) => a.start - b.start);
-  }, [classes, canManageClasses, userTimezone]);
+  }, [classes, canManageClasses, isAdminUser, userTimezone]);
 
   const meetingEvents = useMemo(() => {
     if (!Array.isArray(meetings) || !meetings.length) return [];
@@ -900,10 +892,6 @@ const ClassesCalendarView = ({
       return;
     }
     setSelectedEvent(event);
-  }, []);
-
-  const clearSelection = useCallback(() => {
-    setSelectedEvent(null);
   }, []);
 
   // Build left gutter labels (every hour) to overlay the calendar's time slots.

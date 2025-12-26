@@ -3,7 +3,7 @@ import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 
 const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
-  const { user } = useAuth();
+  useAuth();
   const [classStars, setClassStars] = useState(Math.round(8 / 2));
   const [teacherStars, setTeacherStars] = useState(Math.round(8 / 2));
   const [progressEvaluation, setProgressEvaluation] = useState(8);

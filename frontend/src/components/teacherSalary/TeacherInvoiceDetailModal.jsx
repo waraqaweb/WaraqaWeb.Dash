@@ -21,7 +21,6 @@ import {
   AlertCircle,
   Check,
   Users,
-  TrendingUp,
   ArrowRightLeft,
   Wallet,
   FileSpreadsheet,

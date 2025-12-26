@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+const LANGUAGES = ['Arabic','English','French','Spanish','German','Turkish','Urdu','Hindi','Bengali','Chinese','Japanese','Korean','Other'];
+
 export default function SpokenLanguagesSelect({ value = [], onChange }) {
   const [input, setInput] = useState('');
   const [filtered, setFiltered] = useState([]);
-  const languages = ['Arabic','English','French','Spanish','German','Turkish','Urdu','Hindi','Bengali','Chinese','Japanese','Korean','Other'];
 
   useEffect(() => {
     const f = input.trim().length > 0
-      ? languages.filter(l => l.toLowerCase().includes(input.toLowerCase()) && !(value||[]).includes(l))
+      ? LANGUAGES.filter(l => l.toLowerCase().includes(input.toLowerCase()) && !(value||[]).includes(l))
       : [];
     setFiltered(f.slice(0, 30));
   }, [input, value]);

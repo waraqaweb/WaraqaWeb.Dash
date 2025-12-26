@@ -5,7 +5,7 @@ const TeacherInvoice = require('../models/TeacherInvoice');
 
 async function checkInvoices() {
   try {
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/online-class-manager');
+    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/waraqadb');
     console.log('Connected to MongoDB');
 
     const count = await TeacherInvoice.countDocuments();

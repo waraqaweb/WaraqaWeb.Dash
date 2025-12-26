@@ -172,7 +172,7 @@ export const convertTimezone = (dateTime, fromTimezone, toTimezone) => {
     if (!dateTime) return null;
 
     const stringInput = typeof dateTime === 'string' ? dateTime : null;
-    const hasExplicitOffset = stringInput ? /([zZ]|[+\-]\d{2}:?\d{2})$/.test(stringInput) : false;
+    const hasExplicitOffset = stringInput ? /([zZ]|[+-]\d{2}:?\d{2})$/.test(stringInput) : false;
 
     let source;
 
@@ -571,7 +571,7 @@ export const adjustClassTimeForDST = (originalClassTime, studentTimezone, teache
   }
 };
 
-export default {
+const timezoneUtils = {
   TIMEZONE_LIST,
   DEFAULT_TIMEZONE,
   convertTimezone,
@@ -589,3 +589,5 @@ export default {
   getDynamicTimezoneList,
   getCurrentOffsetMinutes
 };
+
+export default timezoneUtils;

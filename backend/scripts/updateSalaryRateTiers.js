@@ -64,7 +64,7 @@ async function updateSalarySettings() {
 
 async function main() {
   try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager';
+    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
     
     console.log('🔌 Connecting to MongoDB...');
     console.log(`   URI: ${mongoUri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:****@')}`);

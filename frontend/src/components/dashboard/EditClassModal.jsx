@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { XCircle, Trash2, Plus, Clock, AlertTriangle } from "lucide-react";
+import { XCircle, Trash2, Plus, Clock } from "lucide-react";
 import moment from "moment-timezone";
 import { formatTzToUtc } from "../../utils/time";
-import { subjects } from "./ReportTopicsConfig";
+import { subjects } from "../../constants/reportTopicsConfig";
 import TimezoneSelector from "../ui/TimezoneSelector";
 import DSTWarningBanner from "../ui/DSTWarningBanner";
-import { checkDSTWarning, formatTimeInTimezone, convertClassTimeForUser, DEFAULT_TIMEZONE } from "../../utils/timezoneUtils";
+import { checkDSTWarning, convertClassTimeForUser, DEFAULT_TIMEZONE } from "../../utils/timezoneUtils";
 import SearchSelect from "../ui/SearchSelect";
 import {
   searchTeachers,
@@ -38,12 +38,6 @@ export default function EditClassModal({
   const navigate = useNavigate();
   const { user } = useAuth();
   const [dstWarning, setDstWarning] = useState(null);
-  const [timezoneSearchQuery, setTimezoneSearchQuery] = useState("");
-  const [showTimezoneSearch, setShowTimezoneSearch] = useState(false);
-  const teacherList = Array.isArray(teachers) ? teachers : [];
-  const guardianList = Array.isArray(guardians) ? guardians : [];
-  const studentList = Array.isArray(students) ? students : [];
-  const selectedGuardianId = editClass?.student?.guardianId ? String(editClass.student.guardianId) : null;
   const fetchTeacherOptions = useCallback((term = '') => searchTeachers(term), []);
   const fetchTeacherById = useCallback((id) => getTeacherById(id), []);
   const fetchGuardianOptions = useCallback((term = '') => searchGuardians(term), []);

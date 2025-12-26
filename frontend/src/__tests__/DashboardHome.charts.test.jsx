@@ -1,8 +1,8 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-import DashboardHome from '../components/dashboard/DashboardHome';
+import DashboardHome from '../pages/dashboard/DashboardHome';
 import api from '../api/axios';
 
 jest.mock('../api/axios', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn() } }));
@@ -52,17 +52,17 @@ describe('DashboardHome charts integration', () => {
       }
     } });
 
-    const { container } = render(
+    render(
       <MemoryRouter>
         <DashboardHome />
       </MemoryRouter>
     );
 
-  // wait for async load and rendered titles
-  await waitFor(() => expect(api.get).toHaveBeenCalled());
-  await waitFor(() => expect(screen.getByText(/Revenue \(last 30 days\)/i)).toBeTruthy());
-  await waitFor(() => expect(screen.getByText(/Classes \(last 30 days\)/i)).toBeTruthy());
-  await waitFor(() => expect(screen.getByText(/Active Users \/ Teachers \(last 30 days\)/i)).toBeTruthy());
+    // wait for async load and rendered titles
+    await screen.findByText(/Revenue \(last 30 days\)/i);
+    await screen.findByText(/Classes \(last 30 days\)/i);
+    await screen.findByText(/Active Users \/ Teachers \(last 30 days\)/i);
+    expect(api.get).toHaveBeenCalled();
 
     // For a populated timeseries we expect the chart placeholders NOT to appear
     expect(screen.queryByText(/No revenue data/i)).toBeNull();
@@ -88,10 +88,9 @@ describe('DashboardHome charts integration', () => {
       </MemoryRouter>
     );
 
-    await waitFor(() => expect(api.get).toHaveBeenCalled());
     // Placeholders should appear
-    await waitFor(() => expect(screen.getByText(/No revenue data/i)).toBeTruthy());
-    await waitFor(() => expect(screen.getByText(/No class data/i)).toBeTruthy());
-    await waitFor(() => expect(screen.getByText(/No activity data/i)).toBeTruthy());
+    await screen.findByText(/No revenue data/i);
+    await screen.findByText(/No class data/i);
+    await screen.findByText(/No activity data/i);
   });
 });

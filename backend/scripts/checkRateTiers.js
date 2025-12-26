@@ -3,7 +3,7 @@ const SalarySettings = require('../models/SalarySettings');
 
 async function checkRateTiers() {
   try {
-    await mongoose.connect('mongodb://127.0.0.1:27017/waraqa');
+    await mongoose.connect('mongodb://127.0.0.1:27017/waraqadb');
     console.log('Connected to database\n');
     
     const settings = await SalarySettings.getGlobalSettings();

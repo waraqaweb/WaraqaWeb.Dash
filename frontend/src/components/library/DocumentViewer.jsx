@@ -279,7 +279,7 @@ const DocumentViewer = ({ item, onClose }) => {
   const [inlineError, setInlineError] = useState(null);
   const [inlineRenderAttempted, setInlineRenderAttempted] = useState(false);
   const [inlineRenderState, setInlineRenderState] = useState({ status: 'idle', error: null });
-  const [clientRenderedPdf, setClientRenderedPdf] = useState(false);
+  const [, setClientRenderedPdf] = useState(false);
 
   const listRef = useRef(null);
   const svgRef = useRef(null);

@@ -49,7 +49,7 @@ function buildPerDayMap(details, timezone, fallbackDate, duration) {
 }
 
 (async () => {
-  const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager';
+  const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
   await mongoose.connect(uri);
 
   try {

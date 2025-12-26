@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
-  Calendar,
   FileText,
   Mail,
   Phone,
@@ -105,7 +104,6 @@ const InvoicePublicPage = () => {
     invoiceNumber,
     status,
     billingPeriod,
-    dueDate,
     financials = {},
     guardian,
     notes,

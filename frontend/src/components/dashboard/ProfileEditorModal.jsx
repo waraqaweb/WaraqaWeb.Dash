@@ -16,20 +16,14 @@ const ProfileEditorModal = ({ isOpen, onClose, userId, self = false, onSaved }) 
   const { updateProfile, isAdmin } = useAuth();
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
-  const [editing, setEditing] = useState(false);
+  const [, setEditing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    setEditing(false);
-    fetchUser();
-  }, [isOpen, userId, self]);
-
-  const fetchUser = async () => {
+  const fetchUser = useCallback(async () => {
     setLoading(true);
     try {
       if (self) {
@@ -47,7 +41,13 @@ const ProfileEditorModal = ({ isOpen, onClose, userId, self = false, onSaved }) 
     } finally {
       setLoading(false);
     }
-  };
+  }, [self, userId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setEditing(false);
+    fetchUser();
+  }, [isOpen, fetchUser]);
 
   const handleChange = (path, value) => {
     // simple shallow set for top-level and address/notifications

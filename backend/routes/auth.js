@@ -32,6 +32,8 @@ const authLimiter = rateLimit({
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: process.env.NODE_ENV === 'production' ? 20 : 1000, // 1000 login attempts in dev, 20 in production
+  // Only rate-limit failed attempts; successful logins should not consume the budget.
+  skipSuccessfulRequests: true,
   message: {
     error: 'Too many login attempts, please try again later.',
     retryAfter: 15 * 60 // 15 minutes in seconds
@@ -101,9 +103,17 @@ router.post(
       // Check for validation errors
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
+        const errorArray = errors.array();
+        const fieldErrors = {};
+        for (const err of errorArray) {
+          const field = err?.path || err?.param;
+          if (!field) continue;
+          if (!fieldErrors[field]) fieldErrors[field] = err.msg;
+        }
         return res.status(400).json({
           message: "Validation failed",
-          errors: errors.array(),
+          errors: errorArray,
+          fieldErrors,
         });
       }
 
@@ -124,6 +134,8 @@ router.post(
       if (existingUser) {
         return res.status(409).json({
           message: "User with this email already exists",
+          errors: [{ path: 'email', msg: 'User with this email already exists' }],
+          fieldErrors: { email: 'User with this email already exists' },
         });
       }
 

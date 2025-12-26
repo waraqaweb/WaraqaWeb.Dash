@@ -2,6 +2,9 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
+import DashboardHome from '../pages/dashboard/DashboardHome';
+import api from '../api/axios';
+
 // Mock feedback modals
 jest.mock('../components/feedback/FirstClassFeedbackModal', () => ({
   __esModule: true,
@@ -32,9 +35,6 @@ jest.mock('../contexts/AuthContext', () => ({
   useAuth: () => mockAuth,
 }));
 
-import DashboardHome from '../components/dashboard/DashboardHome';
-import api from '../api/axios';
-
 jest.mock('../api/axios', () => ({ __esModule: true, default: { get: jest.fn() } }));
 
 describe('DashboardHome (admin & guardian)', () => {
@@ -64,7 +64,7 @@ describe('DashboardHome (admin & guardian)', () => {
       </MemoryRouter>
     );
 
-  await waitFor(() => expect(screen.getByText(/Assalamu/i)).toBeTruthy());
+    expect(await screen.findByText(/Assalamu/i)).toBeTruthy();
     expect(screen.getByText(/Total Users/i)).toBeTruthy();
 
     // compact toggle should be present
@@ -88,7 +88,7 @@ describe('DashboardHome (admin & guardian)', () => {
       </MemoryRouter>
     );
 
-  await waitFor(() => expect(screen.getByText(/My Students/i)).toBeTruthy());
+    expect(await screen.findByText(/My Students/i)).toBeTruthy();
     expect(screen.getByText(/Hours \(last 30 days\)/i)).toBeTruthy();
     expect(screen.getByText(/Remaining hours/i)).toBeTruthy();
   });

@@ -1,7 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { formatDateDDMMMYYYY } from '../../utils/date';
-import { Clock, Save, AlertCircle, CheckCircle } from 'lucide-react';
-import api from '../../api/axios';
+import React from 'react';
+import { Clock, AlertCircle, CheckCircle } from 'lucide-react';
 
 const TeacherAvailabilityConfig = ({ teacher, value, onChange, isAdminView = false }) => {
   // Use controlled component pattern - value and onChange from parent

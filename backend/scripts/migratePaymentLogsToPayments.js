@@ -25,7 +25,7 @@ const argv = minimist(process.argv.slice(2), { boolean: ['dry-run', 'apply'], de
 const DRY_RUN = !argv.apply;
 const BATCH_SIZE = Number(argv['batch-size'] || 100);
 
-const MONGO_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/waraqa';
+const MONGO_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/waraqadb';
 
 async function connect() {
   await mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });

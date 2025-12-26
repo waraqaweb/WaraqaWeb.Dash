@@ -123,8 +123,6 @@ const WhiteboardModal = ({ open, onClose }) => {
     });
   }, [activeBoard]);
 
-  if (!open) return null;
-
   const applyUpdate = useCallback((boardId, updater, { pushHistory = true } = {}) => {
     if (!boardId) return;
     setAnnotationCache((prev) => {
@@ -391,6 +389,8 @@ const WhiteboardModal = ({ open, onClose }) => {
     () => boards.find((board) => board.id === activeBoard),
     [boards, activeBoard]
   );
+
+  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">

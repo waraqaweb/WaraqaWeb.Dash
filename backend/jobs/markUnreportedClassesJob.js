@@ -98,7 +98,7 @@ async function runJob() {
 if (require.main === module) {
   const mongoose = require('mongoose');
   
-  const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/waraqa';
+  const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/waraqadb';
   
   mongoose.connect(mongoURI)
     .then(() => {

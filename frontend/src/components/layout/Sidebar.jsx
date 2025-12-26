@@ -17,18 +17,16 @@ import {
   Calendar, 
   FileText, 
   BarChart3, 
-  Settings, 
   LogOut,
   Shield,
   DollarSign,
   Clock,
   BookOpen,
-  Megaphone,
   X
 } from 'lucide-react';
 
-const Sidebar = ({ isOpen, onClose, activeView, onViewChange, onOpenProfileModal }) => {
-  const { user, logout, isAdmin, isTeacher, isGuardian, isStudent } = useAuth();
+const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
+  const { user, logout, isAdmin } = useAuth();
   const [branding, setBranding] = useState({ logo: null, title: 'Waraqa', slogan: '' });
 
   // Define navigation items based on user role
@@ -47,7 +45,6 @@ const Sidebar = ({ isOpen, onClose, activeView, onViewChange, onOpenProfileModal
       { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
       { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
       { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },
-      { id: 'marketing', label: 'Marketing', icon: Megaphone, roles: ['admin'], link: '/admin/marketing' },
     ];
 
     // Filter by current user's role

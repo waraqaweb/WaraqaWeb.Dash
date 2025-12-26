@@ -5,7 +5,7 @@ const path = require('path');
 const { findUninvoicedLessons } = require('../services/invoiceAuditService');
 
 async function main() {
-  const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqa';
+  const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
   await mongoose.connect(mongoUri, { dbName: process.env.MONGO_DB || undefined });
 
   const exemptPredicate = (cls) => {

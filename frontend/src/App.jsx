@@ -17,33 +17,30 @@ import AdminLoginPage from './components/auth/AdminLoginPage';
 import RegisterPage from './components/auth/RegisterPage';
 import ForgotPassword from './components/auth/ForgotPassword';
 import ResetPassword from './components/auth/ResetPassword';
-import Dashboard from './components/dashboard/Dashboard';
-import ProfilePage from './components/dashboard/ProfilePage';
+import Dashboard from './pages/dashboard/Dashboard';
 import LoadingSpinner from './components/ui/LoadingSpinner';
-import ClassReportPage from './components/dashboard/ClassReportPage';
-import Settings from "./components/dashboard/Settings";
+import ClassReportPage from './pages/dashboard/ClassReportPage';
 import DashboardLayout from './components/layout/DashboardLayout';
 // Import invoice modals/pages
 import InvoiceViewModal from './components/invoices/InvoiceViewModal';
 import RecordPaymentModal from './components/invoices/RecordPaymentModal';
 import InvoicePublicPage from './components/invoices/InvoicePublicPage';
-import SalariesPage from "./components/dashboard/salaries/SalariesPage";
-import FeedbacksAdmin from './components/dashboard/FeedbacksAdmin';
+import PublicEvaluationBookingPage from './components/meetings/PublicEvaluationBookingPage';
+import SalariesPage from "./pages/dashboard/salaries/SalariesPage";
+import FeedbacksAdmin from './pages/dashboard/FeedbacksAdmin';
 // Classes modals
 import CreateClassModal from './components/dashboard/CreateClassModal';
 import EditClassModal from './components/dashboard/EditClassModal';
 import RescheduleClassModal from './components/dashboard/RescheduleClassModal';
 import DeleteClassModal from './components/dashboard/DeleteClassModal';
 // Salary modals
-import SalaryViewModal from './components/dashboard/salaries/SalaryViewModal';
-import SalaryEditModal from './components/dashboard/salaries/SalaryEditModal';
-import SalaryCreateModal from './components/dashboard/salaries/SalaryCreateModal';
+import SalaryViewModal from './pages/dashboard/salaries/SalaryViewModal';
+import SalaryEditModal from './pages/dashboard/salaries/SalaryEditModal';
+import SalaryCreateModal from './pages/dashboard/salaries/SalaryCreateModal';
 // Teacher Salary pages
 import TeacherSalaries from './pages/admin/TeacherSalaries';
 import TeacherSalaryDashboard from './pages/teacher/SalaryDashboard';
 import LibraryDashboard from './pages/library/LibraryDashboard';
-import PublicEvaluationBooking from './pages/public/PublicEvaluationBooking';
-import MarketingHub from './pages/admin/marketing/MarketingHub';
 
 /**
  * Protected Route Component
@@ -216,13 +213,13 @@ const AppRoutes = () => {
       />
 
       <Route
-        path="/book/evaluation"
-        element={<PublicEvaluationBooking />}
+        path="/public/invoices/:slug"
+        element={<InvoicePublicPage />}
       />
 
       <Route
-        path="/public/invoices/:slug"
-        element={<InvoicePublicPage />}
+        path="/public/meetings/evaluation"
+        element={<PublicEvaluationBookingPage />}
       />
 
       {/* Protected routes */}
@@ -386,16 +383,6 @@ const AppRoutes = () => {
           <ProtectedRoute requiredRole="admin">
             <DashboardLayout activeView="teacher-salaries">
               <TeacherSalaries />
-            </DashboardLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/admin/marketing/*"
-        element={
-          <ProtectedRoute requiredRole="admin">
-            <DashboardLayout activeView="marketing">
-              <MarketingHub />
             </DashboardLayout>
           </ProtectedRoute>
         }
@@ -700,10 +687,29 @@ function App() {
 
     return () => { mounted = false; };
   }, []);
+
+  const resolvedBasename = React.useMemo(() => {
+    const publicUrl = process.env.PUBLIC_URL || '/';
+
+    // In local dev we want routes to work from the root (e.g. /public/...).
+    if (process.env.NODE_ENV === 'development') return '/';
+
+    // In production we support both:
+    // - dashboard hosted under PUBLIC_URL (typically /dashboard)
+    // - public pages hosted at the root (/public/...) via nginx rewrite to the same SPA
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname || '/';
+      if (path.startsWith('/public')) return '/';
+      if (publicUrl !== '/' && path.startsWith(publicUrl)) return publicUrl;
+    }
+
+    return publicUrl || '/';
+  }, []);
+
   return (
     // Opt-in to React Router v7 behavior to silence deprecation warnings and prepare for upgrade
     <Router
-      basename={process.env.PUBLIC_URL || '/'}
+      basename={resolvedBasename}
       future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
     >
       <div className="min-h-screen bg-background">

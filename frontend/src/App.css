@@ -1,3 +1,7 @@
+/* Fonts (must come before other rules for PostCSS) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Merienda:wght@400;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -242,10 +246,6 @@ svg:hover {
   transform: scale(1.12);
   transition: transform 0.15s ease-in-out;
 }
-
-/* Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Merienda:wght@400;700&display=swap');
 
 /* Global typography */
 html, body, #root {

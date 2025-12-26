@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { X, Save } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
-import { getTimezoneOptions } from '../../utils/timezoneOptions';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import SpokenLanguagesSelect from '../ui/SpokenLanguagesSelect';
 
@@ -11,7 +10,7 @@ const deriveStudentTimezone = (s) => {
 };
 
 const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
-  const { user, isAdmin, isTeacher, isGuardian } = useAuth();
+  const { user, isAdmin, isTeacher } = useAuth();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -251,7 +250,7 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
     if (studentId) {
       fetchStudent();
     }
-  }, [studentId, guardianId, actualGuardianId, user]);
+  }, [studentId, guardianId, actualGuardianId, user, isAdmin]);
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -293,19 +292,6 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
       return undefined;
     }
     return digitsOnly;
-  };
-
-  const normalizeSubjects = (value) => {
-    if (!value) return [];
-    if (Array.isArray(value)) {
-      return value
-        .map(subject => (typeof subject === 'string' ? subject.trim() : subject))
-        .filter(Boolean);
-    }
-    return String(value)
-      .split(',')
-      .map(subject => subject.trim())
-      .filter(Boolean);
   };
 
   const pruneUndefined = (obj) => {
@@ -470,7 +456,6 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
           response = await api.put(`/users/${guardianToUpdate}/students/${studentId}`, embeddedPayload);
         } catch (embeddedError) {
           const status = embeddedError.response?.status;
-          const backendMessage = embeddedError.response?.data?.error || embeddedError.response?.data?.message;
           
 
           if (status === 404) {

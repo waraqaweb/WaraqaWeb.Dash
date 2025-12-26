@@ -4,7 +4,7 @@ const User = require('../models/User');
 
 async function main() {
   try {
-  const uri = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/online-class-manager';
+  const uri = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/waraqadb';
     await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
     const filter = {};
     const [, , arg] = process.argv;

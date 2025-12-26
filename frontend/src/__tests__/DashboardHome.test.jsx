@@ -1,6 +1,9 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+
+import DashboardHome from '../pages/dashboard/DashboardHome';
+import api from '../api/axios';
 
 // Mock feedback modals so they don't pull in other deps (axios/Esm imports)
 jest.mock('../components/feedback/FirstClassFeedbackModal', () => ({
@@ -12,9 +15,6 @@ jest.mock('../components/feedback/MonthlyFeedbackModal', () => ({
   __esModule: true,
   default: ({ open, onClose }) => open ? (<div data-testid="monthly-modal">Monthly</div>) : null
 }));
-
-import DashboardHome from '../components/dashboard/DashboardHome';
-import api from '../api/axios';
 
 jest.mock('../api/axios', () => ({ __esModule: true, default: { get: jest.fn() } }));
 
@@ -51,8 +51,8 @@ describe('DashboardHome (teacher)', () => {
       </MemoryRouter>
     );
 
-  // Wait for the dashboard to render the teacher greeting from fetched stats
-  await waitFor(() => expect(screen.getByText(/Assalamu/i)).toBeTruthy(), { timeout: 2000 });
+    // Wait for the dashboard to render the teacher greeting from fetched stats
+    await screen.findByText(/Assalamu/i, {}, { timeout: 2000 });
   expect(screen.getByText(/Hours \(this month\)/i)).toBeTruthy();
   expect(screen.getByText(/12/)).toBeTruthy();
   });

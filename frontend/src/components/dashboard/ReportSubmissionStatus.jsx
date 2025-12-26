@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Clock, AlertCircle, CheckCircle2, XCircle, Shield } from 'lucide-react';
 import api from '../../api/axios';
 
@@ -15,7 +15,8 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
   const [extensionReason, setExtensionReason] = useState('');
   const [processing, setProcessing] = useState(false);
 
-  const fetchStatus = async () => {
+  const fetchStatus = useCallback(async () => {
+    if (!classId) return;
     try {
       setLoading(true);
       setError(null);
@@ -27,13 +28,11 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     } finally {
       setLoading(false);
     }
-  };
+  }, [classId]);
 
   useEffect(() => {
-    if (classId) {
-      fetchStatus();
-    }
-  }, [classId]);
+    fetchStatus();
+  }, [fetchStatus]);
 
   const handleGrantExtension = async () => {
     try {

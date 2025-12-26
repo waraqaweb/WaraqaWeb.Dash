@@ -6,7 +6,7 @@ dotenv.config();
 
 const User = require('../models/User');
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
 
 async function check(email, plain) {
   const u = await User.findOne({ email }).select('+password');

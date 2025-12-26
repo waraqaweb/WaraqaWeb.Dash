@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../../api/axios';
 import { computeInvoiceTotals, resolveInvoiceClassEntries } from '../../utils/invoiceTotals';
 import LoadingSpinner from '../ui/LoadingSpinner';
-import { X, DollarSign, CreditCard, ClipboardSignature, Sparkles } from 'lucide-react';
+import { X, DollarSign, CreditCard, ClipboardSignature } from 'lucide-react';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 
 const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
@@ -101,7 +101,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
             const hours = items.reduce((s, it) => s + ((Number(it?.duration || 0) || 0) / 60), 0);
             const amt = items.reduce((s, it) => s + (Number(it?.amount || 0) || 0), 0);
             if (hours > 0 && amt > 0) return Math.round((amt / hours) * 100) / 100;
-            return hourlyRate > 0 ? hourlyRate : 10;
+            return 10;
           })();
           const basePortion = Number.isFinite(initialAmountRaw) ? initialAmountRaw - rawTransferFee : NaN;
           const initialHours = (Number.isFinite(basePortion) && basePortion > 0 && derivedRate > 0)
@@ -197,7 +197,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
       end: end ? formatDateDDMMMYYYY(end) : null,
       loading: false,
     });
-  }, [invoice, computeAmountFromHours, resolvedClassEntries]);
+  }, [invoice, computeAmountFromHours, didInitDefaults, hourlyRate, resolvedClassEntries]);
 
   // ✅ Removed boundary validation - hoursPaid accepts any value (actual payment amount)
   // Live boundary hint for reference only (not enforced)
@@ -260,7 +260,6 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
   };
 
   const [editingPaypal, setEditingPaypal] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
   const calcTransferFee = (tipValue) => {
     const numeric = Number(tipValue) || 0;
     return Math.round(numeric * 0.05 * 100) / 100;
@@ -268,11 +267,6 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
   const calcNetTip = (tipValue) => {
     const numeric = Number(tipValue) || 0;
     return Math.round((numeric - calcTransferFee(numeric)) * 100) / 100;
-  };
-  const calcNetReceived = (amountValue, tipValue) => {
-    const amountNum = Number(amountValue) || 0;
-    const transfer = calcTransferFee(tipValue);
-    return Math.round((amountNum - transfer) * 100) / 100;
   };
   const teachersList = (resolvedClassEntries.items || [])
     .map(i => i.teacherSnapshot?.firstName ? `${i.teacherSnapshot.firstName} ${i.teacherSnapshot.lastName}` : (i.teacher?.firstName ? `${i.teacher.firstName} ${i.teacher.lastName}` : null))
@@ -290,7 +284,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
   };
 
   // Auto-save coverage (maxHours) after user stops typing for 1.5 seconds
-  const saveCoverageToBackend = async (hoursValue) => {
+  const saveCoverageToBackend = React.useCallback(async (hoursValue) => {
     if (!hoursValue || Number(hoursValue) <= 0) {
       return;
     }
@@ -335,7 +329,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
     } finally {
       setSavingCoverage(false);
     }
-  };
+  }, [invoiceId, invoice?.coverage?.maxHours, lastSavedHours]);
 
   // Auto-save effect: triggers 1.5 seconds after user stops typing
   useEffect(() => {
@@ -358,7 +352,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
         clearTimeout(autoSaveTimerRef.current);
       }
     };
-  }, [form.hoursPaid, activeField]); // Re-run when hoursPaid or activeField changes
+  }, [form.hoursPaid, activeField, saveCoverageToBackend]); // Re-run when hoursPaid or activeField changes
 
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -437,86 +431,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
   if (loading) return <LoadingSpinner />;
   // Display exactly what was saved on the invoice as the primary source of truth, and show computed as secondary
   const savedTotal = Number(invoice?.total ?? invoice?.amount ?? 0) || 0;
-  const computedTotal = Number(typeof invoice?.__computedTotal !== 'undefined' ? invoice.__computedTotal : savedTotal) || savedTotal;
   const savedHours = (typeof invoice?.hoursCovered === 'number') ? invoice.hoursCovered : (invoice?.paidHours ?? invoice?.hoursPaid ?? null);
-  const computedHours = (typeof invoice?.__computedHours === 'number') ? invoice.__computedHours : savedHours;
-
-  // Helper to render a primary value and an optional secondary (marginal) value.
-  // Behavior:
-  // - If secondary is missing or equal (within epsilon) to primary, show a single value.
-  // - If different, show primary prominently and secondary muted with a source label (e.g. "(invoice)").
-  // - opts: { money: boolean, numeric: boolean, sourceLabel: string }
-  const renderDualValue = (primary, secondary, opts = {}) => {
-    const money = !!opts.money;
-    const numeric = money || !!opts.numeric;
-
-    // normalize
-    const pRaw = (primary === null || typeof primary === 'undefined' || primary === '') ? null : primary;
-    const sRaw = (secondary === null || typeof secondary === 'undefined' || secondary === '') ? null : secondary;
-
-    // formatters
-    const fmt = v => {
-      if (v === null || typeof v === 'undefined') return '—';
-      if (money) return `$${Number(v || 0).toFixed(2)}`;
-      return String(v);
-    };
-
-    // compare numerically when possible
-    let equal = false;
-    if (numeric && pRaw !== null && sRaw !== null && !isNaN(Number(pRaw)) && !isNaN(Number(sRaw))) {
-      const a = Number(pRaw);
-      const b = Number(sRaw);
-      const eps = money ? 0.005 : 0.0001;
-      equal = Math.abs(a - b) <= eps;
-    } else {
-      equal = (pRaw === sRaw) || (pRaw === null && sRaw === null);
-    }
-
-    const pStr = fmt(pRaw);
-    const sStr = sRaw !== null ? fmt(sRaw) : null;
-
-    if (!sStr || equal) {
-      return <div className="font-medium text-slate-800">{pStr}</div>;
-    }
-
-    // Different values: color primary based on delta, show secondary muted with source label
-    const sign = (() => {
-      if (!numeric) return 0;
-      const a = Number(pRaw);
-      const b = Number(sRaw);
-      if (isNaN(a) || isNaN(b)) return 0;
-      if (a > b) return 1;
-      if (a < b) return -1;
-      return 0;
-    })();
-
-    // Google brand colors
-    const GREEN = '#0F9D58';
-    const RED = '#DB4437';
-
-    const colorHex = sign > 0 ? GREEN : (sign < 0 ? RED : null);
-    const label = opts.sourceLabel ? <span className="ml-1 text-[11px] italic text-slate-400">{opts.sourceLabel}</span> : null;
-
-    // compute delta string when numeric
-    let deltaStr = null;
-    if (numeric && pRaw !== null && sRaw !== null && !isNaN(Number(pRaw)) && !isNaN(Number(sRaw))) {
-      const delta = Number(pRaw) - Number(sRaw);
-      const eps = money ? 0.005 : 0.0001;
-      if (Math.abs(delta) > eps) {
-        deltaStr = money ? `${delta > 0 ? '+' : ''}$${Math.abs(delta).toFixed(2)}` : `${delta > 0 ? '+' : ''}${Math.abs(delta)}`;
-      }
-    }
-
-    return (
-      <div className="flex items-baseline gap-3">
-        <div className="font-medium" style={colorHex ? { color: colorHex } : undefined}>{pStr}</div>
-        {opts.showDelta && deltaStr && (
-          <div className="text-sm" style={{ color: colorHex }}>{deltaStr}</div>
-        )}
-        <div className="text-sm text-slate-400">{sStr}{label}</div>
-      </div>
-    );
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-8 backdrop-blur-sm">

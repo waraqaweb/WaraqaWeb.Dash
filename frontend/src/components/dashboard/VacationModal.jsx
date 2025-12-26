@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
-import { X, Calendar, Clock, User, Users, Globe, AlertCircle } from 'lucide-react';
+import { X, User, Globe, AlertCircle } from 'lucide-react';
 import TimezoneSelector from '../ui/TimezoneSelector';
 import { DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
 
@@ -131,7 +131,10 @@ const VacationModal = ({
       return;
     }
 
-    const { teacherId, startDate, endDate } = individualForm;
+    const teacherId = individualForm.teacherId;
+    const startDate = individualForm.startDate;
+    const endDate = individualForm.endDate;
+    const vacationId = vacation?._id;
 
     if (!teacherId || !startDate || !endDate) {
   setImpactData(createEmptyImpactState());
@@ -160,8 +163,8 @@ const VacationModal = ({
           start: startDateObj.toISOString(),
           end: endDateObj.toISOString()
         };
-        if (vacation?._id) {
-          params.vacationId = vacation._id;
+        if (vacationId) {
+          params.vacationId = vacationId;
         }
         const res = await api.get(`/vacations/teacher/${teacherId}/impacted-students`, { params });
         if (cancelled) return;
@@ -179,7 +182,7 @@ const VacationModal = ({
           let updatedHandling = (prev.studentHandling || []).filter(item => impactedSet.has(String(item.student)));
           let changed = updatedHandling.length !== (prev.studentHandling || []).length;
 
-          if (vacation && impact?.students?.length) {
+          if (vacationId && impact?.students?.length) {
             const existingMap = new Map(updatedHandling.map(item => [String(item.student), item]));
             impact.students.forEach(student => {
               const mapping = student.configuredHandling;

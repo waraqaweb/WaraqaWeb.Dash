@@ -1,6 +1,9 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+
+import DashboardHome from '../pages/dashboard/DashboardHome';
+import api from '../api/axios';
 
 // Mock feedback modals
 jest.mock('../components/feedback/FirstClassFeedbackModal', () => ({
@@ -30,9 +33,6 @@ jest.mock('../contexts/AuthContext', () => ({
   })
 }));
 
-import DashboardHome from '../components/dashboard/DashboardHome';
-import api from '../api/axios';
-
 jest.mock('../api/axios', () => ({ __esModule: true, default: { get: jest.fn() } }));
 
 describe('DashboardHome (guardian)', () => {
@@ -47,7 +47,7 @@ describe('DashboardHome (guardian)', () => {
       </MemoryRouter>
     );
 
-  await waitFor(() => expect(screen.getByText(/My Students/i)).toBeTruthy());
+    await screen.findByText(/My Students/i);
     expect(screen.getByText(/Hours \(last 30 days\)/i)).toBeTruthy();
     expect(screen.getByText(/Remaining hours/i)).toBeTruthy();
   });

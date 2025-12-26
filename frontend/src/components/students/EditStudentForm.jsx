@@ -9,7 +9,7 @@ import { getTimezoneOptions } from '../../utils/timezoneOptions';
 
 const EditStudentForm = ({ studentId }) => {
   const navigate = useNavigate();
-  const { user, isAdmin, isTeacher, isGuardian } = useAuth();
+  const { isAdmin, isTeacher, isGuardian } = useAuth();
   
   const [student, setStudent] = useState(null);
   const [formData, setFormData] = useState({
@@ -358,7 +358,7 @@ const EditStudentForm = ({ studentId }) => {
 
               {/* Admin-only fields */}
               {/* Evaluation Summary: visible to admin (editable) and teacher (read-only) */}
-              {(isAdmin && isAdmin() || isTeacher && isTeacher()) && (
+              {((isAdmin && isAdmin()) || (isTeacher && isTeacher())) && (
                 <div>
                   <label htmlFor="evaluationSummary" className="block text-sm font-medium text-gray-700 mb-1">
                     Evaluation Summary

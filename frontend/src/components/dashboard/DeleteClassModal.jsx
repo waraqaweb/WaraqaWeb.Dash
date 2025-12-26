@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Calendar as CalendarIcon, Trash2, User as UserIcon, X } from "lucide-react";
 import api from "../../api/axios";
 import LoadingSpinner from "../ui/LoadingSpinner";
@@ -169,31 +169,6 @@ const DeleteClassModal = ({
   if (!isOpen) {
     return null;
   }
-
-  const handleDelete = async (scope) => {
-    if (!classId) {
-      setError("Missing class identifier");
-      return;
-    }
-
-    setSubmittingScope(scope);
-    setError("");
-
-    try {
-      const res = await api.delete(`/classes/${classId}?deleteType=${scope}`);
-      if (onDeleted) {
-        await onDeleted(scope, res.data);
-      }
-      if (onClose) {
-        onClose();
-      }
-    } catch (err) {
-      const message = err?.response?.data?.message || "Failed to delete class";
-      setError(message);
-    } finally {
-      setSubmittingScope(null);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6">

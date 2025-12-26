@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { XCircle, Trash2, Plus } from "lucide-react";
 import TimezoneSelector from '../ui/TimezoneSelector';
 import { DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
-import { subjects } from "./ReportTopicsConfig";
+import { subjects } from "../../constants/reportTopicsConfig";
 import axios from '../../api/axios';
 import SearchSelect from '../ui/SearchSelect';
 import {
@@ -202,7 +202,7 @@ export default function CreateClassModal({
     return () => {
       window.removeEventListener('popstate', onPop);
     };
-  }, [isOpen]);
+  }, [isOpen, navigate, onClose]);
   
   // Log filtered students whenever guardian selection changes
   useEffect(() => {
@@ -295,9 +295,6 @@ export default function CreateClassModal({
 
       const status = error?.response?.status;
       const data = error?.response?.data || {};
-
-      // Some backends return duplicate info under different keys; be permissive
-      const duplicateInfo = data?.duplicateSeries || data?.duplicate_series || data?.duplicate || null;
 
       if (status === 409 && currentNewClass?.isRecurring) {
         // Offer override even if backend didn't provide structured duplicate info

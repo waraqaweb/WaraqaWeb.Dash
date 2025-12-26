@@ -5,7 +5,7 @@ const Invoice = require('../models/Invoice');
 
 async function checkGuardianHours() {
   try {
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/waraqa');
+    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/waraqadb');
     console.log('Connected to MongoDB');
 
     const guardian = await User.findOne({ email: 'khaled.mostafa@waraqa.co' });

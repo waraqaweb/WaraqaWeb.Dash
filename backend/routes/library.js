@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs/promises');
 const { body, param, query, validationResult } = require('express-validator');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { authenticateToken, optionalAuth, requireAdmin } = require('../middleware/auth');
 const libraryService = require('../services/libraryService');
 const libraryAnnotationService = require('../services/libraryAnnotationService');
 const { normalizeUtf8FromLatin1 } = require('../utils/textEncoding');
@@ -60,7 +60,7 @@ const resolveFolderParam = (value) => {
 
 router.get(
   '/folders/tree',
-  authenticateToken,
+  optionalAuth,
   async (req, res, next) => {
     try {
       const tree = await libraryService.getFolderTree({
@@ -76,7 +76,7 @@ router.get(
 
 router.get(
   '/folders/:folderId/items',
-  authenticateToken,
+  optionalAuth,
   async (req, res, next) => {
     try {
       const folderId = resolveFolderParam(req.params.folderId);
@@ -98,7 +98,7 @@ router.get(
 
 router.get(
   '/search',
-  authenticateToken,
+  optionalAuth,
   query('q').optional().isString().isLength({ min: 1 }).trim(),
   validate,
   async (req, res, next) => {
@@ -118,7 +118,7 @@ router.get(
 
 router.get(
   '/',
-  authenticateToken,
+  optionalAuth,
   async (req, res, next) => {
     try {
       const { parentId = null, includeItems = 'true', page = 1, limit = 25, search = '' } = req.query;
@@ -141,7 +141,7 @@ router.get(
 
 router.get(
   '/folders/:folderId',
-  authenticateToken,
+  optionalAuth,
   async (req, res, next) => {
     try {
       const payload = await libraryService.getFolderContents({
@@ -162,7 +162,7 @@ router.get(
 
 router.get(
   '/folders/:folderId/breadcrumbs',
-  authenticateToken,
+  optionalAuth,
   async (req, res, next) => {
     try {
       const breadcrumb = await libraryService.getFolderBreadcrumb({
@@ -307,7 +307,7 @@ router.delete(
 
 router.get(
   '/items/:itemId',
-  authenticateToken,
+  optionalAuth,
   async (req, res, next) => {
     try {
       const payload = await libraryService.getItem({
@@ -324,7 +324,7 @@ router.get(
 
 router.get(
   '/items/:itemId/pages',
-  authenticateToken,
+  optionalAuth,
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 50 }),
   validate,
@@ -346,7 +346,7 @@ router.get(
 
 router.post(
   '/items/:itemId/download-ticket',
-  authenticateToken,
+  optionalAuth,
   async (req, res, next) => {
     try {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -367,7 +367,7 @@ router.post(
 
 router.get(
   '/items/:itemId/download',
-  authenticateToken,
+  optionalAuth,
   async (req, res, next) => {
     try {
       const baseUrl = `${req.protocol}://${req.get('host')}`;

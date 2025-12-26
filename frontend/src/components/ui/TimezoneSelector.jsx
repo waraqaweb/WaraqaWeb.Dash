@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Clock, Globe, X, Check } from 'lucide-react';
-import { searchTimezones, getTimezoneInfo, DEFAULT_TIMEZONE, getBrowserTimezone, getTimezoneDisplayLabel, getDynamicTimezoneList } from '../../utils/timezoneUtils';
+import { getTimezoneInfo, DEFAULT_TIMEZONE, getBrowserTimezone, getTimezoneDisplayLabel, getDynamicTimezoneList } from '../../utils/timezoneUtils';
 
 const TimezoneSelector = ({ 
   value = DEFAULT_TIMEZONE, 
@@ -138,6 +138,8 @@ const TimezoneSelector = ({
         setIsOpen(false);
         setSearchQuery('');
         inputRef.current?.blur();
+        break;
+      default:
         break;
     }
   };

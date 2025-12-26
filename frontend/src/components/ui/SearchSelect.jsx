@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Loader2, Search, X } from "lucide-react";
 
+const EMPTY_OPTIONS_FETCH = () => Promise.resolve([]);
+const EMPTY_BY_ID_FETCH = () => Promise.resolve(null);
+
 const useDebouncedValue = (value, delay = 250) => {
   const [debounced, setDebounced] = useState(value);
 
@@ -70,14 +73,11 @@ const SearchSelect = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
-  const [selectedOption, setSelectedOption] = useState(null);
+  const [, setSelectedOption] = useState(null);
   const containerRef = useRef(null);
   const prevValueRef = useRef(value);
   const fallbackSearchRef = useRef("");
   const debouncedSearch = useDebouncedValue(searchTerm, 200);
-
-  const resolvedFetchOptions = fetchOptions || (() => Promise.resolve([]));
-  const resolvedFetchById = fetchById || (() => Promise.resolve(null));
 
   useEffect(() => {
     fallbackSearchRef.current = "";
@@ -88,10 +88,11 @@ const SearchSelect = ({
     let ignore = false;
 
     const load = async () => {
+      const currentFetchOptions = fetchOptions || EMPTY_OPTIONS_FETCH;
       setIsLoading(true);
       setError("");
       try {
-        const list = await resolvedFetchOptions(debouncedSearch || "");
+        const list = await currentFetchOptions(debouncedSearch || "");
         if (ignore) return;
         let normalized = ensureArray(list);
         let filtered = filterOptionsByQuery(normalized, debouncedSearch);
@@ -103,7 +104,7 @@ const SearchSelect = ({
         ) {
           fallbackSearchRef.current = debouncedSearch;
           try {
-            const fallbackList = await resolvedFetchOptions("");
+            const fallbackList = await currentFetchOptions("");
             if (ignore) return;
             normalized = ensureArray(fallbackList);
             filtered = filterOptionsByQuery(normalized, debouncedSearch);
@@ -134,12 +135,13 @@ const SearchSelect = ({
     return () => {
       ignore = true;
     };
-  }, [debouncedSearch, disabled, isOpen, resolvedFetchOptions]);
+  }, [debouncedSearch, disabled, isOpen, fetchOptions]);
 
   useEffect(() => {
     let ignore = false;
 
     const syncSelected = async () => {
+      const currentFetchById = fetchById || EMPTY_BY_ID_FETCH;
       if (!value) {
         if (prevValueRef.current) {
           setSelectedOption(null);
@@ -158,7 +160,7 @@ const SearchSelect = ({
       }
 
       try {
-        const fetched = await resolvedFetchById(value);
+        const fetched = await currentFetchById(value);
         if (!ignore && fetched) {
           setSelectedOption(fetched);
           setInputValue(fetched.label || "");
@@ -176,7 +178,7 @@ const SearchSelect = ({
     return () => {
       ignore = true;
     };
-  }, [options, resolvedFetchById, value]);
+  }, [options, fetchById, value]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {

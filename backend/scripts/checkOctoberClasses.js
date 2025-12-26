@@ -6,7 +6,7 @@ const User = require('../models/User');
 
 async function checkOctoberClasses() {
   try {
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/online-class-manager');
+    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/waraqadb');
     console.log('Connected to MongoDB');
 
     // Find all teachers

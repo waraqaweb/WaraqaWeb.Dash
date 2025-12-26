@@ -14,7 +14,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 require('dotenv').config();
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
 
 const run = async () => {
   const email = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();

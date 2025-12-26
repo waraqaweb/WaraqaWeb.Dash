@@ -7,7 +7,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { Eye, EyeOff, User, Mail, Lock, Phone, AlertCircle, UserPlus } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, Phone, AlertCircle, UserPlus } from 'lucide-react';
 
 const RegisterPage = () => {
   const [formData, setFormData] = useState({
@@ -24,6 +24,7 @@ const RegisterPage = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const { register } = useAuth();
   const navigate = useNavigate();
@@ -34,6 +35,14 @@ const RegisterPage = () => {
       ...formData,
       [name]: value
     });
+    // Clear field error when user edits that field
+    if (fieldErrors?.[name]) {
+      setFieldErrors((prev) => {
+        const next = { ...(prev || {}) };
+        delete next[name];
+        return next;
+      });
+    }
     // Clear error when user starts typing
     if (error) setError('');
   };
@@ -48,14 +57,27 @@ const RegisterPage = () => {
   };
 
   const validateForm = () => {
+    const nextFieldErrors = {};
+
+    if (!formData.firstName?.trim()) nextFieldErrors.firstName = 'First name is required.';
+    if (!formData.lastName?.trim()) nextFieldErrors.lastName = 'Last name is required.';
+    if (!formData.email?.trim()) nextFieldErrors.email = 'Email is required.';
+
     if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
-      return false;
+      nextFieldErrors.confirmPassword = 'Passwords do not match.';
     }
     if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters long');
+      nextFieldErrors.password = 'Password must be at least 6 characters long.';
+    }
+
+    const hasErrors = Object.keys(nextFieldErrors).length > 0;
+    if (hasErrors) {
+      setFieldErrors(nextFieldErrors);
+      setError('Please fix the highlighted fields and try again.');
       return false;
     }
+
+    setFieldErrors({});
     return true;
   };
 
@@ -63,6 +85,7 @@ const RegisterPage = () => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setFieldErrors({});
 
     if (!validateForm()) {
       setLoading(false);
@@ -85,7 +108,22 @@ const RegisterPage = () => {
       if (result.success) {
         navigate('/dashboard');
       } else {
-        setError(result.error);
+        const backendFieldErrors = result.fieldErrors;
+
+        // Fallback: build a field map from express-validator errors array
+        const derivedFieldErrors = {};
+        if (!backendFieldErrors && Array.isArray(result.errors)) {
+          for (const err of result.errors) {
+            const field = err?.path || err?.param;
+            if (!field) continue;
+            if (!derivedFieldErrors[field]) derivedFieldErrors[field] = err.msg;
+          }
+        }
+
+        const mergedFieldErrors = backendFieldErrors || (Object.keys(derivedFieldErrors).length ? derivedFieldErrors : null);
+        if (mergedFieldErrors) setFieldErrors(mergedFieldErrors);
+
+        setError(result.error || 'Registration failed. Please review the form and try again.');
       }
     } catch (err) {
       setError('An unexpected error occurred. Please try again.');
@@ -152,9 +190,16 @@ const RegisterPage = () => {
                   required
                   value={formData.firstName}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 border border-border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                  className={`w-full px-3 py-2 border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:border-transparent ${
+                    fieldErrors.firstName
+                      ? 'border-destructive/40 focus:ring-destructive/20'
+                      : 'border-border focus:ring-ring'
+                  }`}
                   placeholder="John"
                 />
+                {fieldErrors.firstName && (
+                  <p className="mt-1 text-xs text-destructive">{fieldErrors.firstName}</p>
+                )}
               </div>
               <div>
                 <label htmlFor="lastName" className="block text-sm font-medium text-foreground mb-2">
@@ -167,9 +212,16 @@ const RegisterPage = () => {
                   required
                   value={formData.lastName}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 border border-border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                  className={`w-full px-3 py-2 border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:border-transparent ${
+                    fieldErrors.lastName
+                      ? 'border-destructive/40 focus:ring-destructive/20'
+                      : 'border-border focus:ring-ring'
+                  }`}
                   placeholder="Doe"
                 />
+                {fieldErrors.lastName && (
+                  <p className="mt-1 text-xs text-destructive">{fieldErrors.lastName}</p>
+                )}
               </div>
             </div>
 
@@ -187,11 +239,18 @@ const RegisterPage = () => {
                   required
                   value={formData.email}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 pl-10 border border-border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                  className={`w-full px-3 py-2 pl-10 border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:border-transparent ${
+                    fieldErrors.email
+                      ? 'border-destructive/40 focus:ring-destructive/20'
+                      : 'border-border focus:ring-ring'
+                  }`}
                   placeholder="john.doe@example.com"
                 />
                 <Mail className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               </div>
+              {fieldErrors.email && (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.email}</p>
+              )}
             </div>
 
             {/* Phone Field */}
@@ -207,11 +266,20 @@ const RegisterPage = () => {
                   value={formData.phone}
                   onChange={handleChange}
                   onBlur={() => setFormData((prev) => ({ ...prev, phone: normalizePhone(prev.phone) }))}
-                  className="w-full px-3 py-2 pl-10 border border-border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                  className={`w-full px-3 py-2 pl-10 border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:border-transparent ${
+                    fieldErrors.phone
+                      ? 'border-destructive/40 focus:ring-destructive/20'
+                      : 'border-border focus:ring-ring'
+                  }`}
                   placeholder="+1 (555) 123-4567"
                 />
                 <Phone className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               </div>
+              {fieldErrors.phone ? (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.phone}</p>
+              ) : (
+                <p className="mt-1 text-xs text-muted-foreground">Tip: include country code (e.g., +966..., +1...).</p>
+              )}
             </div>
 
             {/* Password Fields */}
@@ -228,7 +296,11 @@ const RegisterPage = () => {
                   required
                   value={formData.password}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 pl-10 pr-10 border border-border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                  className={`w-full px-3 py-2 pl-10 pr-10 border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:border-transparent ${
+                    fieldErrors.password
+                      ? 'border-destructive/40 focus:ring-destructive/20'
+                      : 'border-border focus:ring-ring'
+                  }`}
                   placeholder="Create a strong password"
                 />
                 <Lock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -244,6 +316,11 @@ const RegisterPage = () => {
                   )}
                 </button>
               </div>
+              {fieldErrors.password ? (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.password}</p>
+              ) : (
+                <p className="mt-1 text-xs text-muted-foreground">At least 6 characters.</p>
+              )}
             </div>
 
             <div>
@@ -259,7 +336,11 @@ const RegisterPage = () => {
                   required
                   value={formData.confirmPassword}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 pl-10 pr-10 border border-border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                  className={`w-full px-3 py-2 pl-10 pr-10 border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:border-transparent ${
+                    fieldErrors.confirmPassword
+                      ? 'border-destructive/40 focus:ring-destructive/20'
+                      : 'border-border focus:ring-ring'
+                  }`}
                   placeholder="Confirm your password"
                 />
                 <Lock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -275,6 +356,9 @@ const RegisterPage = () => {
                   )}
                 </button>
               </div>
+              {fieldErrors.confirmPassword && (
+                <p className="mt-1 text-xs text-destructive">{fieldErrors.confirmPassword}</p>
+              )}
             </div>
 
             {/* Submit Button */}

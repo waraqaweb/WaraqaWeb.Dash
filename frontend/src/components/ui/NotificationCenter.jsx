@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
-import { Bell, Calendar, X, CheckCircle } from 'lucide-react';
+import { Bell, Calendar, X } from 'lucide-react';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 
 const NotificationCenter = () => {

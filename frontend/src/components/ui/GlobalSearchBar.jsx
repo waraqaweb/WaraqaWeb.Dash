@@ -5,8 +5,7 @@ import api from '../../api/axios';
 import {
   TEACHER_SALARY_VIEW_KEY,
   createDefaultTeacherSalaryFilters,
-  TEACHER_SALARY_STATUS_OPTIONS,
-  TEACHER_SALARY_CURRENCY_OPTIONS
+  TEACHER_SALARY_STATUS_OPTIONS
 } from '../../constants/teacherSalaryFilters';
 
 const placeholderMap = {

@@ -6,7 +6,7 @@ const Class = require('../models/Class');
 require('../models/Student');
 const GuardianModel = require('../models/Guardian');
 
-const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager';
+const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
 
 const GUARDIAN_ATTENDANCE_STATUSES = new Set(['attended']);
 

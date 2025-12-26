@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import InputField from './ProfileInputField';
@@ -15,6 +15,16 @@ const ProfileModal = ({ isOpen, onClose }) => {
   const [editing, setEditing] = useState(false);
   const [formData, setFormData] = useState(null);
 
+  const fetchAllUsers = useCallback(async () => {
+    try {
+      const res = await api.get('/users');
+      setUsers(res.data.users || []);
+    } catch (err) {
+      console.error('Error fetching users for modal', err);
+      setUsers([]);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
     // default selected is current user
@@ -24,17 +34,7 @@ const ProfileModal = ({ isOpen, onClose }) => {
     if (isAdmin && isAdmin()) {
       fetchAllUsers();
     }
-  }, [isOpen]);
-
-  const fetchAllUsers = async () => {
-    try {
-      const res = await api.get('/users');
-      setUsers(res.data.users || []);
-    } catch (err) {
-      console.error('Error fetching users for modal', err);
-      setUsers([]);
-    }
-  };
+  }, [isOpen, authUser, isAdmin, fetchAllUsers]);
 
   const selectUser = (u) => {
     setSelectedUser(u);

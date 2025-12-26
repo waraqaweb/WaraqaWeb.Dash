@@ -5,19 +5,6 @@ services:
     volumes:
       - mongo-data:/data/db
 
-  mongo-express:
-    image: mongo-express:1.0.2-20
-    restart: unless-stopped
-    environment:
-      ME_CONFIG_MONGODB_SERVER: mongo
-      ME_CONFIG_MONGODB_PORT: 27017
-      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
-      ME_CONFIG_SITE_BASEURL: /db
-      ME_CONFIG_BASICAUTH_USERNAME: ${DB_PANEL_USER}
-      ME_CONFIG_BASICAUTH_PASSWORD: ${DB_PANEL_PASSWORD}
-    depends_on:
-      - mongo
-
   backend:
     build:
       context: .
@@ -26,7 +13,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 5000
-      MONGODB_URI: mongodb://mongo:27017/online-class-manager
+      MONGODB_URI: mongodb://mongo:27017/waraqadb
       # Comma-separated list of allowed browser origins for CORS
       # Example: https://yourdomain.com
       FRONTEND_URL: ${FRONTEND_URL}
@@ -35,20 +22,6 @@ services:
       REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
     depends_on:
       - mongo
-
-  marketing:
-    build:
-      context: .
-      dockerfile: deploy/marketing/Dockerfile
-    restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      # Browser should call same origin /api
-      NEXT_PUBLIC_API_BASE_URL: /api
-      # Server-side fetches inside Next should use the internal backend hostname
-      MARKETING_API_BASE_URL: http://backend:5000/api
-    depends_on:
-      - backend
 
   web:
     build:
@@ -59,8 +32,7 @@ services:
       - "127.0.0.1:8080:80"
     depends_on:
       - backend
-      - marketing
-      - mongo-express
+
 
 volumes:
   mongo-data:

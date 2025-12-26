@@ -76,7 +76,7 @@ Required flags depend on what you want to import:
   --teacher-invoices <path>   teacherinvoices.csv
 
 Database:
-  --mongo-uri <uri>           defaults to MONGODB_URI env or mongodb://localhost:27017/online-class-manager
+  --mongo-uri <uri>           defaults to MONGODB_URI env or mongodb://localhost:27017/waraqadb
 
 Safety:
   --apply                     actually write to DB (default is dry run)
@@ -272,7 +272,7 @@ const main = async () => {
   const updateExistingUsers = Boolean(args['update-existing-users']);
   const updateExistingPasswords = Boolean(args['update-existing-passwords']);
 
-  const mongoUri = args['mongo-uri'] || process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager';
+  const mongoUri = args['mongo-uri'] || process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
 
   const guardianCsvPath = args.guardians;
   const studentCsvPath = args.students;

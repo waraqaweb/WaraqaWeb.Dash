@@ -5,9 +5,8 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Calendar, Clock, Edit, Plus, Trash2, X, AlertCircle, Link2, Copy, ExternalLink } from 'lucide-react';
+import { Calendar, Clock, Edit, Plus, Trash2, X, AlertCircle, Link2 } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
-import { resolvePublicEvaluationLink } from '../../../utils/publicLinks';
 import {
   listMeetingAvailabilitySlots,
   createMeetingAvailabilitySlot,
@@ -60,9 +59,13 @@ const MeetingAvailabilityAdminPage = () => {
   const [meetingLinkValue, setMeetingLinkValue] = useState(user?.adminSettings?.meetingLink || '');
   const [meetingLinkStatus, setMeetingLinkStatus] = useState({ type: '', message: '' });
   const [meetingLinkSaving, setMeetingLinkSaving] = useState(false);
-  const [publicEvaluationLink] = useState(resolvePublicEvaluationLink);
-  const [publicLinkCopied, setPublicLinkCopied] = useState(false);
+  const [publicLinkStatus, setPublicLinkStatus] = useState('');
   const timezoneOptions = useMemo(() => getMeetingTimezoneOptions(), []);
+
+  const publicEvaluationLink = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    return `${window.location.origin}/public/meetings/evaluation`;
+  }, []);
 
   useEffect(() => {
     if (!activeType && meetingTypes.length) {
@@ -116,12 +119,6 @@ const MeetingAvailabilityAdminPage = () => {
     setMeetingLinkValue(user?.adminSettings?.meetingLink || '');
   }, [user?.adminSettings?.meetingLink]);
 
-  useEffect(() => {
-    if (!publicLinkCopied) return undefined;
-    const timer = setTimeout(() => setPublicLinkCopied(false), 2000);
-    return () => clearTimeout(timer);
-  }, [publicLinkCopied]);
-
   const openCreateForm = (dayIndex = 0) => {
     setFormState(emptyFormState({ meetingType: activeType, dayOfWeek: dayIndex, timezone }));
     setShowForm(true);
@@ -170,46 +167,19 @@ const MeetingAvailabilityAdminPage = () => {
     }
   };
 
-  const handleCopyPublicEvaluationLink = () => {
-    if (!publicEvaluationLink) return;
-
-    const fallbackCopy = () => {
-      if (typeof document === 'undefined') return;
-      try {
-        const temp = document.createElement('textarea');
-        temp.value = publicEvaluationLink;
-        temp.style.position = 'fixed';
-        temp.style.opacity = '0';
-        document.body.appendChild(temp);
-        temp.focus();
-        temp.select();
-        document.execCommand('copy');
-        document.body.removeChild(temp);
-        setPublicLinkCopied(true);
-      } catch (copyErr) {
-        console.error('Failed to copy public evaluation link', copyErr);
-        setPublicLinkCopied(false);
-      }
-    };
-
+  const handleCopyPublicLink = async () => {
+    setPublicLinkStatus('');
+    const value = publicEvaluationLink;
+    if (!value) return;
     try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        navigator.clipboard
-          .writeText(publicEvaluationLink)
-          .then(() => setPublicLinkCopied(true))
-          .catch(() => fallbackCopy());
-        return;
-      }
+      await navigator.clipboard.writeText(value);
+      setPublicLinkStatus('Copied');
+      window.setTimeout(() => setPublicLinkStatus(''), 2000);
     } catch (err) {
-      console.error('Clipboard API failed, falling back', err);
+      console.error('Failed to copy public booking link', err);
+      setPublicLinkStatus('Copy failed');
+      window.setTimeout(() => setPublicLinkStatus(''), 2500);
     }
-
-    fallbackCopy();
-  };
-
-  const openPublicEvaluationPage = () => {
-    if (!publicEvaluationLink || typeof window === 'undefined') return;
-    window.open(publicEvaluationLink, '_blank', 'noopener,noreferrer');
   };
 
   const handleSubmit = async (event) => {
@@ -327,32 +297,27 @@ const MeetingAvailabilityAdminPage = () => {
 
           <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="flex items-start gap-3">
-              <ExternalLink className="w-5 h-5 text-[#2C736C] mt-0.5" />
+              <Link2 className="w-5 h-5 text-[#2C736C] mt-0.5" />
               <div>
-                <p className="text-sm font-semibold text-gray-900">Public evaluation link</p>
-                <p className="text-xs text-gray-500">Share this link with families to let them book.</p>
+                <p className="text-sm font-semibold text-gray-900">Public evaluation booking link</p>
+                <p className="text-xs text-gray-500">Send this link to new students/guardians to book an evaluation.</p>
               </div>
             </div>
             <div className="mt-4 space-y-3">
-              <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 break-words">
-                {publicEvaluationLink}
-              </div>
-              <div className="flex flex-wrap gap-2">
+              <input
+                type="text"
+                value={publicEvaluationLink}
+                readOnly
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-gray-500">{publicLinkStatus || 'Tip: paste it into WhatsApp, email, or SMS.'}</p>
                 <button
                   type="button"
-                  onClick={handleCopyPublicEvaluationLink}
-                  className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:border-[#2C736C] hover:text-[#2C736C]"
+                  onClick={handleCopyPublicLink}
+                  className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-800 hover:border-[#2C736C]"
                 >
-                  <Copy className="w-4 h-4" />
-                  {publicLinkCopied ? 'Copied!' : 'Copy link'}
-                </button>
-                <button
-                  type="button"
-                  onClick={openPublicEvaluationPage}
-                  className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:border-[#2C736C] hover:text-[#2C736C]"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  Open page
+                  Copy link
                 </button>
               </div>
             </div>

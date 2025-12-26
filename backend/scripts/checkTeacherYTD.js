@@ -4,7 +4,7 @@ const User = require('../models/User');
 
 async function checkTeacherYTD() {
   try {
-    await mongoose.connect('mongodb://127.0.0.1:27017/waraqa');
+    await mongoose.connect('mongodb://127.0.0.1:27017/waraqadb');
     console.log('Connected to database\n');
     
     // Find the invoice with 0.92 hours

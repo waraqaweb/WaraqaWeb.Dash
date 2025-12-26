@@ -33,19 +33,51 @@ const libraryRoutes = require('./routes/library');
 const libraryShareRoutes = require('./routes/libraryShares');
 const onboardingRoutes = require('./routes/onboarding');
 const meetingRoutes = require('./routes/meetings');
-const marketingRoutes = require('./routes/marketing');
 
 // Create Express application
 const app = express();
 const server = http.createServer(app);
 
-// Allowed frontend origins (dashboard + marketing-site for local dev)
-const frontendOrigins = (process.env.FRONTEND_URL
+// When running behind a reverse proxy (nginx), trust X-Forwarded-* so req.ip is the real client.
+// This prevents rate-limit from treating all users as a single IP (the proxy).
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Ensure we have a stable JWT secret in development.
+// Without this, logins can succeed/fail inconsistently and existing tokens may become invalid.
+if (!process.env.JWT_SECRET) {
+  if (isProduction) {
+    console.error('❌ JWT_SECRET is required in production');
+    process.exit(1);
+  }
+  process.env.JWT_SECRET = 'dev-jwt-secret';
+  console.warn('⚠️ JWT_SECRET not set; using insecure development default');
+}
+if (isProduction) {
+  // Trust the first proxy hop (nginx -> app). Override via TRUST_PROXY if needed.
+  const trustProxy = process.env.TRUST_PROXY ?? '1';
+  app.set('trust proxy', trustProxy);
+}
+
+// Allowed frontend origins (dashboard)
+// In production, keep this strict (use FRONTEND_URL env var).
+// In local/dev, allow common localhost/127.0.0.1 ports used for running the dashboard.
+const envFrontendOrigins = (process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(',')
-  : ['http://localhost:3000', 'http://localhost:4000']
+  : []
 )
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+const devFrontendOrigins = isProduction
+  ? []
+  : [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001'
+  ];
+
+const frontendOrigins = Array.from(new Set([...envFrontendOrigins, ...devFrontendOrigins]));
 
 // Set up Socket.io for real-time communication
 const io = socketIo(server, {
@@ -79,7 +111,6 @@ app.use(cors({
 })); // Enable CORS for frontend communication
 
 // Rate limiting to prevent abuse
-const isProduction = process.env.NODE_ENV === 'production';
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: isProduction ? 200 : 5000,
@@ -97,7 +128,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
@@ -186,7 +217,6 @@ app.use('/api/templates', templateRoutes);
 app.use('/api/library', libraryRoutes);
 app.use('/api/library/shares', libraryShareRoutes);
 app.use('/api/meetings', meetingRoutes);
-app.use('/api/marketing', marketingRoutes);
 
 const vacationManagementRoutes = require('./routes/vacationManagement');
 app.use('/api/vacation-management', vacationManagementRoutes);

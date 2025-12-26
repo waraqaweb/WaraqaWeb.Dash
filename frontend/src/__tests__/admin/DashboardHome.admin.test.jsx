@@ -1,8 +1,8 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-import DashboardHome from '../../components/dashboard/DashboardHome';
+import DashboardHome from '../../pages/dashboard/DashboardHome';
 import api from '../../api/axios';
 
 jest.mock('../../api/axios', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn() } }));
@@ -50,7 +50,7 @@ describe('DashboardHome (admin)', () => {
       </MemoryRouter>
     );
 
-  await waitFor(() => expect(screen.getByText(/Upcoming \(30 days\)/i)).toBeTruthy());
+    await screen.findByText(/Upcoming \(30 days\)/i);
   // match exact numbers to avoid colliding with date/time strings
   expect(screen.getByText(/^12$/)).toBeTruthy();
   expect(screen.getByText(/Expected \(30 days\)/i)).toBeTruthy();

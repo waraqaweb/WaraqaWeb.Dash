@@ -1,4 +1,4 @@
-FROM node:20-alpine AS dashboard_build
+FROM node:20-alpine AS frontend_build
 
 WORKDIR /app
 
@@ -17,4 +17,4 @@ RUN npm run build
 FROM nginx:1.27-alpine
 
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
-COPY --from=dashboard_build /app/build /usr/share/nginx/html/dashboard
+COPY --from=frontend_build /app/build /usr/share/nginx/html/dashboard

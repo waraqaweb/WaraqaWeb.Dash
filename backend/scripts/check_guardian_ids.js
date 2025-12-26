@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Class = require('../models/Class');
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqa')
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb')
   .then(async () => {
     console.log('Connected to MongoDB');
     

@@ -9,7 +9,6 @@ import { useAuth } from '../../contexts/AuthContext';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import {
   X,
-  Download,
   FileDown,
   FileText,
   Users,
@@ -79,6 +78,8 @@ const roundCurrency = (value) => {
   if (!Number.isFinite(numeric)) return 0;
   return Math.round(numeric * 100) / 100;
 };
+
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 const normalizeStatusValue = (value) => (typeof value === 'string' ? value.trim().toLowerCase() : '');
 const CANCELLED_CLASS_STATUSES = new Set([
@@ -163,7 +164,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const [invoice, setInvoice] = useState(null);
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [classPeriod, setClassPeriod] = useState({ start: '', end: '' });
+  const [, setClassPeriod] = useState({ start: '', end: '' });
   const [classesLoading, setClassesLoading] = useState(false);
   const [resolvedInvoiceId, setResolvedInvoiceId] = useState(invoiceId || null);
   const [shareStatus, setShareStatus] = useState(null);
@@ -204,8 +205,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const skipNextCoverageSave = useRef(false);
   const totalsSyncKeyRef = useRef(null);
   const syncingSnapshotRef = useRef(false);
-  // Tracks debounce timer and a monotonically increasing id for class fetch calls
-  const fetchClassesForInvoiceRef = useRef(null);
   // Track if classes have been fetched initially to prevent auto-updates on modal open
   const initialClassesFetchedRef = useRef(false);
   // Track if user has made any changes to filters
@@ -218,7 +217,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     return date.toISOString().slice(0, 10);
   };
 
-  const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const formatDateDisplay = useCallback((value) => {
     if (!value) return '';
     const d = new Date(value);
@@ -242,7 +240,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
       if (!seq && /\d{3,}$/.test(t)) seq = t.replace(/^0+/, '');
     }
     if (!month) {
-      const m = sys.match(/(20\d{2})[\/-]?(\d{1,2})/);
+      const m = sys.match(/(20\d{2})[/-]?(\d{1,2})/);
       if (m) { year = year || m[1]; month = String(m[2]).padStart(2, '0'); }
     }
     if (!seq) {
@@ -692,26 +690,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const amount = totalAmount;
 
   const actualHoursDisplay = useMemo(() => formatHoursValue(totalMinutes / 60), [totalMinutes, formatHoursValue]);
-  const actualHoursBreakdown = useMemo(() => {
-    if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return null;
-    const wholeHours = Math.floor(totalMinutes / 60);
-    const remainder = totalMinutes - wholeHours * 60;
-    let roundedMinutes = Math.round(remainder);
-    let adjustedHours = wholeHours;
-
-    if (roundedMinutes === 60) {
-      adjustedHours += 1;
-      roundedMinutes = 0;
-    }
-
-    return { hours: adjustedHours, minutes: roundedMinutes };
-  }, [totalMinutes]);
-
-  const actualHoursReadable = useMemo(() => {
-    if (!actualHoursBreakdown) return null;
-    const minutes = String(actualHoursBreakdown.minutes).padStart(2, '0');
-    return `${actualHoursBreakdown.hours}h ${minutes}m`;
-  }, [actualHoursBreakdown]);
 
   const subtotalHoursDisplay = useMemo(() => {
     if (actualHoursDisplay) return actualHoursDisplay;
@@ -1043,7 +1021,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [isAdmin, resolvedInvoiceId, maxHours, customEndDate, waiveTransferFee, handleSaveCoverage, savingCoverage]);
+  }, [isAdmin, invoice, resolvedInvoiceId, maxHours, customEndDate, waiveTransferFee, handleSaveCoverage, savingCoverage]);
 
   const handleNoteChange = useCallback((field, value) => {
     setNoteEdits((prev) => ({ ...prev, [field]: value }));

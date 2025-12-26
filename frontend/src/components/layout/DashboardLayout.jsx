@@ -6,7 +6,6 @@
  */
 
 import React, { useState } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
 import { SearchProvider } from '../../contexts/SearchContext';
 import Sidebar from './Sidebar';
 import GlobalSearchBar from '../ui/GlobalSearchBar';
@@ -27,7 +26,6 @@ const VIEW_TITLE_MAP = {
   salaries: 'Salaries',
   'teacher-salaries': 'Teacher Salaries',
   'teacher-salary': 'My Salary',
-  marketing: 'Website settings',
   'vacation-management': 'Vacations',
   availability: 'My Availability',
   settings: 'Settings',
@@ -42,7 +40,6 @@ const formatTitleFromView = (value) => {
 };
 
 const DashboardLayoutShell = ({ children, activeView = null, pageTitle }) => {
-  const { user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const toggleSidebar = () => {

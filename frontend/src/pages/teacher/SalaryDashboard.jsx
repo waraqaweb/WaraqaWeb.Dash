@@ -21,7 +21,6 @@ import {
   TrendingUp,
   Clock,
   Eye,
-  Download,
   Calendar,
   Award,
   AlertCircle,

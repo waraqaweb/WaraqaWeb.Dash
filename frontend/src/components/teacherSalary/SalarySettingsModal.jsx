@@ -8,7 +8,7 @@
  * - Apply rate changes to draft invoices
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../api/axios';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import {
@@ -48,20 +48,25 @@ const SalarySettingsModal = ({ onClose, onUpdate }) => {
 
   // Settings State
   const [settings, setSettings] = useState(null);
-  const [editingPartition, setEditingPartition] = useState(null);
   const [editingTransferFee, setEditingTransferFee] = useState(false);
   const [editingPartitions, setEditingPartitions] = useState(false);
   const [tempPartitions, setTempPartitions] = useState([]);
   const [editingRate, setEditingRate] = useState(null); // { month, year, rate }
 
   // Helpers for dynamic tier rows
-  const generateTempId = () => `tier-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const generateTempId = useCallback(
+    () => `tier-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    []
+  );
 
-  const clonePartitions = (list = []) =>
-    list.map((partition) => ({
-      ...partition,
-      tempId: partition.tempId || partition._id || generateTempId()
-    }));
+  const clonePartitions = useCallback(
+    (list = []) =>
+      list.map((partition) => ({
+        ...partition,
+        tempId: partition.tempId || partition._id || generateTempId()
+      })),
+    [generateTempId]
+  );
 
   const createPartitionTemplate = (list = tempPartitions) => {
     const last = list[list.length - 1];
@@ -102,24 +107,8 @@ const SalarySettingsModal = ({ onClose, onUpdate }) => {
     return Math.round(Number(n) * 100) / 100;
   };
 
-  // Fetch data on mount and when tab/year changes
-  useEffect(() => {
-    if (activeTab === 'exchange-rates') {
-      fetchExchangeRates();
-    } else {
-      fetchSettings();
-    }
-  }, [activeTab, selectedYear]);
-
-  // Initialize tempPartitions when settings load
-  useEffect(() => {
-    if (settings?.ratePartitions) {
-      setTempPartitions(clonePartitions(settings.ratePartitions));
-    }
-  }, [settings]);
-
   // Fetch exchange rates for a year
-  const fetchExchangeRates = async () => {
+  const fetchExchangeRates = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -133,10 +122,10 @@ const SalarySettingsModal = ({ onClose, onUpdate }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedYear]);
 
   // Fetch salary settings
-  const fetchSettings = async () => {
+  const fetchSettings = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -148,7 +137,23 @@ const SalarySettingsModal = ({ onClose, onUpdate }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Fetch data on mount and when tab/year changes
+  useEffect(() => {
+    if (activeTab === 'exchange-rates') {
+      fetchExchangeRates();
+    } else {
+      fetchSettings();
+    }
+  }, [activeTab, fetchExchangeRates, fetchSettings]);
+
+  // Initialize tempPartitions when settings load
+  useEffect(() => {
+    if (settings?.ratePartitions) {
+      setTempPartitions(clonePartitions(settings.ratePartitions));
+    }
+  }, [settings, clonePartitions]);
 
   // Add/update exchange rate
   const handleSaveExchangeRate = async (e) => {
@@ -188,35 +193,6 @@ const SalarySettingsModal = ({ onClose, onUpdate }) => {
     } catch (err) {
       console.error('Error saving exchange rate:', err);
       setError(err.response?.data?.error || 'Failed to save exchange rate');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Update partition rate
-  const handleUpdatePartition = async (partitionName, rateUSD, applyToDrafts) => {
-    try {
-      setSaving(true);
-      setError(null);
-
-      const response = await api.put(`/teacher-salary/admin/settings/partitions/${partitionName}`, {
-        rateUSD: parseFloat(rateUSD),
-        applyToDrafts
-      });
-
-      setSuccessMessage(
-        `Partition rate updated successfully` +
-        (applyToDrafts ? ` (${response.data.result.affectedInvoices || 0} draft invoices updated)` : '')
-      );
-
-      setEditingPartition(null);
-      fetchSettings();
-      if (onUpdate) onUpdate();
-
-      setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err) {
-      console.error('Error updating partition:', err);
-      setError(err.response?.data?.error || 'Failed to update partition');
     } finally {
       setSaving(false);
     }

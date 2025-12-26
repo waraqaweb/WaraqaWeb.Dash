@@ -10,7 +10,7 @@ const SalarySettings = require('../models/SalarySettings');
 async function fixSettings() {
   try {
     console.log('🔌 Connecting to MongoDB...');
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager', {
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb', {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });

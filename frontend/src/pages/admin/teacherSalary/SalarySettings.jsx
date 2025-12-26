@@ -8,7 +8,7 @@
  * - Apply rate changes to draft invoices
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../../api/axios';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -60,17 +60,8 @@ const SalarySettings = () => {
   const [editingPartition, setEditingPartition] = useState(null);
   const [editingTransferFee, setEditingTransferFee] = useState(null);
 
-  // Fetch data on mount and when tab/year changes
-  useEffect(() => {
-    if (activeTab === 'exchange-rates') {
-      fetchExchangeRates();
-    } else {
-      fetchSettings();
-    }
-  }, [activeTab, selectedYear]);
-
   // Fetch exchange rates for a year
-  const fetchExchangeRates = async () => {
+  const fetchExchangeRates = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -84,10 +75,10 @@ const SalarySettings = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedYear]);
 
   // Fetch salary settings (partitions, transfer fees)
-  const fetchSettings = async () => {
+  const fetchSettings = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -99,7 +90,16 @@ const SalarySettings = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Fetch data on mount and when tab/year changes
+  useEffect(() => {
+    if (activeTab === 'exchange-rates') {
+      fetchExchangeRates();
+    } else {
+      fetchSettings();
+    }
+  }, [activeTab, fetchExchangeRates, fetchSettings]);
 
   // Add/update exchange rate
   const handleSaveExchangeRate = async (e) => {

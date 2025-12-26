@@ -9,7 +9,7 @@ const Setting = require('../models/Setting');
 async function initReportSettings() {
   try {
     // Connect to MongoDB
-    const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/waraqa';
+    const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/waraqadb';
     await mongoose.connect(mongoURI);
     console.log('Connected to MongoDB');
 

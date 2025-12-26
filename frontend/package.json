@@ -4,10 +4,9 @@
   "homepage": "/dashboard",
   "main": "index.js",
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "start": "vite --host 0.0.0.0 --port 3000",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 3000"
   },
   "keywords": [],
   "author": "",
@@ -62,14 +61,13 @@
     "@babel/plugin-transform-private-property-in-object": "^7.27.1",
     "@babel/preset-env": "^7.28.3",
     "@babel/preset-react": "^7.27.1",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.1",
+    "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.21",
     "babel-jest": "^30.2.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^6.1.1",
     "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.17"
+    "tailwindcss": "^3.4.17",
+    "vite": "^6.4.1"
   }
 }

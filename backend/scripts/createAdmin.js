@@ -12,7 +12,7 @@ require('dotenv').config();
 const createAdmin = async () => {
   try {
     // Connect to MongoDB
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager', {
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb', {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });

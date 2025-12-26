@@ -99,15 +99,6 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
     return invoice?.status === 'paid' ? 'paid' : 'unpaid';
   }, [invoice]);
 
-  const totalInvoiceItems = useMemo(() => {
-    const items = Array.isArray(invoice?.items) ? invoice.items : [];
-    // Filter to match backend logic: exclude exempted items
-    return items.filter((it) => 
-      it && !it.excludeFromStudentBalance && !it.exemptFromGuardian && 
-      !(it.flags && (it.flags.notCountForBoth || it.flags.exemptFromGuardian))
-    ).length;
-  }, [invoice]);
-
   const totalInvoiceHours = useMemo(() => {
     const items = Array.isArray(invoice?.items) ? invoice.items : [];
     // Calculate total hours from refundable items (matching backend logic)
@@ -217,7 +208,7 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
       return;
     }
     const clamped = Math.max(0, Math.min(coverageHours, roundHours(numeric)));
-    if (clamped !== roundHours(numeric) || clamped === coverageHours && numeric > coverageHours) {
+    if (clamped !== roundHours(numeric) || (clamped === coverageHours && numeric > coverageHours)) {
       setValidation(`Refund hours cannot exceed ${coverageHours}h.`);
     }
     const amountDisplay = computeAmountDisplayFromHours(clamped);

@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
@@ -31,7 +31,6 @@ import {
 } from '../../constants/teacherSalaryFilters';
 import {
   FileText,
-  DollarSign,
   Users,
   Calendar,
   Eye,
@@ -60,7 +59,6 @@ const formatEGPSummary = (value) => new Intl.NumberFormat('en-EG', {
 const TeacherSalaries = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
   const { searchTerm, viewFilters, setFiltersForView } = useSearch();
   const isAdmin = user?.role === 'admin';
 
@@ -74,7 +72,7 @@ const TeacherSalaries = () => {
   // State management
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
+  const [generating] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -86,8 +84,8 @@ const TeacherSalaries = () => {
   const limit = 20;
 
   // Sort state
-  const [sortBy, setSortBy] = useState('invoiceMonth');
-  const [sortOrder, setSortOrder] = useState('desc');
+  const [sortBy] = useState('invoiceMonth');
+  const [sortOrder] = useState('desc');
 
   // Modal state
   const [selectedInvoice, setSelectedInvoice] = useState(null);
@@ -174,17 +172,6 @@ const TeacherSalaries = () => {
     setSuccessMessage(message);
     fetchInvoices();
     setTimeout(() => setSuccessMessage(null), 5000);
-  };
-
-  // Handle sort change
-  const handleSort = (field) => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(field);
-      setSortOrder('desc');
-    }
-    setPage(1);
   };
 
   // Delete invoice

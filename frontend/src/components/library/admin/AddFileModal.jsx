@@ -2,7 +2,28 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { uploadLibraryAsset } from '../../../api/library';
 import flattenFolders from './folderUtils';
-import { subjects } from '../../dashboard/subjects';
+import { subjects } from '../../../constants/reportTopicsConfig';
+
+const normalizeSubjectOptions = (input) => {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((entry) => {
+      if (!entry) return null;
+      if (typeof entry === 'string') {
+        const trimmed = entry.trim();
+        if (!trimmed) return null;
+        return { value: trimmed, label: trimmed };
+      }
+      if (typeof entry === 'object') {
+        const value = typeof entry.value === 'string' ? entry.value.trim() : '';
+        const label = typeof entry.label === 'string' ? entry.label.trim() : value;
+        if (!value) return null;
+        return { value, label: label || value };
+      }
+      return null;
+    })
+    .filter(Boolean);
+};
 
 const DEFAULT_FORM = {
   folder: 'root',
@@ -38,6 +59,8 @@ const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
   const [uploadedAsset, setUploadedAsset] = useState(null);
   const [uploadState, setUploadState] = useState({ status: 'idle', fileName: '', bytes: 0, message: null });
   const fileInputRef = useRef(null);
+
+  const subjectOptions = useMemo(() => normalizeSubjectOptions(subjects), []);
 
   const { options: folderOptions } = useMemo(() => flattenFolders(folders), [folders]);
 
@@ -199,7 +222,7 @@ const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
                 <button
                   type="button"
                   onClick={triggerFileDialog}
-                  disabled={form.folder === 'root' || uploadState.status === 'uploading'}
+                  disabled={uploadState.status === 'uploading'}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
                 >
                   {uploadState.status === 'uploading' ? 'Uploading…' : 'Choose file'}
@@ -287,10 +310,8 @@ const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
                 onChange={(event) => handleChange('subject', event.target.value)}
                 className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
               >
-                <option value="" disabled>
-                  Select a subject
-                </option>
-                {subjects.map((subject) => (
+                <option value="">No subject (optional)</option>
+                {subjectOptions.map((subject) => (
                   <option key={subject.value} value={subject.value}>
                     {subject.label}
                   </option>

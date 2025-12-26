@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { checkDSTWarning, getDSTTransitions } from '../../utils/timezoneUtils';
+import { checkDSTWarning } from '../../utils/timezoneUtils';
 import { Clock, AlertTriangle, Calendar, X, Info } from 'lucide-react';
 
 const DSTWarningBanner = () => {
@@ -9,16 +9,7 @@ const DSTWarningBanner = () => {
   const [isDismissed, setIsDismissed] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
-  useEffect(() => {
-    if (user?.timezone) {
-      checkForDSTWarning();
-      // Check every hour for DST changes
-      const interval = setInterval(checkForDSTWarning, 60 * 60 * 1000);
-      return () => clearInterval(interval);
-    }
-  }, [user?.timezone]);
-
-  const checkForDSTWarning = () => {
+  const checkForDSTWarning = useCallback(() => {
     if (!user?.timezone) return;
     
     const warning = checkDSTWarning(user.timezone, 7); // 7 days warning
@@ -34,7 +25,16 @@ const DSTWarningBanner = () => {
       setDstWarning(null);
       setIsDismissed(false);
     }
-  };
+  }, [user?.timezone]);
+
+  useEffect(() => {
+    if (user?.timezone) {
+      checkForDSTWarning();
+      // Check every hour for DST changes
+      const interval = setInterval(checkForDSTWarning, 60 * 60 * 1000);
+      return () => clearInterval(interval);
+    }
+  }, [user?.timezone, checkForDSTWarning]);
 
   const handleDismiss = () => {
     if (dstWarning?.transition) {

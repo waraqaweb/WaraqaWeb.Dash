@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { PencilLine, Trash2 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import FolderTree from '../../components/library/FolderTree';
 import LibraryToolbar from '../../components/library/LibraryToolbar';
@@ -26,87 +25,12 @@ import {
   listLibraryShareRequests
 } from '../../api/library';
 
-const ADMIN_ACTION_GUIDE = {
-  addFile: {
-    title: 'Add a file to the current folder',
-    summary: 'Upload the PDF/EPUB to Cloudinary, then register it through the library API.',
-    steps: [
-      'Select the destination folder in the tree so the breadcrumbs confirm the placement.',
-      'Use the Cloudinary direct-upload workflow (or the `libraryStorageService` signature endpoint) to upload the asset and capture `public_id`, `resource_type`, `secure_url`, `bytes`, and `original_filename`.',
-      'Call `POST /api/library/items` with `folder`, `displayName`, `description`, tags, and a `storage` object built from the Cloudinary response. Toggle `allowDownload`/`isSecret` as needed.',
-      'Optionally call `PATCH /api/library/items/:itemId` to refine metadata (subjects, preview image, order index) after QA.',
-      'Press Refresh in the toolbar to pull the server-confirmed copy into the grid.'
-    ],
-    api: ['POST /api/library/items', 'PATCH /api/library/items/:itemId']
-  },
-  deleteEntry: {
-    title: 'Delete a file',
-    summary: 'Removes the metadata row and the underlying Cloudinary asset.',
-    steps: [
-      'Open the folder that contains the target item and confirm nobody is actively using it.',
-      'Call `DELETE /api/library/items/:itemId`. The service decrements folder stats and purges the Cloudinary public asset automatically.',
-      'If you only want to hide it, prefer `PATCH /api/library/items/:itemId` with `status:"archived"` or `isSecret:true` instead.',
-      'Refresh the folder or run a search to verify it no longer appears.'
-    ],
-    api: ['DELETE /api/library/items/:itemId', 'PATCH /api/library/items/:itemId']
-  },
-  renameEntry: {
-    title: 'Rename a folder or file',
-    summary: 'Updates `displayName` (and slug) without touching storage.',
-    steps: [
-      'Decide whether you are renaming a folder (subject/level) or an individual resource.',
-      'Call `PATCH /api/library/folders/:folderId` or `PATCH /api/library/items/:itemId` with the new `displayName`, plus optional `orderIndex`, `subject`, or `level` tweaks.',
-      'Because slugs are derived automatically, avoid reusing the same name in sibling folders to keep URLs unique.',
-      'Refresh to ensure breadcrumbs, tree nodes, and the grid all reflect the new label.'
-    ],
-    api: ['PATCH /api/library/folders/:folderId', 'PATCH /api/library/items/:itemId']
-  },
-  createFolder: {
-    title: 'Create a folder',
-    summary: 'Adds a new subject/grade bucket anywhere in the tree.',
-    steps: [
-      'Highlight the parent folder in the tree (use ROOT for subjects that live at the top).',
-      'Call `POST /api/library/folders` with `displayName`, optional `parentFolder`, `subject`, `level`, `orderIndex`, and `allowDownloads`.',
-      'If the folder should stay private, send `isSecret:true` plus a `secretAccessList` seed.',
-      'Refresh the tree to see the node and start dropping files inside it.'
-    ],
-    api: ['POST /api/library/folders']
-  },
-  removeFolder: {
-    title: 'Remove a folder',
-    summary: 'Deletes an empty folder after verifying it has no children or items.',
-    steps: [
-      'Confirm the folder has zero subfolders and zero items (the API enforces this and returns `FOLDER_NOT_EMPTY` otherwise).',
-      'Call `DELETE /api/library/folders/:folderId`.',
-      'If you need to retire it but keep historical files, prefer moving the content to an Archive folder instead.',
-      'Refresh the tree to make sure the node disappeared.'
-    ],
-    api: ['DELETE /api/library/folders/:folderId']
-  },
-  manageAccess: {
-    title: 'Grant or revoke access',
-    summary: 'Work the approvals queue so teachers only see what they should.',
-    steps: [
-      'Open the admin queue via `GET /api/library/shares/requests` to review pending submissions (filter by `status` when needed).',
-      'Approve or deny with `POST /api/library/shares/:permissionId/decision` and include `status` (`approved`, `denied`), `downloadAllowed`, `expiresAt`, and an optional note.',
-      'To revoke later, call `POST /api/library/shares/:permissionId/revoke`; this switches the status to `revoked` and records an audit log entry.',
-      'For secret folders, keep the `secretAccessList` in sync by PATCHing the folder when you add or remove long-term exceptions.'
-    ],
-    api: [
-      'GET /api/library/shares/requests',
-      'POST /api/library/shares/:permissionId/decision',
-      'POST /api/library/shares/:permissionId/revoke'
-    ]
-  }
-};
-
 const LibraryDashboardContent = () => {
   const { user } = useAuth();
   const { searchTerm: globalSearchTerm, globalFilter } = useSearch();
   const [viewerItem, setViewerItem] = useState(null);
   const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
-  const [adminGuideKey, setAdminGuideKey] = useState(null);
   const [activeModal, setActiveModal] = useState(null);
   const [pendingAdminCount, setPendingAdminCount] = useState(0);
   const {
@@ -151,7 +75,6 @@ const LibraryDashboardContent = () => {
     }
     refreshPendingAdminRequests();
   }, [canManageLibrary, refreshPendingAdminRequests]);
-  const activeAdminGuide = adminGuideKey ? ADMIN_ACTION_GUIDE[adminGuideKey] : null;
   const activeFolderId = activeFolder || 'root';
 
   const resolveFolderId = (folderRef) => {
@@ -173,10 +96,7 @@ const LibraryDashboardContent = () => {
     setActiveModal(null);
   }, []);
 
-  const openAdminModal = useCallback((guideKey, modalType, payload = null) => {
-    if (guideKey) {
-      setAdminGuideKey(guideKey);
-    }
+  const openAdminModal = useCallback((_guideKey, modalType, payload = null) => {
     if (modalType) {
       setActiveModal({ type: modalType, payload });
     } else {

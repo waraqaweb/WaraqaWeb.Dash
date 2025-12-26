@@ -9,10 +9,7 @@
     "dev": "nodemon server.js",
     "create-admin": "node scripts/createAdmin.js",
     "upsert-admin": "node scripts/upsertAdmin.js",
-    "create-users": "node scripts/seedUsers.js",
-    "migrate:remove-guardian-bio": "node scripts/removeGuardianBioInstapay.js",
-    "import-legacy-csv": "node scripts/importLegacyCsv.js",
-    "test": "mocha --recursive --exit"
+    "create-users": "node scripts/seedUsers.js"
   },
   "keywords": [
     "education",
@@ -46,13 +43,8 @@
     "socket.io": "^4.7.2"
   },
   "devDependencies": {
-    "chai": "^4.3.8",
-    "mocha": "^10.2.0",
     "nodemon": "^3.0.1",
-    "prettier": "^3.0.0",
-    "proxyquire": "^2.1.3",
-    "sinon": "^15.0.1",
-    "supertest": "^6.3.3"
+    "prettier": "^3.0.0"
   },
   "engines": {
     "node": ">=16.0.0"

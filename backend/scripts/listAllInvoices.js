@@ -3,7 +3,7 @@ const TeacherInvoice = require('../models/TeacherInvoice');
 
 async function listAllInvoices() {
   try {
-    await mongoose.connect('mongodb://127.0.0.1:27017/waraqa');
+    await mongoose.connect('mongodb://127.0.0.1:27017/waraqadb');
     console.log('Connected to database\n');
     
     // Find all invoices

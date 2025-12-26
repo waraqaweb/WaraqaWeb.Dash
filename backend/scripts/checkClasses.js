@@ -4,7 +4,7 @@ const Class = require('../models/Class');
 
 (async () => {
   try {
-    const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager';
+    const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
     await mongoose.connect(uri);
     const teacherId = process.argv[2] || '';
     if (!teacherId) {

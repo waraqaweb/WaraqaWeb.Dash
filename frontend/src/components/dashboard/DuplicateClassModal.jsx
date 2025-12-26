@@ -4,7 +4,7 @@ import api from "../../api/axios";
 import { DEFAULT_TIMEZONE } from "../../utils/timezoneUtils";
 import TimezoneSelector from "../ui/TimezoneSelector";
 import LoadingSpinner from "../ui/LoadingSpinner";
-import { subjects } from "./ReportTopicsConfig";
+import { subjects } from "../../constants/reportTopicsConfig";
 import { formatDateDDMMMYYYY } from "../../utils/date";
 
 const toLocalInputValue = (dateString) => {

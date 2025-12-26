@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import TimezoneSelector from '../ui/TimezoneSelector';
 import QualificationsEditor from '../ui/QualificationsEditor';
 import TeacherAvailabilityConfig from './TeacherAvailabilityConfig';
-import { subjects } from './ReportTopicsConfig';
+import { subjects } from '../../constants/reportTopicsConfig';
 import Cropper from 'react-easy-crop';
 import imageCompression from 'browser-image-compression';
 import SpokenLanguagesSelect from '../ui/SpokenLanguagesSelect';
@@ -13,7 +13,6 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
   const { user: viewer } = useAuth();
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [refreshingAvatar, setRefreshingAvatar] = useState(false);
   
   // Avatar cropping state
   // uploadFile holds the selected File (or null). isUploading is a boolean upload-in-progress flag.
@@ -108,40 +107,6 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
       setForm(null);
     }
   }, [targetUser]);
-
-  const refreshFormFromServer = async () => {
-    if (!targetUser) return;
-    try {
-      setRefreshingAvatar(true);
-      const res = await api.get(`/users/${targetUser._id}`);
-      if (res.data && res.data.user) {
-        // Deep clone and normalize the fresh data just like in useEffect
-        const freshUser = res.data.user;
-        const formData = JSON.parse(JSON.stringify(freshUser));
-        
-        // Normalize nested fields for teachers
-        if (freshUser.role === 'teacher') {
-          if (freshUser.teacherInfo?.bio !== undefined) formData.bio = freshUser.teacherInfo.bio;
-          if (freshUser.teacherInfo?.instapayName !== undefined) formData.instapayName = freshUser.teacherInfo.instapayName;
-          if (freshUser.teacherInfo?.qualifications !== undefined) formData.qualifications = freshUser.teacherInfo.qualifications;
-          if (freshUser.teacherInfo?.subjects !== undefined) formData.courses = freshUser.teacherInfo.subjects;
-          if (freshUser.teacherInfo?.spokenLanguages !== undefined) formData.spokenLanguages = freshUser.teacherInfo.spokenLanguages;
-          if (freshUser.teacherInfo?.googleMeetLink !== undefined) {
-            formData.googleMeetLink = freshUser.teacherInfo.googleMeetLink;
-          } else {
-            formData.googleMeetLink = '';
-          }
-          if (freshUser.teacherInfo?.availabilityConfig !== undefined) formData.availabilityConfig = freshUser.teacherInfo.availabilityConfig;
-        }
-        
-        setForm(formData);
-      }
-    } catch (e) {
-      console.error('Failed to refresh user after avatar update', e);
-    } finally {
-      setRefreshingAvatar(false);
-    }
-  };
 
   // Avatar cropping functions
   const handleFile = (file) => {
@@ -351,7 +316,7 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
   const inputRef = React.useRef(null);
   const listRef = React.useRef(null);
 
-    useEffect(() => { setHighlight(filtered.length ? 0 : -1); }, [filter]);
+    useEffect(() => { setHighlight(filtered.length ? 0 : -1); }, [filter, filtered.length]);
     useEffect(() => {
       if (highlight >= 0 && listRef.current) {
         const nodes = listRef.current.querySelectorAll('div');

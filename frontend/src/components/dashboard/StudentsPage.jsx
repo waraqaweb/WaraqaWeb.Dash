@@ -5,7 +5,7 @@
  * Includes detailed view with collapsible information, guardian details, and academic progress
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
@@ -20,7 +20,6 @@ import {
   GraduationCap, 
   Users, 
   MapPin, 
-  Calendar,
   Phone,
   Mail,
   Book,
@@ -29,8 +28,6 @@ import {
   UserCheck,
   Baby,
   School,
-  Target,
-  TrendingUp,
   Plus,
   Minus,
   LogIn,
@@ -38,7 +35,6 @@ import {
   Globe
 } from 'lucide-react';
 import api from '../../api/axios';
-import LoadingSpinner from '../ui/LoadingSpinner';
 import EditStudentModal from '../students/EditStudentModal';
 
 const STUDENT_STATUS_TABS = [
@@ -63,6 +59,7 @@ const isStudentActive = (student = {}) => {
 
 const StudentsPage = () => {
   const { user, isAdmin, isGuardian, isTeacher, loginAsUser } = useAuth();
+  const navigate = useNavigate();
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -88,6 +85,7 @@ const StudentsPage = () => {
     return s?.guardianTimezone || s?.timezone || s?.studentInfo?.guardianTimezone || s?.studentInfo?.timezone || 'UTC';
   };
   const itemsPerPage = 30;
+  const fetchStudentsRef = useRef(null);
   const [statusCounts, setStatusCounts] = useState({ active: 0, inactive: 0, all: 0 });
 
   const updateStatusCountsFromList = (list = []) => {
@@ -153,7 +151,7 @@ const StudentsPage = () => {
     } catch (e) {
       // ignore
     }
-  }, [debouncedSearch, currentPage]);
+  }, [debouncedSearch, currentPage, location.pathname, location.search]);
 
   // reset to first page when the user types a new query
   useEffect(() => {
@@ -161,7 +159,7 @@ const StudentsPage = () => {
   }, [debouncedSearch]);
 
   useEffect(() => {
-    fetchStudents();
+    fetchStudentsRef.current?.();
   }, [debouncedSearch, sortBy, sortOrder, statusFilter, currentPage, guardianFilter]);
 
   const fetchStudents = async () => {
@@ -487,6 +485,8 @@ const StudentsPage = () => {
       setLoading(false);
     }
   };
+
+  fetchStudentsRef.current = fetchStudents;
 
   // Log when students state changes, to surface empty/missing cases
   useEffect(() => {
@@ -863,7 +863,7 @@ const StudentsPage = () => {
                               {student.studentInfo?.hoursRemaining || 0} hours left
                             </span>
                           )}
-                          {(student.studentInfo?.evaluationSummary && (isAdmin() || isTeacher && isTeacher())) && (
+                          {(student.studentInfo?.evaluationSummary && (isAdmin() || (isTeacher && isTeacher()))) && (
                             <span className={`flex items-center ${getEvaluationColor(student.studentInfo.evaluationSummary)}`}>
                               <Star className="h-3 w-3 mr-1" />
                               {student.studentInfo.evaluationSummary}
@@ -1068,7 +1068,7 @@ const StudentsPage = () => {
                               <span>{student.studentInfo?.hoursRemaining || 0} hours remaining</span>
                             </div>
                           )}
-                          {(student.studentInfo?.evaluationSummary && (isAdmin() || isTeacher && isTeacher())) && (
+                          {(student.studentInfo?.evaluationSummary && (isAdmin() || (isTeacher && isTeacher()))) && (
                             <div className="flex items-center space-x-2">
                               <Star className="h-4 w-4 text-muted-foreground" />
                               <span className={getEvaluationColor(student.studentInfo.evaluationSummary)}>

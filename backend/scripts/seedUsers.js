@@ -23,7 +23,7 @@ const UnavailablePeriod = require('../models/UnavailablePeriod');
 
 dotenv.config();
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/online-class-manager';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
 const DEFAULT_TIMEZONE = 'Africa/Cairo';
 
 const toTimeString = (hour, minute) => `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;

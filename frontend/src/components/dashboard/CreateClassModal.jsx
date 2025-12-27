@@ -40,7 +40,7 @@ export default function CreateClassModal({
     scheduledDate: '',
     generationPeriodMonths: 3
   },
-  setNewClass = () => {},
+  setNewClass,
   teachers = [],
   guardians = [],
   students = [],
@@ -80,7 +80,8 @@ export default function CreateClassModal({
   const [isLoading, setIsLoading] = useState(false);
   
   // Use local state if no external state is provided (standalone mode)
-  const isStandalone = !setNewClass || setNewClass.toString() === '() => {}';
+  // NOTE: Never rely on Function#toString() for behavior; prod builds can minify it.
+  const isStandalone = typeof setNewClass !== 'function';
   const currentNewClass = isStandalone ? localNewClass : newClass;
   const currentSetNewClass = isStandalone ? setLocalNewClass : setNewClass;
   

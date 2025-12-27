@@ -32,7 +32,7 @@ Run in PowerShell from C:\waraqa:
 ```powershell
 git status
 git add -A
-git commit -m "after deployment"
+git commit -m "first review issues"
 git push origin main
 ```
 

@@ -256,19 +256,35 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md"
                 />
                 <div className="mt-2 max-h-40 overflow-y-auto border border-gray-100 rounded">
-                  {guardiansList.filter(g => {
-                    if (!guardianFilter) return true;
-                    const q = guardianFilter.toLowerCase();
-                    return (`${g.firstName} ${g.lastName}`.toLowerCase().includes(q) || (g.email || '').toLowerCase().includes(q));
-                  }).map(g => (
-                    <button key={g._id} type="button" onClick={() => setSelectedGuardian(g)} className="w-full text-left px-3 py-2 hover:bg-gray-50">
-                      <div className="font-medium">{g.firstName} {g.lastName}</div>
-                      <div className="text-sm text-gray-600">{g.email}</div>
-                    </button>
-                  ))}
-                  {guardiansList.length === 0 && (
-                    <div className="p-3 text-sm text-gray-600">No guardians found.</div>
-                  )}
+                  {(() => {
+                    const q = String(guardianFilter || '').trim().toLowerCase();
+                    if (!q) {
+                      return
+                    }
+
+                    const filtered = (guardiansList || []).filter((g) => {
+                      return (
+                        `${g.firstName} ${g.lastName}`.toLowerCase().includes(q) ||
+                        (g.email || '').toLowerCase().includes(q)
+                      );
+                    });
+
+                    if (filtered.length === 0) {
+                      return <div className="p-3 text-sm text-gray-600">No guardians found.</div>;
+                    }
+
+                    return filtered.map((g) => (
+                      <button
+                        key={g._id}
+                        type="button"
+                        onClick={() => setSelectedGuardian(g)}
+                        className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                      >
+                        <div className="font-medium">{g.firstName} {g.lastName}</div>
+                        <div className="text-sm text-gray-600">{g.email}</div>
+                      </button>
+                    ));
+                  })()}
                 </div>
               </div>
             )}

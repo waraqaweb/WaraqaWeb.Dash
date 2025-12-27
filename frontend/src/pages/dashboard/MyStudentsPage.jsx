@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Users, MessageCircle, Mail, ChevronUp, UserX, UserCheck } from 'lucide-react';
+import { Users, MessageCircle, Mail, ChevronDown, UserX, UserCheck } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import { formatDateDDMMMYYYY } from '../../utils/date';
@@ -35,6 +35,31 @@ const isStudentActive = (student = {}) => {
     return student.isActive;
   }
   return student.isActive !== false;
+};
+
+const isCancelledClassStatus = (status) => {
+  const normalized = String(status || '').toLowerCase();
+  return normalized === 'canceled' || normalized.startsWith('cancelled');
+};
+
+const buildUpcomingSubjectsByStudentId = (classesArr = []) => {
+  const map = new Map();
+  (Array.isArray(classesArr) ? classesArr : []).forEach((cls) => {
+    if (!cls || isCancelledClassStatus(cls.status)) return;
+    const studentId = cls.student?.studentId?._id || cls.student?.studentId;
+    if (!studentId) return;
+    const subject = String(cls.subject || '').trim();
+    if (!subject) return;
+    const key = String(studentId);
+    const set = map.get(key) || new Set();
+    set.add(subject);
+    map.set(key, set);
+  });
+  const out = {};
+  map.forEach((set, key) => {
+    out[key] = Array.from(set).sort((a, b) => a.localeCompare(b));
+  });
+  return out;
 };
 
 
@@ -146,7 +171,21 @@ const fetchStudents = async () => {
     if (isAdmin && isAdmin()) {
       response = await api.get('/users/admin/all-students');
       const arr = response.data.students || [];
-      const withTZ = arr.map(st => ({ ...st, timezone: deriveStudentTimezone(st) }));
+
+      let upcomingClassesArr = [];
+      try {
+        const classesRes = await api.get('/classes', { params: { filter: 'upcoming', limit: 5000 } });
+        upcomingClassesArr = classesRes.data.classes || [];
+      } catch (classesErr) {
+        console.warn('Failed to fetch upcoming classes for subjects (admin)', classesErr?.message || classesErr);
+      }
+
+      const subjectsByStudentId = buildUpcomingSubjectsByStudentId(upcomingClassesArr);
+      const withTZ = arr.map((st) => ({
+        ...st,
+        timezone: deriveStudentTimezone(st),
+        subjects: subjectsByStudentId[String(st?._id)] || st.subjects || []
+      }));
       fetchedArr = withTZ;
       setStudents(withTZ);
       setTotalHours(response.data.totalHours || 0);
@@ -154,21 +193,33 @@ const fetchStudents = async () => {
       // For teachers show only students who have upcoming classes with this teacher.
       try {
         const teacherId = user._id || user.id;
-        const classesRes = await api.get('/classes', { params: { filter: 'upcoming', teacher: teacherId, limit: 1000 } });
+        const classesRes = await api.get('/classes', { params: { filter: 'upcoming', teacher: teacherId, limit: 5000 } });
         const classesArr = classesRes.data.classes || [];
-        console.log('[MyStudentsPage] fetched upcoming classes for teacher', { count: classesArr.length, teacher: teacherId });
+        const upcomingNonCancelled = classesArr.filter((cls) => !isCancelledClassStatus(cls?.status));
+        console.log('[MyStudentsPage] fetched upcoming classes for teacher', { count: upcomingNonCancelled.length, teacher: teacherId });
 
         // Collect guardian ids and build a unique student key map
         const guardianIdsSet = new Set();
         const studentKeyMap = new Map();
         const pendingNameContexts = {};
 
-        for (const cls of classesArr) {
+        const subjectsByStudentId = new Map();
+        for (const cls of upcomingNonCancelled) {
           const s = cls.student || {};
           const rawGuardian = s.guardianId;
           const guardianId = rawGuardian && (rawGuardian._id || rawGuardian);
           const studentId = s.studentId;
           const studentName = (s.studentName || '').trim();
+
+          if (studentId) {
+            const subject = String(cls.subject || '').trim();
+            if (subject) {
+              const sid = String(studentId);
+              const set = subjectsByStudentId.get(sid) || new Set();
+              set.add(subject);
+              subjectsByStudentId.set(sid, set);
+            }
+          }
 
           if (guardianId) guardianIdsSet.add(String(guardianId));
 
@@ -223,42 +274,40 @@ const fetchStudents = async () => {
           console.warn('Failed to fetch teacher students for guardian map', gErr?.message || gErr);
         }
 
-        // Try to resolve pending name contexts by searching users by name
-        const pendingNames = Object.keys(pendingNameContexts);
-        if (pendingNames.length > 0) {
-          for (const nameKey of pendingNames) {
-            try {
-              const name = pendingNameContexts[nameKey][0].studentName;
-              const searchRes = await api.get('/users', { params: { role: 'student', search: name, limit: 20 } });
-              const candidates = searchRes.data.users || [];
-              const exact = candidates.find(c => {
-                const full = `${c.firstName || ''} ${c.lastName || ''}`.trim();
-                return full && full.toLowerCase() === name.toLowerCase();
+        // Resolve any pending studentIds by matching guardianId + student name against teacherStudentsArr.
+        // This avoids calling endpoints teachers may not be allowed to access.
+        const pendingKeys = Object.keys(pendingNameContexts || {});
+        if (pendingKeys.length > 0 && Array.isArray(teacherStudentsArr) && teacherStudentsArr.length > 0) {
+          for (const nameKey of pendingKeys) {
+            const contexts = pendingNameContexts[nameKey] || [];
+            for (const ctx of contexts) {
+              const targetGuardianId = String(ctx.guardianId || '');
+              const targetName = String(ctx.studentName || '').trim().toLowerCase();
+              if (!targetGuardianId || !targetName) continue;
+
+              const found = teacherStudentsArr.find((ts) => {
+                const gId = String(ts.guardianId || ts.guardian || '');
+                const full = `${(ts.firstName || '').trim()} ${(ts.lastName || '').trim()}`.trim().toLowerCase();
+                return gId === targetGuardianId && full === targetName;
               });
-              const chosen = exact || candidates[0] || null;
-              if (chosen) {
-                for (const ctx of pendingNameContexts[nameKey]) {
-                  const resolvedStudentId = String(chosen._id);
-                  const guardianId = ctx.guardianId || (chosen.studentInfo?.guardianId || null);
-                  if (!guardianId) continue;
-                  const key = `${guardianId}_${resolvedStudentId}`;
-                  if (!studentKeyMap.has(key)) {
-                    studentKeyMap.set(key, {
-                      _id: resolvedStudentId,
-                      guardianId: String(guardianId),
-                      studentName: name,
-                      classesCount: 1,
-                      sampleClass: ctx.sampleClass,
-                    });
-                  } else {
-                    const entry = studentKeyMap.get(key);
-                    entry.classesCount = (entry.classesCount || 0) + 1;
-                    studentKeyMap.set(key, entry);
-                  }
-                }
+
+              if (!found?._id) continue;
+
+              const resolvedStudentId = String(found._id);
+              const mapKey = `${targetGuardianId}_${resolvedStudentId}`;
+              if (!studentKeyMap.has(mapKey)) {
+                studentKeyMap.set(mapKey, {
+                  _id: resolvedStudentId,
+                  guardianId: targetGuardianId,
+                  studentName: ctx.studentName,
+                  classesCount: 1,
+                  sampleClass: ctx.sampleClass,
+                });
+              } else {
+                const entry = studentKeyMap.get(mapKey);
+                entry.classesCount = (entry.classesCount || 0) + 1;
+                studentKeyMap.set(mapKey, entry);
               }
-            } catch (err) {
-              console.warn('Global student search failed for', nameKey, err?.message || err);
             }
           }
         }
@@ -276,10 +325,18 @@ const fetchStudents = async () => {
               firstName: byId.firstName,
               lastName: byId.lastName,
               studentInfo: byId.studentInfo || {},
+              dateOfBirth: byId.dateOfBirth || byId.studentInfo?.dateOfBirth || null,
+              gender: byId.gender || byId.studentInfo?.gender || null,
+              language: byId.language || byId.studentInfo?.language || null,
+              spokenLanguages: byId.spokenLanguages || byId.studentInfo?.spokenLanguages || byId.studentInfo?.languagesSpoken || null,
+              learningPreferences: byId.learningPreferences || byId.studentInfo?.learningPreferences || null,
+              evaluationSummary: byId.evaluationSummary || byId.studentInfo?.evaluationSummary || null,
+              notes: byId.notes || byId.studentInfo?.notes || null,
               profilePicture: (byId.profilePicture && (byId.profilePicture.url || byId.profilePicture)) || byId.profilePictureThumbnail || null,
               guardianId: entry.guardianId,
               guardianName: byId.guardianName || (byId.guardian ? `${byId.guardian.firstName || ''} ${byId.guardian.lastName || ''}`.trim() : (guardiansMap[entry.guardianId] && guardiansMap[entry.guardianId].fullName)),
               classesCount: entry.classesCount,
+              subjects: Array.from(subjectsByStudentId.get(String(byId._id)) || []).sort((a, b) => a.localeCompare(b))
             });
             continue;
           }
@@ -297,10 +354,18 @@ const fetchStudents = async () => {
               firstName: byName.firstName,
               lastName: byName.lastName,
               studentInfo: byName.studentInfo || {},
+              dateOfBirth: byName.dateOfBirth || byName.studentInfo?.dateOfBirth || null,
+              gender: byName.gender || byName.studentInfo?.gender || null,
+              language: byName.language || byName.studentInfo?.language || null,
+              spokenLanguages: byName.spokenLanguages || byName.studentInfo?.spokenLanguages || byName.studentInfo?.languagesSpoken || null,
+              learningPreferences: byName.learningPreferences || byName.studentInfo?.learningPreferences || null,
+              evaluationSummary: byName.evaluationSummary || byName.studentInfo?.evaluationSummary || null,
+              notes: byName.notes || byName.studentInfo?.notes || null,
               profilePicture: (byName.profilePicture && (byName.profilePicture.url || byName.profilePicture)) || byName.profilePictureThumbnail || null,
               guardianId: entry.guardianId,
               guardianName: byName.guardianName || (byName.guardian ? `${byName.guardian.firstName || ''} ${byName.guardian.lastName || ''}`.trim() : (guardiansMap[entry.guardianId] && guardiansMap[entry.guardianId].fullName)),
               classesCount: entry.classesCount,
+              subjects: Array.from(subjectsByStudentId.get(String(byName._id)) || []).sort((a, b) => a.localeCompare(b))
             });
             continue;
           }
@@ -311,23 +376,34 @@ const fetchStudents = async () => {
             firstName: entry.studentName || '',
             lastName: '',
             studentInfo: {},
+            dateOfBirth: null,
+            gender: null,
+            language: null,
+            spokenLanguages: null,
+            learningPreferences: null,
+            evaluationSummary: null,
+            notes: null,
             profilePicture: null,
             guardianId: entry.guardianId,
             guardianName: (guardiansMap[entry.guardianId] && guardiansMap[entry.guardianId].fullName) || undefined,
             classesCount: entry.classesCount,
+            subjects: Array.from(subjectsByStudentId.get(String(entry._id)) || []).sort((a, b) => a.localeCompare(b))
           });
         }
 
+        // Teachers should not see inactive students at all
+        const visibleStudents = resolvedStudents.filter((st) => isStudentActive(st));
+
         // Sort and set
-        resolvedStudents.sort((a, b) => {
+        visibleStudents.sort((a, b) => {
           const an = `${a.firstName || ''} ${a.lastName || ''}`.trim().toLowerCase();
           const bn = `${b.firstName || ''} ${b.lastName || ''}`.trim().toLowerCase();
           return an.localeCompare(bn);
         });
 
-  fetchedArr = resolvedStudents;
-  const withTZ = resolvedStudents.map(st => ({ ...st, timezone: deriveStudentTimezone(st) }));
-                        setStudents(withTZ);
+        fetchedArr = visibleStudents;
+        const withTZ = visibleStudents.map(st => ({ ...st, timezone: deriveStudentTimezone(st) }));
+        setStudents(withTZ);
         setTotalHours(0);
       } catch (err) {
         console.error('Failed to fetch classes for teacher view', err);
@@ -673,60 +749,41 @@ const fetchGuardiansList = async () => {
     <div className="p-5 bg-background min-h-screen">
       <div className="max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex justify-between items-center mb-4">
-        <div>
-          {/* Top counters: total students / active / inactive (replaces total hours) */}
-          <div className="flex items-center space-x-6">
-            <div className="text-sm text-slate-600">
-              <span className="block text-xs text-slate-500">Total students</span>
-              <span className="font-semibold text-slate-900">{totalStudents}</span>
-            </div>
-
-            <div className="text-sm text-slate-600">
-              <span className="block text-xs text-slate-500">Active</span>
-              <span className="font-semibold text-green-600">{activeStudents}</span>
-            </div>
-
-            <div className="text-sm text-slate-600">
-              <span className="block text-xs text-slate-500">Inactive</span>
-              <span className="font-semibold text-rose-600">{inactiveStudents}</span>
-            </div>
-          </div>
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="flex flex-wrap gap-2">
+          {STATUS_TABS.map((tab) => {
+            const isSelected = statusFilter === tab.id;
+            const count = statusCounts[tab.id];
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setStatusFilter(tab.id)}
+                className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
+                  isSelected
+                    ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                    : 'bg-transparent border-border text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span className="ml-2 text-xs text-muted-foreground">{count}</span>
+              </button>
+            );
+          })}
         </div>
-        {/* Hide Add Student button for teachers */}
-                          {!isTeacher || !isTeacher() ? (
-                            <button
-                              onClick={() => setIsAddModalOpen(true)}
-                              className="btn-primary flex items-center"
-                            >
-                              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                              </svg>
-                              Add New Student
-                            </button>
-                          ) : null}
-      </div>
 
-      <div className="flex flex-wrap gap-2 mb-4">
-        {STATUS_TABS.map((tab) => {
-          const isSelected = statusFilter === tab.id;
-          const count = statusCounts[tab.id];
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setStatusFilter(tab.id)}
-              className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
-                isSelected
-                  ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                  : 'bg-transparent border-border text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <span>{tab.label}</span>
-              <span className="ml-2 text-xs text-muted-foreground">{count}</span>
-            </button>
-          );
-        })}
+        {/* Hide Add Student button for teachers */}
+        {!isTeacher || !isTeacher() ? (
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="btn-primary flex items-center ml-auto"
+          >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Add New Student
+          </button>
+        ) : null}
       </div>
       
       {/* Students List */}
@@ -867,15 +924,17 @@ const fetchGuardiansList = async () => {
                     
 
                     {/* Edit Button */}
-                    <button
-                      onClick={() => setEditingStudentId(student._id)}
-                      className="icon-button icon-button--blue"
-                      title="Edit Student"
-                    >
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
+                    {(!isTeacher || !isTeacher()) && (
+                      <button
+                        onClick={() => setEditingStudentId(student._id)}
+                        className="icon-button icon-button--blue"
+                        title="Edit Student"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                    )}
 
                     {/* Remove/Delete Button - hide for teachers */}
                     {(!isTeacher || !isTeacher()) && (
@@ -895,7 +954,7 @@ const fetchGuardiansList = async () => {
                       className="icon-button icon-button--muted"
                       aria-expanded={expandedStudent === student._id}
                     >
-                      <ChevronUp className={`h-4 w-4 transform transition-transform ${expandedStudent === student._id ? 'rotate-180' : ''}`} />
+                      <ChevronDown className={`h-4 w-4 transform transition-transform ${expandedStudent === student._id ? 'rotate-180' : ''}`} />
                     </button>
                   </div>
                 </div>
@@ -904,36 +963,65 @@ const fetchGuardiansList = async () => {
               {/* Expanded Details */}
               {expandedStudent === student._id && (
                 <div className="border-t border-border bg-muted/30 p-3 space-y-6">
+                  {(() => {
+                    const guardianFullName = String(student.guardianName || '').trim();
+                    const guardianFirstName = guardianFullName ? guardianFullName.split(' ')[0] : '';
+                    const spokenLanguages =
+                      (Array.isArray(student.spokenLanguages) && student.spokenLanguages.length > 0)
+                        ? student.spokenLanguages
+                        : (Array.isArray(student.studentInfo?.spokenLanguages) && student.studentInfo.spokenLanguages.length > 0)
+                          ? student.studentInfo.spokenLanguages
+                          : (Array.isArray(student.studentInfo?.languagesSpoken) && student.studentInfo.languagesSpoken.length > 0)
+                            ? student.studentInfo.languagesSpoken
+                          : [];
+                    const subjects = Array.isArray(student.subjects) ? student.subjects : [];
+                    const dobValue = student.dateOfBirth || student.studentInfo?.dateOfBirth || null;
+                    const genderValue = student.gender || student.studentInfo?.gender || null;
+                    const lp = student.studentInfo?.learningPreferences || student.learningPreferences;
+                    const notes = student.studentInfo?.notes || student.notes;
+                    const canSeeNotes = Boolean(isAdmin && isAdmin());
+                    const visibleNotes = canSeeNotes ? notes : null;
+                    const canSeeEvaluation = Boolean(((isAdmin && isAdmin()) || (isTeacher && isTeacher())) && student.evaluationSummary);
+                    const showTeacherView = Boolean(isTeacher && isTeacher());
+                    const showContactInfo = !showTeacherView;
+                    const showTimezone = !showTeacherView;
+
+                    return (
+                      <>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <div>
-                      <h4 className="font-medium text-gray-900 mb-2">Contact Information</h4>
-                      <div className="space-y-1 text-sm text-gray-600">
-                        <p><span className="font-medium">Email:</span> {student.email || 'Not provided'}</p>
-                        <p><span className="font-medium">Phone:</span> {student.phone || 'Not provided'}</p>
+                    {showContactInfo && (
+                      <div>
+                        <h4 className="font-medium text-gray-900 mb-2">Contact Information</h4>
+                        <div className="space-y-1 text-sm text-gray-600">
+                          <p><span className="font-medium">Email:</span> {student.email || 'Not provided'}</p>
+                          <p><span className="font-medium">Phone:</span> {student.phone || 'Not provided'}</p>
+                        </div>
                       </div>
-                    </div>
+                    )}
                     
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2">Personal Information</h4>
                       <div className="space-y-1 text-sm text-gray-600">
-                        <p><span className="font-medium">Date of Birth:</span> {formatDate(student.dateOfBirth)}</p>
-                        <p><span className="font-medium">Gender:</span> {student.gender || 'Not specified'}</p>
+                        <p><span className="font-medium">Date of Birth:</span> {formatDate(dobValue)}</p>
+                        <p><span className="font-medium">Gender:</span> {genderValue || 'Not specified'}</p>
+                        <p><span className="font-medium">Guardian first name:</span> {guardianFirstName || 'Not specified'}</p>
+                        {showTimezone && (
+                          <p><span className="font-medium">Timezone:</span> {deriveStudentTimezone(student)}</p>
+                        )}
                       </div>
                     </div>
                     
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2">Academic Information</h4>
                       <div className="space-y-1 text-sm text-gray-600">
-                        <p><span className="font-medium">Language:</span> {student.language || 'English'}</p>
-                        <p><span className="font-medium">Subjects:</span> {student.subjects?.join(', ') || 'None specified'}</p>
+                        <p><span className="font-medium">Languages they speak:</span> {spokenLanguages.length ? spokenLanguages.join(', ') : (student.language || student.studentInfo?.language || 'Not specified')}</p>
+                        <p><span className="font-medium">Subjects:</span> {subjects.length ? subjects.join(', ') : 'Not specified'}</p>
                       </div>
                     </div>
                   </div>
                   
                   {(() => {
-                    const lp = student.studentInfo?.learningPreferences || student.learningPreferences;
-                    const notes = student.studentInfo?.notes || student.notes;
-                    const hasAny = lp || notes || (student.subjects && student.subjects.length) || (((isAdmin && isAdmin()) || (isTeacher && isTeacher())) && student.evaluationSummary);
+                    const hasAny = lp || visibleNotes || canSeeEvaluation;
                     if (!hasAny) return null;
                     return (
                       <div className="space-y-4">
@@ -944,21 +1032,23 @@ const fetchGuardiansList = async () => {
                           </div>
                         )}
 
-                        {notes && (
+                        {visibleNotes && (
                           <div className="mb-3">
-                            <h4 className="font-medium text-foreground mb-1">Notes</h4>
-                            <p className="text-sm text-muted-foreground">{notes}</p>
+                            <h4 className="font-medium text-foreground mb-1">Notes (admin only)</h4>
+                            <p className="text-sm text-muted-foreground">{visibleNotes}</p>
                           </div>
                         )}
 
-                        {/* Evaluation Summary visible only to admin and teacher */}
-                        {((isAdmin && isAdmin()) || (isTeacher && isTeacher())) && student.evaluationSummary && (
+                        {canSeeEvaluation && (
                           <div className="mb-3">
                             <h4 className="font-medium text-foreground mb-1">Evaluation Summary</h4>
                             <p className="text-sm text-muted-foreground">{student.evaluationSummary}</p>
                           </div>
                         )}
                       </div>
+                    );
+                  })()}
+                      </>
                     );
                   })()}
                 </div>
@@ -1000,7 +1090,7 @@ const fetchGuardiansList = async () => {
       ) : null}
 
       {/* Edit Student Modal */}
-      {editingStudentId && (
+      {editingStudentId && (!isTeacher || !isTeacher()) && (
         <EditStudentModal
           studentId={editingStudentId}
           guardianId={user._id}

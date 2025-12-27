@@ -8,6 +8,7 @@ const { body, param, query, validationResult } = require('express-validator');
 const { authenticateToken, optionalAuth, requireAdmin } = require('../middleware/auth');
 const libraryService = require('../services/libraryService');
 const libraryAnnotationService = require('../services/libraryAnnotationService');
+const LibraryAsset = require('../models/library/LibraryAsset');
 const { normalizeUtf8FromLatin1 } = require('../utils/textEncoding');
 
 const router = express.Router();
@@ -57,6 +58,66 @@ const resolveFolderParam = (value) => {
   if (!value || value === 'root' || value === 'null') return null;
   return value;
 };
+
+const parseNumberEnv = (key) => {
+  const value = process.env[key];
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+router.get(
+  '/storage/usage',
+  authenticateToken,
+  requireAdmin,
+  async (req, res, next) => {
+    try {
+      const uploadMaxBytes =
+        parseNumberEnv('LIBRARY_UPLOAD_MAX_BYTES') || 500 * 1024 * 1024;
+
+      const maxBytes =
+        parseNumberEnv('LIBRARY_STORAGE_LIMIT_BYTES') ||
+        (parseNumberEnv('LIBRARY_STORAGE_LIMIT_MB')
+          ? parseNumberEnv('LIBRARY_STORAGE_LIMIT_MB') * 1024 * 1024
+          : null) ||
+        20 * 1024 * 1024 * 1024;
+
+      const warningPercent =
+        parseNumberEnv('LIBRARY_STORAGE_WARNING_PERCENT') || 0.7;
+      const criticalPercent =
+        parseNumberEnv('LIBRARY_STORAGE_CRITICAL_PERCENT') || 0.9;
+
+      const [usage] = await LibraryAsset.aggregate([
+        {
+          $group: {
+            _id: null,
+            usedBytes: { $sum: '$bytes' },
+            assetCount: { $sum: 1 }
+          }
+        }
+      ]);
+
+      const usedBytes = Number(usage?.usedBytes || 0);
+      const remainingBytes = Math.max(maxBytes - usedBytes, 0);
+      const percentUsed = maxBytes > 0 ? usedBytes / maxBytes : 0;
+
+      res.json({
+        usedBytes,
+        remainingBytes,
+        maxBytes,
+        percentUsed,
+        assetCount: Number(usage?.assetCount || 0),
+        uploadMaxBytes,
+        thresholds: {
+          warningPercent,
+          criticalPercent
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 router.get(
   '/folders/tree',

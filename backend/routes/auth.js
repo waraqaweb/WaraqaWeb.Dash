@@ -67,32 +67,39 @@ router.post(
     body("firstName")
       .trim()
       .isLength({ min: 2, max: 50 })
-      .withMessage("First name must be between 2 and 50 characters"),
+      .withMessage("First name must be 2–50 characters (letters only, no symbols)."),
     body("lastName")
       .trim()
       .isLength({ min: 2, max: 50 })
-      .withMessage("Last name must be between 2 and 50 characters"),
+      .withMessage("Last name must be 2–50 characters (letters only, no symbols)."),
     body("email")
       .isEmail()
       .normalizeEmail()
-      .withMessage("Please provide a valid email"),
+      .withMessage("Please enter a valid email address (example: name@example.com)."),
     body("password")
       .isLength({ min: 6 })
-      .withMessage("Password must be at least 6 characters long"),
+      .withMessage("Password must be at least 6 characters."),
+    body('confirmPassword')
+      .custom((value, { req }) => {
+        // Allow frontend to omit confirmPassword, but if it is provided it must match
+        if (value === undefined || value === null || value === '') return true;
+        return String(value) === String(req.body.password);
+      })
+      .withMessage('Confirm password must match password.'),
     body("role")
       .isIn(["teacher", "guardian"])
-      .withMessage("Role must be either teacher or guardian"),
+      .withMessage("Please choose an account type: Teacher or Guardian."),
     body("phone")
       .optional()
       .trim()
       // Remove common formatting characters but preserve leading + for international numbers
       .customSanitizer((v) => (typeof v === 'string' ? v.replace(/[\s().-]/g, '') : v))
       .isMobilePhone('any')
-      .withMessage("Please provide a valid phone number"),
+      .withMessage("Please enter a valid phone number with country code (example: +9665xxxxxxx)."),
     body("timezone")
       .optional()
       .isString()
-      .withMessage("Timezone must be a valid string"),
+      .withMessage("Timezone must be a valid timezone name (example: Africa/Cairo)."),
     body("gender")
       .optional()
       .isIn(["male", "female"])
@@ -111,7 +118,7 @@ router.post(
           if (!fieldErrors[field]) fieldErrors[field] = err.msg;
         }
         return res.status(400).json({
-          message: "Validation failed",
+          message: "Validation failed. Please check the highlighted fields.",
           errors: errorArray,
           fieldErrors,
         });

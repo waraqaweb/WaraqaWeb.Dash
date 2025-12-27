@@ -123,7 +123,7 @@ const TeacherAvailabilityConfig = ({ teacher, value, onChange, isAdminView = fal
               Set your weekly availability schedule and time preferences.
             </p>
             <button
-              onClick={() => window.location.href = '/dashboard?page=availability'}
+              onClick={() => window.location.assign('/dashboard/availability')}
               className="px-4 py-2 bg-custom-teal text-white rounded-lg hover:bg-custom-teal-dark flex items-center gap-2"
             >
               <Clock className="w-4 h-4" />

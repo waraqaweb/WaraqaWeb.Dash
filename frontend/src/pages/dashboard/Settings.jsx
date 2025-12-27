@@ -4,6 +4,15 @@ import FloatingTimezone from '../../components/ui/FloatingTimezone';
 import api from '../../api/axios';
 import ConfirmModal from '../../components/ui/ConfirmModal';
 import Toast from '../../components/ui/Toast';
+import { fetchLibraryStorageUsage } from '../../api/library';
+
+const formatBytes = (bytes = 0) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const idx = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, idx);
+  return `${value.toFixed(value >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+};
 
 const Settings = () => {
   const { user, socket } = useAuth();
@@ -38,6 +47,10 @@ const Settings = () => {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [toast, setToast] = useState(null);
 
+  // Library storage indicator (admin)
+  const [libraryUsage, setLibraryUsage] = useState(null);
+  const [libraryUsageError, setLibraryUsageError] = useState(null);
+
   useEffect(() => {
     if (user?.role !== 'admin') return;
     (async () => {
@@ -48,6 +61,28 @@ const Settings = () => {
         // ignore
       }
     })();
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setLibraryUsageError(null);
+        const usage = await fetchLibraryStorageUsage();
+        if (!cancelled) setLibraryUsage(usage);
+      } catch (e) {
+        if (!cancelled) {
+          setLibraryUsage(null);
+          setLibraryUsageError(e?.response?.data?.message || e?.message || 'Failed to load library storage usage');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user?.role]);
 
   return (
@@ -142,6 +177,80 @@ const Settings = () => {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Library storage card */}
+        {user?.role === 'admin' && (
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="font-medium">Library Storage</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  Shows how much storage is used by uploaded library files.
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    setLibraryUsageError(null);
+                    const usage = await fetchLibraryStorageUsage();
+                    setLibraryUsage(usage);
+                    setToast({ type: 'success', message: 'Storage updated' });
+                  } catch (e) {
+                    setLibraryUsageError(e?.response?.data?.message || e?.message || 'Failed to refresh storage');
+                  }
+                }}
+                className="text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {libraryUsageError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+                {libraryUsageError}
+              </div>
+            )}
+
+            {libraryUsage && (
+              <div className="mt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>
+                    Used <span className="font-medium text-foreground">{formatBytes(libraryUsage.usedBytes)}</span> of{' '}
+                    <span className="font-medium text-foreground">{formatBytes(libraryUsage.maxBytes)}</span>
+                  </span>
+                  <span>
+                    Remaining <span className="font-medium text-foreground">{formatBytes(libraryUsage.remainingBytes)}</span>
+                  </span>
+                  {libraryUsage.uploadMaxBytes ? (
+                    <span>
+                      Max upload <span className="font-medium text-foreground">{formatBytes(libraryUsage.uploadMaxBytes)}</span>
+                    </span>
+                  ) : null}
+                </div>
+
+                {(() => {
+                  const percent = Math.max(0, Math.min(Number(libraryUsage.percentUsed || 0), 1));
+                  const warning = Number(libraryUsage.thresholds?.warningPercent ?? 0.7);
+                  const critical = Number(libraryUsage.thresholds?.criticalPercent ?? 0.9);
+                  const barColor = percent >= critical ? 'bg-red-500' : percent >= warning ? 'bg-yellow-500' : 'bg-emerald-500';
+                  const label = percent >= critical ? 'High' : percent >= warning ? 'Warning' : 'Good';
+
+                  return (
+                    <div className="mt-3">
+                      <div className="h-2 w-full rounded bg-muted overflow-hidden">
+                        <div className={`h-full ${barColor}`} style={{ width: `${Math.round(percent * 100)}%` }} />
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Status: <span className="font-medium text-foreground">{label}</span></span>
+                        <span>{Math.round(percent * 100)}%</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
         )}
       </div>

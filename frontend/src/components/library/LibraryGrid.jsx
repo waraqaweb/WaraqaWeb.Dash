@@ -13,7 +13,7 @@ const classificationLabel = (entity) => {
   if (subject && level) return `${subject} • ${level}`;
   if (subject) return subject;
   if (level) return level;
-  return '—';
+  return null;
 };
 
 const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete }) => {
@@ -55,8 +55,8 @@ const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete }) => {
     };
   }, [identifier, item?.previewAsset?.url, fallbackPreview]);
   return (
-    <article className="group relative flex flex-col overflow-hidden rounded-2xl border border-border/70 bg-card/70 shadow-sm">
-      <div className="relative h-48 w-full overflow-hidden">
+    <article className="group relative flex flex-col overflow-hidden rounded-2xl border border-border/50 bg-card/70 shadow-sm transition-shadow hover:shadow-md">
+      <div className="relative h-44 w-full overflow-hidden">
         <img
           src={previewUrl}
           alt={item.displayName}
@@ -77,7 +77,7 @@ const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete }) => {
                 event.stopPropagation();
                 onRename?.(item);
               }}
-              className="rounded-full bg-white/80 p-1 text-emerald-700 shadow hover:bg-white"
+              className="rounded-full bg-white/85 p-1 text-primary shadow hover:bg-white"
             >
               <PencilLine className="h-4 w-4" />
             </button>
@@ -94,24 +94,33 @@ const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete }) => {
           </div>
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-3 p-4">
+      <div className="flex flex-1 flex-col gap-2 p-3">
         <div>
           <h3 dir="auto" className="text-base font-semibold text-foreground line-clamp-2">
             {item.displayName}
           </h3>
-          <p dir="auto" className="mt-1 text-sm text-muted-foreground line-clamp-2">
-            {item.description}
-          </p>
+          {item?.description ? (
+            <p dir="auto" className="mt-1 text-sm text-muted-foreground line-clamp-2">
+              {item.description}
+            </p>
+          ) : null}
         </div>
-        <div className="mt-auto text-xs text-muted-foreground">
-          <p>{item.subject} • {item.level || 'Multi-level'}</p>
-          <p>{item.pageCount || '—'} pages</p>
-        </div>
+        {(() => {
+          const classification = classificationLabel(item);
+          const hasPageCount = typeof item?.pageCount === 'number' && Number.isFinite(item.pageCount);
+          if (!classification && !hasPageCount) return null;
+          return (
+            <div className="mt-auto text-xs text-muted-foreground">
+              {classification ? <p>{classification}</p> : null}
+              {hasPageCount ? <p>{item.pageCount} pages</p> : null}
+            </div>
+          );
+        })()}
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => onOpen(item)}
-            className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+            className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:brightness-95"
           >
             <Eye className="mr-2 inline h-4 w-4" />
             Open
@@ -136,10 +145,10 @@ const FolderCard = ({ folder, onOpen, isAdmin = false, onRename, onDelete }) => 
 
   return (
     <article
-      className="group relative flex flex-col overflow-hidden rounded-2xl border border-border/70 bg-card/70 shadow-sm"
+      className="group relative flex flex-col overflow-hidden rounded-2xl border border-border/50 bg-card/70 shadow-sm transition-shadow hover:shadow-md"
     >
-      <div className="relative flex h-48 w-full items-center justify-center bg-muted/40">
-        <Folder className="h-14 w-14 text-muted-foreground" />
+      <div className="relative flex h-32 w-full items-center justify-center bg-muted/40">
+        <Folder className="h-10 w-10 text-muted-foreground" />
         {folder?.isSecret && (
           <div className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-xs text-white">
             <Lock className="h-3 w-3" />
@@ -154,7 +163,7 @@ const FolderCard = ({ folder, onOpen, isAdmin = false, onRename, onDelete }) => 
                 event.stopPropagation();
                 onRename?.(folder);
               }}
-              className="rounded-full bg-white/80 p-1 text-emerald-700 shadow hover:bg-white"
+              className="rounded-full bg-white/85 p-1 text-primary shadow hover:bg-white"
               title="Rename folder"
             >
               <PencilLine className="h-4 w-4" />
@@ -173,25 +182,31 @@ const FolderCard = ({ folder, onOpen, isAdmin = false, onRename, onDelete }) => 
           </div>
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-3 p-4">
+      <div className="flex flex-1 flex-col gap-2 p-3">
         <div>
           <h3 dir="auto" className="text-base font-semibold text-foreground line-clamp-2">
             {folder?.displayName || 'Untitled folder'}
           </h3>
-          {folder?.description && (
+          {folder?.description ? (
             <p dir="auto" className="mt-1 text-sm text-muted-foreground line-clamp-2">
               {folder.description}
             </p>
-          )}
+          ) : null}
         </div>
-        <div className="mt-auto text-xs text-muted-foreground">
-          <p>Classification: {classificationLabel(folder)}</p>
-        </div>
+        {(() => {
+          const classification = classificationLabel(folder);
+          if (!classification) return null;
+          return (
+            <div className="mt-auto text-xs text-muted-foreground">
+              <p>{classification}</p>
+            </div>
+          );
+        })()}
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => onOpen?.(folder)}
-            className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+            className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:brightness-95"
           >
             Open
           </button>
@@ -249,14 +264,14 @@ const LibraryGrid = ({
                 <tr key={entryId(folder)} className="border-t border-border/60">
                   <td className="px-4 py-3 font-medium text-foreground">{folder.displayName}</td>
                   <td className="px-4 py-3 text-muted-foreground">Folder</td>
-                  <td className="px-4 py-3 text-muted-foreground">{classificationLabel(folder)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{classificationLabel(folder) || '—'}</td>
                     <td className="px-4 py-3 text-muted-foreground">—</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => onOpenFolder?.(folder)}
-                        className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                        className="inline-flex items-center rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:brightness-95"
                       >
                         Open
                       </button>
@@ -293,14 +308,14 @@ const LibraryGrid = ({
                 <tr key={itemId(item)} className="border-t border-border/60">
                   <td className="px-4 py-3 font-medium text-foreground">{item.displayName}</td>
                   <td className="px-4 py-3 text-muted-foreground">File</td>
-                  <td className="px-4 py-3 text-muted-foreground">{classificationLabel(item)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{classificationLabel(item) || '—'}</td>
                     <td className="px-4 py-3 text-muted-foreground">{item.pageCount || '—'}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => onOpenItem?.(item)}
-                        className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                        className="inline-flex items-center rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:brightness-95"
                       >
                         Open
                       </button>
@@ -345,7 +360,7 @@ const LibraryGrid = ({
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       {sortedFolders.map((folder) => (
         <FolderCard
           key={entryId(folder)}

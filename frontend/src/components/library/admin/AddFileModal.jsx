@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import { uploadLibraryAsset } from '../../../api/library';
+import { fetchLibraryStorageUsage, uploadLibraryAsset } from '../../../api/library';
 import flattenFolders from './folderUtils';
 import { subjects } from '../../../constants/reportTopicsConfig';
 
@@ -52,12 +52,16 @@ const formatBytes = (bytes = 0) => {
   return `${value.toFixed(value >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
 };
 
+const LARGE_FILE_CONFIRM_BYTES = 100 * 1024 * 1024;
+
 const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
   const [form, setForm] = useState({ ...DEFAULT_FORM });
   const [error, setError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadedAsset, setUploadedAsset] = useState(null);
   const [uploadState, setUploadState] = useState({ status: 'idle', fileName: '', bytes: 0, message: null });
+  const [storageUsage, setStorageUsage] = useState(null);
+  const [storageUsageError, setStorageUsageError] = useState(null);
   const fileInputRef = useRef(null);
 
   const subjectOptions = useMemo(() => normalizeSubjectOptions(subjects), []);
@@ -74,6 +78,30 @@ const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
     setUploadState({ status: 'idle', fileName: '', bytes: 0, message: null });
     setError(null);
   }, [open, defaultFolder]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setStorageUsageError(null);
+        const usage = await fetchLibraryStorageUsage();
+        if (!cancelled) {
+          setStorageUsage(usage);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setStorageUsage(null);
+          setStorageUsageError(e?.response?.data?.message || e?.message || 'Failed to load storage usage');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const resetUploadState = () => {
     setUploadedAsset(null);
@@ -100,6 +128,31 @@ const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
       return;
     }
 
+    if (storageUsage?.uploadMaxBytes && file.size > storageUsage.uploadMaxBytes) {
+      const limitLabel = formatBytes(storageUsage.uploadMaxBytes);
+      setError(`File is too large. Max allowed upload size is ${limitLabel}.`);
+      event.target.value = '';
+      return;
+    }
+
+    if (storageUsage?.remainingBytes !== undefined && file.size > storageUsage.remainingBytes) {
+      setError(
+        `Not enough storage remaining to upload this file. Remaining: ${formatBytes(storageUsage.remainingBytes)}.`
+      );
+      event.target.value = '';
+      return;
+    }
+
+    if (file.size >= LARGE_FILE_CONFIRM_BYTES) {
+      const ok = window.confirm(
+        `This file is ${formatBytes(file.size)}. Uploading large files can take time and use a lot of storage.\n\nDo you want to continue?`
+      );
+      if (!ok) {
+        event.target.value = '';
+        return;
+      }
+    }
+
     const formData = new FormData();
     formData.append('file', file);
     formData.append('folderId', form.folder);
@@ -122,7 +175,10 @@ const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
         status: uploadError?.response?.status,
         data: uploadError?.response?.data
       });
-      const message = uploadError?.response?.data?.message || 'Upload failed. Please try again.';
+      const maxBytes = uploadError?.response?.data?.details?.maxBytes;
+      const message = maxBytes
+        ? `Upload failed: file is too large (max ${formatBytes(maxBytes)}).`
+        : uploadError?.response?.data?.message || 'Upload failed. Please try again.';
       setUploadedAsset(null);
       setUploadState({ status: 'error', fileName: file.name, bytes: file.size, message });
       setError(message);
@@ -202,6 +258,31 @@ const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
         <p className="text-xs text-muted-foreground">
           Upload a document directly from your device. Files are stored securely in the selected folder.
         </p>
+
+        {storageUsage && (
+          <div className="mt-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Storage used: <span className="font-medium text-foreground">{formatBytes(storageUsage.usedBytes)}</span> /{' '}
+                <span className="font-medium text-foreground">{formatBytes(storageUsage.maxBytes)}</span>
+              </span>
+              <span>
+                Remaining: <span className="font-medium text-foreground">{formatBytes(storageUsage.remainingBytes)}</span>
+              </span>
+              {storageUsage.uploadMaxBytes ? (
+                <span>
+                  Max upload: <span className="font-medium text-foreground">{formatBytes(storageUsage.uploadMaxBytes)}</span>
+                </span>
+              ) : null}
+            </div>
+          </div>
+        )}
+
+        {storageUsageError && (
+          <div className="mt-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
+            {storageUsageError}
+          </div>
+        )}
 
         {error && (
           <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">{error}</div>

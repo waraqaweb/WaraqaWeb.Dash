@@ -54,6 +54,7 @@ const LibraryDashboardContent = () => {
   } = useLibraryData({ searchTerm: globalSearchTerm, filter: globalFilter });
 
   const canManageLibrary = Boolean(user?.role === 'admin' || user?.permissions?.includes('library:manage'));
+  const isTeacher = user?.role === 'teacher';
 
   const refreshPendingAdminRequests = useCallback(async () => {
     if (!canManageLibrary) {
@@ -284,7 +285,7 @@ const LibraryDashboardContent = () => {
 
   return (
     <DashboardLayout activeView="library" provideSearchContext={false}>
-      <div className="grid gap-4 p-4 lg:grid-cols-[300px_1fr]">
+      <div className="grid gap-3 p-3 lg:grid-cols-[300px_1fr]">
         <div className="flex flex-col gap-4">
           <FolderTree tree={tree} activeFolder={activeFolder} onSelect={handleFolderClick} />
           {isTreeLoading && (
@@ -301,38 +302,36 @@ const LibraryDashboardContent = () => {
               </p>
             ) : pendingAccess.length ? (
               <p className="mt-2 text-xs text-muted-foreground">
-                Pending approval for {pendingAccess.length} request{pendingAccess.length > 1 ? 's' : ''}
+                {isTeacher
+                  ? 'Pending approval.'
+                  : `Pending approval for ${pendingAccess.length} request${pendingAccess.length > 1 ? 's' : ''}`}
               </p>
             ) : (
               <p className="mt-2 text-xs text-muted-foreground">No pending requests.</p>
-            )}
-            {!canManageLibrary && (
-              <button
-                type="button"
-                onClick={() => setShareModalOpen(true)}
-                className="mt-3 inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
-              >
-                Request access
-              </button>
             )}
           </div>
         </div>
 
         <div className="flex flex-col gap-4">
-          <LibraryBreadcrumbs breadcrumb={breadcrumb} onNavigate={handleBreadcrumbNav} />
-          <LibraryToolbar
-            view={view}
-            onViewChange={setView}
-            onRefresh={() => loadFolder(activeFolderId)}
-            onOpenShareModal={() => setShareModalOpen(true)}
-            pendingRequests={shareRequests}
-            managePendingCount={pendingAdminCount}
-            isAdmin={canManageLibrary}
-            onAddFile={handleAddFileOpen}
-            onCreateFolder={handleCreateFolderOpen}
-            onManageAccess={handleManageAccessOpen}
-            onOpenWhiteboard={() => setWhiteboardOpen(true)}
-          />
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card/80 p-3 shadow-sm">
+            <div className="min-w-0 flex-1">
+              <LibraryBreadcrumbs breadcrumb={breadcrumb} onNavigate={handleBreadcrumbNav} />
+            </div>
+            <LibraryToolbar
+              view={view}
+              onViewChange={setView}
+              onRefresh={() => loadFolder(activeFolderId)}
+              onOpenShareModal={() => setShareModalOpen(true)}
+              pendingRequests={shareRequests}
+              hidePendingBadge={isTeacher}
+              managePendingCount={pendingAdminCount}
+              isAdmin={canManageLibrary}
+              onAddFile={handleAddFileOpen}
+              onCreateFolder={handleCreateFolderOpen}
+              onManageAccess={handleManageAccessOpen}
+              onOpenWhiteboard={() => setWhiteboardOpen(true)}
+            />
+          </div>
 
           {error && (
             <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">

@@ -337,21 +337,52 @@ app.get('/api/health', (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   const isMulterLimit = err && (err.code === 'LIMIT_FILE_SIZE' || err.code === 'LIMIT_UNEXPECTED_FILE');
-  const status = err.status || (isMulterLimit ? 413 : 500);
+  const isDiskFull = err && err.code === 'ENOSPC';
+  const isPermissionError = err && (err.code === 'EACCES' || err.code === 'EPERM');
+  const isLibraryRoute = typeof req?.path === 'string' && req.path.startsWith('/api/library');
+
+  const derivedStatus = isMulterLimit ? 413 : isDiskFull ? 507 : 500;
+  const status = err.status || derivedStatus;
 
   // Keep logging server-side details for debugging.
   console.error('❌ Error:', err && (err.stack || err));
 
   if (isMulterLimit) {
+    const maxBytes = Number(process.env.LIBRARY_UPLOAD_MAX_BYTES || 500 * 1024 * 1024);
+    const maxMb = Math.round(maxBytes / 1024 / 1024);
     return res.status(status).json({
-      message: 'File too large for upload. Please use a smaller file or increase the server upload limit.',
-      error: err.code
+      message: `File is too large to upload. Max allowed size is ${maxMb} MB.`,
+      error: 'FILE_TOO_LARGE',
+      details: {
+        maxBytes
+      }
     });
   }
 
+  if (isDiskFull) {
+    return res.status(status).json({
+      message: 'Upload failed because the server storage is full. Please delete older library files or increase server storage.',
+      error: 'STORAGE_FULL'
+    });
+  }
+
+  if (isPermissionError) {
+    return res.status(status).json({
+      message: 'Upload failed because the server cannot write files (permission error). Please contact support or check server file permissions.',
+      error: 'STORAGE_PERMISSION'
+    });
+  }
+
+  const safeMessage = (() => {
+    if (status < 500) return err.message;
+    // For library, prefer returning the real message when it comes from our own explicit errors.
+    if (isLibraryRoute && (err.status || err.code)) return err.message;
+    return 'Something went wrong!';
+  })();
+
   res.status(status).json({
-    message: status >= 500 ? 'Something went wrong!' : err.message,
-    error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    message: safeMessage,
+    error: err.code || (status >= 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR')
   });
 });
 

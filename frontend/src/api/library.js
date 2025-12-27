@@ -78,9 +78,13 @@ export const deleteLibraryItem = (itemId) =>
 export const uploadLibraryAsset = (formData) =>
   handle(() =>
     api.post('/library/items/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 10 * 60 * 1000
     })
   );
+
+export const fetchLibraryStorageUsage = () =>
+  handle(() => api.get('/library/storage/usage'));
 
 export const listLibraryShareRequests = (params) =>
   handle(() => api.get('/library/shares/requests', { params }), () => ({ permissions: [] }));

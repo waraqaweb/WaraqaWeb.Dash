@@ -14,6 +14,7 @@ const ShareRequestModal = ({ open, onClose, onSubmit, folders, isSubmitting }) =
   const [selectedFolder, setSelectedFolder] = useState('root');
   const [targetItemId, setTargetItemId] = useState('');
   const [errors, setErrors] = useState({});
+  const [submitError, setSubmitError] = useState('');
 
   const folderOptions = useMemo(() => {
     const flatten = [];
@@ -50,6 +51,8 @@ const ShareRequestModal = ({ open, onClose, onSubmit, folders, isSubmitting }) =
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (isSubmitting) return;
+    setSubmitError('');
     if (!validate()) return;
     const isFolderScope = form.scopeType === 'folder';
     const isItemScope = form.scopeType === 'item';
@@ -67,6 +70,8 @@ const ShareRequestModal = ({ open, onClose, onSubmit, folders, isSubmitting }) =
       setSelectedFolder('root');
       setTargetItemId('');
       onClose();
+    } else {
+      setSubmitError(result?.message || 'Request failed. Please try again.');
     }
   };
 
@@ -173,6 +178,12 @@ const ShareRequestModal = ({ open, onClose, onSubmit, folders, isSubmitting }) =
               />
               Include sub-folders
             </label>
+          )}
+
+          {submitError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {submitError}
+            </div>
           )}
 
           <div className="flex justify-end gap-2 pt-2">

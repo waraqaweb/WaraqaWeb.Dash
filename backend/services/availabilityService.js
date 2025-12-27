@@ -10,6 +10,7 @@ const UnavailablePeriod = require('../models/UnavailablePeriod');
 const Class = require('../models/Class');
 const User = require('../models/User');
 const tzUtils = require('../utils/timezoneUtils');
+const moment = require('moment-timezone');
 
 const BUSY_CLASS_STATUSES = ['scheduled', 'in_progress'];
 
@@ -211,24 +212,36 @@ async function validateTeacherAvailability(teacherId, startDateTime, endDateTime
       return await checkUnavailabilityAndConflicts(teacherId, startDateTime, endDateTime, excludeClassId);
     }
 
-    const dayOfWeek = startDateTime.getUTCDay();
-    const startTime = `${String(startDateTime.getUTCHours()).padStart(2, '0')}:${String(startDateTime.getUTCMinutes()).padStart(2, '0')}`;
-    const endTime = `${String(endDateTime.getUTCHours()).padStart(2, '0')}:${String(endDateTime.getUTCMinutes()).padStart(2, '0')}`;
+    // NOTE: Availability slots are stored as dayOfWeek + HH:MM strings.
+    // In practice, the UI provides these in the teacher/slot timezone (not UTC).
+    // So we must evaluate the requested UTC time window in the slot timezone.
+    const teacherTimezone = teacher?.timezone || 'UTC';
+    const slots = await AvailabilitySlot.findActiveByTeacher(teacherId);
 
-    // Check if teacher has availability slots for this time
-    const availableSlots = await AvailabilitySlot.find({
-      teacherId,
-      dayOfWeek,
-      isActive: true,
-      startTime: { $lte: startTime },
-      endTime: { $gte: endTime },
-      $or: [
-        { effectiveTo: null },
-        { effectiveTo: { $gte: new Date() } }
-      ]
+    const fitsAnySlot = slots.some((slot) => {
+      const slotTimezone = slot?.timezone || teacherTimezone;
+
+      const startLocal = moment(startDateTime).tz(slotTimezone);
+      const endLocal = moment(endDateTime).tz(slotTimezone);
+
+      // If the class crosses midnight in slot timezone, we currently treat it as not-fitting.
+      // (The availability model is day-based and does not support cross-day windows.)
+      if (startLocal.format('YYYY-MM-DD') !== endLocal.format('YYYY-MM-DD')) {
+        return false;
+      }
+
+      const dayOfWeekLocal = startLocal.day();
+      if (Number(slot.dayOfWeek) !== Number(dayOfWeekLocal)) {
+        return false;
+      }
+
+      const startTimeLocal = startLocal.format('HH:mm');
+      const endTimeLocal = endLocal.format('HH:mm');
+
+      return canFitInSlot(slot.startTime, slot.endTime, startTimeLocal, endTimeLocal);
     });
 
-    if (availableSlots.length === 0) {
+    if (!fitsAnySlot) {
       return {
         isAvailable: false,
         reason: 'Teacher not available during this time',

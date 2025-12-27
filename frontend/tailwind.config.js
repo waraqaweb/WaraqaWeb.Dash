@@ -13,6 +13,11 @@ module.exports = {
           softer: 'rgba(44, 115, 108, 0.5)'
         },
 
+        // Backwards-compat color tokens used across older pages/components.
+        // Map to theme variables so production builds don't lose button backgrounds.
+        'custom-teal': 'var(--primary)',
+        'custom-teal-dark': 'color-mix(in srgb, var(--primary) 85%, black)',
+
         // App theme tokens
         background: 'var(--background)',
         foreground: 'var(--foreground)',

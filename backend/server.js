@@ -330,7 +330,17 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: 'Waraqa API is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    version: process.env.APP_VERSION || 'dev',
+    buildTime: process.env.BUILD_TIME || null
+  });
+});
+
+// Lightweight version endpoint (useful for frontend display)
+app.get('/api/version', (req, res) => {
+  res.json({
+    version: process.env.APP_VERSION || 'dev',
+    buildTime: process.env.BUILD_TIME || null
   });
 });
 
@@ -348,7 +358,7 @@ app.use((err, req, res, next) => {
   console.error('❌ Error:', err && (err.stack || err));
 
   if (isMulterLimit) {
-    const maxBytes = Number(process.env.LIBRARY_UPLOAD_MAX_BYTES || 500 * 1024 * 1024);
+    const maxBytes = Number(process.env.LIBRARY_UPLOAD_MAX_BYTES || 250 * 1024 * 1024);
     const maxMb = Math.round(maxBytes / 1024 / 1024);
     return res.status(status).json({
       message: `File is too large to upload. Max allowed size is ${maxMb} MB.`,

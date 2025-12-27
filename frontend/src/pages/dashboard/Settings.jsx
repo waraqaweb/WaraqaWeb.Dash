@@ -47,6 +47,10 @@ const Settings = () => {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [toast, setToast] = useState(null);
 
+  // App version (from backend)
+  const [appVersion, setAppVersion] = useState(null);
+  const [appBuildTime, setAppBuildTime] = useState(null);
+
   // Library storage indicator (admin)
   const [libraryUsage, setLibraryUsage] = useState(null);
   const [libraryUsageError, setLibraryUsageError] = useState(null);
@@ -62,6 +66,25 @@ const Settings = () => {
       }
     })();
   }, [user?.role]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get('/version');
+        if (cancelled) return;
+        setAppVersion(res.data?.version || null);
+        setAppBuildTime(res.data?.buildTime || null);
+      } catch (e) {
+        if (cancelled) return;
+        setAppVersion(null);
+        setAppBuildTime(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
@@ -91,7 +114,15 @@ const Settings = () => {
         <FloatingTimezone />
         <div className={`mb-4 ${condensed ? 'text-sm' : 'text-base'}`}>
           <div className="flex items-center justify-between mb-3">
-            <h1 className={`font-semibold ${condensed ? 'text-lg' : 'text-2xl'}`}>Settings</h1>
+            <div>
+              <h1 className={`font-semibold ${condensed ? 'text-lg' : 'text-2xl'}`}>Settings</h1>
+              {(appVersion || appBuildTime) && (
+                <div className="text-xs text-muted-foreground mt-1">
+                  Version: <span className="font-medium text-foreground">{appVersion || 'unknown'}</span>
+                  {appBuildTime ? <span> • Built: {new Date(appBuildTime).toLocaleString()}</span> : null}
+                </div>
+              )}
+            </div>
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setCondensed(s => !s)}

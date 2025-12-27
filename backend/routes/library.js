@@ -25,8 +25,8 @@ try {
 const upload = multer({
   dest: LIBRARY_UPLOAD_TMP_DIR,
   limits: {
-    // Default bumped to 500MB so common classroom videos succeed.
-    fileSize: Number(process.env.LIBRARY_UPLOAD_MAX_BYTES || 500 * 1024 * 1024)
+    // Default: 250MB (can be overridden via LIBRARY_UPLOAD_MAX_BYTES)
+    fileSize: Number(process.env.LIBRARY_UPLOAD_MAX_BYTES || 250 * 1024 * 1024)
   }
 });
 
@@ -73,7 +73,7 @@ router.get(
   async (req, res, next) => {
     try {
       const uploadMaxBytes =
-        parseNumberEnv('LIBRARY_UPLOAD_MAX_BYTES') || 500 * 1024 * 1024;
+        parseNumberEnv('LIBRARY_UPLOAD_MAX_BYTES') || 250 * 1024 * 1024;
 
       const maxBytes =
         parseNumberEnv('LIBRARY_STORAGE_LIMIT_BYTES') ||

@@ -175,10 +175,14 @@ const AddFileModal = ({ open, onClose, onSubmit, folders, defaultFolder }) => {
         status: uploadError?.response?.status,
         data: uploadError?.response?.data
       });
+      const status = uploadError?.response?.status;
       const maxBytes = uploadError?.response?.data?.details?.maxBytes;
+
       const message = maxBytes
         ? `Upload failed: file is too large (max ${formatBytes(maxBytes)}).`
-        : uploadError?.response?.data?.message || 'Upload failed. Please try again.';
+        : status === 413
+          ? 'Upload failed: file is too large for the server. Please try a smaller file or increase the server upload limit.'
+          : uploadError?.response?.data?.message || 'Upload failed. Please try again.';
       setUploadedAsset(null);
       setUploadState({ status: 'error', fileName: file.name, bytes: file.size, message });
       setError(message);

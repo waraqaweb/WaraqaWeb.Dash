@@ -38,7 +38,9 @@ server {
   ssl_protocols TLSv1.2 TLSv1.3;
 
   server_tokens off;
-  client_max_body_size 20m;
+  # Allow larger uploads (library assets, videos, PDFs, etc.)
+  # Keep in sync with backend multer limit (LIBRARY_UPLOAD_MAX_BYTES).
+  client_max_body_size 250m;
 
   # Very light limits (keeps scanners from hammering)
   limit_conn conn_per_ip 30;

@@ -9,11 +9,16 @@ services:
     build:
       context: .
       dockerfile: deploy/backend/Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+        BUILD_TIME: ${BUILD_TIME:-}
     restart: unless-stopped
     environment:
       NODE_ENV: production
       PORT: 5000
       TRUST_PROXY: "1"
+      APP_VERSION: ${APP_VERSION:-dev}
+      BUILD_TIME: ${BUILD_TIME:-}
       MONGODB_URI: mongodb://mongo:27017/waraqadb
       FRONTEND_URL: ${FRONTEND_URL}
       JWT_SECRET: ${JWT_SECRET}
@@ -50,6 +55,8 @@ services:
       args:
         REACT_APP_API_URL: ${REACT_APP_API_URL}
         REACT_APP_SOCKET_URL: ${REACT_APP_SOCKET_URL}
+        APP_VERSION: ${APP_VERSION:-dev}
+        BUILD_TIME: ${BUILD_TIME:-}
     restart: unless-stopped
 
   nginx:

@@ -1,0 +1,454 @@
+## Waraqa deployment runbook (DigitalOcean)
+
+### Server
+
+- Droplet IP: 159.89.40.84
+- OS: Ubuntu 24.04
+- User: root (key-only)
+
+### Current status
+
+- UFW enabled: yes (22 limited, 80/443 allowed)
+- Root SSH from Windows: working (ed25519 key)
+
+### Local machine
+
+- Repo path: C:\waraqa
+- SSH key used (Windows): %USERPROFILE%\.ssh\id_ed25519
+- Public key (Windows): ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKey6UiilW/2iiM6zIBr1zQttRDEQMK+7szsUR41if6e mohamed ismail@DESKTOP-8T43TLE
+
+### Required values to fill (copy/paste exact values when known)
+
+- GITHUB_REPO_URL: https://github.com/waraqaweb/WaraqaWeb.Dash.git
+- DOMAIN (optional for HTTPS): REPLACE_WITH_DOMAIN (LetsEncrypt does NOT work on IP-only)
+- CERTBOT_EMAIL (optional for HTTPS): REPLACE_WITH_EMAIL
+
+---
+
+# Step 0 (LOCAL): Push repo to GitHub (must be done before deploy)
+
+Run in PowerShell from C:\waraqa:
+
+```powershell
+git status
+git add -A
+git commit -m "after deployment"
+git push origin main
+```
+
+Verify nothing sensitive is tracked:
+
+```powershell
+git ls-files | findstr /i "node_modules"
+git ls-files | findstr /i "\\build\\"
+git ls-files | findstr /i "\.env"
+```
+
+---
+
+# Step 1 (DROPLET): Fix SSH so root works from Windows
+
+Symptom: `Permission denied (publickey)` from Windows.
+
+If your droplet console shows `>` (stuck in a heredoc), type:
+
+EOF
+
+or press Ctrl+C.
+
+On the droplet console as root (this REWRITES authorized_keys cleanly):
+
+```bash
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+cp /root/.ssh/authorized_keys /root/.ssh/authorized_keys.bak.$(date +%F-%H%M%S) 2>/dev/null || true
+cat > /root/.ssh/authorized_keys <<'EOF'
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCtp4W+2oBzwvG0sgfvoFv5s9W0KT6MektyytFL0twVwu8nJQenL7nW8295ppAYvYZa3jFms5ugP0WuEKftSDXr4LmOKfSFjwMMoNlhWaLtfDNdA/GfJpv0zvA1HVMCwr0/fYhhkOyf7heoU+ueKSxRSLIlb9mBFqnAmsLx3mNouiIZn7oiBHnxCY83Ma4UK+5aZm6PL82WQ8L8p5XtgD4uShDuiy9sLHnQR+wphWolWp6VRnPcb++S/45hfRJQqHWRDRt3YTc9Gov/vhmkiZUdqf7pb0Bjmzh9371+rGyAZAUL8bXu3ST1jj1txivkxxYwQc8dNTMQPXEmpcwnTASF rsa-key-20230927
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKey6UiilW/2iiM6zIBr1zQttRDEQMK+7szsUR41if6e mohamed ismail@DESKTOP-8T43TLE
+EOF
+
+chown root:root /root/.ssh /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+cat -n /root/.ssh/authorized_keys
+```
+
+Then from Windows PowerShell:
+
+```powershell
+ssh -o IdentitiesOnly=yes -i $env:USERPROFILE\.ssh\id_ed25519 root@159.89.40.84
+```
+
+---
+
+# Step 2 (DROPLET): Reboot once (recommended after apt upgrades)
+
+On droplet:
+
+```bash
+reboot
+```
+
+If you prefer to avoid reboot right now, you can skip this and continue.
+
+Reconnect from Windows:
+
+```powershell
+ssh -o IdentitiesOnly=yes -i $env:USERPROFILE\.ssh\id_ed25519 root@159.89.40.84
+```
+
+---
+
+# Step 3 (DROPLET): Firewall (UFW) + SSH hardening (root-only)
+
+## UFW
+
+```bash
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow OpenSSH
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw limit OpenSSH
+ufw --force enable
+ufw status verbose
+```
+
+## DigitalOcean Cloud Firewall (IMPORTANT)
+
+If `curl -I http://127.0.0.1/dashboard/` works on the droplet but your browser times out, the usual cause is a DigitalOcean Cloud Firewall that allows SSH (22) but blocks HTTP/HTTPS.
+
+In the DigitalOcean control panel:
+
+- Networking -> Firewalls
+- Find any firewall attached to this droplet
+- Ensure **Inbound Rules** include:
+  - TCP 22 (SSH) from your IP (or 0.0.0.0/0 if you accept the risk)
+  - TCP 80 from 0.0.0.0/0 and ::/0
+  - TCP 443 from 0.0.0.0/0 and ::/0
+
+From Windows PowerShell (external test):
+
+```powershell
+Test-NetConnection 159.89.40.84 -Port 80
+Test-NetConnection 159.89.40.84 -Port 443
+```
+
+## SSH hardening (keep root, key-only)
+
+```bash
+printf "%s\n" \
+	"PermitRootLogin prohibit-password" \
+	"PasswordAuthentication no" \
+	"KbdInteractiveAuthentication no" \
+	"ChallengeResponseAuthentication no" \
+	"PubkeyAuthentication yes" \
+	"X11Forwarding no" \
+	> /etc/ssh/sshd_config.d/99-hardening.conf
+
+sshd -t
+systemctl reload ssh
+```
+
+---
+
+# Step 4 (DROPLET): Fail2Ban (blocks brute-force SSH)
+
+```bash
+apt-get install -y fail2ban
+printf "%s\n" \
+	"[sshd]" \
+	"enabled = true" \
+	"maxretry = 5" \
+	"findtime = 10m" \
+	"bantime = 1h" \
+	"backend = systemd" \
+	> /etc/fail2ban/jail.d/sshd.local
+
+systemctl enable --now fail2ban
+fail2ban-client status
+fail2ban-client status sshd
+```
+
+---
+
+# Step 5 (DROPLET): Install Docker + Docker Compose plugin
+
+```bash
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+docker version
+docker compose version
+```
+
+---
+
+# Step 6 (DROPLET): Clone and deploy (HTTP-only works on IP)
+
+## Clone
+
+```bash
+mkdir -p /opt/waraqa
+cd /opt/waraqa
+git clone https://github.com/waraqaweb/WaraqaWeb.Dash.git .
+```
+
+## Create production env
+
+```bash
+cp .env.example .env
+```
+
+Generate secrets (paste into .env for JWT_SECRET and REFRESH_TOKEN_SECRET):
+
+```bash
+openssl rand -base64 48
+openssl rand -base64 48
+```
+
+Set DOMAIN in .env (HTTPS requires a real domain; IP-only = leave DOMAIN as example.com and do NOT run certbot):
+
+```bash
+sed -i 's/^DOMAIN=.*/DOMAIN=159.89.40.84/' .env
+sed -i 's|^FRONTEND_URL=.*|FRONTEND_URL=http://159.89.40.84|' .env
+sed -i 's|^REACT_APP_API_URL=.*|REACT_APP_API_URL=http://159.89.40.84/api|' .env
+sed -i 's|^REACT_APP_SOCKET_URL=.*|REACT_APP_SOCKET_URL=http://159.89.40.84|' .env
+```
+
+## Start containers
+
+```bash
+docker compose up -d --build
+```
+
+## Check
+
+```bash
+docker compose ps
+docker compose logs -n 200 nginx
+docker compose logs -n 200 backend
+curl -sS http://127.0.0.1/api/health
+```
+
+Open in browser:
+
+- http://159.89.40.84/dashboard/
+
+---
+
+# Step 6.5 (DROPLET): Create the first admin user
+
+This uses the existing backend script and writes the admin user into MongoDB.
+
+IMPORTANT: `admin123456` is weak. Use it only temporarily, then change it immediately after first login.
+
+```bash
+cd /opt/waraqa
+
+# Create admin (first run only)
+docker compose exec \
+	-e ADMIN_EMAIL="waraqainc@gmail.com" \
+	-e ADMIN_PASSWORD="admin123456" \
+	backend node scripts/createAdmin.js
+```
+
+If it says an admin already exists and you need to reset the password, run:
+
+```bash
+cd /opt/waraqa
+docker compose exec backend node - <<'NODE'
+const mongoose = require('mongoose');
+const User = require('./models/User');
+require('dotenv').config();
+
+const email = 'waraqainc@gmail.com';
+const newPassword = 'admin123456';
+
+(async () => {
+	await mongoose.connect(process.env.MONGODB_URI);
+	const user = await User.findOne({ email });
+	if (!user) {
+		console.error('No user found for', email);
+		process.exit(1);
+	}
+	user.password = newPassword; // will be hashed by User pre-save hook
+	await user.save();
+	console.log('Password updated for', email);
+	await mongoose.disconnect();
+})();
+NODE
+```
+
+---
+
+# Step 6.6 (DROPLET): Verify database is working
+
+MongoDB runs inside Docker and is NOT exposed publicly (recommended).
+
+```bash
+cd /opt/waraqa
+docker compose ps
+docker compose exec mongo mongosh --quiet --eval "db.adminCommand({ ping: 1 })"
+docker compose exec mongo mongosh --quiet --eval "show dbs"
+docker compose exec mongo mongosh --quiet --eval "use waraqadb; db.users.countDocuments()"
+```
+
+NOTE: There is no "cPanel" for MongoDB by default on a droplet. The safe way to manage MongoDB is:
+
+- Use `mongosh` inside the container (commands above), OR
+- Use MongoDB Compass via an SSH tunnel (ask if you want the exact steps).
+
+---
+
+# Step 7 (OPTIONAL): HTTPS with Let's Encrypt (DOMAIN REQUIRED)
+
+Only do this when your domain's DNS points to 159.89.40.84.
+
+This project supports:
+
+- `DOMAIN` = the Let's Encrypt certificate directory name (under `/etc/letsencrypt/live/<DOMAIN>`)
+- `SERVER_NAMES` = what nginx answers for (space-separated)
+
+## Phase A: Deploy on a temporary subdomain (example: test.waraqaweb.com)
+
+1. DNS: create an A record:
+
+- test.waraqaweb.com -> 159.89.40.84
+
+Wait for DNS propagation, then verify from the droplet:
+
+```bash
+dig +short test.waraqaweb.com A
+```
+
+2. Update `.env`:
+
+```bash
+cd /opt/waraqa
+
+sed -i 's/^DOMAIN=.*/DOMAIN=test.waraqaweb.com/' .env
+
+if grep -q '^SERVER_NAMES=' .env; then
+	sed -i 's/^SERVER_NAMES=.*/SERVER_NAMES=test.waraqaweb.com/' .env
+else
+	echo 'SERVER_NAMES=test.waraqaweb.com' >> .env
+fi
+
+sed -i 's|^FRONTEND_URL=.*|FRONTEND_URL=https://test.waraqaweb.com|' .env
+sed -i 's|^REACT_APP_API_URL=.*|REACT_APP_API_URL=https://test.waraqaweb.com/api|' .env
+sed -i 's|^REACT_APP_SOCKET_URL=.*|REACT_APP_SOCKET_URL=https://test.waraqaweb.com|' .env
+
+grep -E '^(DOMAIN|SERVER_NAMES|FRONTEND_URL|REACT_APP_API_URL|REACT_APP_SOCKET_URL)=' .env
+```
+
+3. Rebuild with the new frontend URLs (no need for `docker compose down`):
+
+```bash
+cd /opt/waraqa
+docker compose up -d --build
+```
+
+4. Issue the cert + enable HTTPS:
+
+```bash
+mkdir -p /var/www/certbot
+apt-get install -y certbot
+
+certbot certonly --webroot \
+	-w /var/www/certbot \
+	-d test.waraqaweb.com \
+	--email REPLACE_WITH_EMAIL \
+	--agree-tos --no-eff-email
+
+docker compose restart nginx
+```
+
+5. Verify:
+
+```bash
+curl -I https://test.waraqaweb.com/dashboard/login
+curl -sS https://test.waraqaweb.com/api/health
+```
+
+## Phase B: Move later to dashboard.waraqaweb.com
+
+1. DNS: create an A record:
+
+- dashboard.waraqaweb.com -> 159.89.40.84
+
+Wait for DNS propagation:
+
+```bash
+dig +short dashboard.waraqaweb.com A
+```
+
+2. Expand the existing certificate to include the new name (keeps `DOMAIN=test.waraqaweb.com` as the cert directory):
+
+```bash
+certbot certonly --webroot \
+	-w /var/www/certbot \
+	--expand \
+	-d test.waraqaweb.com \
+	-d dashboard.waraqaweb.com \
+	--email REPLACE_WITH_EMAIL \
+	--agree-tos --no-eff-email
+```
+
+3. Switch the app URLs to the new domain and rebuild:
+
+```bash
+cd /opt/waraqa
+
+if grep -q '^SERVER_NAMES=' .env; then
+	sed -i 's/^SERVER_NAMES=.*/SERVER_NAMES=test.waraqaweb.com dashboard.waraqaweb.com/' .env
+else
+	echo 'SERVER_NAMES=test.waraqaweb.com dashboard.waraqaweb.com' >> .env
+fi
+
+sed -i 's|^FRONTEND_URL=.*|FRONTEND_URL=https://dashboard.waraqaweb.com|' .env
+sed -i 's|^REACT_APP_API_URL=.*|REACT_APP_API_URL=https://dashboard.waraqaweb.com/api|' .env
+sed -i 's|^REACT_APP_SOCKET_URL=.*|REACT_APP_SOCKET_URL=https://dashboard.waraqaweb.com|' .env
+
+docker compose up -d --build
+docker compose restart nginx
+```
+
+4. Verify:
+
+```bash
+curl -I https://dashboard.waraqaweb.com/dashboard/login
+curl -sS https://dashboard.waraqaweb.com/api/health
+```
+
+---
+
+# Step 8: Update + rollback
+
+## Update to latest main
+
+```bash
+cd /opt/waraqa
+git rev-parse HEAD > /opt/waraqa/.previous_deploy_sha
+git pull --ff-only
+docker compose up -d --build
+```
+
+## Rollback
+
+```bash
+cd /opt/waraqa
+git checkout $(cat /opt/waraqa/.previous_deploy_sha)
+docker compose up -d --build
+```
+
+## Logs
+
+```bash
+docker compose logs -f --tail=200 nginx
+docker compose logs -f --tail=200 backend
+docker compose logs -f --tail=200 mongo
+```

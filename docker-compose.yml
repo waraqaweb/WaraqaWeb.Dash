@@ -59,6 +59,7 @@ services:
     restart: unless-stopped
     environment:
       DOMAIN: ${DOMAIN}
+      SERVER_NAMES: ${SERVER_NAMES}
     ports:
       - "80:80"
       - "443:443"

@@ -9,7 +9,7 @@ upstream frontend_upstream {
 # HTTP-only mode (used when certs are not yet installed)
 server {
   listen 80;
-  server_name ${DOMAIN};
+  server_name ${SERVER_NAMES};
 
   # ACME challenge for Let's Encrypt (certbot)
   location ^~ /.well-known/acme-challenge/ {

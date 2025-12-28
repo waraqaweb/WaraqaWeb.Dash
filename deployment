@@ -572,43 +572,79 @@ docker compose logs -f --tail=200 backend
 docker compose logs -f --tail=200 mongo
 ```
 
-=============================================================
-A) On your Windows PC: push latest code to GitHub (safe)
-Run in PowerShell from waraqa:
+---
 
-B) On the droplet: pull latest code and redeploy (safe, keeps DB + env)
-Rollback (safe)
-One important note about “not destroying anything”
+# Canonical deploy workflow (safe / repeatable)
+
+## A) Windows: push latest code to GitHub
+
+Run in PowerShell from `C:\waraqa`:
+
+```powershell
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Update deploy + fixes"
+git commit -m "Update"
 git push origin main
+```
 
-B) On the droplet: pull latest code and redeploy (safe, keeps DB + env)
+## B) Droplet: pull + redeploy (keeps DB + env)
+
+This does NOT delete MongoDB data and does NOT overwrite `.env`.
+
+```bash
 cd /opt/waraqa
 
-# Save current running state
-
+# Save rollback point
 git rev-parse HEAD > /opt/waraqa/.previous_deploy_sha
 
-# Pull code safely
-
+# Update code safely
 git pull --ff-only
 
-# Rebuild/recreate containers as needed (does NOT delete volumes)
-
+# Rebuild/restart (minimal downtime)
 docker compose up -d --build
 
-# Quick health checks
-
+# Verify
 docker compose ps
-curl -I http://127.0.0.1/dashboard/login
-curl -sS http://127.0.0.1/api/health
+curl -I http://127.0.0.1/dashboard/login || true
+curl -sS http://127.0.0.1/api/health || true
+```
 
-Rollback (safe)
+## C) Rollback (safe)
 
-One important note about “not destroying anything”
-Do NOT run docker compose down -v (that would delete Mongo volume data).
-Regular docker compose up -d --build is safe and preserves the DB volume.
-If you paste the output of sed -n '1,220p' docker-compose.yml from the droplet, I can tell you exactly what’s wrong in that file and (if needed) give you a one-shot command to repair it.
+```bash
+cd /opt/waraqa
+git checkout $(cat /opt/waraqa/.previous_deploy_sha)
+docker compose up -d --build
+```
+
+## Uptime rules (avoid downtime)
+
+- DO NOT install host `nginx` (Docker nginx binds 80/443).
+- DO NOT run `docker compose down -v` (it deletes the MongoDB volume).
+- For changes to domain/URLs, always run `docker compose up -d --build` (frontend rebuild required).
+- Only paste command blocks into the droplet shell (never paste terminal output like "Reading package lists...").
+
+---
+
+# Step 9 (OPTIONAL but recommended): Auto-renew TLS certificates
+
+If you used `certbot` on the droplet, enable auto-renew and restart the Docker nginx after renewal.
+
+```bash
+apt-get update -y
+apt-get install -y certbot
+
+# Install a deploy hook that restarts the nginx container after renew
+cat > /etc/letsencrypt/renewal-hooks/deploy/restart-waraqa-nginx.sh <<'EOF'
+#!/bin/sh
+set -eu
+cd /opt/waraqa
+/usr/bin/docker compose restart nginx
+EOF
+
+chmod +x /etc/letsencrypt/renewal-hooks/deploy/restart-waraqa-nginx.sh
+
+# Test renew (dry run)
+certbot renew --dry-run
+```

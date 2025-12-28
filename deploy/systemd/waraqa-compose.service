@@ -1,0 +1,21 @@
+[Unit]
+Description=Waraqa Docker Compose stack
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/waraqa
+
+# Start (or recreate) the stack
+ExecStart=/usr/bin/docker compose up -d
+
+# Stop the stack (manual use)
+ExecStop=/usr/bin/docker compose down
+
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

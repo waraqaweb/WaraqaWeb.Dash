@@ -240,6 +240,125 @@ Open in browser:
 
 ---
 
+# Step 6.25 (DROPLET): Prevent downtime after reboot (IMPORTANT)
+
+## Do NOT install host nginx
+
+This deployment already includes an nginx reverse-proxy **inside Docker** (service: `nginx`) that binds ports 80/443.
+Installing host nginx will take port 80 and cause this error when starting Docker:
+
+`failed to bind host port 0.0.0.0:80/tcp: address already in use`
+
+If host nginx is installed (by mistake), remove it:
+
+```bash
+systemctl disable --now nginx 2>/dev/null || true
+apt-get purge -y nginx nginx-common nginx-core 2>/dev/null || true
+apt-get autoremove -y
+rm -rf /etc/nginx
+```
+
+Then bring the Docker stack back:
+
+```bash
+cd /opt/waraqa
+docker compose up -d --build
+```
+
+## Ensure the stack always comes back after reboot
+
+Docker is already enabled; we also install a small systemd unit that runs `docker compose up -d` on every boot.
+
+```bash
+cd /opt/waraqa
+
+cat > /etc/systemd/system/waraqa-compose.service <<'EOF'
+[Unit]
+Description=Waraqa Docker Compose stack
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/waraqa
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now waraqa-compose.service
+systemctl status waraqa-compose.service --no-pager
+```
+
+---
+
+# Step 6.3 (DROPLET): Incident playbook (site down)
+
+Run these in order and paste output if you need help:
+
+```bash
+# 1) Is the droplet reachable?
+uptime
+
+# 2) Are ports open locally?
+ss -ltnp | grep -E ':(80|443)\b' || true
+
+# 3) Is Docker running?
+systemctl status docker --no-pager
+docker ps
+
+# 4) Bring stack up
+cd /opt/waraqa
+docker compose up -d
+
+# 5) Quick health checks
+curl -I http://127.0.0.1/dashboard/login || true
+curl -sS http://127.0.0.1/api/health || true
+
+# 6) Logs
+docker compose logs --tail=200 nginx
+docker compose logs --tail=200 backend
+docker compose logs --tail=200 mongo
+```
+
+## Common error: "service \"mongo\" refers to undefined volume mongo-data"
+
+This means `/opt/waraqa/docker-compose.yml` got truncated/edited and is missing the bottom `volumes:` section.
+
+Safe fix (does NOT delete the database):
+
+```bash
+cd /opt/waraqa
+
+# Confirm the problem
+docker compose config || true
+
+# Restore compose file from git (safe)
+git status --porcelain
+git restore docker-compose.yml 2>/dev/null || git checkout -- docker-compose.yml
+
+# Verify volumes section exists now
+tail -n 30 docker-compose.yml
+
+# Compose should validate now
+docker compose config >/dev/null
+
+# Start stack
+docker compose up -d --build
+
+# Re-start boot recovery service (if installed)
+systemctl restart waraqa-compose.service 2>/dev/null || true
+systemctl status waraqa-compose.service --no-pager 2>/dev/null || true
+```
+
+---
+
 # Step 6.5 (DROPLET): Create the first admin user
 
 This uses the existing backend script and writes the admin user into MongoDB.
@@ -452,3 +571,44 @@ docker compose logs -f --tail=200 nginx
 docker compose logs -f --tail=200 backend
 docker compose logs -f --tail=200 mongo
 ```
+
+=============================================================
+A) On your Windows PC: push latest code to GitHub (safe)
+Run in PowerShell from waraqa:
+
+B) On the droplet: pull latest code and redeploy (safe, keeps DB + env)
+Rollback (safe)
+One important note about “not destroying anything”
+cd C:\waraqa
+git status
+git add -A
+git commit -m "Update deploy + fixes"
+git push origin main
+
+B) On the droplet: pull latest code and redeploy (safe, keeps DB + env)
+cd /opt/waraqa
+
+# Save current running state
+
+git rev-parse HEAD > /opt/waraqa/.previous_deploy_sha
+
+# Pull code safely
+
+git pull --ff-only
+
+# Rebuild/recreate containers as needed (does NOT delete volumes)
+
+docker compose up -d --build
+
+# Quick health checks
+
+docker compose ps
+curl -I http://127.0.0.1/dashboard/login
+curl -sS http://127.0.0.1/api/health
+
+Rollback (safe)
+
+One important note about “not destroying anything”
+Do NOT run docker compose down -v (that would delete Mongo volume data).
+Regular docker compose up -d --build is safe and preserves the DB volume.
+If you paste the output of sed -n '1,220p' docker-compose.yml from the droplet, I can tell you exactly what’s wrong in that file and (if needed) give you a one-shot command to repair it.

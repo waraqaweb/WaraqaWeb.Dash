@@ -239,6 +239,7 @@ router.get('/stats', authenticateToken, async (req, res) => {
             teacher: teacherId,
             'student.studentId': nextClass.student?.studentId,
             'classReport.submittedAt': { $exists: true, $ne: null },
+            'classReport.attendance': 'attended',
             scheduledDate: { $lt: nextClass.scheduledDate || new Date() }
           })
             .sort({ scheduledDate: -1 })
@@ -266,24 +267,47 @@ router.get('/stats', authenticateToken, async (req, res) => {
 
       // Pending reports: past classes (in last 7 days) without submitted classReport.submittedAt
       const pastWindow = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const handledAttendances = ['attended', 'missed_by_student', 'cancelled_by_teacher', 'no_show_both'];
+      const handledStatuses = [
+        'completed',
+        'attended',
+        'missed_by_student',
+        'cancelled_by_teacher',
+        'cancelled_by_guardian',
+        'cancelled_by_admin',
+        'no_show_both',
+        'cancelled'
+      ];
+
       // Select past classes in the recent window that have no submitted report
       // and whose attendance wasn't recorded as attended/missed/cancelled.
-      // We avoid relying on `status` and instead check `classReport.attendance`.
+      // NOTE: use $and to avoid accidental key overwrites (duplicate $or keys).
       const pendingReports = await Class.find({
         teacher: teacherId,
         scheduledDate: { $lt: new Date(), $gte: pastWindow },
-        $or: [ { 'classReport.submittedAt': { $exists: false } }, { 'classReport.submittedAt': null } ],
-        $or: [
-          { 'classReport.attendance': { $exists: false } },
-          { 'classReport.attendance': { $nin: ['attended', 'missed_by_student', 'cancelled_by_teacher', 'cancelled'] } }
-        ],
-        // Also exclude classes where attendance was recorded via the top-level
-        // attendance object or where status already indicates handled.
-        $nor: [
-          { status: { $in: ['attended', 'missed_by_student', 'cancelled_by_teacher', 'cancelled'] } },
-          { 'attendance.markedAt': { $exists: true } },
-          { 'attendance.teacherPresent': true },
-          { 'attendance.studentPresent': true }
+        $and: [
+          {
+            $or: [
+              { 'classReport.submittedAt': { $exists: false } },
+              { 'classReport.submittedAt': null }
+            ]
+          },
+          {
+            $or: [
+              { 'classReport.attendance': { $exists: false } },
+              { 'classReport.attendance': { $nin: handledAttendances } }
+            ]
+          },
+          {
+            // Also exclude classes where attendance was recorded via the top-level
+            // attendance object or where status already indicates handled.
+            $nor: [
+              { status: { $in: handledStatuses } },
+              { 'attendance.markedAt': { $exists: true } },
+              { 'attendance.teacherPresent': true },
+              { 'attendance.studentPresent': true }
+            ]
+          }
         ]
       })
         .limit(20)
@@ -300,20 +324,33 @@ router.get('/stats', authenticateToken, async (req, res) => {
       const overdueReports = await Class.find({
         teacher: teacherId,
         scheduledDate: { $lt: pastWindow },
-        $or: [ { 'classReport.submittedAt': { $exists: false } }, { 'classReport.submittedAt': null } ],
-        $or: [
-          { 'reportSubmission.teacherDeadline': { $gte: now } },
-          { 'reportSubmission.adminExtension.granted': true, 'reportSubmission.adminExtension.expiresAt': { $gte: now } }
-        ],
-        $or: [
-          { 'classReport.attendance': { $exists: false } },
-          { 'classReport.attendance': { $nin: ['attended', 'missed_by_student', 'cancelled_by_teacher', 'cancelled'] } }
-        ],
-        $nor: [
-          { status: { $in: ['attended', 'missed_by_student', 'cancelled_by_teacher', 'cancelled'] } },
-          { 'attendance.markedAt': { $exists: true } },
-          { 'attendance.teacherPresent': true },
-          { 'attendance.studentPresent': true }
+        $and: [
+          {
+            $or: [
+              { 'classReport.submittedAt': { $exists: false } },
+              { 'classReport.submittedAt': null }
+            ]
+          },
+          {
+            $or: [
+              { 'reportSubmission.teacherDeadline': { $gte: now } },
+              { 'reportSubmission.adminExtension.granted': true, 'reportSubmission.adminExtension.expiresAt': { $gte: now } }
+            ]
+          },
+          {
+            $or: [
+              { 'classReport.attendance': { $exists: false } },
+              { 'classReport.attendance': { $nin: handledAttendances } }
+            ]
+          },
+          {
+            $nor: [
+              { status: { $in: handledStatuses } },
+              { 'attendance.markedAt': { $exists: true } },
+              { 'attendance.teacherPresent': true },
+              { 'attendance.studentPresent': true }
+            ]
+          }
         ]
       })
         .sort({ scheduledDate: -1 })

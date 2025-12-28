@@ -404,7 +404,6 @@ const InvoicesPage = () => {
 
     const params = new URLSearchParams(location.search);
     const hadModalParams = params.has('modal') || params.has('invoice') || params.has('invoiceSlug');
-    const shouldGoBack = !force && Boolean(location.state && location.state.invoicesModal);
 
     params.delete('modal');
     params.delete('invoice');
@@ -416,9 +415,8 @@ const InvoicesPage = () => {
     delete baseState.invoiceId;
     delete baseState.invoiceSlug;
 
-    if (shouldGoBack) {
-      navigate(-1);
-    } else if (hadModalParams) {
+    if (hadModalParams) {
+      // Stay on the same invoices page; just clear modal params/state.
       navigate(`${location.pathname}${nextSearch ? `?${nextSearch}` : ''}`, { replace: true, state: baseState });
     }
 

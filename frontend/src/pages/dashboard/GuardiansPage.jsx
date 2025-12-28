@@ -16,6 +16,7 @@ import {
   MessageCircle, 
   User, 
   Clock, 
+  Globe,
   Mail, 
   Phone, 
   MapPin, 
@@ -318,6 +319,10 @@ const GuardiansPage = () => {
                         <span className="flex items-center">
                           <Clock className="h-3 w-3 mr-1" />
                           {guardian.guardianInfo?.totalHours || 0} hours left
+                        </span>
+                        <span className="flex items-center">
+                          <Globe className="h-3 w-3 mr-1" />
+                          {guardian.timezone || guardian.guardianInfo?.timezone || 'UTC'}
                         </span>
                       </div>
                     </div>

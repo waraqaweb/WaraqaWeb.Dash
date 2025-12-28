@@ -296,6 +296,35 @@ systemctl enable --now waraqa-compose.service
 systemctl status waraqa-compose.service --no-pager
 ```
 
+## Optional: avoid surprise reboots (unattended-upgrades)
+
+Ubuntu can install kernel updates automatically. This is good for security, but it can cause unexpected reboots.
+
+To DISABLE automatic reboot (updates still install):
+
+```bash
+grep -R "Automatic-Reboot" -n /etc/apt/apt.conf.d/* || true
+
+cat > /etc/apt/apt.conf.d/99-waraqa-unattended-reboot.conf <<'EOF'
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
+
+systemctl restart unattended-upgrades || true
+```
+
+To ALLOW automatic reboot but at a fixed time (example: 04:00 UTC):
+
+```bash
+cat > /etc/apt/apt.conf.d/99-waraqa-unattended-reboot.conf <<'EOF'
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:00";
+EOF
+
+systemctl restart unattended-upgrades || true
+```
+
+---
+
 ---
 
 # Step 6.3 (DROPLET): Incident playbook (site down)
@@ -318,8 +347,18 @@ cd /opt/waraqa
 docker compose up -d
 
 # 5) Quick health checks
-curl -I http://127.0.0.1/dashboard/login || true
-curl -sS http://127.0.0.1/api/health || true
+# NOTE: When HTTPS is enabled, http://127.0.0.1/* will 301 to https://127.0.0.1/*.
+# That redirect is expected but not a useful health check.
+
+# If you know the domain:
+DOMAIN=${DOMAIN:-test.waraqaweb.com}
+curl -I https://$DOMAIN/dashboard/login || true
+curl -sS https://$DOMAIN/api/health || true
+
+# If DNS is not working yet, force Host + SNI to localhost:
+curl -I http://127.0.0.1/dashboard/login -H "Host: $DOMAIN" || true
+curl -kI https://127.0.0.1/dashboard/login --resolve "$DOMAIN:443:127.0.0.1" || true
+curl -ksS https://127.0.0.1/api/health --resolve "$DOMAIN:443:127.0.0.1" || true
 
 # 6) Logs
 docker compose logs --tail=200 nginx
@@ -489,6 +528,12 @@ docker compose restart nginx
 5. Verify:
 
 ```bash
+DOMAIN=test.waraqaweb.com
+
+# Confirm HTTP redirects to the correct HTTPS domain (Host header matters)
+curl -I http://127.0.0.1/dashboard/login -H "Host: $DOMAIN"
+
+# Real checks
 curl -I https://test.waraqaweb.com/dashboard/login
 curl -sS https://test.waraqaweb.com/api/health
 ```
@@ -606,8 +651,15 @@ docker compose up -d --build
 
 # Verify
 docker compose ps
-curl -I http://127.0.0.1/dashboard/login || true
-curl -sS http://127.0.0.1/api/health || true
+
+# Prefer real domain checks when HTTPS is enabled
+DOMAIN=${DOMAIN:-test.waraqaweb.com}
+curl -I https://$DOMAIN/dashboard/login || true
+curl -sS https://$DOMAIN/api/health || true
+
+# If DNS is not working yet, force Host + SNI to localhost
+curl -I http://127.0.0.1/dashboard/login -H "Host: $DOMAIN" || true
+curl -ksS https://127.0.0.1/api/health --resolve "$DOMAIN:443:127.0.0.1" || true
 ```
 
 ## C) Rollback (safe)
@@ -635,6 +687,9 @@ If you used `certbot` on the droplet, enable auto-renew and restart the Docker n
 apt-get update -y
 apt-get install -y certbot
 
+# Confirm the systemd timer exists (Ubuntu default)
+systemctl list-timers | grep -i certbot || true
+
 # Install a deploy hook that restarts the nginx container after renew
 cat > /etc/letsencrypt/renewal-hooks/deploy/restart-waraqa-nginx.sh <<'EOF'
 #!/bin/sh
@@ -644,6 +699,9 @@ cd /opt/waraqa
 EOF
 
 chmod +x /etc/letsencrypt/renewal-hooks/deploy/restart-waraqa-nginx.sh
+
+# Confirm hook exists
+ls -la /etc/letsencrypt/renewal-hooks/deploy/
 
 # Test renew (dry run)
 certbot renew --dry-run

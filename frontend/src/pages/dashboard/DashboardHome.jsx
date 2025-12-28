@@ -95,6 +95,15 @@ const DashboardHome = () => {
     fetchStats();
   }, [fetchStats]);
 
+  // Refresh dashboard stats when other screens (e.g., Class Report modal) signal an update
+  useEffect(() => {
+    const handler = () => {
+      try { fetchStats(); } catch (e) {}
+    };
+    window.addEventListener('waraqa:dashboard-stats-refresh', handler);
+    return () => window.removeEventListener('waraqa:dashboard-stats-refresh', handler);
+  }, [fetchStats]);
+
   // Debug: help trace why student names might be missing on dashboard views
   useEffect(() => {
     if (stats.loading) return;
@@ -684,6 +693,8 @@ const DashboardHome = () => {
     const upcomingCount = Array.isArray(data.upcomingClasses)
       ? data.upcomingClasses.length
       : Number(data.upcomingClasses || 0);
+    const pendingTotal = (Array.isArray(data.pendingReports) ? data.pendingReports.length : 0)
+      + (Array.isArray(data.overdueReports) ? data.overdueReports.length : 0);
     return (
       <div className="space-y-4 sm:space-y-6">
         <div className="bg-card rounded-lg p-4 sm:p-6 border border-border">
@@ -733,21 +744,6 @@ const DashboardHome = () => {
           </div>
         )}
 
-        <div className="rounded-3xl border border-[#FACC15] bg-[#FFF9DB] p-5 shadow-sm flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-[#c0680e]">Monthly sync</p>
-            <h3 className="text-lg font-semibold text-[#2f2001]">Align with the admin team</h3>
-            <p className="text-sm text-[#5f4506]">Use this yellow calendar slot for progress escalations or planning support.</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowTeacherSyncModal(true)}
-            className="inline-flex items-center justify-center rounded-full bg-[#2C736C] px-5 py-2 text-sm font-semibold text-white shadow"
-          >
-            Book sync
-          </button>
-        </div>
-
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard title="Hours (this month)" value={`${Number(data.hoursThisMonth || 0).toFixed(2)}`} Icon={Clock} color="bg-slate-100 text-slate-700" />
           <StatCard title="Active Students" value={data.activeStudentCount || data.studentsWithClassesThisMonth || 0} Icon={Users} color="bg-amber-50 text-amber-700" />
@@ -762,12 +758,27 @@ const DashboardHome = () => {
 
           <div className="lg:col-span-2">
             <div className="space-y-4">
+              <div className="rounded-2xl border border-[#FACC15] bg-[#FFF9DB] p-4 shadow-sm flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-[0.25em] text-[#c0680e]">Monthly sync</p>
+                  <div className="text-sm font-semibold text-[#2f2001] truncate">Align with the admin team</div>
+                  <div className="text-xs text-[#5f4506] truncate">Use this yellow slot for escalations or planning.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTeacherSyncModal(true)}
+                  className="inline-flex items-center justify-center rounded-full bg-[#2C736C] px-4 py-1.5 text-xs font-semibold text-white shadow"
+                >
+                  Book sync
+                </button>
+              </div>
+
               {((stats.data?.recentActivity || stats.data?.recentActivities || []).length > 0) && (
                 <RecentActivityCard />
               )}
 
               <div className="bg-card rounded-lg border border-border p-6">
-                <h3 className="text-base sm:text-lg font-semibold text-foreground mb-2">Pending Reports ({data.pendingReportsCount || (data.pendingReports || []).length || 0})</h3>
+                <h3 className="text-base sm:text-lg font-semibold text-foreground mb-2">Pending Reports ({pendingTotal || 0})</h3>
                   <PendingReportsList
                     reports={[...(data.pendingReports || []), ...(data.overdueReports || []).map(x => ({ ...x, _isOverdue: true }))]}
                     onOpen={(r) => navigate(`/classes/${r._id || r.id}/report`, { state: { background: location, reportClass: r } })}

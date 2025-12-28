@@ -475,15 +475,13 @@ const changePasswordHandler = async (req, res) => {
         errors: errors.array(),
       });
     }
-
-    const token = req.header("Authorization")?.replace("Bearer ", "");
-    
-    if (!token) {
-      return res.status(401).json({ message: "No token provided" });
+    // Use the authenticated user from middleware (more reliable than manual header parsing)
+    const authedUserId = req.user?._id || req.user?.id;
+    if (!authedUserId) {
+      return res.status(401).json({ message: "Authentication required" });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select("+password"); // Select password to compare
+    const user = await User.findById(authedUserId).select('+password');
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -519,8 +517,9 @@ const changePasswordHandler = async (req, res) => {
  * Change password
  * PUT/POST /api/auth/change-password
  */
-router.put("/change-password", changePasswordValidators, changePasswordHandler);
-router.post("/change-password", changePasswordValidators, changePasswordHandler);
+router.put("/change-password", authenticateToken, changePasswordValidators, changePasswordHandler);
+router.post("/change-password", authenticateToken, changePasswordValidators, changePasswordHandler);
+
 
 
 /**

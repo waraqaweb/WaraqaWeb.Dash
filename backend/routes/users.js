@@ -15,6 +15,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Student = require('../models/Student');
 const Notification = require('../models/Notification');
+const Class = require('../models/Class');
 const { isValidTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 const { 
   authenticateToken, 
@@ -199,8 +200,48 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
 
     const total = await User.countDocuments(query);
 
+    // For the teachers list, compute hours this month from Class durations
+    // (this matches the teacher dashboard aggregation and avoids relying on
+    // teacherInfo.monthlyHours which can be a mutable snapshot).
+    let usersPayload = users;
+    if (String(role || '').toLowerCase() === 'teacher' && Array.isArray(users) && users.length) {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const teacherIds = users.map((u) => u && u._id).filter(Boolean);
+
+      let hoursByTeacherId = {};
+      try {
+        const rows = await Class.aggregate([
+          {
+            $match: {
+              teacher: { $in: teacherIds },
+              scheduledDate: { $gte: monthStart, $lt: monthEnd },
+              status: { $in: ['attended', 'missed_by_student', 'completed'] }
+            }
+          },
+          { $group: { _id: '$teacher', totalMinutes: { $sum: '$duration' } } }
+        ]);
+        hoursByTeacherId = (rows || []).reduce((acc, r) => {
+          acc[String(r._id)] = (r.totalMinutes || 0) / 60;
+          return acc;
+        }, {});
+      } catch (e) {
+        console.warn('users: failed to aggregate teacher monthly hours', e && e.message);
+      }
+
+      usersPayload = users.map((u) => {
+        const obj = u.toObject();
+        const key = String(obj._id);
+        const computed = hoursByTeacherId[key] ?? 0;
+        obj.teacherInfo = obj.teacherInfo || {};
+        obj.teacherInfo._computedMonthlyHours = computed;
+        return obj;
+      });
+    }
+
     res.json({
-      users,
+      users: usersPayload,
       pagination: {
         page: parsedPage,
         limit: parsedLimit,

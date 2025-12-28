@@ -331,6 +331,17 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
       if (res.data.message) {
         clearDraft(derivedClassId);
         setShowToast({ show: true, type: "success", message: "Class report submitted successfully!" });
+
+        try {
+          window.dispatchEvent(
+            new CustomEvent('waraqa:dashboard-stats-refresh', {
+              detail: { reason: 'class-report-submitted', classId: derivedClassId }
+            })
+          );
+        } catch (e) {
+          // ignore
+        }
+
         onSuccess?.();
         onClose?.();
       }

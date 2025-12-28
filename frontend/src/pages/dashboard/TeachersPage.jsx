@@ -343,10 +343,10 @@
 															</span>
 															<span className="flex items-center">
 																<Clock className="h-3 w-3 mr-1" />
-																{/* Show backend value when present (including 0). Only use computed fallback when backend value is missing. */}
-																{ (teacher.teacherInfo && (teacher.teacherInfo.monthlyHours !== undefined && teacher.teacherInfo.monthlyHours !== null))
-																	? Number(teacher.teacherInfo.monthlyHours) || 0
-																	: Number(teacher.teacherInfo?._computedMonthlyHours ?? 0)
+																{/* Prefer the server-computed aggregation for this month when present. */}
+																{ (teacher.teacherInfo && (teacher.teacherInfo._computedMonthlyHours !== undefined && teacher.teacherInfo._computedMonthlyHours !== null))
+																	? Number(teacher.teacherInfo._computedMonthlyHours) || 0
+																	: Number(teacher.teacherInfo?.monthlyHours ?? 0) || 0
 																} hours this month
 															</span>
 														</div>

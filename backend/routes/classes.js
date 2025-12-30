@@ -14,6 +14,7 @@ const { body, validationResult } = require("express-validator");
 const { authenticateToken, requireRole } = require("../middleware/auth");
 const Class = require("../models/Class");
 const User = require("../models/User");
+const Notification = require("../models/Notification");
 require("../models/Student");
 const InvoiceModel = require("../models/Invoice");
 const InvoiceService = require('../services/invoiceService');
@@ -29,6 +30,78 @@ const { processArrayWithTimezone, addTimezoneInfo, DEFAULT_TIMEZONE } = require(
 // timezone helpers (you must have these implemented)
 const tzUtils = require("../utils/timezone"); // expects toUtc(dateString, tz) and buildUtcFromParts(parts, tz)
 const { generateRecurringClasses } = require("../utils/generateRecurringClasses");
+
+/* -------------------------
+   GET /api/classes/reschedule-requests/stats
+   Admin-only: counts of reschedule requests by requester role within a date range.
+   Backed by Notification metadata (kind=class_reschedule_request).
+   ------------------------- */
+router.get("/reschedule-requests/stats", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  try {
+    const { teacherId, studentId, guardianId, from, to, days } = req.query || {};
+
+    const now = new Date();
+    const parsedTo = to ? new Date(to) : now;
+    const parsedFrom = from
+      ? new Date(from)
+      : (days ? new Date(now.getTime() - Number(days) * 24 * 60 * 60 * 1000) : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
+
+    if (Number.isNaN(parsedFrom.getTime()) || Number.isNaN(parsedTo.getTime())) {
+      return res.status(400).json({ message: "Invalid date range" });
+    }
+
+    if (parsedTo < parsedFrom) {
+      return res.status(400).json({ message: "Invalid date range" });
+    }
+
+    const match = {
+      createdAt: { $gte: parsedFrom, $lte: parsedTo },
+      "metadata.kind": "class_reschedule_request",
+    };
+
+    if (teacherId) match["metadata.teacherId"] = String(teacherId);
+    if (studentId) match["metadata.studentId"] = String(studentId);
+    if (guardianId) match["metadata.guardianId"] = String(guardianId);
+
+    const rows = await Notification.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: {
+            role: "$metadata.requestedByRole",
+            key: { $ifNull: ["$metadata.rescheduleRequestKey", "$_id"] },
+          },
+          any: { $first: 1 },
+        },
+      },
+      {
+        $group: {
+          _id: "$_id.role",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const countsByRole = {};
+    let total = 0;
+    rows.forEach((row) => {
+      const role = row._id || "unknown";
+      const count = Number(row.count) || 0;
+      countsByRole[role] = count;
+      total += count;
+    });
+
+    return res.json({
+      range: { from: parsedFrom.toISOString(), to: parsedTo.toISOString() },
+      filters: { teacherId: teacherId || null, studentId: studentId || null, guardianId: guardianId || null },
+      total,
+      countsByRole,
+    });
+  } catch (err) {
+    console.error("GET /classes/reschedule-requests/stats error:", err);
+    return res.status(500).json({ message: "Failed to fetch reschedule request stats", error: err.message });
+  }
+});
 
 /* -------------------------
    Small helpers
@@ -843,21 +916,46 @@ router.post(
         const User = require("../models/User");
         const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
         const requestorName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || req.user.email;
-        const adminTime = formatTimeInTimezone(classDoc.scheduledDate, DEFAULT_TIMEZONE, "DD MMM YYYY hh:mm A");
-        const message = `${requestorName} submitted a class reschedule request (current time: ${adminTime}).`;
+
+        const rescheduleRequestKey = `${classDoc._id}:${classDoc.pendingReschedule.requestedAt.toISOString()}`;
+
+        const teacherId = String(classDoc.teacher?._id || classDoc.teacher || "");
+        const guardianId = String(classDoc.student?.guardianId?._id || classDoc.student?.guardianId || "");
+        const studentId = String(classDoc.student?.studentId?._id || classDoc.student?.studentId || "");
+        const studentName = classDoc.student?.studentName || "";
+        const teacherName = classDoc.teacher
+          ? `${classDoc.teacher.firstName || ""} ${classDoc.teacher.lastName || ""}`.trim() || classDoc.teacher.email
+          : "Teacher";
+        const guardianName = classDoc.student?.guardianId
+          ? `${classDoc.student.guardianId.firstName || ""} ${classDoc.student.guardianId.lastName || ""}`.trim() || classDoc.student.guardianId.email
+          : "Guardian";
+
+        const adminOriginalLabel = formatTimeInTimezone(classDoc.scheduledDate, DEFAULT_TIMEZONE, "DD MMM YYYY hh:mm A");
+        const adminProposedLabel = formatTimeInTimezone(proposedDate, DEFAULT_TIMEZONE, "DD MMM YYYY hh:mm A");
+        const message = `${teacherName} and ${studentName || guardianName} have a reschedule request pending. From ${adminOriginalLabel} to ${adminProposedLabel}.`;
 
         await notificationService.notifyRole({
           role: "admin",
-          title: "Class reschedule request",
+          title: "Pending reschedule approval",
           message,
-          type: "class",
+          type: "warning",
           related: {
             class: classDoc._id,
             relatedTo: "class",
             relatedId: classDoc._id,
+            actionRequired: true,
+            actionLink: "/dashboard/classes",
             metadata: {
               kind: "class_reschedule_request",
               classId: String(classDoc._id),
+              rescheduleRequestKey,
+              teacherId,
+              guardianId,
+              studentId,
+              studentName,
+              teacherName,
+              guardianName,
+              requestedById: String(req.user._id),
               proposedDate: proposedDate.toISOString(),
               proposedDuration: minutes,
               requestedByRole: req.user.role,
@@ -882,12 +980,20 @@ router.post(
             userId: counterpart,
             title: "Reschedule request",
             message: `${requestorName} requested to move a class from ${originalLabel} to ${proposedLabel}. Please ${decisionLabel} or decline.`,
-            type: "class",
+            type: "warning",
             relatedTo: "class",
             relatedId: classDoc._id,
             metadata: {
               kind: "class_reschedule_request",
               classId: String(classDoc._id),
+              rescheduleRequestKey,
+              teacherId,
+              guardianId,
+              studentId,
+              studentName,
+              teacherName,
+              guardianName,
+              requestedById: String(req.user._id),
               proposedDate: proposedDate.toISOString(),
               proposedDuration: minutes,
               requestedByRole: req.user.role,

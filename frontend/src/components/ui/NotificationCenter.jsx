@@ -3,6 +3,7 @@ import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { Bell, Calendar, X } from 'lucide-react';
 import { formatDateDDMMMYYYY, formatDateTimeDDMMMYYYYhhmmA } from '../../utils/date';
+import RescheduleRequestDetailsModal from '../dashboard/RescheduleRequestDetailsModal';
 
 const NotificationCenter = () => {
   const { user } = useAuth();
@@ -12,6 +13,8 @@ const NotificationCenter = () => {
   const [loading, setLoading] = useState(false);
   const [currentVacation, setCurrentVacation] = useState(null);
   const [rescheduleActionLoading, setRescheduleActionLoading] = useState(null);
+  const [rescheduleDetailsOpen, setRescheduleDetailsOpen] = useState(false);
+  const [rescheduleDetailsNotification, setRescheduleDetailsNotification] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -76,6 +79,20 @@ const NotificationCenter = () => {
       (kind === 'class_reschedule_request') &&
       classId
     );
+  };
+
+  const isRescheduleRequestNotification = (notification) => {
+    const kind = notification?.metadata?.kind;
+    const classId = notification?.metadata?.classId || notification?.relatedId;
+    return Boolean(kind === 'class_reschedule_request' && classId);
+  };
+
+  const openRescheduleDetails = async (notification) => {
+    setRescheduleDetailsNotification(notification);
+    setRescheduleDetailsOpen(true);
+    if (notification && !notification.isRead) {
+      await markAsRead([notification._id]);
+    }
   };
 
   const handleRescheduleDecision = async (notification, decision) => {
@@ -195,9 +212,13 @@ const NotificationCenter = () => {
                       !notification.isRead ? 'bg-blue-50' : ''
                     }`}
                     onClick={() => {
-                      if (!notification.isRead) {
-                        markAsRead([notification._id]);
+                      // For admin reschedule requests: open details instead of a blind mark-read.
+                      if (user?.role === 'admin' && isRescheduleRequestNotification(notification)) {
+                        openRescheduleDetails(notification);
+                        return;
                       }
+
+                      if (!notification.isRead) markAsRead([notification._id]);
                     }}
                   >
                     <div className="flex items-start space-x-3">
@@ -225,22 +246,34 @@ const NotificationCenter = () => {
 
                         {isActionableReschedule(notification) && (
                           <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              disabled={rescheduleActionLoading === notification._id}
-                              onClick={() => handleRescheduleDecision(notification, 'approved')}
-                              className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground disabled:opacity-60"
-                            >
-                              Accept
-                            </button>
-                            <button
-                              type="button"
-                              disabled={rescheduleActionLoading === notification._id}
-                              onClick={() => handleRescheduleDecision(notification, 'rejected')}
-                              className="px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted-foreground hover:text-foreground disabled:opacity-60"
-                            >
-                              Decline
-                            </button>
+                            {user?.role === 'admin' ? (
+                              <button
+                                type="button"
+                                onClick={() => openRescheduleDetails(notification)}
+                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground"
+                              >
+                                Review request
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={rescheduleActionLoading === notification._id}
+                                  onClick={() => handleRescheduleDecision(notification, 'approved')}
+                                  className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground disabled:opacity-60"
+                                >
+                                  Accept
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={rescheduleActionLoading === notification._id}
+                                  onClick={() => handleRescheduleDecision(notification, 'rejected')}
+                                  className="px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted-foreground hover:text-foreground disabled:opacity-60"
+                                >
+                                  Decline
+                                </button>
+                              </>
+                            )}
                           </div>
                         )}
                         <p className="text-xs text-gray-400 mt-2">
@@ -278,6 +311,19 @@ const NotificationCenter = () => {
           onClick={() => setIsOpen(false)}
         />
       )}
+
+      <RescheduleRequestDetailsModal
+        isOpen={rescheduleDetailsOpen}
+        notification={rescheduleDetailsNotification}
+        userTimezone={userTimezone}
+        onClose={() => {
+          setRescheduleDetailsOpen(false);
+          setRescheduleDetailsNotification(null);
+        }}
+        onDecision={async () => {
+          await fetchNotifications();
+        }}
+      />
     </div>
   );
 };

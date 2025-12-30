@@ -393,10 +393,15 @@ const DocumentViewer = ({ item, onClose }) => {
     const controller = new AbortController();
 
     const downloadInlinePdf = async () => {
-      const response = await fetch(inlineUrl, {
-        credentials: 'include',
-        mode: 'cors',
-        signal: controller.signal
+      const resolved = new URL(inlineUrl, window.location.href);
+      const sameOrigin = resolved.origin === window.location.origin;
+
+      const response = await fetch(resolved.toString(), {
+        credentials: sameOrigin ? 'include' : 'omit',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/pdf,*/*'
+        }
       });
       if (!response.ok) {
         throw new Error(`PDF download failed with status ${response.status}`);

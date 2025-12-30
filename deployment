@@ -638,7 +638,7 @@ Run in PowerShell from `C:\waraqa`:
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Update - improvements 1"
+git commit -m "Update - improvements 2"
 git push origin main
 ```
 

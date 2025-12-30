@@ -21,6 +21,7 @@ import FABCluster from "../../components/FABCluster";
 import MeetingReportModal from "../../components/dashboard/MeetingReportModal";
 import RescheduleClassModal from "../../components/dashboard/RescheduleClassModal";
 import RescheduleRequestModal from "../../components/dashboard/RescheduleRequestModal";
+import RescheduleRequestDetailsModal from "../../components/dashboard/RescheduleRequestDetailsModal";
 import DeleteClassModal from "../../components/dashboard/DeleteClassModal";
 import DuplicateClassModal from "../../components/dashboard/DuplicateClassModal";
 import ClassesCalendarView from "../../components/dashboard/ClassesCalendarView";
@@ -178,6 +179,8 @@ const ClassesPage = () => {
   const [rescheduleClass, setRescheduleClass] = useState(null);
   const [showRescheduleRequestModal, setShowRescheduleRequestModal] = useState(false);
   const [requestClass, setRequestClass] = useState(null);
+  const [rescheduleDetailsOpen, setRescheduleDetailsOpen] = useState(false);
+  const [rescheduleDetailsNotification, setRescheduleDetailsNotification] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteClass, setDeleteClass] = useState(null);
   const [deleteCountdownActive, setDeleteCountdownActive] = useState(false);
@@ -701,6 +704,50 @@ const fetchClasses = useCallback(async () => {
 
 // Keep a ref reference to fetchClasses so effects that are created earlier can call it
 fetchClassesRef.current = fetchClasses;
+
+  const openPendingRescheduleDetails = useCallback((classItem) => {
+    if (!isAdminUser) return;
+    if (!classItem?._id) return;
+
+    const pending = classItem?.pendingReschedule;
+    if (!pending || pending.status !== "pending") return;
+
+    const teacherId = String(classItem?.teacher?._id || classItem?.teacher || "");
+    const guardianId = String(classItem?.student?.guardianId?._id || classItem?.student?.guardianId || "");
+    const studentId = String(classItem?.student?.studentId?._id || classItem?.student?.studentId || "");
+
+    const teacherName = classItem?.teacher
+      ? `${classItem.teacher.firstName || ""} ${classItem.teacher.lastName || ""}`.trim() || classItem.teacher.email
+      : "";
+
+    const guardianName = classItem?.student?.guardianId
+      ? `${classItem.student.guardianId.firstName || ""} ${classItem.student.guardianId.lastName || ""}`.trim() || classItem.student.guardianId.email
+      : "";
+
+    const studentName = classItem?.student?.studentName || "";
+
+    setRescheduleDetailsNotification({
+      _id: `class-${classItem._id}-pending-reschedule`,
+      relatedId: classItem._id,
+      actionRequired: true,
+      metadata: {
+        kind: "class_reschedule_request",
+        classId: String(classItem._id),
+        teacherId,
+        guardianId,
+        studentId,
+        teacherName,
+        guardianName,
+        studentName,
+        requestedByRole: pending.requestedByRole,
+        requestedById: pending.requestedBy ? String(pending.requestedBy) : undefined,
+        originalDate: pending.originalDate || classItem.scheduledDate,
+        proposedDate: pending.proposedDate,
+        proposedDuration: pending.proposedDuration,
+      },
+    });
+    setRescheduleDetailsOpen(true);
+  }, [isAdminUser]);
 
   const fetchMeetings = useCallback(async (rangeOverride = {}) => {
     if (!canViewMeetings) return;
@@ -1672,6 +1719,17 @@ Would you like to create another series anyway?`
     : 'Book or confirm a meeting to see it here.';
   const shouldSplitColumns = isAdminUser && viewLayout === 'list' && isLargeScreen;
 
+  const pendingRescheduleCount = useMemo(() => {
+    if (!isAdminUser) return 0;
+    return (filteredClasses || []).reduce((acc, classItem) => {
+      const pending = classItem?.pendingReschedule;
+      if (pending?.status === 'pending' && (pending?.requestedAt || pending?.requestedBy)) {
+        return acc + 1;
+      }
+      return acc;
+    }, 0);
+  }, [filteredClasses, isAdminUser]);
+
   const renderTeacherAvailabilitySummary = () => {
     if (shareMode === "admin" && !selectedTeacherId) {
       return (
@@ -1918,9 +1976,20 @@ Would you like to create another series anyway?`
               {/* Action Buttons (not part of clickable row) */}
               <div className="flex w-full flex-wrap items-center justify-start gap-1 sm:w-auto sm:justify-end sm:gap-2">
                 {hasPendingReschedule && (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openPendingRescheduleDetails(classItem);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ${
+                      isAdminUser ? "hover:bg-amber-100" : "cursor-default"
+                    }`}
+                    title={isAdminUser ? "Review reschedule request" : "Pending approval"}
+                    disabled={!isAdminUser}
+                  >
                     <AlertCircle className="h-3.5 w-3.5" /> Pending approval
-                  </span>
+                  </button>
                 )}
                 {classItem?.meetingLink && (
                   <div className="flex items-center space-x-1">
@@ -2512,6 +2581,13 @@ Would you like to create another series anyway?`
                    <Calendar className="h-4 w-4" />
                    Calendar
                  </button>
+
+                {isAdminUser && (
+                  <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-1.5 text-sm font-semibold text-amber-800">
+                    <AlertCircle className="h-4 w-4" />
+                    Pending reschedules: {pendingRescheduleCount}
+                  </div>
+                )}
              </div>
                <div className="flex w-full max-w-xs flex-col gap-3">
                  <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-inner">
@@ -2913,6 +2989,20 @@ Would you like to create another series anyway?`
         onClose={handleCloseRescheduleRequestModal}
         onSubmitted={handleRescheduleRequestSuccess}
         userTimezone={user?.timezone || DEFAULT_TIMEZONE}
+      />
+
+      <RescheduleRequestDetailsModal
+        isOpen={rescheduleDetailsOpen}
+        notification={rescheduleDetailsNotification}
+        userTimezone={user?.timezone || DEFAULT_TIMEZONE}
+        onClose={() => {
+          setRescheduleDetailsOpen(false);
+          setRescheduleDetailsNotification(null);
+        }}
+        onDecision={async () => {
+          // refresh list so the badge disappears and times update
+          await fetchClassesRef.current?.();
+        }}
       />
 
       <CancelClassModal

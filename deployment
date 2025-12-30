@@ -607,7 +607,27 @@ curl -sS https://dashboard.waraqaweb.com/api/health
 cd /opt/waraqa
 git rev-parse HEAD > /opt/waraqa/.previous_deploy_sha
 git pull --ff-only
-docker compose up -d --build
+
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+
+OLD_SHA="$(cat /opt/waraqa/.previous_deploy_sha)"
+NEW_SHA="$(git rev-parse HEAD)"
+CHANGED="$(git diff --name-only "$OLD_SHA" "$NEW_SHA" || true)"
+
+SERVICES=""
+if printf "%s\n" "$CHANGED" | grep -qE '^(deploy/nginx/|docker-compose\.yml)'; then SERVICES="$SERVICES nginx"; fi
+if printf "%s\n" "$CHANGED" | grep -qE '^(backend/|deploy/backend/)'; then SERVICES="$SERVICES backend"; fi
+if printf "%s\n" "$CHANGED" | grep -qE '^(frontend/|deploy/frontend/)'; then SERVICES="$SERVICES frontend"; fi
+
+if [ -n "${SERVICES// /}" ]; then
+	echo "Rebuilding services:$SERVICES"
+	docker compose up -d --build $SERVICES
+else
+	echo "No build needed; restarting containers"
+	docker compose up -d
+fi
 ```
 
 ## Rollback
@@ -615,7 +635,13 @@ docker compose up -d --build
 ```bash
 cd /opt/waraqa
 git checkout $(cat /opt/waraqa/.previous_deploy_sha)
-docker compose up -d --build
+
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+
+# Rollbacks are usually backend-only, but if unsure you can add `frontend nginx`.
+docker compose up -d --build backend
 ```
 
 ## Logs
@@ -638,7 +664,7 @@ Run in PowerShell from `C:\waraqa`:
 cd C:\waraqa
 git status
 git add -A
-git commit -m "library issue"
+git commit -m "Update - improvements1"
 git push origin main
 ```
 
@@ -647,32 +673,49 @@ git push origin main
 This does NOT delete MongoDB data and does NOT overwrite `.env`.
 
 ```bash
-set -eu
 cd /opt/waraqa
 
-# Save rollback point (the version currently running)
-OLD_SHA="$(git rev-parse HEAD)"
-echo "$OLD_SHA" > /opt/waraqa/.previous_deploy_sha
+# Save rollback point
+git rev-parse HEAD > /opt/waraqa/.previous_deploy_sha
 
 # Update code safely
 git pull --ff-only
 
-# Rebuild ONLY what changed (faster; avoids unnecessary frontend rebuilds)
+# Speed/stability knobs:
+# - Avoid BuildKit provenance/attestation work (can be slow / look stuck)
+# - Rebuild ONLY services affected by the code change (avoids slow Vite rebuilds)
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+
+OLD_SHA="$(cat /opt/waraqa/.previous_deploy_sha)"
 NEW_SHA="$(git rev-parse HEAD)"
-CHANGED="$(git diff --name-only "$OLD_SHA..$NEW_SHA" || true)"
+CHANGED="$(git diff --name-only "$OLD_SHA" "$NEW_SHA" || true)"
 
 SERVICES=""
-printf "%s\n" "$CHANGED" | grep -qE '^deploy/nginx/' && SERVICES="$SERVICES nginx"
-printf "%s\n" "$CHANGED" | grep -qE '^backend/' && SERVICES="$SERVICES backend"
-printf "%s\n" "$CHANGED" | grep -qE '^frontend/' && SERVICES="$SERVICES frontend"
 
-if [ -z "${SERVICES// }" ]; then
-	echo "No build-needed changes detected; restarting stack only"
-	docker compose up -d
-else
+# If nginx templates / compose changed, rebuild nginx
+if printf "%s\n" "$CHANGED" | grep -qE '^(deploy/nginx/|docker-compose\.yml)'; then
+	SERVICES="$SERVICES nginx"
+fi
+
+# If backend code changed, rebuild backend (nginx will pick it up)
+if printf "%s\n" "$CHANGED" | grep -qE '^(backend/|deploy/backend/)'; then
+	SERVICES="$SERVICES backend"
+fi
+
+# If frontend code or its deploy config changed, rebuild frontend
+if printf "%s\n" "$CHANGED" | grep -qE '^(frontend/|deploy/frontend/)'; then
+	SERVICES="$SERVICES frontend"
+fi
+
+# Rebuild/restart (minimal downtime)
+if [ -n "${SERVICES// /}" ]; then
 	echo "Rebuilding services:$SERVICES"
-	# Note: frontend rebuild (vite build) can take several minutes on small droplets.
 	docker compose up -d --build $SERVICES
+else
+	echo "No build needed; restarting containers"
+	docker compose up -d
 fi
 
 # Verify
@@ -710,8 +753,11 @@ Fix / redeploy:
 cd /opt/waraqa
 git pull --ff-only
 
-# Nginx config change? Rebuild nginx. Backend change? Rebuild backend.
-# If you're not sure, rebuilding nginx+backend is usually enough.
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+
+# nginx changes are most likely here; if unsure just rebuild nginx+backend.
 docker compose up -d --build nginx backend
 
 # Confirm 429s are gone (nginx)
@@ -822,7 +868,13 @@ fail2ban-client status sshd 2>/dev/null || true
 ```bash
 cd /opt/waraqa
 git checkout $(cat /opt/waraqa/.previous_deploy_sha)
-docker compose up -d --build
+
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+
+# Rollbacks are usually backend-only, but if unsure you can add `frontend nginx`.
+docker compose up -d --build backend
 ```
 
 ## Uptime rules (avoid downtime)

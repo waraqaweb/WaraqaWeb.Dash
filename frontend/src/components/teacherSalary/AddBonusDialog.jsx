@@ -80,16 +80,24 @@ const AddBonusDialog = ({ invoice, onClose, onSuccess }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Validate amount
-    const amount = parseFloat(formData.amountUSD);
-    if (isNaN(amount) || amount <= 0) {
-      setError('Please enter a valid bonus amount');
-      return;
-    }
-
     if (!formData.source.trim()) {
       setError('Please provide a source for the bonus');
       return;
+    }
+
+    // Validate amount based on source
+    const amount = parseFloat(formData.amountUSD);
+    const gross = parseFloat(formData.grossAmountUSD);
+    if (formData.source === 'guardian') {
+      if (isNaN(gross) || gross <= 0) {
+        setError('Please enter a valid gross amount sent by the guardian');
+        return;
+      }
+    } else {
+      if (isNaN(amount) || amount <= 0) {
+        setError('Please enter a valid bonus amount');
+        return;
+      }
     }
 
     // Validate guardian selection when source is guardian
@@ -109,13 +117,15 @@ const AddBonusDialog = ({ invoice, onClose, onSuccess }) => {
 
       const payload = {
         source: formData.source.trim(),
-        amountUSD: amount,
         reason: formData.reason.trim()
       };
 
       // Include guardianId if source is guardian
       if (formData.source === 'guardian' && formData.guardianId) {
         payload.guardianId = formData.guardianId;
+        payload.grossAmountUSD = gross;
+      } else {
+        payload.amountUSD = amount;
       }
 
       await api.post(`/teacher-salary/admin/invoices/${invoice._id}/bonuses`, payload);

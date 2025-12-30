@@ -8,6 +8,7 @@ const Student = require('../models/Student');
 const { requireAdmin, requireAuth } = require('../middleware/auth');
 const vacationService = require('../services/vacationService');
 const notificationService = require('../services/notificationService');
+const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 
 function computeLifecycleStatus(vacationDoc) {
   const now = new Date();
@@ -103,25 +104,62 @@ router.post('/', requireAuth, async (req, res) => {
 
     await vacation.save();
 
-    // Notify admins of new vacation request
-    await notificationService.notifyRole({
-      role: 'admin',
-      title: 'New Vacation Request',
-      message: `A new vacation request has been submitted by user ${req.user.fullName || req.user.email}.`,
-      type: 'request',
-      related: { relatedTo: 'vacation', relatedId: vacation._id }
-    });
+    // Notify admins of new vacation request (per-admin timezone)
+    const [vacationUser, admins] = await Promise.all([
+      User.findById(user).select('fullName email'),
+      User.find({ role: 'admin', isActive: true }).select('_id timezone')
+    ]);
+
+    const requesterName = req.user?.fullName || req.user?.email || 'A user';
+    const vacationUserName = vacationUser?.fullName || vacationUser?.email || 'the user';
+
+    await Promise.allSettled(
+      (admins || []).map((admin) => {
+        const tz = admin?.timezone || DEFAULT_TIMEZONE;
+        const startLabel = formatTimeInTimezone(start, tz, 'DD MMM YYYY hh:mm A');
+        const endLabel = formatTimeInTimezone(end, tz, 'DD MMM YYYY hh:mm A');
+        return notificationService.createNotification({
+          userId: admin._id,
+          title: 'Vacation request submitted',
+          message: `${requesterName} submitted a vacation request for ${vacationUserName} (${startLabel} → ${endLabel}).`,
+          type: 'request',
+          relatedTo: 'vacation',
+          relatedId: vacation._id,
+          metadata: {
+            kind: 'vacation_request_submitted',
+            vacationId: String(vacation._id),
+            requesterId: String(req.user?._id || ''),
+            vacationUserId: String(user),
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
+            recipientTimezone: tz
+          }
+        });
+      })
+    );
 
     // Notify the user of submission
-    await notificationService.createNotification({
-      userId: req.user._id,
-      title: 'Vacation Request Submitted',
-      message: 'Your vacation request has been submitted and is awaiting approval.',
-      type: 'request',
-      relatedTo: 'vacation',
-      relatedId: vacation._id,
-      actionRequired: false
-    });
+    {
+      const requesterTz = req.user?.timezone || DEFAULT_TIMEZONE;
+      const startLabel = formatTimeInTimezone(start, requesterTz, 'DD MMM YYYY hh:mm A');
+      const endLabel = formatTimeInTimezone(end, requesterTz, 'DD MMM YYYY hh:mm A');
+      await notificationService.createNotification({
+        userId: req.user._id,
+        title: 'Vacation request submitted',
+        message: `Your vacation request (${startLabel} → ${endLabel}) was submitted and is awaiting approval.`,
+        type: 'request',
+        relatedTo: 'vacation',
+        relatedId: vacation._id,
+        actionRequired: false,
+        metadata: {
+          kind: 'vacation_request_submitted',
+          vacationId: String(vacation._id),
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+          recipientTimezone: requesterTz
+        }
+      });
+    }
 
     // Send response
     res.status(201).json({ 
@@ -308,24 +346,32 @@ router.post('/:vacationId/approval', requireAuth, requireAdmin, async (req, res)
         await vacation.save();
 
         if (vacation.role === 'teacher') {
-          const startDisplay = new Date(vacation.startDate).toLocaleString('en-US', {
-            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-          });
+          const tz = vacation.user?.timezone || DEFAULT_TIMEZONE;
+          const startDisplay = formatTimeInTimezone(vacation.startDate, tz, 'DD MMM YYYY hh:mm A');
           const endTarget = impactSummary?.availabilityWindow?.end || vacation.actualEndDate || vacation.endDate;
-          const endDisplay = new Date(endTarget).toLocaleString('en-US', {
-            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-          });
+          const endDisplay = formatTimeInTimezone(endTarget, tz, 'DD MMM YYYY hh:mm A');
           const classSummary = impactSummary?.processedClasses
             ? `${impactSummary.processedClasses} class${impactSummary.processedClasses === 1 ? '' : 'es'} impacted (${impactSummary.cancelled} cancelled, ${impactSummary.onHold} on hold, ${impactSummary.substituted} reassigned).`
             : 'No scheduled classes were found during this period.';
+
+          const now = new Date();
+          const isActiveNow = vacation.startDate <= now && new Date(endTarget) >= now;
+
           await notificationService.createNotification({
             userId: vacation.user._id || vacation.user,
-            title: 'Vacation window scheduled',
-            message: `Your vacation from ${startDisplay} to ${endDisplay} is now active.${impactSummary?.processedClasses ? ` ${classSummary}` : ''}`,
+            title: isActiveNow ? 'Vacation is now active' : 'Vacation scheduled',
+            message: `${isActiveNow ? 'Your vacation is now active' : 'Your vacation is scheduled'} (${startDisplay} → ${endDisplay}).${impactSummary?.processedClasses ? ` ${classSummary}` : ''}`,
             type: 'info',
             relatedTo: 'vacation',
             relatedId: vacation._id,
-            actionRequired: false
+            actionRequired: false,
+            metadata: {
+              kind: 'vacation_status',
+              vacationId: String(vacation._id),
+              startDate: new Date(vacation.startDate).toISOString(),
+              endDate: new Date(endTarget).toISOString(),
+              recipientTimezone: tz
+            }
           });
         }
 
@@ -334,8 +380,8 @@ router.post('/:vacationId/approval', requireAuth, requireAdmin, async (req, res)
         // Create notification about the error
         await notificationService.createNotification({
           userId: vacation.user,
-          title: 'Vacation Update Issue',
-          message: 'Your vacation was approved, but there were some issues updating the class schedule. An administrator will review this.',
+          title: 'Vacation approved (schedule update pending)',
+          message: 'Your vacation request was approved, but we couldn’t fully update the class schedule. An administrator will review this.',
           type: 'warning',
           relatedTo: 'vacation',
           relatedId: vacation._id,
@@ -397,10 +443,12 @@ router.post('/:vacationId/end', requireAuth, async (req, res) => {
     });
 
     if (vacation.role === 'teacher') {
+      const tz = vacation.user?.timezone || DEFAULT_TIMEZONE;
+      const effectiveLabel = endDate ? formatTimeInTimezone(endDate, tz, 'DD MMM YYYY hh:mm A') : null;
       await notificationService.createNotification({
         userId: vacation.user._id || vacation.user,
-        title: 'Vacation Ended',
-        message: `Your vacation has been marked as ended ${endDate ? `effective ${new Date(endDate).toDateString()}` : 'effective immediately'}.`,
+        title: 'Vacation ended',
+        message: `Your vacation was ended early${effectiveLabel ? ` (effective ${effectiveLabel})` : ' (effective immediately)'}.`,
         type: 'success',
         relatedTo: 'vacation',
         relatedId: vacation._id,

@@ -90,7 +90,7 @@ async function submitShareRequest({
   await notificationService.notifyRole({
     role: 'admin',
     title: 'Library access request',
-    message: `${permission.grantedToName || normalizedEmail} requested ${scopeType} access`,
+    message: `${permission.grantedToName || normalizedEmail} requested access to the library (${scopeType}).`,
     type: 'library',
     related: { sharePermission: permission._id }
   });
@@ -146,8 +146,8 @@ async function decideRequest(permissionId, {
   if (status === 'approved' && permission.grantedToUser) {
     await notificationService.createNotification({
       userId: permission.grantedToUser,
-      title: 'Library access approved',
-      message: 'You can now access the requested library resources.',
+      title: 'Library access granted',
+      message: 'Your library access request was approved. You can now open the shared resources.',
       type: 'library',
       relatedTo: 'library_share',
       relatedId: permission._id
@@ -157,8 +157,8 @@ async function decideRequest(permissionId, {
   if (status === 'denied' && permission.requester) {
     await notificationService.createNotification({
       userId: permission.requester,
-      title: 'Library access request denied',
-      message: note || 'Your access request was denied by an administrator.',
+      title: 'Library access declined',
+      message: note ? `Your library access request was declined. Note: ${note}` : 'Your library access request was declined.',
       type: 'library',
       relatedTo: 'library_share',
       relatedId: permission._id

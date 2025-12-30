@@ -342,7 +342,7 @@ export default function ProfilePage() {
             <div className="fixed inset-0 bg-black bg-opacity-40" onClick={() => dismissOnboarding()} />
             <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
               <h3 className="text-lg font-semibold mb-2">Profile complete</h3>
-              <p className="text-sm text-gray-700 mb-4">Great job! Your profile is now complete and ready to use. You'll get the best experience with a completed profile.</p>
+              <p className="text-sm text-gray-700 mb-4">Your profile is complete.</p>
               <div className="flex justify-end gap-2">
                 <button onClick={() => { dismissOnboarding(); sendOnboardingEvent('completed_modal_ok'); }} className="px-4 py-2 bg-primary text-white rounded">Done</button>
               </div>

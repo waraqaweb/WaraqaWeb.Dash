@@ -19,6 +19,7 @@ import {
 } from "../../services/entitySearch";
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const CLASS_TYPE_OPTIONS = ['One on one', 'Group classes', 'Public lecture'];
 
 export default function EditClassModal({
   isOpen,
@@ -164,13 +165,20 @@ export default function EditClassModal({
 
   const timePreview = getTimePreview();
 
+  const classType = editClass?.title || 'One on one';
+  const modalHeading = classType === 'One on one' ? 'One on one class' : classType;
+
+  const classTypeOptions = (editClass?.title && !CLASS_TYPE_OPTIONS.includes(editClass.title))
+    ? [...CLASS_TYPE_OPTIONS, editClass.title]
+    : CLASS_TYPE_OPTIONS;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           {/* Header */}
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-gray-900">Edit Class</h2>
+            <h2 className="text-xl font-semibold text-gray-900">Edit {modalHeading}</h2>
             <button onClick={handleClose} className="text-gray-400 hover:text-gray-600">
               <XCircle className="h-6 w-6" />
             </button>
@@ -424,15 +432,17 @@ export default function EditClassModal({
             {/* Basic Info */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
-                <input
-                  type="text"
+                <label className="block text-sm font-medium text-gray-700 mb-1">Class Type *</label>
+                <select
                   required
-                  value={editClass.title || ""}
+                  value={editClass.title || 'One on one'}
                   onChange={(e) => setEditClass((prev) => ({ ...prev, title: e.target.value }))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                  placeholder="Enter class title"
-                />
+                >
+                  {classTypeOptions.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
               </div>
 
               <div>

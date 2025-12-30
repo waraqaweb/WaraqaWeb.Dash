@@ -816,7 +816,7 @@ const DashboardHome = () => {
           {greetingSubtitle ? (
             <p className="text-sm opacity-85">{greetingSubtitle}</p>
           ) : (
-            <p className="text-sm opacity-85">{lastLoginGlobal ? `Last visit: ${lastLoginGlobal ? formatClassDate(lastLoginGlobal) : '—'}` : `This looks like your first time here — we're glad you joined us.`}</p>
+            <p className="text-sm opacity-85">{lastLoginGlobal ? `Last visit: ${lastLoginGlobal ? formatClassDate(lastLoginGlobal) : '—'}` : `Welcome—this looks like your first visit.`}</p>
           )}
         </div>
 

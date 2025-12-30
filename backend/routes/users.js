@@ -643,25 +643,25 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
       // If the requestor updated their own profile, notify admins about changed fields
       if (actorId === String(updatedUser._id)) {
         if (changedFields.length) {
-          const msg = `${who} updated their profile. Changed fields: ${changedFields.join(', ')}`;
+          const msg = `${who} updated their profile.${changedFields.length ? ` Updated: ${changedFields.join(', ')}.` : ''}`;
           // Notify admins via notificationService
           const notificationService = require('../services/notificationService');
-          await notificationService.notifyRole({ role: 'admin', title: 'User updated profile', message: msg, type: 'request', related: { user: updatedUser._id }, actionRequired: false, actionLink: `/admin/users/${updatedUser._id}` });
+          await notificationService.notifyRole({ role: 'admin', title: 'Profile updated', message: msg, type: 'request', related: { user: updatedUser._id }, actionRequired: false, actionLink: `/admin/users/${updatedUser._id}` });
         }
         // If bank details specifically updated, also notify admins (keeps prior behavior)
         if (notifyAdminForBank) {
           const instapayFromUser = (updatedUser.teacherInfo && updatedUser.teacherInfo.instapayName) || (updatedUser.guardianInfo && updatedUser.guardianInfo.instapayName);
           const messageBase = instapayFromUser
-            ? `${who} updated their bank details (Instapay: ${instapayFromUser}). Please verify and approve.`
-            : `${who} updated their bank details. Please verify and approve.`;
-          await Notification.create({ role: 'admin', title: 'Bank details updated', message: messageBase, type: 'request', actionRequired: true, actionLink: `/admin/users/${updatedUser._id}` });
+            ? `${who} updated their payment details (Instapay: ${instapayFromUser}). Please review.`
+            : `${who} updated their payment details. Please review.`;
+          await Notification.create({ role: 'admin', title: 'Payment details updated', message: messageBase, type: 'request', actionRequired: true, actionLink: `/admin/users/${updatedUser._id}` });
         }
       } else if (actorRole === 'admin') {
         // Admin edited a user -> notify that user which fields were changed
         if (changedFields.length) {
-          const msg = `An administrator updated your profile. Changed fields: ${changedFields.join(', ')}`;
+          const msg = `Your profile was updated by an administrator.${changedFields.length ? ` Updated: ${changedFields.join(', ')}.` : ''}`;
           const notificationService = require('../services/notificationService');
-          await notificationService.createNotification({ userId: updatedUser._id, title: 'Your profile was updated', message: msg, type: 'info', actionRequired: false, actionLink: '/profile' });
+          await notificationService.createNotification({ userId: updatedUser._id, title: 'Profile updated', message: msg, type: 'info', actionRequired: false, actionLink: '/profile' });
         }
       }
     } catch (nerr) {

@@ -55,13 +55,27 @@ router.post('/', authenticateToken, async (req, res) => {
         feedback,
         toUser: teacherId
       }).catch(console.error);
-      // Optionally, notify admin(s) as well
-      notificationService.notifyRole({
-        role: 'admin',
-        title: 'New Feedback Submitted',
-        message: `Feedback submitted for teacher ${teacher.firstName} ${teacher.lastName}.`,
-        type: 'feedback',
-        related: { relatedFeedback: feedback._id }
+      // Notify admin(s) as well (per-admin)
+      User.find({ role: 'admin', isActive: true }).select('_id').then((admins) => {
+        const teacherName = `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.email || 'the teacher';
+        const feedbackLabel = type === 'first_class' ? 'first class' : 'monthly';
+
+        return Promise.allSettled(
+          (admins || []).map((admin) => notificationService.createNotification({
+            userId: admin._id,
+            title: 'New feedback submitted',
+            message: `New ${feedbackLabel} feedback was submitted for ${teacherName}.`,
+            type: 'feedback',
+            relatedTo: 'feedback',
+            relatedId: feedback._id,
+            metadata: {
+              kind: 'feedback_submitted',
+              feedbackId: String(feedback._id),
+              teacherId: String(teacherId),
+              feedbackType: type
+            }
+          }))
+        );
       }).catch(console.error);
     } catch (e) {
       console.warn('Notification trigger failed', e.message);

@@ -332,7 +332,7 @@ const FeedbacksAdmin = () => {
               <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">Feedback hub</p>
               <h1 className="text-3xl font-semibold text-slate-900">Guardian insights</h1>
               <p className="text-sm text-slate-500">
-                Track every submission, acknowledge what was shared, and stay ahead on follow-ups.
+                Review submissions and manage follow-ups.
               </p>
             </div>
             <div className="flex flex-wrap gap-4">

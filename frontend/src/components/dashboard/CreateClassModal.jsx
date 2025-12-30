@@ -22,7 +22,7 @@ export default function CreateClassModal({
   isOpen,
   onClose,
   newClass = {
-    title: '',
+    title: 'One on one',
     subject: '',
     description: '',
     teacher: '',
@@ -59,7 +59,7 @@ export default function CreateClassModal({
   
   // Local state for when component is used standalone (e.g., from route)
   const [localNewClass, setLocalNewClass] = useState({
-    title: '',
+    title: 'One on one',
     subject: '',
     description: '',
     teacher: '',
@@ -84,6 +84,13 @@ export default function CreateClassModal({
   const isStandalone = typeof setNewClass !== 'function';
   const currentNewClass = isStandalone ? localNewClass : newClass;
   const currentSetNewClass = isStandalone ? setLocalNewClass : setNewClass;
+
+  // Ensure we always have a default class type
+  useEffect(() => {
+    if (!isOpen) return;
+    if (currentNewClass?.title) return;
+    currentSetNewClass((prev) => ({ ...prev, title: 'One on one' }));
+  }, [isOpen, currentNewClass?.title, currentSetNewClass]);
   
   // Filter students based on selected guardian - only show students of selected guardian
   const selectedGuardianId = currentNewClass.student?.guardianId
@@ -374,13 +381,16 @@ export default function CreateClassModal({
     navigate(-1);
   };
 
+  const classType = currentNewClass?.title || 'One on one';
+  const modalHeading = classType === 'One on one' ? 'One on one class' : classType;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           {/* Header */}
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-gray-900">Create New Class</h2>
+            <h2 className="text-xl font-semibold text-gray-900">Create {modalHeading}</h2>
             <button
               onClick={() => {
                 handleClose();
@@ -626,18 +636,18 @@ export default function CreateClassModal({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Title *
+                  Class Type *
                 </label>
-                <input
-                  type="text"
+                <select
                   required
-                  value={currentNewClass.title}
-                  onChange={(e) =>
-                    currentSetNewClass((prev) => ({ ...prev, title: e.target.value }))
-                  }
+                  value={currentNewClass.title || 'One on one'}
+                  onChange={(e) => currentSetNewClass((prev) => ({ ...prev, title: e.target.value }))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                  placeholder="Enter class title"
-                />
+                >
+                  <option value="One on one">One on one</option>
+                  <option value="Group classes">Group classes</option>
+                  <option value="Public lecture">Public lecture</option>
+                </select>
               </div>
 
               <div>

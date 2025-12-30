@@ -2,6 +2,7 @@ const SystemVacation = require('../models/SystemVacation');
 const Class = require('../models/Class');
 const User = require('../models/User');
 const notificationService = require('./notificationService');
+const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 
 /**
  * Apply system vacation effects - put affected classes on hold
@@ -121,14 +122,27 @@ async function sendSystemVacationNotifications(systemVacation) {
     });
 
     for (const user of users) {
+      const tz = user?.timezone || DEFAULT_TIMEZONE;
+      const startLabel = formatTimeInTimezone(systemVacation.startDate, tz, 'DD MMM YYYY hh:mm A');
+      const endLabel = formatTimeInTimezone(systemVacation.endDate, tz, 'DD MMM YYYY hh:mm A');
+      const baseMessage = `System vacation “${systemVacation.name}” is active (${startLabel} → ${endLabel}).`;
+      const extra = systemVacation.message ? ` ${systemVacation.message}` : '';
+
       await notificationService.createNotification({
         userId: user._id,
-        title: `System Vacation: ${systemVacation.name}`,
-        message: systemVacation.message,
+        title: `System vacation: ${systemVacation.name}`,
+        message: `${baseMessage}${extra}`.trim(),
         type: 'info',
         relatedTo: 'vacation',
         relatedId: systemVacation._id,
-        actionRequired: false
+        actionRequired: false,
+        metadata: {
+          kind: 'system_vacation',
+          vacationId: String(systemVacation._id),
+          startDate: systemVacation.startDate?.toISOString?.() || systemVacation.startDate,
+          endDate: systemVacation.endDate?.toISOString?.() || systemVacation.endDate,
+          recipientTimezone: tz
+        }
       });
     }
 

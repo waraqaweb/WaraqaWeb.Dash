@@ -170,8 +170,8 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
             <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
               <h3 className="text-lg font-semibold mb-4">Grant Extension</h3>
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-                <p className="font-medium mb-1">📝 What this does:</p>
-                <p>This extends the submission window, allowing the teacher to submit the report for the specified number of additional hours. The report will NOT be automatically submitted.</p>
+                <p className="font-medium mb-1">What this does</p>
+                <p>Reopens the submission window for the selected hours. The teacher still needs to submit the report.</p>
               </div>
               <div className="space-y-4">
                 <div>
@@ -295,8 +295,8 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
             <h3 className="text-lg font-semibold mb-4">Grant Extension</h3>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-              <p className="font-medium mb-1">📝 What this does:</p>
-              <p>This extends the submission window, allowing the teacher to submit the report for the specified number of additional hours. The report will NOT be automatically submitted.</p>
+              <p className="font-medium mb-1">What this does</p>
+              <p>Reopens the submission window for the selected hours. The teacher still needs to submit the report.</p>
             </div>
             <div className="space-y-4">
               <div>

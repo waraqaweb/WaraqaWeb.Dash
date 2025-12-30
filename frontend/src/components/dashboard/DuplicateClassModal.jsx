@@ -7,6 +7,8 @@ import LoadingSpinner from "../ui/LoadingSpinner";
 import { subjects } from "../../constants/reportTopicsConfig";
 import { formatDateDDMMMYYYY } from "../../utils/date";
 
+const CLASS_TYPE_OPTIONS = ["One on one", "Group classes", "Public lecture"];
+
 const toLocalInputValue = (dateString) => {
   if (!dateString) return "";
   const date = new Date(dateString);
@@ -50,7 +52,7 @@ const DuplicateClassModal = ({
   onDuplicated,
 }) => {
   const [form, setForm] = useState({
-    title: "",
+    title: "One on one",
     subject: "",
     description: "",
     teacher: "",
@@ -69,7 +71,7 @@ const DuplicateClassModal = ({
   useEffect(() => {
     if (!isOpen) {
       setForm({
-        title: "",
+        title: "One on one",
         subject: "",
         description: "",
         teacher: "",
@@ -96,7 +98,7 @@ const DuplicateClassModal = ({
     const studentId = resolveId(sourceClass?.student?.studentId);
 
     setForm({
-      title: sourceClass.title || "",
+      title: sourceClass.title || "One on one",
       subject: sourceClass.subject || "",
       description: sourceClass.description || "",
       teacher: teacherId || "",
@@ -115,6 +117,12 @@ const DuplicateClassModal = ({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, sourceClass]);
+
+  const classType = form.title || "One on one";
+  const modalHeading = classType === "One on one" ? "One on one class" : classType;
+  const classTypeOptions = form.title && !CLASS_TYPE_OPTIONS.includes(form.title)
+    ? [...CLASS_TYPE_OPTIONS, form.title]
+    : CLASS_TYPE_OPTIONS;
 
   const fetchStudentsForGuardian = async (guardianId, initialStudentId = "") => {
     if (!guardianId) {
@@ -282,7 +290,7 @@ const DuplicateClassModal = ({
       <div className="relative w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Duplicate Class</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Duplicate {modalHeading}</h2>
             {sourceClass?.student?.studentName && (
               <p className="text-sm text-gray-500">
                 {sourceClass.student.studentName}
@@ -336,14 +344,17 @@ const DuplicateClassModal = ({
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Title *</label>
-                <input
-                  type="text"
-                  value={form.title}
+                <label className="mb-1 block text-sm font-medium text-gray-700">Class Type *</label>
+                <select
+                  value={form.title || "One on one"}
                   onChange={handleFieldChange("title")}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                   required
-                />
+                >
+                  {classTypeOptions.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Subject *</label>

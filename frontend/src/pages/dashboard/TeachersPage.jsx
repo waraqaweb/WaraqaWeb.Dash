@@ -319,8 +319,8 @@
 								{sortedTeachers.map((teacher) => (
 									<div key={teacher._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
 										<div className="p-3">
-											<div className="flex items-center justify-between">
-												<div className="flex items-center space-x-4">
+											<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+												<div className="flex items-center gap-4">
 													<div className="h-12 w-12 bg-primary rounded-full flex items-center justify-center">
 														{teacher.profilePicture ? (
 															<img src={teacher.profilePicture} alt="Profile" className="h-full w-full rounded-full object-cover" />
@@ -335,7 +335,7 @@
 														<h3 className="text-lg font-semibold text-foreground">
 															{teacher.firstName} {teacher.lastName}
 														</h3>
-														<div className="flex items-center space-x-4 text-sm text-muted-foreground">
+														<div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
 															<span className={`px-2 py-1 rounded-full text-xs ${
 																teacher.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
 															}`}>
@@ -353,7 +353,7 @@
 													</div>
 												</div>
 
-												<div className="flex items-center space-x-2">
+													<div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
 													{teacher.phone && (
 														<button
 															onClick={() => openWhatsApp(teacher.phone)}

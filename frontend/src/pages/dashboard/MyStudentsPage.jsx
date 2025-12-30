@@ -813,8 +813,8 @@ const fetchGuardiansList = async () => {
             <div key={student._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
               {/* Student Header */}
               <div className="p-3">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center space-x-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-4">
                     <div className="flex-shrink-0">
                       {(() => {
                         const pic = getStudentPicture(student);
@@ -845,7 +845,7 @@ const fetchGuardiansList = async () => {
                         )}
                       </h3>
                       
-                      <div className="flex items-center space-x-4 text-sm text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
                       {/* Show guardian name under student for admin and teacher users */}
                       {(isAdmin && isAdmin()) || (isTeacher && isTeacher()) ? (
                         (() => {
@@ -860,7 +860,7 @@ const fetchGuardiansList = async () => {
                             gName = fallbackGuardianName || (student.studentInfo?.guardian ? `${student.studentInfo.guardian.firstName || ''} ${student.studentInfo.guardian.lastName || ''}`.trim() : null);
                           }
                           return gName ? (
-                            <div className="text-sm text-muted-foreground mt-1">
+                            <div className="text-sm text-muted-foreground">
                               <Users className="inline h-3 w-3 mr-1 align-middle" />
                               {gName}
                             </div>
@@ -878,7 +878,7 @@ const fetchGuardiansList = async () => {
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
                     {/* WhatsApp Button */}
                     {student.whatsapp && (
                       <a
@@ -905,7 +905,7 @@ const fetchGuardiansList = async () => {
 
                     {/* Admin Actions (activate/login) */}
                     {isAdmin && isAdmin() && (
-                      <div className="flex items-center space-x-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         <button
                           onClick={() => handleToggleActive(student, !(student.isActive !== false))}
                           className={`icon-button transition-colors ${student.isActive !== false ? 'text-red-600' : 'text-green-600'}`}

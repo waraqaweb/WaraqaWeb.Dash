@@ -882,8 +882,8 @@ class InvoiceService {
           const payLink = `${paypalBase}${encodeURIComponent(invoice.paypalInvoiceNumber || invoice.invoiceNumber || invoice._id)}`;
           notificationService.createNotification({
             userId: invoice.guardian,
-            title: 'New invoice ready to pay',
-            message: 'A new invoice has been created for your account. Click to pay.',
+            title: 'Invoice ready to pay',
+            message: 'A new invoice is ready. Open it to review and pay securely via PayPal.',
             type: 'invoice',
             relatedTo: 'invoice',
             relatedId: invoice._id,
@@ -2929,8 +2929,8 @@ class InvoiceService {
               const payLink = `${paypalBase}${encodeURIComponent(ref)}`;
               await notificationService.createNotification({
                 userId: guardianUserId,
-                title: 'New invoice ready to pay',
-                message: 'A new invoice has been created for your account. Click to pay.',
+                title: 'Invoice ready to pay',
+                message: 'A new invoice is ready. Open it to review and pay securely via PayPal.',
                 type: 'invoice',
                 relatedTo: 'invoice',
                 relatedId: created?._id,
@@ -3369,8 +3369,8 @@ class InvoiceService {
             if (total < 0) {
               const notificationService = require('../services/notificationService');
               await notificationService.notifySystem({
-                title: 'Guardian balance below zero after refund',
-                message: `Guardian ${guardianDoc?.firstName || guardianId} has negative hours after refund. Consider manual correction.`,
+                title: 'Guardian balance below zero',
+                message: `Guardian ${guardianDoc?.firstName || guardianId} now has negative hours after a refund. Please review.`,
                 type: 'invoice',
                 role: 'admin',
                 related: { invoice: invoice._id, guardian: guardianId }
@@ -3381,8 +3381,8 @@ class InvoiceService {
               const notificationService = require('../services/notificationService');
               await notificationService.createNotification({
                 userId: guardianId,
-                title: 'Invoice adjusted (refund applied)',
-                message: 'A refund/adjustment has been applied to your invoice. Your remaining hours have been updated.',
+                title: 'Invoice adjusted',
+                message: 'A refund or adjustment was applied to your invoice. Your remaining hours have been updated.',
                 type: 'invoice',
                 relatedTo: 'invoice',
                 relatedId: invoice._id
@@ -3412,16 +3412,16 @@ class InvoiceService {
           if (guardianId) {
             await notificationService.createNotification({
               userId: guardianId,
-              title: 'Invoice updated with additional hours',
-              message: 'Additional hours/lessons have been added to your invoice.',
+              title: 'Invoice updated',
+              message: 'Additional hours or lessons were added to your invoice.',
               type: 'invoice',
               relatedTo: 'invoice',
               relatedId: invoice._id
             });
           }
           await notificationService.notifySystem({
-            title: 'Invoice increased after payment',
-            message: `Invoice ${invoice.invoiceNumber || invoice._id} was increased after payment`,
+            title: 'Invoice updated after payment',
+            message: `Invoice ${invoice.invoiceNumber || invoice._id} was updated after payment.`,
             type: 'invoice',
             role: 'admin',
             related: { invoice: invoice._id }
@@ -4868,8 +4868,8 @@ class InvoiceService {
 
             await notificationService.createNotification({
               userId: invoice.guardian,
-              title: 'Invoice sent — pay with PayPal',
-              message: 'A new invoice has been sent. Click to pay via PayPal.',
+              title: 'Invoice sent',
+              message: 'Your invoice has been sent. Open it to review and pay via PayPal.',
               type: 'invoice',
               relatedTo: 'invoice',
               relatedId: invoice._id,

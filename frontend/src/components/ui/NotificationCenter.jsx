@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { Bell, Calendar, X } from 'lucide-react';
-import { formatDateDDMMMYYYY } from '../../utils/date';
+import { formatDateDDMMMYYYY, formatDateTimeDDMMMYYYYhhmmA } from '../../utils/date';
 
 const NotificationCenter = () => {
   const { user } = useAuth();
@@ -11,6 +11,7 @@ const NotificationCenter = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [currentVacation, setCurrentVacation] = useState(null);
+  const [rescheduleActionLoading, setRescheduleActionLoading] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -61,17 +62,42 @@ const NotificationCenter = () => {
     }
   };
 
-  const formatRelativeTime = (dateString) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffInSeconds = Math.floor((now - date) / 1000);
-    
-    if (diffInSeconds < 60) return 'Just now';
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
-    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
-    // Fallback to standardized date format
-    return formatDateDDMMMYYYY(date);
+  const userTimezone = user?.timezone || user?.guardianInfo?.timezone || user?.teacherInfo?.timezone;
+
+  const formatNotificationTimestamp = (dateString) => {
+    return formatDateTimeDDMMMYYYYhhmmA(dateString, { timeZone: userTimezone });
+  };
+
+  const isActionableReschedule = (notification) => {
+    const kind = notification?.metadata?.kind;
+    const classId = notification?.metadata?.classId || notification?.relatedId;
+    return Boolean(
+      notification?.actionRequired &&
+      (kind === 'class_reschedule_request') &&
+      classId
+    );
+  };
+
+  const handleRescheduleDecision = async (notification, decision) => {
+    const classId = notification?.metadata?.classId || notification?.relatedId;
+    if (!classId) return;
+
+    try {
+      setRescheduleActionLoading(notification._id);
+      await api.post(`/classes/${classId}/reschedule-request/decision`, { decision });
+
+      // Mark this notification as read and refresh list.
+      if (!notification.isRead) {
+        await markAsRead([notification._id]);
+      } else {
+        await fetchNotifications();
+      }
+    } catch (err) {
+      console.error('Reschedule decision failed:', err);
+      alert(err.response?.data?.message || 'Failed to update reschedule request');
+    } finally {
+      setRescheduleActionLoading(null);
+    }
   };
 
   const getNotificationIcon = (type, relatedTo) => {
@@ -144,7 +170,7 @@ const NotificationCenter = () => {
                     {currentVacation.message}
                   </p>
                   <p className="text-xs text-green-600 mt-2">
-                    Until: {formatDateDDMMMYYYY(currentVacation.endDate)}
+                    Until: {formatDateTimeDDMMMYYYYhhmmA(currentVacation.endDate, { timeZone: userTimezone })}
                   </p>
                 </div>
               </div>
@@ -190,8 +216,35 @@ const NotificationCenter = () => {
                         <p className="text-sm text-gray-600 mt-1 line-clamp-2">
                           {notification.message}
                         </p>
+
+                        {notification?.metadata?.kind === 'class_reschedule_request' && notification?.metadata?.proposedDate && (
+                          <p className="text-xs text-gray-500 mt-2">
+                            Proposed: {formatDateTimeDDMMMYYYYhhmmA(notification.metadata.proposedDate, { timeZone: userTimezone })}
+                          </p>
+                        )}
+
+                        {isActionableReschedule(notification) && (
+                          <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              disabled={rescheduleActionLoading === notification._id}
+                              onClick={() => handleRescheduleDecision(notification, 'approved')}
+                              className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground disabled:opacity-60"
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              disabled={rescheduleActionLoading === notification._id}
+                              onClick={() => handleRescheduleDecision(notification, 'rejected')}
+                              className="px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted-foreground hover:text-foreground disabled:opacity-60"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        )}
                         <p className="text-xs text-gray-400 mt-2">
-                          {formatRelativeTime(notification.createdAt)}
+                          {formatNotificationTimestamp(notification.createdAt)}
                         </p>
                       </div>
                     </div>

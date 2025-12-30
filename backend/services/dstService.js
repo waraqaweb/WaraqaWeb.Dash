@@ -133,36 +133,40 @@ const sendDSTWarningNotification = async (transition, timezone) => {
     if (users.length === 0) return;
     
     const daysUntil = Math.ceil((new Date(transition.date) - new Date()) / (1000 * 60 * 60 * 24));
-    const action = transition.type === 'spring_forward' ? 'spring forward' : 'fall back';
-    const timeChange = transition.type === 'spring_forward' ? 'ahead' : 'back';
-    const amount = `${transition.timeDifference / 60} hour${transition.timeDifference / 60 !== 1 ? 's' : ''}`;
+    const action = transition.type === 'spring_forward' ? 'move forward' : 'move back';
+    const direction = transition.type === 'spring_forward' ? 'ahead' : 'back';
+    const hours = transition.timeDifference / 60;
+    const amount = `${hours} hour${hours !== 1 ? 's' : ''}`;
     
     let title, message;
     
+    const dateLabel = moment(transition.date).format('ddd, MMM D, YYYY');
+
     if (daysUntil === 0) {
-      title = '🕰️ Daylight Saving Time Changes Today!';
-      message = `Clocks ${action} ${amount} ${timeChange} today. Your class times will remain consistent in your local time.`;
+      title = 'Daylight saving time update';
+      message = `Daylight saving time changes today. Clocks ${action} by ${amount} (${direction}). Your class times will stay correct in your local time.`;
     } else if (daysUntil === 1) {
-      title = '🕰️ Daylight Saving Time Changes Tomorrow';
-      message = `Clocks will ${action} ${amount} ${timeChange} tomorrow. Your class times will automatically adjust to maintain consistency in your local time.`;
+      title = 'Daylight saving time update';
+      message = `Daylight saving time changes tomorrow. Clocks ${action} by ${amount} (${direction}). Your class times will stay correct in your local time.`;
     } else {
-      title = `🕰️ Daylight Saving Time Changes in ${daysUntil} Days`;
-      message = `Clocks will ${action} ${amount} ${timeChange} on ${moment(transition.date).format('dddd, MMMM Do')}. Your class times will remain consistent in your local time.`;
+      title = 'Daylight saving time update';
+      message = `Daylight saving time changes on ${dateLabel}. Clocks ${action} by ${amount} (${direction}). Your class times will stay correct in your local time.`;
     }
-    
-    // Create notification for all users in this timezone
-    await notificationService.createNotification({
-      recipients: users.map(u => u._id),
-      title,
-      message,
-      type: 'info',
-      relatedTo: 'dst_transition',
-      metadata: {
-        transition,
-        timezone,
-        daysUntil
-      }
-    });
+
+    await Promise.allSettled(users.map((u) => (
+      notificationService.createNotification({
+        userId: u._id,
+        title,
+        message,
+        type: 'info',
+        relatedTo: 'dst_transition',
+        metadata: {
+          transition,
+          timezone,
+          daysUntil
+        }
+      })
+    )));
     
     console.log(`📧 Sent DST warning to ${users.length} users in ${timezone}`);
   } catch (error) {

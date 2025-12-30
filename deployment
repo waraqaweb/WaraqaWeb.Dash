@@ -638,7 +638,7 @@ Run in PowerShell from `C:\waraqa`:
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Update"
+git commit -m "Update - improvements 1"
 git push origin main
 ```
 
@@ -696,6 +696,105 @@ docker compose up -d --build
 
 # Confirm 429s are gone (nginx)
 docker compose logs --tail=500 nginx | grep ' 429 ' || echo "No 429s in last 500 lines"
+```
+
+## Rapid diagnostics bundle (copy/paste)
+
+When you report an incident (logout, login fails, random 429/401), run the blocks below on the droplet and paste the full output.
+
+### 1) Host + containers health
+
+```bash
+set -eu
+cd /opt/waraqa
+
+echo "== time =="; date; echo
+echo "== uptime =="; uptime; echo
+echo "== disk/mem =="; df -h / /var 2>/dev/null || true; free -h || true; echo
+
+echo "== docker compose ps =="; docker compose ps; echo
+echo "== restart counts / oom ==";
+docker inspect \
+	--format '{{.Name}} restartCount={{.RestartCount}} oom={{.State.OOMKilled}} exitCode={{.State.ExitCode}}' \
+	$(docker compose ps -q) | sort; echo
+
+echo "== last 50 backend logs =="; docker compose logs --tail=50 backend; echo
+echo "== last 50 nginx logs =="; docker compose logs --tail=50 nginx; echo
+```
+
+### 2) Nginx: are we rate limiting real users?
+
+This summarizes nginx access-log status codes and shows recent 429 samples.
+
+```bash
+set -eu
+cd /opt/waraqa
+
+LOGS="$(docker compose logs --tail=20000 nginx | sed -E 's/^[^|]*\|\s*//')"
+
+echo "== nginx status code counts (last 20k lines) =="
+printf "%s\n" "$LOGS" \
+	| awk -F'"' 'NF>=3{print $3}' \
+	| awk '{print $1}' \
+	| grep -E '^[0-9]{3}$' \
+	| sort | uniq -c | sort -nr | head -n 20
+echo
+
+echo "== nginx 429 samples (last 50) =="
+printf "%s\n" "$LOGS" \
+	| awk -F'"' 'NF>=3{req=$2; status=$3; sub(/^ /,"",status); split(status,a," "); if(a[1]=="429") print $0}' \
+	| tail -n 50
+echo
+
+echo "== top IPs hitting 429 (last 20k lines) =="
+printf "%s\n" "$LOGS" \
+	| awk -F'"' 'NF>=3{status=$3; sub(/^ /,"",status); split(status,a," "); if(a[1]=="429") print $1}' \
+	| sort | uniq -c | sort -nr | head -n 20
+echo
+
+echo "== auth endpoints (login/me) status timeline (last 200 matches) =="
+printf "%s\n" "$LOGS" \
+	| awk -F'"' 'NF>=3{req=$2; status=$3; sub(/^ /,"",status); split(status,a," "); if(req ~ /^(GET \/api\/auth\/me|POST \/api\/auth\/(login|admin\/login))/){print a[1], $1, "|", req}}' \
+	| tail -n 200
+```
+
+### 3) Nginx: confirm active rate-limit config (what nginx is really running)
+
+```bash
+set -eu
+cd /opt/waraqa
+
+echo "== nginx effective config snippets =="
+docker compose exec -T nginx sh -lc \
+	'nginx -T 2>&1 | grep -E "limit_req_status|limit_req_zone|limit_req |map \$http_authorization|location \^~ /api/auth/|location = /api/health|location = /api/version|return 444" || true'
+```
+
+### 4) Backend: confirm rate-limit env and trust proxy
+
+```bash
+set -eu
+cd /opt/waraqa
+echo "== backend env (rate limiting / proxy) =="
+docker compose exec -T backend sh -lc 'env | grep -E "^(NODE_ENV|TRUST_PROXY|RATE_LIMIT_WINDOW_MS|RATE_LIMIT_MAX)=" || true'
+```
+
+### 5) Quick bot/scanner snapshot (optional)
+
+This helps distinguish real-user issues from background internet scanning.
+
+```bash
+set -eu
+cd /opt/waraqa
+
+echo "== recent scanner probes (.env/.git/wp-login/phpmyadmin/etc) =="
+docker compose logs --tail=20000 nginx \
+	| sed -E 's/^[^|]*\|\s*//' \
+	| grep -E '"(GET|POST) /(\.env|\.git|wp-login\.php|wp-admin|phpmyadmin|pma|adminer)' \
+	| tail -n 50 || true
+
+echo
+echo "== fail2ban sshd status =="
+fail2ban-client status sshd 2>/dev/null || true
 ```
 
 ## C) Rollback (safe)

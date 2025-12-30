@@ -62,16 +62,16 @@ async function notifyNewUser(user) {
   // Notify admin(s)
   await notifyRole({
     role: 'admin',
-    title: 'New User Joined',
-    message: `${user.fullName || user.email} has joined.`,
+    title: 'New user registered',
+    message: `${user.fullName || user.email} created an account.`,
     type: 'user',
     related: { user: user._id }
   });
   // Notify user with onboarding tips
   await module.exports.createNotification({
     userId: user._id,
-    title: 'Welcome to Waraqa!',
-    message: 'Please complete your profile and create a student account to get started.',
+    title: 'Welcome to Waraqa',
+    message: 'To get started, please complete your profile and add your student details.',
     type: 'user',
     relatedTo: 'profile',
     actionRequired: true,
@@ -82,8 +82,8 @@ async function notifyNewUser(user) {
 async function notifyProfileIncomplete(user) {
   return module.exports.createNotification({
     userId: user._id,
-    title: 'Complete Your Profile',
-    message: 'Your profile is incomplete. Please update your information for a better experience.',
+    title: 'Profile incomplete',
+    message: 'Please complete your profile so we can coordinate classes and notifications accurately.',
     type: 'user',
     relatedTo: 'profile',
     actionRequired: true,
@@ -97,45 +97,87 @@ async function notifyClassEvent({
 }) {
   // eventType: 'added', 'cancelled', 'rescheduled', 'time_changed'
   const { teacher, student, _id, scheduledDate } = classObj;
-  let title, message;
-  switch (eventType) {
-    case 'added':
-      title = 'New Class Scheduled';
-      message = `A new class has been scheduled for you on ${new Date(scheduledDate).toLocaleString()}. ${extraMsg}`;
-      break;
-    case 'cancelled':
-      title = 'Class Cancelled';
-      message = `A class scheduled for ${new Date(scheduledDate).toLocaleString()} has been cancelled. ${extraMsg}`;
-      break;
-    case 'rescheduled':
-      title = 'Class Rescheduled';
-      message = `A class has been rescheduled to ${new Date(scheduledDate).toLocaleString()}. ${extraMsg}`;
-      break;
-    case 'time_changed':
-      title = 'Class Time Changed';
-      message = `The time for your class has changed to ${new Date(scheduledDate).toLocaleString()}. ${extraMsg}`;
-      break;
-    default:
-      title = 'Class Update';
-      message = `There is an update to your class. ${extraMsg}`;
+
+  const teacherId = normalizeObjectId(teacher);
+  const guardianId = normalizeObjectId(student?.guardianId || student);
+
+  const [teacherUser, guardianUser] = await Promise.all([
+    teacherId ? User.findById(teacherId).select('timezone') : null,
+    guardianId ? User.findById(guardianId).select('timezone') : null,
+  ]);
+
+  const buildCopy = (timeLabel) => {
+    const note = extraMsg ? ` ${extraMsg}` : '';
+    switch (eventType) {
+      case 'added':
+        return {
+          title: 'Class scheduled',
+          message: `Your class is scheduled for ${timeLabel}.${note}`
+        };
+      case 'cancelled':
+        return {
+          title: 'Class cancelled',
+          message: `Your class scheduled for ${timeLabel} was cancelled.${note}`
+        };
+      case 'rescheduled':
+        return {
+          title: 'Class rescheduled',
+          message: `Your class has been moved to ${timeLabel}.${note}`
+        };
+      case 'time_changed':
+        return {
+          title: 'Class time updated',
+          message: `Your class time is now ${timeLabel}.${note}`
+        };
+      default:
+        return {
+          title: 'Class updated',
+          message: `There’s an update to your class.${note}`
+        };
+    }
+  };
+
+  const formatForUser = (tz) => formatTimeInTimezone(scheduledDate, tz || DEFAULT_TIMEZONE, 'DD MMM YYYY hh:mm A');
+
+  if (teacherId) {
+    const tz = teacherUser?.timezone || DEFAULT_TIMEZONE;
+    const copy = buildCopy(formatForUser(tz));
+    await module.exports.createNotification({
+      userId: teacherId,
+      title: copy.title,
+      message: copy.message,
+      type: 'class',
+      relatedTo: 'class',
+      relatedId: _id,
+      metadata: {
+        kind: 'class_event',
+        eventType,
+        classId: String(_id),
+        scheduledDate: new Date(scheduledDate).toISOString(),
+        recipientTimezone: tz
+      }
+    });
   }
-  // Notify teacher and student (guardian)
-  await module.exports.createNotification({
-    userId: teacher,
-    title,
-    message,
-    type: 'class',
-    relatedTo: 'class',
-    relatedId: _id
-  });
-  await module.exports.createNotification({
-    userId: student?.guardianId || student,
-    title,
-    message,
-    type: 'class',
-    relatedTo: 'class',
-    relatedId: _id
-  });
+
+  if (guardianId) {
+    const tz = guardianUser?.timezone || DEFAULT_TIMEZONE;
+    const copy = buildCopy(formatForUser(tz));
+    await module.exports.createNotification({
+      userId: guardianId,
+      title: copy.title,
+      message: copy.message,
+      type: 'class',
+      relatedTo: 'class',
+      relatedId: _id,
+      metadata: {
+        kind: 'class_event',
+        eventType,
+        classId: String(_id),
+        scheduledDate: new Date(scheduledDate).toISOString(),
+        recipientTimezone: tz
+      }
+    });
+  }
 }
 
 // --- INVOICE EVENTS ---
@@ -144,20 +186,20 @@ async function notifyInvoiceEvent({ invoice, eventType }) {
   let title, message;
   switch (eventType) {
     case 'created':
-      title = 'New Invoice Created';
-      message = 'A new invoice has been generated for your account.';
+      title = 'Invoice created';
+      message = 'A new invoice is available in your account.';
       break;
     case 'paid':
-      title = 'Invoice Paid';
-      message = 'Your invoice has been marked as paid. Thank you!';
+      title = 'Payment received';
+      message = 'Thank you—your invoice has been marked as paid.';
       break;
     case 'reminder':
-      title = 'Invoice Payment Reminder';
-      message = 'You have an unpaid invoice. Please pay as soon as possible.';
+      title = 'Invoice reminder';
+      message = 'You have an unpaid invoice. Please review it when you can.';
       break;
     default:
-      title = 'Invoice Update';
-      message = 'There is an update to your invoice.';
+      title = 'Invoice updated';
+      message = 'There’s an update to your invoice.';
   }
   await module.exports.createNotification({
     userId: invoice.user,
@@ -173,8 +215,8 @@ async function notifyInvoiceEvent({ invoice, eventType }) {
 async function notifyFeedbackSubmitted({ feedback, toUser }) {
   return module.exports.createNotification({
     userId: toUser,
-    title: 'New Feedback Submitted',
-    message: 'You have received new feedback.',
+    title: 'New feedback received',
+    message: 'You have new feedback to review.',
     type: 'feedback',
     relatedTo: 'feedback',
     relatedId: feedback._id
@@ -186,20 +228,20 @@ async function notifyRequestEvent({ request, eventType, toUser }) {
   let title, message;
   switch (eventType) {
     case 'sent':
-      title = 'New Request Sent';
-      message = 'A new request has been sent to you.';
+      title = 'New request',
+      message = 'You have a new request that may require your attention.';
       break;
     case 'approved':
-      title = 'Request Approved';
-      message = 'Your request has been approved.';
+      title = 'Request approved';
+      message = 'Your request was approved.';
       break;
     case 'rejected':
-      title = 'Request Rejected';
-      message = 'Your request has been rejected.';
+      title = 'Request declined';
+      message = 'Your request was declined.';
       break;
     default:
-      title = 'Request Update';
-      message = 'There is an update to your request.';
+      title = 'Request updated';
+      message = 'There’s an update to your request.';
   }
   return module.exports.createNotification({
     userId: toUser,
@@ -216,30 +258,34 @@ async function notifyMeetingScheduled({ meeting, adminUser = null, triggeredBy =
 
   try {
     const meetingLabel = MEETING_TYPE_LABELS[meeting.meetingType] || 'Meeting';
-    const timezone = meeting.timezone || DEFAULT_TIMEZONE;
-    const timeLabel = formatTimeInTimezone(meeting.scheduledStart, timezone, 'ddd, MMM D • h:mm A z');
     const students = Array.isArray(meeting.bookingPayload?.students) ? meeting.bookingPayload.students : [];
     const studentCount = students.length;
     const studentLabel = studentCount ? `${studentCount} student${studentCount === 1 ? '' : 's'}` : null;
     const guardianName = meeting.bookingPayload?.guardianName || null;
     const teacherName = meeting.attendees?.teacherName || null;
-    const metadata = {
+    const metadataBase = {
       meetingType: meeting.meetingType,
       meetingLabel,
       scheduledStart: meeting.scheduledStart,
-      timezone,
       studentCount,
       guardianName,
       teacherName,
       bookingSource: meeting.bookingSource
     };
 
-    const baseMessage = `${meetingLabel} on ${timeLabel}${studentLabel ? ` • ${studentLabel}` : ''}`;
+    const [adminUserDoc, guardianUserDoc, teacherUserDoc] = await Promise.all([
+      meeting.adminId ? User.findById(meeting.adminId).select('timezone') : null,
+      meeting.guardianId ? User.findById(meeting.guardianId).select('timezone') : null,
+      meeting.teacherId ? User.findById(meeting.teacherId).select('timezone') : null,
+    ]);
+
+    const formatFor = (tz) => formatTimeInTimezone(meeting.scheduledStart, tz || DEFAULT_TIMEZONE, 'DD MMM YYYY hh:mm A');
     const notifications = [];
 
     if (meeting.adminId) {
       const bookedBy = triggeredBy?.fullName || triggeredBy?.email || null;
-      const adminMessageParts = [baseMessage];
+      const timeLabel = formatFor(adminUserDoc?.timezone);
+      const adminMessageParts = [`${meetingLabel} scheduled for ${timeLabel}${studentLabel ? ` • ${studentLabel}` : ''}`];
       if (guardianName) adminMessageParts.push(`Guardian: ${guardianName}`);
       if (teacherName) adminMessageParts.push(`Teacher: ${teacherName}`);
       if (bookedBy) adminMessageParts.push(`Booked by ${bookedBy}`);
@@ -250,12 +296,13 @@ async function notifyMeetingScheduled({ meeting, adminUser = null, triggeredBy =
         type: 'meeting',
         relatedTo: 'meeting',
         relatedId: meeting._id,
-        metadata
+        metadata: { ...metadataBase, recipientTimezone: adminUserDoc?.timezone || DEFAULT_TIMEZONE }
       }));
     }
 
     if (meeting.guardianId) {
-      const guardianMessage = `Your ${meetingLabel.toLowerCase()} is scheduled for ${timeLabel}. We'll remind you before it starts.`;
+      const timeLabel = formatFor(guardianUserDoc?.timezone);
+      const guardianMessage = `Your ${meetingLabel.toLowerCase()} is scheduled for ${timeLabel}.`;
       notifications.push(module.exports.createNotification({
         userId: meeting.guardianId,
         title: `${meetingLabel} confirmed`,
@@ -263,12 +310,13 @@ async function notifyMeetingScheduled({ meeting, adminUser = null, triggeredBy =
         type: 'meeting',
         relatedTo: 'meeting',
         relatedId: meeting._id,
-        metadata
+        metadata: { ...metadataBase, recipientTimezone: guardianUserDoc?.timezone || DEFAULT_TIMEZONE }
       }));
     }
 
     if (meeting.teacherId) {
-      const teacherMessageParts = [`${meetingLabel} on ${timeLabel}`];
+      const timeLabel = formatFor(teacherUserDoc?.timezone);
+      const teacherMessageParts = [`${meetingLabel} scheduled for ${timeLabel}`];
       if (guardianName) teacherMessageParts.push(`with ${guardianName}`);
       const adminName = adminUser?.fullName || adminUser?.firstName || 'Admin team';
       teacherMessageParts.push(`Coordinated by ${adminName}`);
@@ -279,7 +327,7 @@ async function notifyMeetingScheduled({ meeting, adminUser = null, triggeredBy =
         type: 'meeting',
         relatedTo: 'meeting',
         relatedId: meeting._id,
-        metadata
+        metadata: { ...metadataBase, recipientTimezone: teacherUserDoc?.timezone || DEFAULT_TIMEZONE }
       }));
     }
 
@@ -356,24 +404,14 @@ async function createVacationStatusNotification(vacation, approver) {
   const isApproved = vacation.approvalStatus === 'approved';
   const title = isApproved ? 'Vacation Request Approved' : 'Vacation Request Rejected';
   const endReference = vacation.actualEndDate || vacation.endDate;
-  const startDate = new Date(vacation.startDate).toLocaleString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-  const endDate = new Date(endReference).toLocaleString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
+  const vacationUser = await User.findById(vacation.user).select('timezone');
+  const tz = vacationUser?.timezone || DEFAULT_TIMEZONE;
+  const startDate = formatTimeInTimezone(vacation.startDate, tz, 'DD MMM YYYY hh:mm A');
+  const endDate = formatTimeInTimezone(endReference, tz, 'DD MMM YYYY hh:mm A');
   
   const message = isApproved
-  ? `Your vacation request for ${startDate} to ${endDate} has been approved. ${vacation.substitutes?.length ? 'Substitute teachers will be assigned.' : ''}`
-  : `Your vacation request for ${startDate} to ${endDate} has been rejected. Reason: ${vacation.rejectionReason || 'No reason provided'}`;
+  ? `Your vacation request (${startDate} → ${endDate}) was approved.${vacation.substitutes?.length ? ' Substitute teachers will be assigned.' : ''}`
+  : `Your vacation request (${startDate} → ${endDate}) was declined. ${vacation.rejectionReason ? `Reason: ${vacation.rejectionReason}` : ''}`.trim();
 
   return createNotification({
     userId: vacation.user,

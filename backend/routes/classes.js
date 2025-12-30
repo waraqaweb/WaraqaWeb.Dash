@@ -840,16 +840,31 @@ router.post(
       let notificationService;
       try {
         notificationService = require("../services/notificationService");
+        const User = require("../models/User");
+        const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
         const requestorName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || req.user.email;
-        const classDate = new Date(classDoc.scheduledDate).toLocaleString();
-        const message = `${requestorName} requested to move class on ${classDate}`;
+        const adminTime = formatTimeInTimezone(classDoc.scheduledDate, DEFAULT_TIMEZONE, "DD MMM YYYY hh:mm A");
+        const message = `${requestorName} submitted a class reschedule request (current time: ${adminTime}).`;
 
         await notificationService.notifyRole({
           role: "admin",
           title: "Class reschedule request",
           message,
           type: "class",
-          related: { class: classDoc._id },
+          related: {
+            class: classDoc._id,
+            relatedTo: "class",
+            relatedId: classDoc._id,
+            metadata: {
+              kind: "class_reschedule_request",
+              classId: String(classDoc._id),
+              proposedDate: proposedDate.toISOString(),
+              proposedDuration: minutes,
+              requestedByRole: req.user.role,
+              requestedByName: requestorName,
+              originalDate: classDoc.scheduledDate?.toISOString?.() || classDoc.scheduledDate,
+            }
+          },
         });
 
         const counterpart = req.user.role === "teacher"
@@ -857,14 +872,30 @@ router.post(
           : classDoc.teacher?._id || classDoc.teacher;
 
         if (counterpart) {
+          const counterpartUser = await User.findById(counterpart).select("timezone");
+          const recipientTimezone = counterpartUser?.timezone || DEFAULT_TIMEZONE;
+          const originalLabel = formatTimeInTimezone(classDoc.scheduledDate, recipientTimezone, "DD MMM YYYY hh:mm A");
+          const proposedLabel = formatTimeInTimezone(proposedDate, recipientTimezone, "DD MMM YYYY hh:mm A");
+          const decisionLabel = req.user.role === "teacher" ? "accept" : "confirm";
+
           await notificationService.createNotification({
             userId: counterpart,
-            title: "Class reschedule requested",
-            message: `${requestorName} requested to reschedule the class to ${proposedDate.toLocaleString()}.`,
+            title: "Reschedule request",
+            message: `${requestorName} requested to move a class from ${originalLabel} to ${proposedLabel}. Please ${decisionLabel} or decline.`,
             type: "class",
             relatedTo: "class",
             relatedId: classDoc._id,
-            actionRequired: req.user.role === "teacher",
+            metadata: {
+              kind: "class_reschedule_request",
+              classId: String(classDoc._id),
+              proposedDate: proposedDate.toISOString(),
+              proposedDuration: minutes,
+              requestedByRole: req.user.role,
+              requestedByName: requestorName,
+              originalDate: classDoc.scheduledDate?.toISOString?.() || classDoc.scheduledDate,
+              recipientTimezone,
+            },
+            actionRequired: true,
             actionLink: "/dashboard/classes",
           });
         }
@@ -898,12 +929,12 @@ router.post(
 
 /* -------------------------
    POST /api/classes/:id/reschedule-request/decision
-   Admin approves or rejects a reschedule request
+   Admin OR the counterparty (teacher/guardian) approves or rejects a reschedule request
    ------------------------- */
 router.post(
   "/:id/reschedule-request/decision",
   authenticateToken,
-  requireRole(["admin"]),
+  requireRole(["admin", "teacher", "guardian"]),
   [
     body("decision")
       .isIn(["approved", "rejected"])
@@ -938,6 +969,27 @@ router.post(
         return res.status(400).json({ message: "No pending reschedule request" });
       }
 
+      // For teacher/guardian: only the counterparty may decide (admin can always decide).
+      if (req.user.role !== "admin") {
+        if (!ensureClassAccess(req, classDoc)) {
+          return res.status(403).json({ message: "You do not have access to this class" });
+        }
+
+        const requestedByRole = pending.requestedByRole;
+        const isCounterparty =
+          (req.user.role === "teacher" && requestedByRole === "guardian") ||
+          (req.user.role === "guardian" && requestedByRole === "teacher");
+
+        if (!isCounterparty) {
+          return res.status(403).json({ message: "Only the other party can respond to this reschedule request" });
+        }
+
+        // Only admins may override the proposed date/duration.
+        if (typeof req.body.newDate !== "undefined" || typeof req.body.duration !== "undefined") {
+          return res.status(403).json({ message: "Only admins can modify the proposed time or duration" });
+        }
+      }
+
       const requestSnapshot = typeof pending.toObject === "function" ? pending.toObject() : { ...pending };
       const decisionNote = req.body.note;
 
@@ -954,13 +1006,23 @@ router.post(
 
         try {
           const notificationService = require("../services/notificationService");
+          const User = require("../models/User");
+          const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
+
+          const requestor = requestSnapshot?.requestedBy ? await User.findById(requestSnapshot.requestedBy).select("timezone") : null;
+          const requestorTz = requestor?.timezone || DEFAULT_TIMEZONE;
+          const proposedLabel = formatTimeInTimezone(requestSnapshot?.proposedDate, requestorTz, "DD MMM YYYY hh:mm A");
+          const deciderLabel = (req.user.firstName || req.user.lastName)
+            ? `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim()
+            : (req.user.email || req.user.role);
+
           if (requestSnapshot?.requestedBy) {
             await notificationService.createNotification({
               userId: requestSnapshot.requestedBy,
-              title: "Reschedule request rejected",
+              title: "Reschedule declined",
               message: decisionNote
-                ? `Your reschedule request was rejected. Reason: ${decisionNote}`
-                : "Your reschedule request was rejected.",
+                ? `${deciderLabel} declined your reschedule request for ${proposedLabel}. Note: ${decisionNote}`
+                : `${deciderLabel} declined your reschedule request for ${proposedLabel}.`,
               type: "class",
               relatedTo: "class",
               relatedId: classDoc._id,
@@ -993,8 +1055,8 @@ router.post(
       }
 
       const reason = decisionNote
-        ? `Approved reschedule request. ${decisionNote}`
-        : "Approved reschedule request.";
+        ? `Reschedule approved. ${decisionNote}`
+        : "Reschedule approved.";
 
       try {
         // Adjust class duration/timezone if provided
@@ -1017,6 +1079,8 @@ router.post(
 
         try {
           const notificationService = require("../services/notificationService");
+          const User = require("../models/User");
+          const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
           notificationService.notifyClassEvent({
             classObj: populated,
             eventType: "rescheduled",
@@ -1025,13 +1089,27 @@ router.post(
           }).catch(console.error);
 
           if (requestSnapshot?.requestedBy) {
+            const requestor = await User.findById(requestSnapshot.requestedBy).select("timezone");
+            const requestorTz = requestor?.timezone || DEFAULT_TIMEZONE;
+            const rescheduledLabel = formatTimeInTimezone(rescheduleDate, requestorTz, "DD MMM YYYY hh:mm A");
+            const deciderLabel = (req.user.firstName || req.user.lastName)
+              ? `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim()
+              : (req.user.email || req.user.role);
+
             await notificationService.createNotification({
               userId: requestSnapshot.requestedBy,
-              title: "Reschedule request approved",
-              message: `Your reschedule request was approved. New time: ${rescheduleDate.toLocaleString()}.`,
+              title: "Reschedule accepted",
+              message: `${deciderLabel} accepted your reschedule request. New time: ${rescheduledLabel}.`,
               type: "class",
               relatedTo: "class",
               relatedId: classDoc._id,
+              metadata: {
+                kind: "class_reschedule_decision",
+                classId: String(classDoc._id),
+                decision: "approved",
+                decidedByRole: req.user.role,
+                newDate: rescheduleDate.toISOString(),
+              }
             });
           }
         } catch (notifyErr) {

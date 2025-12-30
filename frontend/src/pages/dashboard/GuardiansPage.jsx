@@ -290,8 +290,8 @@ const GuardiansPage = () => {
             <div key={guardian._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
               {/* Guardian Summary */}
               <div className="p-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-4">
                     {/* Avatar */}
                     <div className="h-12 w-12 bg-primary rounded-full flex items-center justify-center">
                       {guardian.profilePicture ? (
@@ -308,7 +308,7 @@ const GuardiansPage = () => {
                       <h3 className="text-lg font-semibold text-foreground">
                         {guardian.firstName} {guardian.lastName}
                       </h3>
-                      <div className="flex items-center space-x-4 text-sm text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
                         <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(guardian.isActive ? 'active' : 'inactive')}`}>
                           {guardian.isActive ? 'Active' : 'Inactive'}
                         </span>
@@ -329,7 +329,7 @@ const GuardiansPage = () => {
                   </div>
 
                   {/* Action Buttons */}
-                  <div className="flex items-center space-x-2">
+                  <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
                     {/* WhatsApp */}
                     {guardian.phone && (
                       <button
@@ -353,7 +353,7 @@ const GuardiansPage = () => {
 
                     {/* Admin Actions */}
                     {isAdmin() && (
-                      <div className="flex items-center space-x-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         <button
                           onClick={() => setEditingGuardian(guardian)}
                           className="icon-button icon-button--blue"

@@ -1863,13 +1863,13 @@ Would you like to create another series anyway?`
 
             {/* Row clickable for expand */}
             <div
-              className="flex items-center justify-between cursor-pointer"
+              className="flex cursor-pointer flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
               onClick={() => toggleExpanded(classItem._id)}
             >
-              <div className="flex items-center space-x-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
 
                 {/* Time & Date with Timezone Info */}
-                <div className="flex flex-col items-center md:items-start flex-shrink-0 w-28">
+                <div className="flex w-full flex-shrink-0 flex-col items-start sm:w-28 sm:items-center md:items-start">
                   <div className="flex items-center space-x-1">
                     <span className="text-sm font-semibold text-[#2F3559]">{timeInfo.time}</span>
                     {timeInfo.isConverted && (
@@ -1887,7 +1887,7 @@ Would you like to create another series anyway?`
                 {/* Student Name */}
                 <div>
                   <h3 className="text-sm font-semibold text-gray-900">{classItem?.student?.studentName}</h3>
-                  <div className="flex items-center space-x-3 text-xs text-gray-600 mt-1">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
                     {/* Status Tag */}
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(classItem?.status)}`}>
                       {getStatusIcon(classItem?.status)}
@@ -1916,7 +1916,7 @@ Would you like to create another series anyway?`
               </div>
 
               {/* Action Buttons (not part of clickable row) */}
-              <div className="flex items-center gap-1">
+              <div className="flex w-full flex-wrap items-center justify-start gap-1 sm:w-auto sm:justify-end sm:gap-2">
                 {hasPendingReschedule && (
                   <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
                     <AlertCircle className="h-3.5 w-3.5" /> Pending approval

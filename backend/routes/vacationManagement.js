@@ -19,6 +19,7 @@ const Class = require('../models/Class');
 const vacationService = require('../services/vacationService');
 const systemVacationService = require('../services/systemVacationService');
 const notificationService = require('../services/notificationService');
+const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 
 // ============================================================================
 // INDIVIDUAL VACATION ROUTES
@@ -120,14 +121,32 @@ router.post('/individual', authenticateToken, async (req, res) => {
 
     // Send notification to admin if created by teacher
     if (req.user.role === 'teacher') {
-      await notificationService.createNotification({
-        recipients: { role: 'admin' },
-        title: 'New Vacation Request',
-        message: `${req.user.firstName} ${req.user.lastName} has requested vacation from ${start.toDateString()} to ${end.toDateString()}`,
-        type: 'info',
-        relatedTo: 'vacation',
-        relatedId: vacation._id
-      });
+      const teacherName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || req.user.email || 'A teacher';
+      const admins = await User.find({ role: 'admin', isActive: true }).select('_id timezone');
+      await Promise.allSettled(
+        (admins || []).map((admin) => {
+          const tz = admin?.timezone || DEFAULT_TIMEZONE;
+          const startLabel = formatTimeInTimezone(start, tz, 'DD MMM YYYY hh:mm A');
+          const endLabel = formatTimeInTimezone(end, tz, 'DD MMM YYYY hh:mm A');
+          return notificationService.createNotification({
+            userId: admin._id,
+            title: 'Vacation request submitted',
+            message: `${teacherName} requested vacation (${startLabel} → ${endLabel}).`,
+            type: 'request',
+            relatedTo: 'vacation',
+            relatedId: vacation._id,
+            metadata: {
+              kind: 'vacation_request_submitted',
+              vacationId: String(vacation._id),
+              requesterId: String(req.user.id || req.user._id || ''),
+              teacherId: String(teacherId),
+              startDate: start.toISOString(),
+              endDate: end.toISOString(),
+              recipientTimezone: tz
+            }
+          });
+        })
+      );
     }
 
     res.status(201).json(vacation);
@@ -165,14 +184,28 @@ router.put('/individual/:id', authenticateToken, async (req, res) => {
         await vacationService.applyVacationEffects(vacation);
         
         // Send approval notification
-        await notificationService.createNotification({
-          recipients: [vacation.teacher._id],
-          title: 'Vacation Approved',
-          message: `Your vacation request from ${vacation.startDate.toDateString()} to ${vacation.endDate.toDateString()} has been approved`,
-          type: 'success',
-          relatedTo: 'vacation',
-          relatedId: vacation._id
-        });
+        {
+          const teacherUser = await User.findById(vacation.teacher._id).select('timezone');
+          const tz = teacherUser?.timezone || DEFAULT_TIMEZONE;
+          const startLabel = formatTimeInTimezone(vacation.startDate, tz, 'DD MMM YYYY hh:mm A');
+          const endLabel = formatTimeInTimezone(vacation.endDate, tz, 'DD MMM YYYY hh:mm A');
+          await notificationService.createNotification({
+            userId: vacation.teacher._id,
+            title: 'Vacation approved',
+            message: `Your vacation request (${startLabel} → ${endLabel}) was approved.`,
+            type: 'success',
+            relatedTo: 'vacation',
+            relatedId: vacation._id,
+            metadata: {
+              kind: 'vacation_status',
+              vacationId: String(vacation._id),
+              status: 'approved',
+              startDate: new Date(vacation.startDate).toISOString(),
+              endDate: new Date(vacation.endDate).toISOString(),
+              recipientTimezone: tz
+            }
+          });
+        }
         
       } else if (status === 'rejected') {
         vacation.status = 'rejected';
@@ -180,12 +213,18 @@ router.put('/individual/:id', authenticateToken, async (req, res) => {
         
         // Send rejection notification
         await notificationService.createNotification({
-          recipients: [vacation.teacher._id],
-          title: 'Vacation Rejected',
-          message: `Your vacation request has been rejected. Reason: ${rejectionReason}`,
-          type: 'error',
+          userId: vacation.teacher._id,
+          title: 'Vacation declined',
+          message: `Your vacation request was declined.${rejectionReason ? ` Reason: ${rejectionReason}` : ''}`,
+          type: 'warning',
           relatedTo: 'vacation',
-          relatedId: vacation._id
+          relatedId: vacation._id,
+          metadata: {
+            kind: 'vacation_status',
+            vacationId: String(vacation._id),
+            status: 'rejected',
+            rejectionReason: rejectionReason || null
+          }
         });
       }
       

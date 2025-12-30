@@ -24,11 +24,36 @@ import VacationDetailsModal from '../../components/dashboard/VacationDetailsModa
 const VacationManagementPage = () => {
   const { user } = useAuth();
   const { searchTerm, globalFilter } = useSearch();
+
+  const toLocalDateInput = (date) => {
+    const d = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(d.getTime())) return '';
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
+  };
+
+  const parseLocalDayStart = (yyyyMmDd) => {
+    if (!yyyyMmDd) return null;
+    const d = new Date(`${yyyyMmDd}T00:00:00`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const parseLocalDayEnd = (yyyyMmDd) => {
+    if (!yyyyMmDd) return null;
+    const d = new Date(`${yyyyMmDd}T23:59:59.999`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
   const [activeTab, setActiveTab] = useState('individual');
   const [individualVacations, setIndividualVacations] = useState([]);
   const [systemVacations, setSystemVacations] = useState([]);
   const [myVacations, setMyVacations] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const [summaryFrom, setSummaryFrom] = useState(() => {
+    const now = new Date();
+    return toLocalDateInput(new Date(now.getFullYear(), now.getMonth(), 1));
+  });
+  const [summaryTo, setSummaryTo] = useState(() => toLocalDateInput(new Date()));
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createType, setCreateType] = useState('individual'); // 'individual' or 'system'
   const [editingVacation, setEditingVacation] = useState(null);
@@ -281,6 +306,101 @@ const VacationManagementPage = () => {
     return matchesSearch && matchesFilter;
   });
 
+  const vacationSummaryRows = useMemo(() => {
+    if (user?.role !== 'admin') return [];
+
+    const rangeStart = parseLocalDayStart(summaryFrom);
+    const rangeEnd = parseLocalDayEnd(summaryTo);
+    if (!rangeStart || !rangeEnd) return [];
+
+    if (rangeEnd < rangeStart) return [];
+
+    const overlapMs = (start, end) => {
+      if (!start || !end) return 0;
+      const startMs = start.getTime();
+      const endMs = end.getTime();
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 0;
+      if (endMs <= startMs) return 0;
+      const oStart = Math.max(startMs, rangeStart.getTime());
+      const oEnd = Math.min(endMs, rangeEnd.getTime());
+      return Math.max(0, oEnd - oStart);
+    };
+
+    const formatAggregate = (ms) => {
+      const hours = ms / (1000 * 60 * 60);
+      if (hours < 24) {
+        const val = Math.round(hours * 10) / 10;
+        return `${val}${val === 1 ? ' hr' : ' hrs'}`;
+      }
+      const days = hours / 24;
+      if (days < 30) {
+        const val = Math.round(days * 10) / 10;
+        return `${val}${val === 1 ? ' day' : ' days'}`;
+      }
+      const months = days / 30;
+      const val = Math.round(months * 10) / 10;
+      return `${val}${val === 1 ? ' month' : ' months'}`;
+    };
+
+    const getTeacherAllowance = (teacherUser) => {
+      const ti = teacherUser?.teacherInfo;
+      const raw =
+        ti?.vacationAllowanceDaysPerYear ??
+        ti?.vacationDaysPerYear ??
+        ti?.allowedVacationDaysPerYear ??
+        ti?.vacationAllowanceDays ??
+        null;
+      const numeric = typeof raw === 'string' ? Number(raw) : raw;
+      if (typeof numeric === 'number' && Number.isFinite(numeric) && numeric > 0) {
+        return `${numeric} days/year`;
+      }
+      return '—';
+    };
+
+    const totals = new Map();
+
+    (individualVacations || []).forEach((vacation) => {
+      if (!vacation) return;
+      if (vacation.role && vacation.role !== 'teacher') return;
+
+      const status = vacation.lifecycleStatus || vacation.status || vacation.approvalStatus;
+      if (['rejected', 'cancelled'].includes(status)) return;
+
+      const teacherId = String(vacation.user?._id || vacation.user?.id || vacation.teacher?._id || vacation.teacher || '');
+      if (!teacherId) return;
+
+      const teacherName =
+        vacation.user?.fullName ||
+        `${vacation.user?.firstName || vacation.teacher?.firstName || ''} ${vacation.user?.lastName || vacation.teacher?.lastName || ''}`.trim() ||
+        vacation.user?.email ||
+        'Unknown teacher';
+
+      const start = new Date(vacation.startDate);
+      const end = new Date(vacation.effectiveEndDate || vacation.actualEndDate || vacation.endDate);
+      const duration = overlapMs(start, end);
+      if (duration <= 0) return;
+
+      const existing = totals.get(teacherId) || {
+        teacherId,
+        teacherName,
+        totalMs: 0,
+        vacationCount: 0,
+        allowance: getTeacherAllowance(vacation.user)
+      };
+
+      existing.totalMs += duration;
+      existing.vacationCount += 1;
+      totals.set(teacherId, existing);
+    });
+
+    return Array.from(totals.values())
+      .map((row) => ({
+        ...row,
+        totalLabel: formatAggregate(row.totalMs)
+      }))
+      .sort((a, b) => b.totalMs - a.totalMs);
+  }, [user?.role, individualVacations, summaryFrom, summaryTo]);
+
   const renderIndividualVacations = () => (
     <div className="space-y-6">
       {/* Header */}
@@ -298,6 +418,77 @@ const VacationManagementPage = () => {
           </button>
         </div>
       </div>
+
+      {/* Summary */}
+      {user?.role === 'admin' && (
+        <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Vacation summary</h3>
+              <p className="text-sm text-gray-600">Totals are based on vacations overlapping the selected period.</p>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+                <input
+                  type="date"
+                  value={summaryFrom}
+                  onChange={(e) => setSummaryFrom(e.target.value)}
+                  className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+                <input
+                  type="date"
+                  value={summaryTo}
+                  onChange={(e) => setSummaryTo(e.target.value)}
+                  className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+            </div>
+          </div>
+
+          {(() => {
+            const start = parseLocalDayStart(summaryFrom);
+            const end = parseLocalDayEnd(summaryTo);
+            const invalid = !start || !end || end < start;
+            if (invalid) {
+              return <p className="mt-4 text-sm text-red-600">Select a valid date range.</p>;
+            }
+            if (vacationSummaryRows.length === 0) {
+              return <p className="mt-4 text-sm text-gray-600">No teacher vacations found in this period.</p>;
+            }
+
+            return (
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs font-semibold text-gray-600 border-b">
+                      <th className="py-2 pr-4">Teacher</th>
+                      <th className="py-2 pr-4">Vacations</th>
+                      <th className="py-2 pr-4">Total</th>
+                      <th className="py-2">Allowance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {vacationSummaryRows.map((row) => (
+                      <tr key={row.teacherId}>
+                        <td className="py-2 pr-4 font-medium text-gray-900 whitespace-nowrap">{row.teacherName}</td>
+                        <td className="py-2 pr-4 text-gray-700">{row.vacationCount}</td>
+                        <td className="py-2 pr-4 text-gray-700 whitespace-nowrap">{row.totalLabel}</td>
+                        <td className="py-2 text-gray-700 whitespace-nowrap">{row.allowance}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-xs text-gray-500">Allowance appears only if it’s configured on the teacher profile.</p>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Vacation List */}
       <div className="bg-white rounded-lg shadow">

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Download, Loader2, X } from 'lucide-react';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
 import AnnotationToolbar from './AnnotationToolbar';
+import api from '../../api/axios';
 import {
   fetchDocumentPages,
   fetchAnnotations,
@@ -275,15 +276,87 @@ const DocumentViewer = ({ item, onClose }) => {
   const [liveShape, setLiveShape] = useState(null);
   const [previewMode, setPreviewMode] = useState('pages');
   const [inlineUrl, setInlineUrl] = useState(null);
+  const [inlineBlobUrl, setInlineBlobUrl] = useState(null);
   const [inlineLoading, setInlineLoading] = useState(false);
   const [inlineError, setInlineError] = useState(null);
   const [inlineRenderAttempted, setInlineRenderAttempted] = useState(false);
   const [inlineRenderState, setInlineRenderState] = useState({ status: 'idle', error: null });
   const [, setClientRenderedPdf] = useState(false);
 
+  const inlinePdfBufferRef = useRef(null);
+
   const listRef = useRef(null);
   const svgRef = useRef(null);
   const drawingRef = useRef(false);
+
+  const cleanupInlineBlobUrl = useCallback(() => {
+    setInlineBlobUrl((prev) => {
+      if (prev) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch (e) {
+          // ignore
+        }
+      }
+      return null;
+    });
+  }, []);
+
+  const resolveInlineErrorMessage = (error) => {
+    if (!error) return 'Unable to load the document preview.';
+    const status = error?.response?.status;
+    if (status === 401 || status === 403) {
+      return 'Preview failed due to authorization. Try Download to open it directly.';
+    }
+    if (error?.message) return error.message;
+    return 'Unable to load the document preview.';
+  };
+
+  const downloadPdfArrayBuffer = useCallback(async (url) => {
+    if (!url) throw new Error('Preview link missing.');
+    const resolved = new URL(url, window.location.href);
+    const sameOrigin = resolved.origin === window.location.origin;
+
+    // If the URL is same-origin (often an API route), use Axios so the Bearer token
+    // is attached. Iframes/fetch cannot attach Authorization reliably.
+    if (sameOrigin) {
+      const res = await api.get(resolved.toString(), {
+        responseType: 'arraybuffer',
+        headers: {
+          Accept: 'application/pdf,*/*'
+        }
+      });
+      return res.data;
+    }
+
+    // Cross-origin (usually a signed URL). Use fetch without credentials.
+    const response = await fetch(resolved.toString(), {
+      credentials: 'omit',
+      headers: {
+        Accept: 'application/pdf,*/*'
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`PDF download failed with status ${response.status}`);
+    }
+    return response.arrayBuffer();
+  }, []);
+
+  const prepareInlineBlobPreview = useCallback(async (url) => {
+    cleanupInlineBlobUrl();
+    inlinePdfBufferRef.current = null;
+    const pdfBuffer = await downloadPdfArrayBuffer(url);
+    inlinePdfBufferRef.current = pdfBuffer;
+    try {
+      const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+      const objectUrl = URL.createObjectURL(blob);
+      setInlineBlobUrl(objectUrl);
+      return objectUrl;
+    } catch (e) {
+      // If Blob/URL fails, fall back to direct URL (may still work in iframe).
+      return null;
+    }
+  }, [cleanupInlineBlobUrl, downloadPdfArrayBuffer]);
 
   const ensureInlinePreview = useCallback(async () => {
     if (!itemId) return;
@@ -294,15 +367,30 @@ const DocumentViewer = ({ item, onClose }) => {
       setInlineUrl(ticket?.url || null);
       if (!ticket?.url) {
         setInlineError('Preview link missing. Use Download instead.');
+        cleanupInlineBlobUrl();
+        inlinePdfBufferRef.current = null;
+        return;
+      }
+
+      // Best-effort: build a Blob URL so iframe/pdfjs can render without auth/CORS issues.
+      // If this fails (e.g. CORS blocks fetch on a signed URL), we fall back to the direct URL.
+      try {
+        await prepareInlineBlobPreview(ticket.url);
+      } catch (err) {
+        console.warn('Inline blob preview failed; falling back to direct URL', err);
+        cleanupInlineBlobUrl();
+        inlinePdfBufferRef.current = null;
       }
     } catch (error) {
       console.error('Inline preview failed', error);
-      setInlineError('Unable to load the document preview. Click Download to open it directly.');
+      setInlineError(`${resolveInlineErrorMessage(error)} Click Download to open it directly.`);
       setInlineUrl(null);
+      cleanupInlineBlobUrl();
+      inlinePdfBufferRef.current = null;
     } finally {
       setInlineLoading(false);
     }
-  }, [itemId]);
+  }, [cleanupInlineBlobUrl, itemId, prepareInlineBlobPreview]);
 
   const loadPages = useCallback(async (page = 1) => {
     if (!itemId) return;
@@ -359,6 +447,8 @@ const DocumentViewer = ({ item, onClose }) => {
     setActivePage(1);
     setPreviewMode('pages');
     setInlineUrl(null);
+    cleanupInlineBlobUrl();
+    inlinePdfBufferRef.current = null;
     setInlineError(null);
     setInlineRenderAttempted(false);
     setInlineRenderState({ status: 'idle', error: null });
@@ -379,7 +469,13 @@ const DocumentViewer = ({ item, onClose }) => {
     } catch (err) {
       console.warn('Failed to restore annotation cache', err);
     }
-  }, [itemId, loadPages]);
+  }, [cleanupInlineBlobUrl, itemId, loadPages]);
+
+  useEffect(() => {
+    return () => {
+      cleanupInlineBlobUrl();
+    };
+  }, [cleanupInlineBlobUrl]);
 
   useEffect(() => {
     if (!itemId) return;
@@ -393,20 +489,27 @@ const DocumentViewer = ({ item, onClose }) => {
     const controller = new AbortController();
 
     const downloadInlinePdf = async () => {
+      if (inlinePdfBufferRef.current) return inlinePdfBufferRef.current;
+      // Note: AbortController does not cancel axios; fetch path handles cancellation.
       const resolved = new URL(inlineUrl, window.location.href);
       const sameOrigin = resolved.origin === window.location.origin;
-
-      const response = await fetch(resolved.toString(), {
-        credentials: sameOrigin ? 'include' : 'omit',
-        signal: controller.signal,
-        headers: {
-          Accept: 'application/pdf,*/*'
-        }
-      });
-      if (!response.ok) {
-        throw new Error(`PDF download failed with status ${response.status}`);
+      if (sameOrigin) {
+        const res = await api.get(resolved.toString(), {
+          responseType: 'arraybuffer',
+          headers: { Accept: 'application/pdf,*/*' }
+        });
+        inlinePdfBufferRef.current = res.data;
+        return res.data;
       }
-      return response.arrayBuffer();
+      const response = await fetch(resolved.toString(), {
+        credentials: 'omit',
+        signal: controller.signal,
+        headers: { Accept: 'application/pdf,*/*' }
+      });
+      if (!response.ok) throw new Error(`PDF download failed with status ${response.status}`);
+      const buf = await response.arrayBuffer();
+      inlinePdfBufferRef.current = buf;
+      return buf;
     };
 
     const renderInlineDocument = async () => {
@@ -475,7 +578,7 @@ const DocumentViewer = ({ item, onClose }) => {
         console.error('Client-side PDF render failed', error);
         setInlineRenderState({
           status: 'error',
-          error: 'Unable to prepare this PDF for annotations.'
+          error: resolveInlineErrorMessage(error)
         });
       } finally {
         if (loadingTask) {
@@ -840,9 +943,9 @@ const DocumentViewer = ({ item, onClose }) => {
                 <div className="flex h-full items-center justify-center text-sm text-slate-600">
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading preview…
                 </div>
-              ) : inlineUrl ? (
+              ) : (inlineBlobUrl || inlineUrl) ? (
                 <iframe
-                  src={inlineUrl}
+                  src={inlineBlobUrl || inlineUrl}
                   title={`Preview of ${item.displayName}`}
                   className="h-full w-full rounded-2xl bg-white"
                   allow="fullscreen"

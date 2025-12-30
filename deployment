@@ -638,7 +638,7 @@ Run in PowerShell from `C:\waraqa`:
 cd C:\waraqa
 git status
 git add -A
-git commit -m "add bonous issue"
+git commit -m "Library Document viewer"
 git push origin main
 ```
 
@@ -647,16 +647,35 @@ git push origin main
 This does NOT delete MongoDB data and does NOT overwrite `.env`.
 
 ```bash
+set -eu
 cd /opt/waraqa
 
-# Save rollback point
-git rev-parse HEAD > /opt/waraqa/.previous_deploy_sha
+# Save rollback point (the version currently running)
+OLD_SHA="$(git rev-parse HEAD)"
+echo "$OLD_SHA" > /opt/waraqa/.previous_deploy_sha
 
 # Update code safely
 git pull --ff-only
 
-# Rebuild/restart (minimal downtime)
-docker compose up -d --build
+# Rebuild ONLY what changed (faster; avoids unnecessary frontend rebuilds)
+NEW_SHA="$(git rev-parse HEAD)"
+CHANGED="$(git diff --name-only "$OLD_SHA..$NEW_SHA" || true)"
+
+
+
+SERVICES=""
+printf "%s\n" "$CHANGED" | grep -qE '^deploy/nginx/' && SERVICES="$SERVICES nginx"
+printf "%s\n" "$CHANGED" | grep -qE '^backend/' && SERVICES="$SERVICES backend"
+printf "%s\n" "$CHANGED" | grep -qE '^frontend/' && SERVICES="$SERVICES frontend"
+
+if [ -z "${SERVICES// }" ]; then
+	echo "No build-needed changes detected; restarting stack only"
+	docker compose up -d
+else
+	echo "Rebuilding services:$SERVICES"
+	# Note: frontend rebuild (vite build) can take several minutes on small droplets.
+	docker compose up -d --build $SERVICES
+fi
 
 # Verify
 docker compose ps
@@ -681,44 +700,6 @@ curl -I http://127.0.0.1/dashboard/login -H "Host: $DOMAIN" || true
 curl -ksS https://127.0.0.1/api/health --resolve "$DOMAIN:443:127.0.0.1" || true
 ```
 
-### Faster redeploy (only rebuild what changed)
-
-If deploys are taking a long time, it is usually because the **frontend build** step (`vite build`) is CPU-heavy on small droplets.
-This block rebuilds only the services that changed in git.
-
-```bash
-set -eu
-cd /opt/waraqa
-
-OLD_SHA="$(cat /opt/waraqa/.previous_deploy_sha 2>/dev/null || git rev-parse HEAD)"
-echo "previous sha: $OLD_SHA"
-
-git rev-parse HEAD > /opt/waraqa/.previous_deploy_sha
-git pull --ff-only
-
-NEW_SHA="$(git rev-parse HEAD)"
-echo "current  sha: $NEW_SHA"
-
-CHANGED="$(git diff --name-only "$OLD_SHA..$NEW_SHA" || true)"
-echo "== changed files =="; printf "%s\n" "$CHANGED"; echo
-
-SERVICES=""
-printf "%s\n" "$CHANGED" | grep -qE '^deploy/nginx/' && SERVICES="$SERVICES nginx"
-printf "%s\n" "$CHANGED" | grep -qE '^backend/' && SERVICES="$SERVICES backend"
-printf "%s\n" "$CHANGED" | grep -qE '^frontend/' && SERVICES="$SERVICES frontend"
-
-if [ -z "${SERVICES// }" ]; then
-	echo "No build-needed changes detected; restarting stack only"
-	docker compose up -d
-else
-	echo "Rebuilding services:$SERVICES"
-	# This will still take time when frontend changed (vite build)
-	docker compose up -d --build $SERVICES
-fi
-
-docker compose ps
-```
-
 ## If users get logged out / login fails for a few minutes
 
 If you see `429` responses in `docker compose logs nginx` for real users (especially `/api/auth/me` or `/api/auth/login`), the nginx HTTPS rate limiting is too aggressive.
@@ -730,7 +711,10 @@ Fix / redeploy:
 ```bash
 cd /opt/waraqa
 git pull --ff-only
-docker compose up -d --build
+
+# Nginx config change? Rebuild nginx. Backend change? Rebuild backend.
+# If you're not sure, rebuilding nginx+backend is usually enough.
+docker compose up -d --build nginx backend
 
 # Confirm 429s are gone (nginx)
 docker compose logs --tail=500 nginx | grep ' 429 ' || echo "No 429s in last 500 lines"

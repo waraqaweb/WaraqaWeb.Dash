@@ -389,7 +389,7 @@ const PublicEvaluationBookingPage = () => {
 
             <Link
               to="/dashboard/login"
-              className="inline-flex h-9 items-center justify-center rounded-full border border-border bg-background px-4 text-xs font-semibold text-foreground"
+              className="inline-flex h-9 items-center justify-center rounded-full border border-border bg-primary px-4 text-xs font-semibold text-foreground"
             >
               Login page
             </Link>

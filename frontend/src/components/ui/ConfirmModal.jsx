@@ -18,7 +18,7 @@ const ConfirmModal = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-title"
-        className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5"
+        className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5 max-h-[90vh] overflow-y-auto"
       >
         <h3 id="confirm-title" className="text-lg font-semibold text-slate-900">{title}</h3>
         {message && (

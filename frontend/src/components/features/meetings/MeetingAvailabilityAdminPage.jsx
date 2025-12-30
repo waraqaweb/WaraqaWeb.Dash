@@ -64,7 +64,9 @@ const MeetingAvailabilityAdminPage = () => {
 
   const publicEvaluationLink = useMemo(() => {
     if (typeof window === 'undefined') return '';
-    return `${window.location.origin}/public/meetings/evaluation`;
+    const publicUrl = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
+    const basePrefix = publicUrl && publicUrl !== '/' ? publicUrl : '';
+    return `${window.location.origin}${basePrefix}/public/meetings/evaluation`;
   }, []);
 
   useEffect(() => {

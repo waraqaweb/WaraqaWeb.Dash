@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.6
 FROM node:20-alpine
 
 WORKDIR /app
@@ -7,7 +8,7 @@ ARG BUILD_TIME
 
 # Install dependencies first (better layer caching)
 COPY backend/package.json backend/package-lock.json ./
-RUN npm ci --omit=dev
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 
 # Copy backend source
 COPY backend/ ./

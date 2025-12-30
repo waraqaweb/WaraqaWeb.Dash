@@ -326,7 +326,7 @@ const MeetingReportModal = ({ isOpen, meeting = null, onClose, onSaved }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-8">
-      <div className="relative w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+      <div className="relative flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div className="flex items-center gap-2">
             <ClipboardList className="h-5 w-5 text-teal-600" />
@@ -347,7 +347,7 @@ const MeetingReportModal = ({ isOpen, meeting = null, onClose, onSaved }) => {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6 px-6 py-5">
+        <form onSubmit={handleSubmit} className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
           {error && (
             <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               <AlertTriangle className="h-4 w-4" />

@@ -435,7 +435,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-8 backdrop-blur-sm">
-  <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-lg">
+  <div className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl bg-white shadow-lg">
         <button
           onClick={onClose}
           className="absolute right-5 top-5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/70 text-slate-500 shadow hover:text-slate-900"
@@ -466,8 +466,8 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
         <div
           className="space-y-4 px-6 pb-6 pt-4"
           style={{
-            maxHeight: 'calc(100vh - 120px)',
-            overflow: 'hidden',
+            maxHeight: 'calc(90vh - 120px)',
+            overflow: 'auto',
             display: 'grid',
             // left column flexible, right column fixed width keeps preview compact and uses empty space
             gridTemplateColumns: '1fr 280px',
@@ -479,7 +479,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
               {error}
             </div>
           )}
-          <form onSubmit={handleSubmit} className="col-span-1" style={{ overflow: 'auto' }}>
+          <form onSubmit={handleSubmit} className="col-span-1">
             <div className="space-y-5">
               <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 mb-2">
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-emerald-600">

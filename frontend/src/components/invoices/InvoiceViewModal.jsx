@@ -1357,7 +1357,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 px-4 py-8 backdrop-blur-sm">
-      <div className="relative w-full max-w-6xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
+      <div className="relative flex w-full max-w-6xl max-h-[90vh] flex-col overflow-hidden rounded-[32px] bg-white shadow-2xl">
         <button
           onClick={handleClose}
           className="absolute right-5 top-5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/70 text-slate-500 shadow hover:text-slate-900"
@@ -1366,7 +1366,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
           <X className="h-5 w-5" />
         </button>
 
-        <div className="space-y-8">
+        <div className="flex-1 overflow-y-auto">
+          <div className="space-y-8">
           <div className="border-b border-slate-200 bg-white/95 px-8 py-8">
             <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
               <div className="space-y-3">
@@ -1726,6 +1727,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
               </div>
             </div>
           )}
+          </div>
         </div>
       </div>
     </div>

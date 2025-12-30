@@ -681,6 +681,44 @@ curl -I http://127.0.0.1/dashboard/login -H "Host: $DOMAIN" || true
 curl -ksS https://127.0.0.1/api/health --resolve "$DOMAIN:443:127.0.0.1" || true
 ```
 
+### Faster redeploy (only rebuild what changed)
+
+If deploys are taking a long time, it is usually because the **frontend build** step (`vite build`) is CPU-heavy on small droplets.
+This block rebuilds only the services that changed in git.
+
+```bash
+set -eu
+cd /opt/waraqa
+
+OLD_SHA="$(cat /opt/waraqa/.previous_deploy_sha 2>/dev/null || git rev-parse HEAD)"
+echo "previous sha: $OLD_SHA"
+
+git rev-parse HEAD > /opt/waraqa/.previous_deploy_sha
+git pull --ff-only
+
+NEW_SHA="$(git rev-parse HEAD)"
+echo "current  sha: $NEW_SHA"
+
+CHANGED="$(git diff --name-only "$OLD_SHA..$NEW_SHA" || true)"
+echo "== changed files =="; printf "%s\n" "$CHANGED"; echo
+
+SERVICES=""
+printf "%s\n" "$CHANGED" | grep -qE '^deploy/nginx/' && SERVICES="$SERVICES nginx"
+printf "%s\n" "$CHANGED" | grep -qE '^backend/' && SERVICES="$SERVICES backend"
+printf "%s\n" "$CHANGED" | grep -qE '^frontend/' && SERVICES="$SERVICES frontend"
+
+if [ -z "${SERVICES// }" ]; then
+	echo "No build-needed changes detected; restarting stack only"
+	docker compose up -d
+else
+	echo "Rebuilding services:$SERVICES"
+	# This will still take time when frontend changed (vite build)
+	docker compose up -d --build $SERVICES
+fi
+
+docker compose ps
+```
+
 ## If users get logged out / login fails for a few minutes
 
 If you see `429` responses in `docker compose logs nginx` for real users (especially `/api/auth/me` or `/api/auth/login`), the nginx HTTPS rate limiting is too aggressive.

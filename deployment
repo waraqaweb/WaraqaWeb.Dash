@@ -621,7 +621,7 @@ if printf "%s\n" "$CHANGED" | grep -qE '^(deploy/nginx/|docker-compose\.yml)'; t
 if printf "%s\n" "$CHANGED" | grep -qE '^(backend/|deploy/backend/)'; then SERVICES="$SERVICES backend"; fi
 if printf "%s\n" "$CHANGED" | grep -qE '^(frontend/|deploy/frontend/)'; then SERVICES="$SERVICES frontend"; fi
 
-if [ -n "${SERVICES// /}" ]; then
+if [ -n "$(printf "%s" "$SERVICES" | tr -d ' ')" ]; then
 	echo "Rebuilding services:$SERVICES"
 	docker compose up -d --build $SERVICES
 else
@@ -672,6 +672,9 @@ git push origin main
 
 This does NOT delete MongoDB data and does NOT overwrite `.env`.
 
+IMPORTANT: Only copy/paste the code block below into the droplet shell.
+Do NOT paste any surrounding explanation text (e.g. lines like “then it computes…”).
+
 ```bash
 cd /opt/waraqa
 
@@ -710,7 +713,7 @@ if printf "%s\n" "$CHANGED" | grep -qE '^(frontend/|deploy/frontend/)'; then
 fi
 
 # Rebuild/restart (minimal downtime)
-if [ -n "${SERVICES// /}" ]; then
+if [ -n "$(printf "%s" "$SERVICES" | tr -d ' ')" ]; then
 	echo "Rebuilding services:$SERVICES"
 	docker compose up -d --build $SERVICES
 else

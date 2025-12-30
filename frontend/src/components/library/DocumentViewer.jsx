@@ -259,7 +259,10 @@ const buildPlaceholderPages = (count = 6) =>
   }));
 
 const DocumentViewer = ({ item, onClose }) => {
-  const itemId = useMemo(() => item?._id || item?.id || item?.item || null, [item]);
+  const itemId = useMemo(
+    () => item?._id || item?.id || item?.itemId || item?.item || null,
+    [item]
+  );
   const [pages, setPages] = useState([]);
   const [pageCursor, setPageCursor] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -281,6 +284,10 @@ const DocumentViewer = ({ item, onClose }) => {
   const [inlineError, setInlineError] = useState(null);
   const [inlineRenderAttempted, setInlineRenderAttempted] = useState(false);
   const [inlineRenderState, setInlineRenderState] = useState({ status: 'idle', error: null });
+  const [inlineRenderProgress, setInlineRenderProgress] = useState({ current: 0, total: 0 });
+  const [inlineFirstPageImage, setInlineFirstPageImage] = useState(null);
+  const [inlineRenderRequested, setInlineRenderRequested] = useState(false);
+  const [inlineDownloadProgress, setInlineDownloadProgress] = useState({ loaded: 0, total: 0 });
   const [, setClientRenderedPdf] = useState(false);
 
   const inlinePdfBufferRef = useRef(null);
@@ -316,14 +323,23 @@ const DocumentViewer = ({ item, onClose }) => {
     if (!url) throw new Error('Preview link missing.');
     const resolved = new URL(url, window.location.href);
     const sameOrigin = resolved.origin === window.location.origin;
+    const apiBase = String(api?.defaults?.baseURL || '').replace(/\/$/, '');
+    const isApiUrl = apiBase ? resolved.toString().startsWith(apiBase) : false;
 
     // If the URL is same-origin (often an API route), use Axios so the Bearer token
     // is attached. Iframes/fetch cannot attach Authorization reliably.
-    if (sameOrigin) {
+    // Also use Axios for our API base even when cross-origin in local dev (3000 -> 5000).
+    if (sameOrigin || isApiUrl) {
+      setInlineDownloadProgress({ loaded: 0, total: 0 });
       const res = await api.get(resolved.toString(), {
         responseType: 'arraybuffer',
         headers: {
           Accept: 'application/pdf,*/*'
+        },
+        onDownloadProgress: (evt) => {
+          const loaded = typeof evt?.loaded === 'number' ? evt.loaded : 0;
+          const total = typeof evt?.total === 'number' ? evt.total : 0;
+          setInlineDownloadProgress({ loaded, total });
         }
       });
       return res.data;
@@ -345,6 +361,7 @@ const DocumentViewer = ({ item, onClose }) => {
   const prepareInlineBlobPreview = useCallback(async (url) => {
     cleanupInlineBlobUrl();
     inlinePdfBufferRef.current = null;
+    setInlineFirstPageImage(null);
     const pdfBuffer = await downloadPdfArrayBuffer(url);
     inlinePdfBufferRef.current = pdfBuffer;
     try {
@@ -362,10 +379,17 @@ const DocumentViewer = ({ item, onClose }) => {
     if (!itemId) return;
     setInlineLoading(true);
     setInlineError(null);
+    setInlineRenderProgress({ current: 0, total: 0 });
+    setInlineFirstPageImage(null);
+    setInlineDownloadProgress({ loaded: 0, total: 0 });
     try {
-      // Use a same-origin proxy endpoint so the browser can always fetch the bytes
-      // (no CORS/iframe limitations; Authorization header included via axios).
-      const proxyUrl = `${window.location.origin}/api/library/items/${encodeURIComponent(itemId)}/preview?attachment=false`;
+      // Use the API base URL so this works in BOTH:
+      // - production (same-origin via nginx)
+      // - local dev (vite :3000 + backend :5000)
+      const apiBase = String(api?.defaults?.baseURL || '').replace(/\/$/, '');
+      const proxyUrl = apiBase
+        ? `${apiBase}/library/items/${encodeURIComponent(itemId)}/preview?attachment=false`
+        : `${window.location.origin}/api/library/items/${encodeURIComponent(itemId)}/preview?attachment=false`;
       setInlineUrl(proxyUrl);
 
       try {
@@ -382,6 +406,7 @@ const DocumentViewer = ({ item, onClose }) => {
       setInlineUrl(null);
       cleanupInlineBlobUrl();
       inlinePdfBufferRef.current = null;
+      setInlineFirstPageImage(null);
     } finally {
       setInlineLoading(false);
     }
@@ -402,6 +427,7 @@ const DocumentViewer = ({ item, onClose }) => {
         setPageCursor(1);
         setClientRenderedPdf(false);
         setInlineRenderAttempted(false);
+        setInlineRenderRequested(false);
         setInlineRenderState({ status: 'idle', error: null });
         ensureInlinePreview();
         return;
@@ -478,7 +504,7 @@ const DocumentViewer = ({ item, onClose }) => {
   }, [annotationCache, itemId]);
 
   useEffect(() => {
-    if (previewMode !== 'inline' || !inlineUrl || inlineRenderAttempted) return;
+    if (previewMode !== 'inline' || !inlineUrl || !inlineRenderRequested || inlineRenderAttempted) return;
     let cancelled = false;
     let loadingTask;
     const controller = new AbortController();
@@ -488,7 +514,10 @@ const DocumentViewer = ({ item, onClose }) => {
       // Note: AbortController does not cancel axios; fetch path handles cancellation.
       const resolved = new URL(inlineUrl, window.location.href);
       const sameOrigin = resolved.origin === window.location.origin;
-      if (sameOrigin) {
+      const apiBase = String(api?.defaults?.baseURL || '').replace(/\/$/, '');
+      const isApiUrl = apiBase ? resolved.toString().startsWith(apiBase) : false;
+
+      if (sameOrigin || isApiUrl) {
         const res = await api.get(resolved.toString(), {
           responseType: 'arraybuffer',
           headers: { Accept: 'application/pdf,*/*' }
@@ -496,6 +525,7 @@ const DocumentViewer = ({ item, onClose }) => {
         inlinePdfBufferRef.current = res.data;
         return res.data;
       }
+
       const response = await fetch(resolved.toString(), {
         credentials: 'omit',
         signal: controller.signal,
@@ -529,6 +559,7 @@ const DocumentViewer = ({ item, onClose }) => {
         }
         const limit = Math.min(safeTotal, INLINE_RENDER_PAGE_LIMIT);
         const generated = [];
+        setInlineRenderProgress({ current: 0, total: limit });
 
         for (let pageNumber = 1; pageNumber <= limit; pageNumber += 1) {
           if (cancelled) break;
@@ -539,10 +570,15 @@ const DocumentViewer = ({ item, onClose }) => {
           canvas.height = viewport.height;
           canvas.width = viewport.width;
           await page.render({ canvasContext: context, viewport }).promise;
+          const imageUrl = canvas.toDataURL('image/png');
           generated.push({
             pageNumber,
-            imageUrl: canvas.toDataURL('image/png')
+            imageUrl
           });
+          if (pageNumber === 1) {
+            setInlineFirstPageImage(imageUrl);
+          }
+          setInlineRenderProgress({ current: pageNumber, total: limit });
           canvas.width = 0;
           canvas.height = 0;
         }
@@ -575,6 +611,7 @@ const DocumentViewer = ({ item, onClose }) => {
           status: 'error',
           error: resolveInlineErrorMessage(error)
         });
+        setInlineRenderProgress({ current: 0, total: 0 });
       } finally {
         if (loadingTask) {
           loadingTask.destroy();
@@ -590,7 +627,7 @@ const DocumentViewer = ({ item, onClose }) => {
         loadingTask.destroy();
       }
     };
-  }, [previewMode, inlineUrl, inlineRenderAttempted]);
+  }, [previewMode, inlineUrl, inlineRenderRequested, inlineRenderAttempted]);
 
   useEffect(() => {
     if (!itemId || previewMode === 'inline') return;
@@ -879,6 +916,7 @@ const DocumentViewer = ({ item, onClose }) => {
     if (!inlineUrl && !inlineLoading) {
       ensureInlinePreview();
     }
+    setInlineRenderRequested(true);
     setInlineRenderAttempted(false);
     setInlineRenderState({ status: 'idle', error: null });
   };
@@ -934,31 +972,52 @@ const DocumentViewer = ({ item, onClose }) => {
         {previewMode === 'inline' ? (
           <div className="flex flex-1 gap-4 overflow-hidden p-4">
             <div className="flex-1 rounded-3xl border border-slate-200 bg-white p-4">
-              {inlineLoading ? (
-                <div className="flex h-full items-center justify-center text-sm text-slate-600">
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading preview…
-                </div>
-              ) : (inlineBlobUrl || inlineUrl) ? (
-                <iframe
-                  src={inlineBlobUrl || inlineUrl}
-                  title={`Preview of ${item.displayName}`}
-                  className="h-full w-full rounded-2xl bg-white"
-                  allow="fullscreen"
-                />
-              ) : (
+              {inlineRenderState.status === 'error' ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-slate-600">
-                  <p className="text-sm font-medium">We could not generate page previews for this file.</p>
-                  <p className="text-xs text-slate-500">
-                    Use Download to open it in a new tab or retry loading the inline preview below.
-                  </p>
+                  <p className="text-sm font-medium">We couldn’t render a preview for this file.</p>
+                  <p className="text-xs text-slate-500">Use Download to open it directly, or retry rendering.</p>
+                  <p className="text-xs text-red-500">{inlineRenderState.error}</p>
                   {inlineError && <p className="text-xs text-red-500">{inlineError}</p>}
                   <button
                     type="button"
-                    onClick={ensureInlinePreview}
+                    onClick={handleInlineRenderRetry}
                     className="rounded-full border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                   >
-                    Retry preview
+                    Retry
                   </button>
+                </div>
+              ) : inlineBlobUrl ? (
+                <div className="flex h-full flex-col gap-3">
+                  <div className="flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <object
+                      data={inlineBlobUrl}
+                      type="application/pdf"
+                      className="h-full w-full"
+                      aria-label={`Preview of ${item.displayName}`}
+                    >
+                      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-slate-600">
+                        <p className="text-sm font-medium">Your browser can’t display this PDF inline.</p>
+                        <p className="text-xs text-slate-500">Click Download to open it.</p>
+                      </div>
+                    </object>
+                  </div>
+                  {inlineError ? <p className="text-xs text-red-500">{inlineError}</p> : null}
+                </div>
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-slate-600">
+                  <div className="inline-flex items-center justify-center text-sm text-slate-600">
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading PDF…
+                  </div>
+                  {inlineLoading && (inlineDownloadProgress.total || inlineDownloadProgress.loaded) ? (
+                    <p className="text-xs text-slate-600">
+                      Downloaded {Math.round((inlineDownloadProgress.loaded || 0) / 1024 / 1024)} MB
+                      {inlineDownloadProgress.total
+                        ? ` / ${Math.round(inlineDownloadProgress.total / 1024 / 1024)} MB`
+                        : ''}
+                    </p>
+                  ) : null}
+                  {inlineError ? <p className="text-xs text-red-500">{inlineError}</p> : null}
+                  <p className="text-xs text-slate-500">If this takes too long, click Download.</p>
                 </div>
               )}
 
@@ -970,7 +1029,9 @@ const DocumentViewer = ({ item, onClose }) => {
                 {inlineRenderState.status === 'rendering' && (
                   <div className="mt-3 inline-flex items-center gap-2 text-emerald-600">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Preparing transparent canvas…</span>
+                    <span>
+                      Preparing annotation pages… {inlineRenderProgress.current}/{inlineRenderProgress.total || '…'}
+                    </span>
                   </div>
                 )}
                 {inlineRenderState.status === 'error' && (

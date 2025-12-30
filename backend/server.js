@@ -111,14 +111,24 @@ app.use(cors({
 })); // Enable CORS for frontend communication
 
 // Rate limiting to prevent abuse
+const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || (isProduction ? 2000 : 5000));
+
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isProduction ? 200 : 5000,
+  windowMs: rateLimitWindowMs,
+  max: rateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    const p = req.path || '';
+    // Auth endpoints have their own specific limiters.
+    if (p.startsWith('/api/auth')) return true;
+    // Health/version should never be rate-limited.
+    return p === '/api/health' || p === '/api/version';
+  },
   message: {
     error: 'Too many requests, please slow down.',
-    retryAfter: 15 * 60
+    retryAfter: Math.ceil(rateLimitWindowMs / 1000)
   }
 });
 app.use(limiter);

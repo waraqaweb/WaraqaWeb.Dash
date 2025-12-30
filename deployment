@@ -350,6 +350,16 @@ docker compose up -d
 # NOTE: When HTTPS is enabled, http://127.0.0.1/* will 301 to https://127.0.0.1/*.
 # That redirect is expected but not a useful health check.
 
+# Wait briefly for backend to accept connections (avoids transient 502 right after restart)
+for i in $(seq 1 30); do
+	if docker compose exec -T nginx sh -lc 'wget -q -O- http://backend:5000/api/health >/dev/null'; then
+		echo "Backend is healthy"
+		break
+	fi
+	echo "Waiting for backend... ($i/30)"
+	sleep 1
+done
+
 # If you know the domain:
 DOMAIN=${DOMAIN:-test.waraqaweb.com}
 curl -I https://$DOMAIN/dashboard/login || true
@@ -390,7 +400,6 @@ docker compose config >/dev/null
 
 # Start stack
 docker compose up -d --build
-
 # Re-start boot recovery service (if installed)
 systemctl restart waraqa-compose.service 2>/dev/null || true
 systemctl status waraqa-compose.service --no-pager 2>/dev/null || true
@@ -652,6 +661,16 @@ docker compose up -d --build
 # Verify
 docker compose ps
 
+# Wait for backend to become reachable (nginx can start before node listens)
+for i in $(seq 1 30); do
+	if docker compose exec -T nginx sh -lc 'wget -q -O- http://backend:5000/api/health >/dev/null'; then
+		echo "Backend is healthy"
+		break
+	fi
+	echo "Waiting for backend... ($i/30)"
+	sleep 1
+done
+
 # Prefer real domain checks when HTTPS is enabled
 DOMAIN=${DOMAIN:-test.waraqaweb.com}
 curl -I https://$DOMAIN/dashboard/login || true
@@ -660,6 +679,23 @@ curl -sS https://$DOMAIN/api/health || true
 # If DNS is not working yet, force Host + SNI to localhost
 curl -I http://127.0.0.1/dashboard/login -H "Host: $DOMAIN" || true
 curl -ksS https://127.0.0.1/api/health --resolve "$DOMAIN:443:127.0.0.1" || true
+```
+
+## If users get logged out / login fails for a few minutes
+
+If you see `429` responses in `docker compose logs nginx` for real users (especially `/api/auth/me` or `/api/auth/login`), the nginx HTTPS rate limiting is too aggressive.
+
+With this repo version, nginx only rate-limits **anonymous** `/api/*` requests (bots) and does **not** rate-limit authenticated users.
+
+Fix / redeploy:
+
+```bash
+cd /opt/waraqa
+git pull --ff-only
+docker compose up -d --build
+
+# Confirm 429s are gone (nginx)
+docker compose logs --tail=500 nginx | grep ' 429 ' || echo "No 429s in last 500 lines"
 ```
 
 ## C) Rollback (safe)

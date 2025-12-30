@@ -15,6 +15,8 @@ const { authenticateToken } = require("../middleware/auth");
 
 const router = express.Router();
 
+const authDebug = process.env.AUTH_DEBUG === 'true';
+
 // Create a more specific rate limiter for auth endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -233,9 +235,10 @@ router.post(
 
       // Find user by email and EXPLICITLY SELECT PASSWORD
       const user = await User.findOne({ email }).select("+password");
-      console.log("Login attempt for email:", email);
-      console.log("User found:", user ? user.email : "No user found");
-      console.log("User password hash from DB:", user ? user.password : "N/A");
+      if (authDebug) {
+        console.log("Login attempt for email:", email);
+        console.log("User found:", user ? user.email : "No user found");
+      }
 
       if (!user) {
         console.log("Login failed: User not found");
@@ -254,7 +257,9 @@ router.post(
 
       // Verify password using the method on the user schema
       const isPasswordValid = await user.comparePassword(password);
-      console.log("Password comparison result:", isPasswordValid);
+      if (authDebug) {
+        console.log("Password comparison result:", isPasswordValid);
+      }
 
       if (!isPasswordValid) {
         // Increment login attempts if password is invalid

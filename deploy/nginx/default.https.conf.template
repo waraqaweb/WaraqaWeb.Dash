@@ -7,7 +7,16 @@ upstream frontend_upstream {
 }
 
 # Basic, practical abuse protection (lightweight)
-limit_req_zone $binary_remote_addr zone=req_per_ip:10m rate=10r/s;
+# IMPORTANT: limits are per *public IP*. Several real users may share one IP (NAT).
+# To keep real users smooth while still throttling bots:
+# - Only rate-limit *anonymous* API calls (no Authorization header).
+# - Never rate-limit /api/auth/* at nginx (backend has dedicated auth/login limiters).
+map $http_authorization $anon_api_key {
+  default "";
+  ""      $binary_remote_addr;
+}
+limit_req_zone $anon_api_key zone=anon_api_per_ip:10m rate=20r/s;
+limit_req_status 429;
 limit_conn_zone $binary_remote_addr zone=conn_per_ip:10m;
 
 server {
@@ -43,15 +52,49 @@ server {
   client_max_body_size 250m;
 
   # Very light limits (keeps scanners from hammering)
-  limit_conn conn_per_ip 30;
-  limit_req zone=req_per_ip burst=20 nodelay;
+  limit_conn conn_per_ip 100;
 
   add_header X-Content-Type-Options nosniff always;
   add_header X-Frame-Options SAMEORIGIN always;
   add_header Referrer-Policy strict-origin-when-cross-origin always;
 
+  # Hard-block common scanning/probing paths
+  location ~* ^/(?:\.env|\.git|\.hg|\.svn|\.DS_Store|\.ht|wp-admin|wp-login\.php|phpmyadmin|pma|adminer|vendor|cgi-bin) {
+    return 444;
+  }
+
   # Backend API
+  # Auth endpoints are intentionally NOT rate-limited at nginx.
+  # The backend has its own dedicated auth/login rate limiters.
+  location ^~ /api/auth/ {
+    proxy_pass http://backend_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+
+  # Health/version are safe to exempt from nginx limits (backend also skips them).
+  location = /api/health {
+    proxy_pass http://backend_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+
+  location = /api/version {
+    proxy_pass http://backend_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+
   location ^~ /api/ {
+    # Only affects anonymous requests. Authenticated requests have an empty key and
+    # are effectively not rate-limited at nginx.
+    limit_req zone=anon_api_per_ip burst=40 nodelay;
     proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;

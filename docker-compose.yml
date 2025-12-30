@@ -4,6 +4,11 @@ services:
     restart: unless-stopped
     volumes:
       - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ ping: 1 })' >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   backend:
     build:
@@ -20,8 +25,8 @@ services:
       APP_VERSION: ${APP_VERSION:-dev}
       BUILD_TIME: ${BUILD_TIME:-}
       MONGODB_URI: mongodb://mongo:27017/waraqadb
-      FRONTEND_URL: ${FRONTEND_URL}
-      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL is required (e.g. https://your-domain)}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
       JWT_EXPIRE: ${JWT_EXPIRE}
@@ -47,6 +52,11 @@ services:
       LIBRARY_DOWNLOAD_SECRET: ${LIBRARY_DOWNLOAD_SECRET}
     depends_on:
       - mongo
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:5000/api/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   frontend:
     build:
@@ -58,6 +68,11 @@ services:
         APP_VERSION: ${APP_VERSION:-dev}
         BUILD_TIME: ${BUILD_TIME:-}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/dashboard/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   nginx:
     build:

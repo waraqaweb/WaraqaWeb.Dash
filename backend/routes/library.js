@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs/promises');
+const axios = require('axios');
 const { body, param, query, validationResult } = require('express-validator');
 const { authenticateToken, optionalAuth, requireAdmin } = require('../middleware/auth');
 const libraryService = require('../services/libraryService');
@@ -441,6 +442,78 @@ router.get(
         baseUrl
       });
       res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// Streams a previewable asset to the browser from a same-origin URL.
+// This avoids CORS and iframe/header limitations for protected assets.
+router.get(
+  '/items/:itemId/preview',
+  optionalAuth,
+  async (req, res, next) => {
+    try {
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const attachment = req.query.attachment === 'true';
+      const payload = await libraryService.getDownloadUrl({
+        itemId: req.params.itemId,
+        user: req.user,
+        shareToken: shareTokenFromRequest(req),
+        attachment,
+        format: req.query.format,
+        baseUrl
+      });
+
+      if (!payload?.url) {
+        return res.status(404).json({ message: 'Preview URL not found' });
+      }
+
+      // If we already generated a same-origin token URL (local provider), just redirect.
+      if (payload.url.startsWith(`${baseUrl}/api/library/assets/download?`)) {
+        return res.redirect(302, payload.url);
+      }
+
+      // Otherwise proxy the remote stream (e.g., Cloudinary signed URL).
+      const upstream = await axios.get(payload.url, {
+        responseType: 'stream',
+        timeout: 60_000,
+        validateStatus: () => true,
+        headers: {
+          // Hint content-type selection to upstream; harmless if ignored.
+          Accept: 'application/pdf,*/*'
+        }
+      });
+
+      if (upstream.status < 200 || upstream.status >= 300) {
+        return res.status(502).json({
+          message: 'Preview upstream request failed',
+          upstreamStatus: upstream.status
+        });
+      }
+
+      const contentType = upstream.headers?.['content-type'] || 'application/pdf';
+      const contentLength = upstream.headers?.['content-length'];
+
+      res.setHeader('Content-Type', contentType);
+      // Inline by default, but allow forcing download with ?attachment=true
+      res.setHeader('Content-Disposition', attachment ? 'attachment' : 'inline');
+      res.setHeader('Cache-Control', 'no-store');
+      if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+      }
+
+      upstream.data.on('error', (err) => {
+        console.error('Library preview upstream stream error', err);
+        if (!res.headersSent) {
+          res.status(502).json({ message: 'Preview stream failed' });
+        } else {
+          res.end();
+        }
+      });
+
+      return upstream.data.pipe(res);
     } catch (error) {
       next(error);
     }

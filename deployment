@@ -638,7 +638,7 @@ Run in PowerShell from `C:\waraqa`:
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Library Document viewer"
+git commit -m "add bonous issue"
 git push origin main
 ```
 
@@ -660,8 +660,6 @@ git pull --ff-only
 # Rebuild ONLY what changed (faster; avoids unnecessary frontend rebuilds)
 NEW_SHA="$(git rev-parse HEAD)"
 CHANGED="$(git diff --name-only "$OLD_SHA..$NEW_SHA" || true)"
-
-
 
 SERVICES=""
 printf "%s\n" "$CHANGED" | grep -qE '^deploy/nginx/' && SERVICES="$SERVICES nginx"

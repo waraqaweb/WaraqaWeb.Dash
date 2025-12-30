@@ -363,23 +363,18 @@ const DocumentViewer = ({ item, onClose }) => {
     setInlineLoading(true);
     setInlineError(null);
     try {
-      const ticket = await fetchDownloadTicket(itemId, { attachment: false });
-      setInlineUrl(ticket?.url || null);
-      if (!ticket?.url) {
-        setInlineError('Preview link missing. Use Download instead.');
-        cleanupInlineBlobUrl();
-        inlinePdfBufferRef.current = null;
-        return;
-      }
+      // Use a same-origin proxy endpoint so the browser can always fetch the bytes
+      // (no CORS/iframe limitations; Authorization header included via axios).
+      const proxyUrl = `${window.location.origin}/api/library/items/${encodeURIComponent(itemId)}/preview?attachment=false`;
+      setInlineUrl(proxyUrl);
 
-      // Best-effort: build a Blob URL so iframe/pdfjs can render without auth/CORS issues.
-      // If this fails (e.g. CORS blocks fetch on a signed URL), we fall back to the direct URL.
       try {
-        await prepareInlineBlobPreview(ticket.url);
+        await prepareInlineBlobPreview(proxyUrl);
       } catch (err) {
-        console.warn('Inline blob preview failed; falling back to direct URL', err);
+        console.warn('Inline blob preview failed', err);
         cleanupInlineBlobUrl();
         inlinePdfBufferRef.current = null;
+        setInlineError('Unable to load the document preview. Click Download to open it directly.');
       }
     } catch (error) {
       console.error('Inline preview failed', error);

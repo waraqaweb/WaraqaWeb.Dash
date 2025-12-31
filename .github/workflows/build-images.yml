@@ -2,7 +2,7 @@ name: Build & Push Docker Images (GHCR)
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
 
 concurrency:
   group: ghcr-build-main

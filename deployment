@@ -257,8 +257,8 @@ Optional fastest mode (pull CI-built images from GHCR):
 
 - Enable `.github/workflows/build-images.yml` in GitHub Actions
 - Set GitHub repo variables:
-	- `REACT_APP_API_URL` (example: `https://your-domain/api`)
-	- `REACT_APP_SOCKET_URL` (example: `https://your-domain`)
+  - `REACT_APP_API_URL` (example: `https://your-domain/api`)
+  - `REACT_APP_SOCKET_URL` (example: `https://your-domain`)
 
 Then on the droplet:
 

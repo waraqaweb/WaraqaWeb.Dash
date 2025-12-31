@@ -22,6 +22,17 @@ const getPublicBaseUrl = (req) => {
   return `${proto}://${req.get('host')}`;
 };
 
+const makeLogger = (label) => (phase, details = {}) => {
+  const base = {
+    at: new Date().toISOString(),
+    phase
+  };
+  console.log(label, JSON.stringify({ ...base, ...details }));
+};
+
+const logPreview = makeLogger('[library:preview]');
+const logAssetDownload = makeLogger('[library:asset-download]');
+
 const LIBRARY_UPLOAD_TMP_DIR =
   process.env.LIBRARY_UPLOAD_TMP_DIR || path.join(__dirname, '..', 'tmp', 'library-uploads');
 
@@ -465,6 +476,13 @@ router.get(
     try {
       const baseUrl = getPublicBaseUrl(req);
       const attachment = req.query.attachment === 'true';
+      const logContext = {
+        itemId: req.params.itemId,
+        attachment,
+        shareToken: Boolean(shareTokenFromRequest(req)),
+        baseUrl
+      };
+      logPreview('start', logContext);
       const payload = await libraryService.getDownloadUrl({
         itemId: req.params.itemId,
         user: req.user,
@@ -475,11 +493,13 @@ router.get(
       });
 
       if (!payload?.url) {
+        logPreview('no-url', logContext);
         return res.status(404).json({ message: 'Preview URL not found' });
       }
 
       // If we already generated a same-origin token URL (local provider), just redirect.
       if (payload.url.startsWith(`${baseUrl}/api/library/assets/download?`)) {
+        logPreview('redirect-local', { ...logContext, target: payload.url });
         return res.redirect(302, payload.url);
       }
 
@@ -495,6 +515,7 @@ router.get(
         upstreamHeaders.Range = req.headers.range;
       }
 
+      const upstreamStarted = Date.now();
       const upstream = await axios.get(payload.url, {
         responseType: 'stream',
         // Remote storage can be slow; allow more time than the default 60s.
@@ -504,11 +525,22 @@ router.get(
       });
 
       if (upstream.status < 200 || upstream.status >= 300) {
+        logPreview('upstream-error-status', {
+          ...logContext,
+          upstreamStatus: upstream.status
+        });
         return res.status(502).json({
           message: 'Preview upstream request failed',
           upstreamStatus: upstream.status
         });
       }
+
+      logPreview('upstream-ok', {
+        ...logContext,
+        upstreamStatus: upstream.status,
+        elapsedMs: Date.now() - upstreamStarted,
+        contentLength: upstream.headers?.['content-length']
+      });
 
       const contentType = upstream.headers?.['content-type'] || 'application/pdf';
       const contentLength = upstream.headers?.['content-length'];
@@ -532,7 +564,10 @@ router.get(
       }
 
       upstream.data.on('error', (err) => {
-        console.error('Library preview upstream stream error', err);
+        logPreview('upstream-stream-error', {
+          ...logContext,
+          message: err?.message || 'stream error'
+        });
         if (!res.headersSent) {
           res.status(502).json({ message: 'Preview stream failed' });
         } else {
@@ -540,17 +575,40 @@ router.get(
         }
       });
 
+      res.on('close', () => {
+        logPreview('response-closed', {
+          ...logContext,
+          elapsedMs: Date.now() - upstreamStarted,
+          finished: res.writableEnded
+        });
+      });
+
       return upstream.data.pipe(res);
     } catch (error) {
+      logPreview('error', {
+        itemId: req.params.itemId,
+        message: error?.message || 'preview error',
+        stack: error?.stack ? undefined : undefined
+      });
       next(error);
     }
   }
 );
 
 router.get('/assets/download', async (req, res, next) => {
+  const startedAt = Date.now();
+  const { token } = req.query;
+  logAssetDownload('start', { tokenPresent: Boolean(token) });
   try {
-    const { token } = req.query;
     const { asset, payload } = await libraryService.resolveLocalDownloadToken(token);
+    const logContext = {
+      assetId: payload.assetId,
+      itemId: payload.itemId,
+      attachment: payload.attachment !== false,
+      hasStoragePath: Boolean(asset.storagePath),
+      hasBuffer: Boolean(asset.data?.length)
+    };
+    logAssetDownload('resolved', logContext);
     const fileName = normalizeUtf8FromLatin1(payload.fileName || asset.fileName || 'library-file');
     const disposition = payload.attachment === false ? 'inline' : 'attachment';
 
@@ -572,22 +630,60 @@ router.get('/assets/download', async (req, res, next) => {
       `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeRFC5987(safeName)}`
     );
 
+    res.on('close', () => {
+      logAssetDownload('response-closed', {
+        ...logContext,
+        elapsedMs: Date.now() - startedAt,
+        finished: res.writableEnded
+      });
+    });
+
     if (asset.storagePath) {
       try {
         const stats = await fsPromises.stat(asset.storagePath);
         res.setHeader('Content-Length', stats.size);
-        return fs.createReadStream(asset.storagePath).pipe(res);
+        const fileStream = fs.createReadStream(asset.storagePath);
+        fileStream.on('error', (err) => {
+          logAssetDownload('file-stream-error', {
+            ...logContext,
+            message: err?.message || 'file stream error'
+          });
+          if (!res.headersSent) {
+            res.status(500).json({ message: 'Stored file stream failed.' });
+          } else {
+            res.end();
+          }
+        });
+        logAssetDownload('stream-file', logContext);
+        return fileStream.pipe(res);
       } catch (fileError) {
         if (!asset.data) {
-          throw libraryService.httpError(500, 'Stored file is missing. Please re-upload.', 'ASSET_FILE_MISSING');
+          logAssetDownload('file-missing-no-buffer', {
+            ...logContext,
+            message: fileError?.message || 'file missing'
+          });
+          throw libraryService.httpError(
+            500,
+            'Stored file is missing. Please re-upload.',
+            'ASSET_FILE_MISSING'
+          );
         }
-        console.warn('Falling back to embedded asset data', fileError);
+        logAssetDownload('file-missing-fallback-buffer', {
+          ...logContext,
+          message: fileError?.message || 'file missing'
+        });
       }
     }
 
-    res.setHeader('Content-Length', asset.bytes || asset.data?.length || 0);
+    const payloadBytes = asset.bytes || asset.data?.length || 0;
+    res.setHeader('Content-Length', payloadBytes);
+    logAssetDownload('send-buffer', { ...logContext, payloadBytes });
     return res.send(asset.data);
   } catch (error) {
+    logAssetDownload('error', {
+      tokenPresent: Boolean(token),
+      message: error?.message || 'asset download error'
+    });
     next(error);
   }
 });

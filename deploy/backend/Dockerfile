@@ -8,7 +8,7 @@ ARG BUILD_TIME
 
 # Install dependencies first (better layer caching)
 COPY backend/package.json backend/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --no-audit --no-fund
 
 # Copy backend source
 COPY backend/ ./

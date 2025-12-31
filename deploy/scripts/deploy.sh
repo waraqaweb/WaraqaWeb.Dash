@@ -14,6 +14,7 @@ MODE="${1:-auto}"  # auto | all | no-build | pull
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+export BUILDKIT_PROGRESS=plain
 
 PREV_FILE="${ROOT_DIR}/.previous_deploy_sha"
 OLD_SHA=""
@@ -62,6 +63,9 @@ elif [[ "$MODE" == "no-build" ]]; then
   docker compose up -d
 elif [[ -n "$SERVICES_TRIMMED" ]]; then
   echo "[deploy] Rebuilding services:$SERVICES"
+  if printf "%s\n" "$SERVICES" | grep -q "frontend"; then
+    echo "[deploy] NOTE: frontend rebuilds can take several minutes on small droplets (Vite + npm ci)."
+  fi
   docker compose up -d --build $SERVICES
 else
   echo "[deploy] No build needed; restarting containers"

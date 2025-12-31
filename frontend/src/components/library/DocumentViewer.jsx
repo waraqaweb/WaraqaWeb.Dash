@@ -23,6 +23,8 @@ const DEFAULT_HIGHLIGHT_OPACITY = 0.35;
 const DEFAULT_SHAPE_OPACITY = 0.85;
 const INLINE_RENDER_PAGE_LIMIT = 12;
 const INLINE_RENDER_SCALE = 1.4;
+const PAGES_BATCH_SIZE = 6;
+const SIDEBAR_PREFETCH_THRESHOLD_PX = 600;
 
 const baseExtras = () => ({ shapes: [] });
 
@@ -252,11 +254,24 @@ const pointsToPath = (points = []) => {
   return d;
 };
 
-const buildPlaceholderPages = (count = 6) =>
-  Array.from({ length: count }).map((_, index) => ({
-    pageNumber: index + 1,
-    imageUrl: `https://placehold.co/900x1200/111827/FFFFFF?text=Page+${index + 1}`
-  }));
+const buildPlaceholderDataUrl = (label) => {
+  const safeLabel = String(label || 'Loading…');
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1200" viewBox="0 0 900 1200">
+  <rect width="900" height="1200" fill="#0f172a"/>
+  <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial" font-size="72" fill="#ffffff">${safeLabel}</text>
+</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+};
+
+const buildPlaceholderPages = (count = 6, startPageNumber = 1) =>
+  Array.from({ length: count }).map((_, index) => {
+    const pageNumber = startPageNumber + index;
+    return {
+      pageNumber,
+      imageUrl: buildPlaceholderDataUrl(`Page ${pageNumber}`)
+    };
+  });
 
 const DocumentViewer = ({ item, onClose }) => {
   const itemId = useMemo(
@@ -373,7 +388,6 @@ const DocumentViewer = ({ item, onClose }) => {
       setInlineBlobUrl(objectUrl);
       return objectUrl;
     } catch (e) {
-      // If Blob/URL fails, fall back to direct URL (may still work in iframe).
       return null;
     }
   }, [cleanupInlineBlobUrl, downloadPdfArrayBuffer]);
@@ -386,23 +400,39 @@ const DocumentViewer = ({ item, onClose }) => {
     setInlineFirstPageImage(null);
     setInlineDownloadProgress({ loaded: 0, total: 0 });
     try {
-      // Use the API base URL so this works in BOTH:
-      // - production (same-origin via nginx)
-      // - local dev (vite :3000 + backend :5000)
       const apiBase = String(api?.defaults?.baseURL || '').replace(/\/$/, '');
-      const proxyUrl = apiBase
-        ? `${apiBase}/library/items/${encodeURIComponent(itemId)}/preview?attachment=false`
-        : `${window.location.origin}/api/library/items/${encodeURIComponent(itemId)}/preview?attachment=false`;
-      setInlineUrl(proxyUrl);
 
-      try {
-        await prepareInlineBlobPreview(proxyUrl);
-      } catch (err) {
-        console.warn('Inline blob preview failed', err);
-        cleanupInlineBlobUrl();
-        inlinePdfBufferRef.current = null;
-        setInlineError('Unable to load the document preview. Click Download to open it directly.');
+      // Local dev often runs on a different origin (3000 -> 5000) and nginx sets
+      // X-Frame-Options=SAMEORIGIN in prod-like setups, which breaks embedding.
+      // For dev, keep the blob path.
+      const apiOrigin = apiBase ? new URL(apiBase, window.location.href).origin : window.location.origin;
+      const isCrossOriginDev = Boolean(apiBase) && apiOrigin !== window.location.origin;
+
+      if (isCrossOriginDev) {
+        const proxyUrl = `${apiBase}/library/items/${encodeURIComponent(itemId)}/preview?attachment=false`;
+        setInlineUrl(proxyUrl);
+        try {
+          await prepareInlineBlobPreview(proxyUrl);
+        } catch (err) {
+          console.warn('Inline blob preview failed', err);
+          cleanupInlineBlobUrl();
+          inlinePdfBufferRef.current = null;
+          setInlineError('Unable to load the document preview. Click Download to open it directly.');
+        }
+        return;
       }
+
+      // Production (same-origin): request a tokenized URL and let the browser PDF viewer
+      // stream/range-request it. This avoids downloading the entire book before scrolling.
+      const ticket = await fetchDownloadTicket(itemId, { attachment: false });
+      const streamUrl = ticket?.url;
+      if (!streamUrl) {
+        throw new Error('Preview link missing.');
+      }
+      cleanupInlineBlobUrl();
+      inlinePdfBufferRef.current = null;
+      setInlineBlobUrl(null);
+      setInlineUrl(streamUrl);
     } catch (error) {
       console.error('Inline preview failed', error);
       setInlineError(`${resolveInlineErrorMessage(error)} Click Download to open it directly.`);
@@ -419,7 +449,7 @@ const DocumentViewer = ({ item, onClose }) => {
     if (!itemId) return;
     setLoadingPages(true);
     try {
-      const response = await fetchDocumentPages(itemId, { page, limit: 4 });
+      const response = await fetchDocumentPages(itemId, { page, limit: PAGES_BATCH_SIZE });
       const total = typeof response.total === 'number' ? response.total : null;
       const receivedPages = Array.isArray(response.pages) ? response.pages : [];
       const hasServerPages = receivedPages.length > 0;
@@ -437,10 +467,9 @@ const DocumentViewer = ({ item, onClose }) => {
       }
       setPreviewMode('pages');
       setClientRenderedPdf(false);
-      const nextPages = hasServerPages ? receivedPages : buildPlaceholderPages(4).map((placeholder) => ({
-        ...placeholder,
-        pageNumber: placeholder.pageNumber + (page - 1) * 4
-      }));
+      const nextPages = hasServerPages
+        ? receivedPages
+        : buildPlaceholderPages(PAGES_BATCH_SIZE, (page - 1) * PAGES_BATCH_SIZE + 1);
       setPages((prev) => {
         const merged = [...prev];
         nextPages.forEach((entry) => {
@@ -450,7 +479,15 @@ const DocumentViewer = ({ item, onClose }) => {
         });
         return merged.sort((a, b) => a.pageNumber - b.pageNumber);
       });
-      setHasMore(Boolean(response.hasMore));
+
+      const resolvedHasMore =
+        typeof response.hasMore === 'boolean'
+          ? response.hasMore
+          : typeof total === 'number' && total > 0
+            ? page * PAGES_BATCH_SIZE < total
+            : receivedPages.length >= PAGES_BATCH_SIZE;
+
+      setHasMore(resolvedHasMore);
       setPageCursor(page);
       if (!response.pages?.length && page === 1) {
         setHasMore(false);
@@ -658,7 +695,8 @@ const DocumentViewer = ({ item, onClose }) => {
   const handleScroll = useCallback(() => {
     if (!hasMore || loadingPages || !listRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = listRef.current;
-    if (scrollHeight - scrollTop - clientHeight < 80) {
+    const threshold = Math.max(SIDEBAR_PREFETCH_THRESHOLD_PX, clientHeight * 1.5);
+    if (scrollHeight - scrollTop - clientHeight < threshold) {
       loadPages(pageCursor + 1);
     }
   }, [hasMore, loadingPages, loadPages, pageCursor]);
@@ -928,7 +966,7 @@ const DocumentViewer = ({ item, onClose }) => {
   const canRedo = Boolean(activeAnnotations.redo?.length);
 
   const pageImage = useMemo(() => {
-    const fallback = 'https://placehold.co/900x1200/111827/FFFFFF?text=Preview';
+    const fallback = buildPlaceholderDataUrl('Preview');
     const match = pages.find((page) => page.pageNumber === activePage)?.imageUrl;
     return match || pages[0]?.imageUrl || fallback;
   }, [activePage, pages]);
@@ -989,11 +1027,11 @@ const DocumentViewer = ({ item, onClose }) => {
                     Retry
                   </button>
                 </div>
-              ) : inlineBlobUrl ? (
+              ) : inlineBlobUrl || inlineUrl ? (
                 <div className="flex h-full flex-col gap-3">
                   <div className="flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white">
                     <object
-                      data={inlineBlobUrl}
+                      data={inlineBlobUrl || inlineUrl}
                       type="application/pdf"
                       className="h-full w-full"
                       aria-label={`Preview of ${item.displayName}`}
@@ -1072,7 +1110,7 @@ const DocumentViewer = ({ item, onClose }) => {
                     }`}
                   >
                     <span>Page {page.pageNumber}</span>
-                    <span className="text-xs text-slate-500">{page.pageNumber <= pageCursor * 4 ? 'Ready' : 'Queued'}</span>
+                    <span className="text-xs text-slate-500">{page.pageNumber <= pageCursor * PAGES_BATCH_SIZE ? 'Ready' : 'Queued'}</span>
                   </button>
                 ))}
                 {loadingPages && (

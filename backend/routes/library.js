@@ -418,7 +418,13 @@ router.get(
         page: Number(req.query.page) || 1,
         limit: Number(req.query.limit) || 5
       });
-      res.json(payload);
+      const total = typeof payload.total === 'number' ? payload.total : 0;
+      const page = typeof payload.page === 'number' ? payload.page : Number(req.query.page) || 1;
+      const limit = typeof payload.limit === 'number' ? payload.limit : Number(req.query.limit) || 5;
+      const received = Array.isArray(payload.pages) ? payload.pages.length : 0;
+      const startIndex = Math.max((page - 1) * limit, 0);
+      const hasMore = total > 0 ? startIndex + received < total : received >= limit;
+      res.json({ ...payload, hasMore });
     } catch (error) {
       next(error);
     }

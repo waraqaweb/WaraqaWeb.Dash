@@ -198,7 +198,8 @@ router.get('/stats', authenticateToken, async (req, res) => {
       const monthStart = new Date(currentYear, currentMonth - 1, 1);
       const monthEnd = new Date(currentYear, currentMonth, 1);
 
-      const teacherAgg = await Class.aggregate([
+      // Aggregate all classes for general stats (classes/cancellations, etc.)
+      const teacherAggAll = await Class.aggregate([
         { $match: { teacher: teacherId, scheduledDate: { $gte: monthStart, $lt: monthEnd } } },
         {
           $group: {
@@ -209,12 +210,41 @@ router.get('/stats', authenticateToken, async (req, res) => {
         }
       ]);
 
-      const statusMap = {};
-      teacherAgg.forEach((r) => { statusMap[r._id] = r; });
+      const statusMapAll = {};
+      teacherAggAll.forEach((r) => { statusMapAll[r._id] = r; });
 
-      const hoursThisMonth = ( (statusMap.attended?.totalMinutes || 0) + (statusMap.missed_by_student?.totalMinutes || 0) + (statusMap.completed?.totalMinutes || 0) ) / 60;
-      const classesCompletedThisMonth = (statusMap.attended?.count || 0) + (statusMap.completed?.count || 0);
-      const cancellationsThisMonth = (statusMap.cancelled_by_teacher?.count || 0) + (statusMap.cancelled?.count || 0);
+      // Aggregate UNBILLED, countable teacher hours for the month.
+      // This keeps the dashboard "hours" counter aligned with teacher invoicing.
+      const teacherAggUnbilled = await Class.aggregate([
+        {
+          $match: {
+            teacher: teacherId,
+            scheduledDate: { $gte: monthStart, $lt: monthEnd },
+            deleted: { $ne: true },
+            billedInTeacherInvoiceId: null,
+            status: { $in: ['attended', 'missed_by_student', 'absent', 'completed'] }
+          }
+        },
+        {
+          $group: {
+            _id: '$status',
+            totalMinutes: { $sum: '$duration' }
+          }
+        }
+      ]);
+
+      const statusMapUnbilled = {};
+      teacherAggUnbilled.forEach((r) => { statusMapUnbilled[r._id] = r; });
+
+      const hoursThisMonth = (
+        (statusMapUnbilled.attended?.totalMinutes || 0) +
+        (statusMapUnbilled.missed_by_student?.totalMinutes || 0) +
+        (statusMapUnbilled.absent?.totalMinutes || 0) +
+        (statusMapUnbilled.completed?.totalMinutes || 0)
+      ) / 60;
+
+      const classesCompletedThisMonth = (statusMapAll.attended?.count || 0) + (statusMapAll.completed?.count || 0);
+      const cancellationsThisMonth = (statusMapAll.cancelled_by_teacher?.count || 0) + (statusMapAll.cancelled?.count || 0);
 
       // Distinct students with classes this month
       const studentsWithClasses = await Class.aggregate([

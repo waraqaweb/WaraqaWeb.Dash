@@ -349,6 +349,7 @@
 																	: Number(teacher.teacherInfo?.monthlyHours ?? 0) || 0
 																} hours this month
 															</span>
+															<span className="text-[11px] text-muted-foreground">(unbilled)</span>
 														</div>
 													</div>
 												</div>

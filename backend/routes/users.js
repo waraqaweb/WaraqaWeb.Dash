@@ -200,9 +200,9 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
 
     const total = await User.countDocuments(query);
 
-    // For the teachers list, compute hours this month from Class durations
-    // (this matches the teacher dashboard aggregation and avoids relying on
-    // teacherInfo.monthlyHours which can be a mutable snapshot).
+    // For the teachers list, compute UNBILLED hours this month from Class durations
+    // to keep the UI invoice-aware and avoid relying on teacherInfo.monthlyHours
+    // (which is a mutable snapshot).
     let usersPayload = users;
     if (String(role || '').toLowerCase() === 'teacher' && Array.isArray(users) && users.length) {
       const now = new Date();
@@ -217,7 +217,9 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
             $match: {
               teacher: { $in: teacherIds },
               scheduledDate: { $gte: monthStart, $lt: monthEnd },
-              status: { $in: ['attended', 'missed_by_student', 'completed'] }
+              deleted: { $ne: true },
+              billedInTeacherInvoiceId: null,
+              status: { $in: ['attended', 'missed_by_student', 'absent', 'completed'] }
             }
           },
           { $group: { _id: '$teacher', totalMinutes: { $sum: '$duration' } } }

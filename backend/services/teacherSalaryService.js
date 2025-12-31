@@ -428,11 +428,13 @@ class TeacherSalaryService {
         invoices: [],
         skipped: [],
         adjusted: [],
+        adjustmentsCreated: [],
         errors: [],
         summary: {
           total: teachers.length,
           created: 0,
           adjusted: 0,
+          adjustmentsCreated: 0,
           skipped: 0,
           failed: 0
         }
@@ -511,14 +513,74 @@ class TeacherSalaryService {
                   });
                 }
               } else {
-                // Invoice is paid, create a new adjustment invoice if missing hours > 0
-                console.log(`[generateMonthlyInvoices] Existing invoice is paid, skipping adjustment for teacher ${teacher._id}`);
-                results.skipped.push({
-                  teacherId: teacher._id,
-                  teacherName: `${teacher.firstName} ${teacher.lastName}`,
-                  reason: 'Paid invoice exists, manual adjustment needed'
-                });
-                results.summary.skipped++;
+                // Invoice is paid: create an adjustment invoice for late submissions so the period stays closed
+                // without polluting the new month's counters.
+                if (dryRun) {
+                  results.adjustmentsCreated.push({
+                    teacherId: teacher._id,
+                    teacherName: `${teacher.firstName} ${teacher.lastName}`,
+                    status: 'would_create_adjustment',
+                    adjustmentFor: existing._id,
+                    addedHours: missingHours,
+                    classCount: missingClasses.length
+                  });
+                  results.summary.adjustmentsCreated++;
+                } else {
+                  const newClassIds = missingClasses
+                    .map(cls => cls._id)
+                    .filter(id => !existing.classIds.some(existingId => existingId.toString() === id.toString()));
+
+                  if (newClassIds.length === 0) {
+                    console.log(`[generateMonthlyInvoices] Paid invoice missing classes were already linked elsewhere for teacher ${teacher._id}`);
+                    results.skipped.push({
+                      teacherId: teacher._id,
+                      teacherName: `${teacher.firstName} ${teacher.lastName}`,
+                      reason: 'Late-submission classes already billed'
+                    });
+                    results.summary.skipped++;
+                  } else {
+                    const newClassIdSet = new Set(newClassIds.map(id => id.toString()));
+                    const addedHours = missingClasses.reduce((sum, cls) => (
+                      newClassIdSet.has(cls._id.toString())
+                        ? sum + (cls.duration || 0) / 60
+                        : sum
+                    ), 0);
+                    const roundedHours = Math.round(addedHours * 1000) / 1000;
+
+                    const adjustmentInvoice = new TeacherInvoice({
+                      teacher: teacher._id,
+                      month,
+                      year,
+                      status: 'draft',
+                      isAdjustment: true,
+                      adjustmentFor: existing._id,
+                      adjustmentType: 'late_submission',
+                      totalHours: roundedHours,
+                      lockedMonthlyHours: roundedHours,
+                      classIds: newClassIds,
+                      rateSnapshot: existing.rateSnapshot,
+                      exchangeRateSnapshot: existing.exchangeRateSnapshot,
+                      transferFeeSnapshot: existing.transferFeeSnapshot,
+                      createdBy: userId,
+                      updatedBy: userId,
+                      notes: `Late submission adjustment for ${existing.invoiceNumber || existing._id}`
+                    });
+
+                    adjustmentInvoice.calculateAmounts();
+                    await adjustmentInvoice.save();
+                    await this.markClassesAsBilled(newClassIds, adjustmentInvoice._id);
+
+                    results.adjustmentsCreated.push({
+                      invoiceId: adjustmentInvoice._id,
+                      adjustmentFor: existing._id,
+                      teacherId: teacher._id,
+                      teacherName: `${teacher.firstName} ${teacher.lastName}`,
+                      addedHours: roundedHours,
+                      classCount: newClassIds.length
+                    });
+                    results.summary.adjustmentsCreated++;
+                  }
+                }
               }
             } else {
               console.log(`[generateMonthlyInvoices] Invoice already exists with all classes for teacher ${teacher._id}`);

@@ -4,7 +4,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 COPY frontend/package.json frontend/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci --prefer-offline
 
 COPY frontend/ ./
 
@@ -20,7 +20,9 @@ ENV VITE_BUILD_TIME=${BUILD_TIME}
 
 # Vite build is configured to output to build/ and use base=/dashboard/
 ENV NODE_OPTIONS=--max_old_space_size=2048
-RUN --mount=type=cache,target=/app/node_modules/.vite npm run build
+RUN --mount=type=cache,target=/root/.npm \
+	--mount=type=cache,target=/app/node_modules/.vite \
+	npm run build
 
 
 FROM nginx:1.27-alpine

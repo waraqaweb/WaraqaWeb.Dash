@@ -1,0 +1,12 @@
+services:
+  backend:
+    image: ghcr.io/waraqaweb/waraqa-backend:main
+    build: null
+
+  frontend:
+    image: ghcr.io/waraqaweb/waraqa-frontend:main
+    build: null
+
+  nginx:
+    image: ghcr.io/waraqaweb/waraqa-nginx:main
+    build: null

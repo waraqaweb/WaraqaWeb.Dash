@@ -14,6 +14,14 @@ const { normalizeUtf8FromLatin1 } = require('../utils/textEncoding');
 
 const router = express.Router();
 
+const getPublicBaseUrl = (req) => {
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const proto = String(forwardedProto || req.protocol || 'http')
+    .split(',')[0]
+    .trim();
+  return `${proto}://${req.get('host')}`;
+};
+
 const LIBRARY_UPLOAD_TMP_DIR =
   process.env.LIBRARY_UPLOAD_TMP_DIR || path.join(__dirname, '..', 'tmp', 'library-uploads');
 
@@ -432,7 +440,7 @@ router.get(
   optionalAuth,
   async (req, res, next) => {
     try {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const baseUrl = getPublicBaseUrl(req);
       const payload = await libraryService.getDownloadUrl({
         itemId: req.params.itemId,
         user: req.user,
@@ -455,7 +463,7 @@ router.get(
   optionalAuth,
   async (req, res, next) => {
     try {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const baseUrl = getPublicBaseUrl(req);
       const attachment = req.query.attachment === 'true';
       const payload = await libraryService.getDownloadUrl({
         itemId: req.params.itemId,

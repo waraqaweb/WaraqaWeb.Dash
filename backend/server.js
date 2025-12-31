@@ -52,8 +52,10 @@ if (!process.env.JWT_SECRET) {
   process.env.JWT_SECRET = 'dev-jwt-secret';
   console.warn('⚠️ JWT_SECRET not set; using insecure development default');
 }
-if (isProduction) {
-  // Trust the first proxy hop (nginx -> app). Override via TRUST_PROXY if needed.
+// Trust reverse proxy headers (nginx -> app) so req.protocol / req.ip are correct.
+// This is required for generating https URLs (avoids mixed content) and correct rate-limiting.
+// Can be disabled by setting TRUST_PROXY=0.
+if (process.env.TRUST_PROXY !== '0') {
   const trustProxy = process.env.TRUST_PROXY ?? '1';
   app.set('trust proxy', trustProxy);
 }

@@ -44,6 +44,8 @@ git ls-files | findstr /i "\\build\\"
 git ls-files | findstr /i "\.env"
 ```
 
+Never commit credentials (JWT secrets, SMTP passwords, admin passwords, tokens). If anything sensitive was pushed, rotate it immediately.
+
 ---
 
 # Step 1 (DROPLET): Fix SSH so root works from Windows
@@ -223,6 +225,45 @@ sed -i 's|^REACT_APP_SOCKET_URL=.*|REACT_APP_SOCKET_URL=http://159.89.40.84|' .e
 
 ```bash
 docker compose up -d --build
+```
+
+---
+
+# Step 6.1 (DROPLET): Faster deploys (recommended)
+
+Use the built-in deploy helper to make updates faster and safer.
+
+On the droplet:
+
+```bash
+cd /opt/waraqa
+chmod +x deploy/scripts/deploy.sh
+deploy/scripts/deploy.sh auto
+```
+
+Force full rebuild (slow; useful after Dockerfile/infra changes):
+
+```bash
+deploy/scripts/deploy.sh all
+```
+
+Restart without rebuilding:
+
+```bash
+deploy/scripts/deploy.sh no-build
+```
+
+Optional fastest mode (pull CI-built images from GHCR):
+
+- Enable `.github/workflows/build-images.yml` in GitHub Actions
+- Set GitHub repo variables:
+	- `REACT_APP_API_URL` (example: `https://your-domain/api`)
+	- `REACT_APP_SOCKET_URL` (example: `https://your-domain`)
+
+Then on the droplet:
+
+```bash
+deploy/scripts/deploy.sh pull
 ```
 
 ## Check

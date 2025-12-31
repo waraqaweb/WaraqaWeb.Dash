@@ -333,6 +333,9 @@ const DocumentViewer = ({ item, onClose }) => {
       setInlineDownloadProgress({ loaded: 0, total: 0 });
       const res = await api.get(resolved.toString(), {
         responseType: 'arraybuffer',
+        // Large PDFs can exceed the global API timeout (60s), especially in production
+        // where the backend may proxy from remote storage.
+        timeout: 5 * 60_000,
         headers: {
           Accept: 'application/pdf,*/*'
         },

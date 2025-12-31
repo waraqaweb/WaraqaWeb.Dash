@@ -74,6 +74,19 @@ server {
     proxy_set_header X-Forwarded-Proto https;
   }
 
+  # Library streaming endpoints (PDF previews/downloads) can be large and slow.
+  # Increase proxy timeouts and disable buffering to avoid 504s and partial loads.
+  location ^~ /api/library/ {
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    proxy_buffering off;
+    proxy_pass http://backend_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+
   # Health/version are safe to exempt from nginx limits (backend also skips them).
   location = /api/health {
     proxy_pass http://backend_upstream;

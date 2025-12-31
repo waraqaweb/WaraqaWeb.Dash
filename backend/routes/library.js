@@ -476,14 +476,23 @@ router.get(
       }
 
       // Otherwise proxy the remote stream (e.g., Cloudinary signed URL).
+      const upstreamHeaders = {
+        // Hint content-type selection to upstream; harmless if ignored.
+        Accept: 'application/pdf,*/*'
+      };
+
+      // Forward Range when the browser opens the preview URL directly.
+      // This makes large PDFs much more reliable in Chrome.
+      if (req.headers.range) {
+        upstreamHeaders.Range = req.headers.range;
+      }
+
       const upstream = await axios.get(payload.url, {
         responseType: 'stream',
-        timeout: 60_000,
+        // Remote storage can be slow; allow more time than the default 60s.
+        timeout: 5 * 60_000,
         validateStatus: () => true,
-        headers: {
-          // Hint content-type selection to upstream; harmless if ignored.
-          Accept: 'application/pdf,*/*'
-        }
+        headers: upstreamHeaders
       });
 
       if (upstream.status < 200 || upstream.status >= 300) {
@@ -495,11 +504,21 @@ router.get(
 
       const contentType = upstream.headers?.['content-type'] || 'application/pdf';
       const contentLength = upstream.headers?.['content-length'];
+      const contentRange = upstream.headers?.['content-range'];
+      const acceptRanges = upstream.headers?.['accept-ranges'];
 
       res.setHeader('Content-Type', contentType);
       // Inline by default, but allow forcing download with ?attachment=true
       res.setHeader('Content-Disposition', attachment ? 'attachment' : 'inline');
       res.setHeader('Cache-Control', 'no-store');
+      if (acceptRanges) {
+        res.setHeader('Accept-Ranges', acceptRanges);
+      }
+      if (contentRange) {
+        res.setHeader('Content-Range', contentRange);
+        // If upstream served a partial response, mirror it.
+        res.status(206);
+      }
       if (contentLength) {
         res.setHeader('Content-Length', contentLength);
       }

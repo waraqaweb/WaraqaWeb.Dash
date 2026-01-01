@@ -669,7 +669,11 @@ class TeacherSalaryService {
                     results.summary.zeroed = (results.summary.zeroed || 0) + 1;
                   } catch (zeroErr) {
                     console.warn(`[generateMonthlyInvoices] Failed to zero monthly hours for teacher ${teacher._id}:`, zeroErr && zeroErr.message);
-                    results.failed.push({ teacherId: teacher._id, error: `Zeroing failed: ${zeroErr.message}` });
+                    results.errors.push({
+                      teacherId: teacher._id,
+                      teacherName: `${teacher.firstName} ${teacher.lastName}`,
+                      error: `Zeroing failed: ${zeroErr.message}`
+                    });
                     results.summary.failed++;
                   }
 

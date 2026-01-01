@@ -509,6 +509,16 @@ router.get(
         return res.redirect(302, payload.url);
       }
 
+      const isPdfPreview = () => {
+        const requestedFormat = String(req.query.format || '').toLowerCase();
+        const payloadFormat = String(payload?.item?.storage?.format || '').toLowerCase();
+        const payloadName = String(payload?.fileName || payload?.item?.storage?.fileName || '').toLowerCase();
+        if (requestedFormat === 'pdf') return true;
+        if (payloadFormat === 'pdf') return true;
+        if (payloadName.endsWith('.pdf')) return true;
+        return false;
+      };
+
       // Otherwise proxy the remote stream (e.g., Cloudinary signed URL).
       const upstreamHeaders = {
         // Hint content-type selection to upstream; harmless if ignored.
@@ -553,7 +563,12 @@ router.get(
       const contentRange = upstream.headers?.['content-range'];
       const acceptRanges = upstream.headers?.['accept-ranges'];
 
-      res.setHeader('Content-Type', contentType);
+      // Some upstream providers (e.g., raw/object storage) return application/octet-stream for PDFs.
+      // Browsers then refuse to render inline and show the "can’t display this PDF inline" fallback.
+      const shouldForcePdfContentType = !attachment && isPdfPreview();
+      const resolvedContentType = shouldForcePdfContentType ? 'application/pdf' : contentType;
+
+      res.setHeader('Content-Type', resolvedContentType);
       // Inline by default, but allow forcing download with ?attachment=true
       res.setHeader('Content-Disposition', attachment ? 'attachment' : 'inline');
       res.setHeader('Cache-Control', 'no-store');
@@ -629,12 +644,24 @@ router.get('/assets/download', async (req, res, next) => {
       .replace(/"/g, '');
     const asciiFallback = safeName.replace(/[^\x20-\x7E]+/g, '_') || 'library-file';
 
-    res.setHeader('Content-Type', asset.contentType || 'application/octet-stream');
+    const inferPdf = () => {
+      const fileNameLower = String(fileName || '').toLowerCase();
+      return fileNameLower.endsWith('.pdf') || String(payload?.format || '').toLowerCase() === 'pdf';
+    };
+
+    const shouldForcePdfContentType = payload.attachment === false && inferPdf();
+    const rawContentType = asset.contentType || 'application/octet-stream';
+    const resolvedContentType = shouldForcePdfContentType ? 'application/pdf' : rawContentType;
+
+    res.setHeader('Content-Type', resolvedContentType);
     // Use RFC 5987 (filename*) for proper UTF-8 filenames (Arabic, etc.) with an ASCII fallback.
     res.setHeader(
       'Content-Disposition',
       `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeRFC5987(safeName)}`
     );
+
+    // Let browsers range-request PDFs (Chrome viewer does this for large files)
+    res.setHeader('Accept-Ranges', 'bytes');
 
     res.on('close', () => {
       logAssetDownload('response-closed', {
@@ -647,6 +674,40 @@ router.get('/assets/download', async (req, res, next) => {
     if (asset.storagePath) {
       try {
         const stats = await fsPromises.stat(asset.storagePath);
+
+        const range = req.headers.range;
+        if (range) {
+          // bytes=start-end
+          const match = /^bytes=(\d*)-(\d*)$/i.exec(String(range).trim());
+          if (match) {
+            const size = stats.size;
+            const start = match[1] ? Number(match[1]) : 0;
+            const end = match[2] ? Number(match[2]) : size - 1;
+            const safeStart = Number.isFinite(start) ? Math.min(Math.max(start, 0), size - 1) : 0;
+            const safeEnd = Number.isFinite(end) ? Math.min(Math.max(end, safeStart), size - 1) : size - 1;
+            const chunkSize = safeEnd - safeStart + 1;
+
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${safeStart}-${safeEnd}/${size}`);
+            res.setHeader('Content-Length', chunkSize);
+
+            const fileStream = fs.createReadStream(asset.storagePath, { start: safeStart, end: safeEnd });
+            fileStream.on('error', (err) => {
+              logAssetDownload('file-stream-error', {
+                ...logContext,
+                message: err?.message || 'file stream error'
+              });
+              if (!res.headersSent) {
+                res.status(500).json({ message: 'Stored file stream failed.' });
+              } else {
+                res.end();
+              }
+            });
+            logAssetDownload('stream-file-range', { ...logContext, range });
+            return fileStream.pipe(res);
+          }
+        }
+
         res.setHeader('Content-Length', stats.size);
         const fileStream = fs.createReadStream(asset.storagePath);
         fileStream.on('error', (err) => {

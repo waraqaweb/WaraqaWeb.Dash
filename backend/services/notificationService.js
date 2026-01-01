@@ -743,13 +743,16 @@ async function notifyAdminInvoiceGeneration(summary) {
 
     for (const admin of admins) {
       try {
+        const hasPeriod = summary && summary.month && summary.year;
+        const periodText = hasPeriod ? `${summary.month}/${summary.year}` : null;
+
         // Create in-app notification
         await Notification.create({
           user: admin._id,
           role: 'admin',
           type: 'system',
           relatedTo: 'teacher_invoice',
-          title: `Teacher Invoices Generated - ${summary.month}/${summary.year}`,
+          title: periodText ? `Teacher Invoices Generated - ${periodText}` : 'Teacher Invoices Generated',
           message: `${summary.created} invoices created, ${summary.skipped?.length || 0} teachers skipped, ${summary.failed?.length || 0} failed.`,
           actionRequired: true,
           actionLink: '/admin/teacher-invoices',

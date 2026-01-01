@@ -113,6 +113,9 @@ const NextClassCard = ({ nextClass }) => {
           <div className="mt-3 text-sm">
             <div className="text-xs text-muted-foreground">
               Last attended topic: <span className="text-foreground font-medium">{lastTopic || '—'}</span>
+              {nextClass.previousReport?.classScore != null && (
+            <span className="rounded-full bg-muted px-2.5 py-1 font-semibold text-foreground">Score: {nextClass.previousReport.classScore}/5</span>
+          )}
             </div>
           </div>
 

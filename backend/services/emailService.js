@@ -79,7 +79,10 @@ async function sendBonusAdded(teacher, invoice, bonus) {
  */
 async function sendAdminInvoiceGenerationSummary(admin, summary) {
   try {
-    const subject = `Monthly Teacher Invoices Generated - ${summary.month}/${summary.year}`;
+    const hasPeriod = summary && summary.month && summary.year;
+    const subject = hasPeriod
+      ? `Monthly Teacher Invoices Generated - ${summary.month}/${summary.year}`
+      : 'Monthly Teacher Invoices Generated';
     const html = generateAdminSummaryHTML(admin, summary);
     
     await sendMail({ to: admin.email, subject, html });

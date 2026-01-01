@@ -192,6 +192,10 @@ async function generateTeacherInvoices() {
       dryRun: false
     });
 
+    // Ensure month/year are present for downstream notifications/emails
+    results.month = month;
+    results.year = year;
+
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
     console.log('\n' + '-'.repeat(80));

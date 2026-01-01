@@ -50,6 +50,13 @@ services:
 
       # Optional library download link signing
       LIBRARY_DOWNLOAD_SECRET: ${LIBRARY_DOWNLOAD_SECRET}
+
+      # Persist local library assets across container rebuilds
+      LIBRARY_LOCAL_ASSET_DIR: /data/library-assets
+      LIBRARY_UPLOAD_TMP_DIR: /data/library-uploads
+    volumes:
+      - library-assets:/data/library-assets
+      - library-uploads:/data/library-uploads
     depends_on:
       - mongo
     healthcheck:
@@ -95,3 +102,5 @@ services:
 
 volumes:
   mongo-data:
+  library-assets:
+  library-uploads:

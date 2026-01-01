@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs/promises');
 const axios = require('axios');
+const jwt = require('jsonwebtoken');
 const { body, param, query, validationResult } = require('express-validator');
 const { authenticateToken, optionalAuth, requireAdmin } = require('../middleware/auth');
 const libraryService = require('../services/libraryService');
@@ -32,6 +33,8 @@ const makeLogger = (label) => (phase, details = {}) => {
 
 const logPreview = makeLogger('[library:preview]');
 const logAssetDownload = makeLogger('[library:asset-download]');
+
+const DOWNLOAD_TOKEN_SECRET = process.env.LIBRARY_DOWNLOAD_SECRET || process.env.JWT_SECRET || 'library-download-secret';
 
 const LIBRARY_UPLOAD_TMP_DIR =
   process.env.LIBRARY_UPLOAD_TMP_DIR || path.join(__dirname, '..', 'tmp', 'library-uploads');
@@ -481,6 +484,113 @@ router.get(
   async (req, res, next) => {
     try {
       const baseUrl = getPublicBaseUrl(req);
+
+      // Tokenized preview: allows embedding/streaming without Authorization headers.
+      // This is used to avoid cross-origin restrictions from storage providers.
+      if (req.query.token) {
+        let tokenPayload;
+        try {
+          tokenPayload = jwt.verify(String(req.query.token), DOWNLOAD_TOKEN_SECRET);
+        } catch (error) {
+          return res.status(401).json({ message: 'Preview token invalid or expired' });
+        }
+
+        if (!tokenPayload?.url) {
+          return res.status(400).json({ message: 'Preview token missing URL' });
+        }
+
+        const tokenItemId = String(tokenPayload.itemId || '');
+        if (tokenItemId && tokenItemId !== String(req.params.itemId)) {
+          return res.status(403).json({ message: 'Preview token does not match item' });
+        }
+
+        const attachment = Boolean(tokenPayload.attachment);
+        const fileName = normalizeUtf8FromLatin1(tokenPayload.fileName || 'library-file.pdf');
+
+        const encodeRFC5987 = (value) =>
+          encodeURIComponent(value)
+            .replace(/['()]/g, escape)
+            .replace(/\*/g, '%2A')
+            .replace(/%(7C|60|5E)/g, (match) => match.toLowerCase());
+
+        const safeName = String(fileName)
+          .replace(/[\\/]/g, '-')
+          .replace(/"/g, '');
+        const asciiFallback = safeName.replace(/[^\x20-\x7E]+/g, '_') || 'library-file.pdf';
+
+        const upstreamHeaders = {
+          Accept: 'application/pdf,*/*'
+        };
+        if (req.headers.range) {
+          upstreamHeaders.Range = req.headers.range;
+        }
+
+        const upstreamStarted = Date.now();
+        const upstream = await axios.get(String(tokenPayload.url), {
+          responseType: 'stream',
+          timeout: 5 * 60_000,
+          validateStatus: () => true,
+          headers: upstreamHeaders
+        });
+
+        if (upstream.status < 200 || upstream.status >= 300) {
+          logPreview('token-upstream-error-status', {
+            itemId: req.params.itemId,
+            attachment,
+            upstreamStatus: upstream.status
+          });
+          return res.status(502).json({
+            message: 'Preview upstream request failed',
+            upstreamStatus: upstream.status
+          });
+        }
+
+        const upstreamContentType = upstream.headers?.['content-type'] || 'application/pdf';
+        const upstreamContentLength = upstream.headers?.['content-length'];
+        const upstreamContentRange = upstream.headers?.['content-range'];
+        const upstreamAcceptRanges = upstream.headers?.['accept-ranges'];
+
+        const inferredPdf = String(fileName).toLowerCase().endsWith('.pdf') || String(tokenPayload.format || '').toLowerCase() === 'pdf';
+        const resolvedContentType = !attachment && inferredPdf ? 'application/pdf' : upstreamContentType;
+
+        res.setHeader('Content-Type', resolvedContentType);
+        res.setHeader(
+          'Content-Disposition',
+          `${attachment ? 'attachment' : 'inline'}; filename="${asciiFallback}"; filename*=UTF-8''${encodeRFC5987(safeName)}`
+        );
+        res.setHeader('Cache-Control', 'no-store');
+        if (upstreamAcceptRanges) res.setHeader('Accept-Ranges', upstreamAcceptRanges);
+        if (upstreamContentRange) res.setHeader('Content-Range', upstreamContentRange);
+        if (upstreamContentLength) res.setHeader('Content-Length', upstreamContentLength);
+
+        // Mirror upstream partial response status if present.
+        if (upstream.status === 206 || Boolean(upstreamContentRange)) {
+          res.status(206);
+        }
+
+        upstream.data.on('error', (err) => {
+          logPreview('token-upstream-stream-error', {
+            itemId: req.params.itemId,
+            message: err?.message || 'stream error'
+          });
+          if (!res.headersSent) {
+            res.status(502).json({ message: 'Preview stream failed' });
+          } else {
+            res.end();
+          }
+        });
+
+        res.on('close', () => {
+          logPreview('token-response-closed', {
+            itemId: req.params.itemId,
+            elapsedMs: Date.now() - upstreamStarted,
+            finished: res.writableEnded
+          });
+        });
+
+        return upstream.data.pipe(res);
+      }
+
       const attachment = req.query.attachment === 'true';
       const logContext = {
         itemId: req.params.itemId,
@@ -506,6 +616,12 @@ router.get(
       // If we already generated a same-origin token URL (local provider), just redirect.
       if (payload.url.startsWith(`${baseUrl}/api/library/assets/download?`)) {
         logPreview('redirect-local', { ...logContext, target: payload.url });
+        return res.redirect(302, payload.url);
+      }
+
+      // If we generated a same-origin tokenized preview URL (remote provider), redirect to it.
+      if (payload.url.startsWith(`${baseUrl}/api/library/items/${encodeURIComponent(req.params.itemId)}/preview?token=`)) {
+        logPreview('redirect-token-preview', { ...logContext, target: payload.url });
         return res.redirect(302, payload.url);
       }
 

@@ -809,11 +809,35 @@ async function getDownloadUrl({ itemId, user, shareToken, attachment = true, for
       format: format || storage.format || 'pdf',
       attachment
     });
-    downloadPayload = {
-      url: signed.url,
-      expiresAt: signed.expiresAt,
-      fileName: storage.fileName
-    };
+
+    // Inline preview in browsers is often blocked when the storage provider sets strict
+    // cross-origin resource policies. For inline previews, return a same-origin tokenized
+    // proxy URL that streams the signed upstream URL.
+    if (attachment === false && baseUrl) {
+      const token = jwt.sign(
+        {
+          itemId: item._id.toString(),
+          url: signed.url,
+          attachment: false,
+          fileName: storage.fileName || `${item.slug || 'library-file'}.${format || storage.format || 'pdf'}`,
+          format: format || storage.format || 'pdf'
+        },
+        DOWNLOAD_TOKEN_SECRET,
+        { expiresIn: DOWNLOAD_TOKEN_TTL_SECONDS }
+      );
+
+      downloadPayload = {
+        url: `${baseUrl}/api/library/items/${item._id.toString()}/preview?token=${encodeURIComponent(token)}`,
+        expiresAt: new Date(Date.now() + DOWNLOAD_TOKEN_TTL_SECONDS * 1000),
+        fileName: storage.fileName
+      };
+    } else {
+      downloadPayload = {
+        url: signed.url,
+        expiresAt: signed.expiresAt,
+        fileName: storage.fileName
+      };
+    }
   }
 
   const updateOps = {

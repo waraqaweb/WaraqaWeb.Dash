@@ -1030,17 +1030,11 @@ const DocumentViewer = ({ item, onClose }) => {
               ) : inlineBlobUrl || inlineUrl ? (
                 <div className="flex h-full flex-col gap-3">
                   <div className="flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                    <object
-                      data={inlineBlobUrl || inlineUrl}
-                      type="application/pdf"
+                    <iframe
+                      src={inlineBlobUrl || inlineUrl}
+                      title={`Preview of ${item.displayName}`}
                       className="h-full w-full"
-                      aria-label={`Preview of ${item.displayName}`}
-                    >
-                      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-slate-600">
-                        <p className="text-sm font-medium">Your browser can’t display this PDF inline.</p>
-                        <p className="text-xs text-slate-500">Click Download to open it.</p>
-                      </div>
-                    </object>
+                    />
                   </div>
                   {inlineError ? <p className="text-xs text-red-500">{inlineError}</p> : null}
                 </div>

@@ -471,7 +471,7 @@ const GuardiansPage = () => {
             <Clock className="h-4 w-4 text-muted-foreground" />
             <span>Total Hours: {guardian.guardianInfo?.totalHours || 0}</span>
           </div>
-          {isAdmin && (
+          {isAdmin() && (
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <span className="text-xs text-muted-foreground">Manual adjustment (admin only)</span>
               <select

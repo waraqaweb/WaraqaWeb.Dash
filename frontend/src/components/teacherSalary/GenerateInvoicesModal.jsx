@@ -140,8 +140,9 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
       const response = await api.post('/teacher-salary/admin/generate', payload);
 
       const created = response.data.results?.summary?.created || 0;
-      const skipped = response.data.results?.summary?.skipped || 0;
       const adjusted = response.data.results?.summary?.adjusted || 0;
+      const adjustmentsCreated = response.data.results?.summary?.adjustmentsCreated || 0;
+      const skipped = response.data.results?.summary?.skipped || 0;
       const failed = response.data.results?.summary?.failed || 0;
 
       // Build success message
@@ -151,6 +152,9 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
       }
       if (adjusted > 0) {
         message += `✓ Adjusted ${adjusted} existing invoice${adjusted !== 1 ? 's' : ''}. `;
+      }
+      if (adjustmentsCreated > 0) {
+        message += `✓ Created ${adjustmentsCreated} adjustment invoice${adjustmentsCreated !== 1 ? 's' : ''}. `;
       }
       if (skipped > 0) {
         message += `${skipped} skipped. `;
@@ -185,7 +189,7 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
             </div>
             <div>
               <h2 className="text-xl font-semibold text-slate-900">Generate Teacher Invoices</h2>
-              <p className="text-sm text-slate-500">C for the selected month</p>
+              <p className="text-sm text-slate-500">Creates or updates unpaid invoices for the selected month</p>
             </div>
           </div>
           <button
@@ -389,11 +393,15 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
               <div className="text-sm text-blue-800 space-y-1">
                 <p className="font-medium">How it works:</p>
                 <ul className="list-disc list-inside space-y-1 ml-2">
-                  <li>If a teacher already has an invoice for this month, it will be skipped</li>
-                  <li>If there are classes not included in any invoice, a new invoice will be created</li>
-                  <li>If there's an unpaid invoice with missing classes, it will be adjusted to include them</li>
+                  <li>If a teacher already has an invoice for this month and no new unbilled classes, it will be skipped</li>
+                  <li>If there's no invoice yet and there are unbilled classes, a new invoice will be created</li>
+                  <li>If there's an unpaid invoice with new unbilled classes, it will be adjusted to include them</li>
+                  <li>If the month's main invoice is already paid and new unbilled classes appear (late reports), an adjustment invoice will be created</li>
                   <li>Teachers with zero hours will be skipped</li>
                 </ul>
+                <p className="pt-2 text-blue-900">
+                  Fields affected: creates/updates <span className="font-mono">TeacherInvoice</span> records and links classes by setting <span className="font-mono">Class.billedInTeacherInvoiceId</span>.
+                </p>
               </div>
             </div>
           </div>

@@ -26,7 +26,8 @@ import {
   FileSpreadsheet,
   Info,
   Edit3,
-  Save
+  Save,
+  Trash2
 } from 'lucide-react';
 
 const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
@@ -37,6 +38,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
   const [debugOpen, setDebugOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   
   const [editedValues, setEditedValues] = useState({
     grossAmountUSD: '',
@@ -213,6 +215,33 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
     }
   };
 
+  const handleDeleteInvoice = async () => {
+    if (user?.role !== 'admin') return;
+    if (!invoiceId) return;
+    if (!invoice || !['draft', 'published'].includes(invoice.status)) {
+      setError('Only unpaid (draft/published) invoices can be deleted');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete invoice ${invoice.invoiceNumber || ''}?\n\nThis will unmark its linked classes so they can be invoiced again. This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setDeleting(true);
+      setError(null);
+      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`);
+      if (onUpdate) onUpdate();
+      onClose();
+    } catch (err) {
+      console.error('Error deleting invoice:', err);
+      setError(err.response?.data?.message || 'Failed to delete invoice');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/60 backdrop-blur-sm">
@@ -343,6 +372,18 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
               <PrimaryButton onClick={handleExportExcel} variant="subtle" size="sm" title="Excel" circle>
                 <FileSpreadsheet className="w-5 h-5" />
               </PrimaryButton>
+              {user?.role === 'admin' && (invoice?.status === 'draft' || invoice?.status === 'published') && (
+                <PrimaryButton
+                  onClick={handleDeleteInvoice}
+                  variant="danger"
+                  size="sm"
+                  title="Delete Invoice"
+                  circle
+                  disabled={saving || deleting}
+                >
+                  <Trash2 className="w-5 h-5" />
+                </PrimaryButton>
+              )}
               <PrimaryButton onClick={() => setDebugOpen(d => !d)} variant="subtle" size="sm" title="Debug">
                 Debug
               </PrimaryButton>

@@ -42,15 +42,16 @@ class TeacherSalaryService {
 
       console.log(`[aggregateTeacherHours] Teacher: ${teacherId}, Period: ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
-      // Query classes: include current countable statuses used by Class model
-      // (attended, missed_by_student) and keep legacy 'absent' for backward compatibility
+      // Query classes: include current countable statuses used in production data.
+      // We include 'completed' as some flows mark attended lessons that way.
+      // Keep legacy 'absent' for backward compatibility.
       const classes = await Class.find({
         teacher: teacherId,
         scheduledDate: {
           $gte: startDate,
           $lt: endDate
         },
-        status: { $in: ['attended', 'missed_by_student', 'absent'] }, // Countable statuses
+        status: { $in: ['attended', 'missed_by_student', 'completed', 'absent'] }, // Countable statuses
         deleted: { $ne: true }
       })
         .select('_id scheduledDate duration subject status student billedInTeacherInvoiceId')
@@ -730,7 +731,7 @@ class TeacherSalaryService {
   }
 
   /**
-   * Soft delete a draft invoice and release linked classes
+   * Soft delete an unpaid invoice (draft or published) and release linked classes
    * @param {ObjectId|String} invoiceId
    * @param {ObjectId|String} userId
    */
@@ -740,8 +741,8 @@ class TeacherSalaryService {
       throw new Error('Invoice not found');
     }
 
-    if (invoice.status !== 'draft') {
-      throw new Error('Only draft invoices can be deleted');
+    if (!['draft', 'published'].includes(invoice.status)) {
+      throw new Error('Only unpaid (draft/published) invoices can be deleted');
     }
 
     invoice.deleted = true;

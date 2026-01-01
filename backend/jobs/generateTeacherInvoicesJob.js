@@ -167,12 +167,18 @@ async function generateTeacherInvoices() {
 
       // Notify admins
       await notifyAdmins({
+        month,
+        year,
         summary: {
+          total: 0,
           created: 0,
           skipped: 0,
           failed: 1
         },
-        error: 'Exchange rate not set'
+        skippedTeachers: [],
+        errors: [
+          { teacherName: 'System', error: 'Exchange rate not set' }
+        ]
       });
 
       await releaseLock();

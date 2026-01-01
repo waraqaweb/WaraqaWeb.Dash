@@ -66,6 +66,10 @@ const PublishInvoiceDialog = ({ invoice, onClose, onSuccess }) => {
               <Check className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
               <span>The invoice can still be modified (bonuses, extras)</span>
             </li>
+            <li className="flex items-start gap-2">
+              <Check className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+              <span>Fields affected: <span className="font-mono">TeacherInvoice.status</span> → <span className="font-mono">published</span> (class links stay the same)</span>
+            </li>
           </ul>
         </div>
 

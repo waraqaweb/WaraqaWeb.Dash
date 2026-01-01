@@ -197,6 +197,9 @@ const AddBonusDialog = ({ invoice, onClose, onSuccess }) => {
               {invoice?.teacher?.firstName} {invoice?.teacher?.lastName}
             </span>
           </div>
+          <p className="mt-2 text-xs text-gray-600">
+            Fields affected: adds a bonus entry on the invoice and updates invoice totals. Class links (<span className="font-mono">billedInTeacherInvoiceId</span>) are not changed.
+          </p>
         </div>
 
         {/* Form */}

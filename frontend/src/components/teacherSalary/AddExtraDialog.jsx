@@ -112,6 +112,9 @@ const AddExtraDialog = ({ invoice, onClose, onSuccess }) => {
               {invoice?.teacher?.firstName} {invoice?.teacher?.lastName}
             </span>
           </div>
+          <p className="mt-2 text-xs text-gray-600">
+            Fields affected: adds an extra line item (addition/deduction) and updates invoice totals. Class links are not changed.
+          </p>
         </div>
 
         {/* Form */}

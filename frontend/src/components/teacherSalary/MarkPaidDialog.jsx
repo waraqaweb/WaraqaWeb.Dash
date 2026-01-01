@@ -89,6 +89,9 @@ const MarkPaidDialog = ({ invoice, onClose, onSuccess }) => {
               {formatCurrency(invoice?.finalTotal, invoice?.currency)}
             </span>
           </div>
+          <p className="mt-3 text-xs text-gray-600">
+            Fields affected: sets <span className="font-mono">TeacherInvoice.status</span> to <span className="font-mono">paid</span> and stores payment details (method/proof/notes). Paid invoices are treated as closed; late classes create adjustment invoices.
+          </p>
         </div>
 
         {/* Form */}

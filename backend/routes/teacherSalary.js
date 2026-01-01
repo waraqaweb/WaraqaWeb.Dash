@@ -145,13 +145,40 @@ router.post('/admin/generate', authenticateToken, requireAdmin, async (req, res)
  */
 router.get('/admin/invoices', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { month, year, status, page = 1, limit = 50, search, includeSummary } = req.query;
+    const { month, year, status, page = 1, limit = 50, search, includeSummary, teacherId, currency } = req.query;
 
     const query = { deleted: false };
-    
-    if (month) query.month = parseInt(month);
-    if (year) query.year = parseInt(year);
-    if (status) query.status = status;
+
+    // Support both (month=10&year=2025) and (month=2025-10) formats coming from <input type="month">
+    const rawMonth = month ? String(month) : '';
+    if (rawMonth && rawMonth.includes('-') && !year) {
+      const [y, m] = rawMonth.split('-').map(v => parseInt(v, 10));
+      if (Number.isFinite(y) && Number.isFinite(m)) {
+        query.year = y;
+        query.month = m;
+      }
+    } else {
+      if (month) query.month = parseInt(month);
+      if (year) query.year = parseInt(year);
+    }
+    if (status) {
+      const normalized = String(status).toLowerCase();
+      if (normalized === 'unpaid') {
+        query.status = { $in: ['draft', 'published'] };
+      } else if (normalized === 'paid') {
+        query.status = 'paid';
+      } else {
+        query.status = status;
+      }
+    }
+
+    if (teacherId) {
+      query.teacher = teacherId;
+    }
+
+    if (currency) {
+      query.currency = String(currency).toUpperCase();
+    }
 
     if (search && search.trim()) {
       const trimmed = search.trim();
@@ -232,7 +259,8 @@ router.get('/admin/invoices', authenticateToken, requireAdmin, async (req, res) 
         page: parseInt(page),
         limit: parseInt(limit),
         total,
-        pages: Math.ceil(total / parseInt(limit))
+        pages: Math.ceil(total / parseInt(limit)),
+        totalPages: Math.ceil(total / parseInt(limit))
       },
       summary
     });
@@ -424,7 +452,7 @@ router.post('/admin/invoices/:id/bonuses', authenticateToken, requireAdmin, asyn
 });
 
 /**
- * Delete invoice (soft delete for draft invoices only)
+ * Delete invoice (soft delete for unpaid invoices only: draft/published)
  * DELETE /api/teacher-salary/admin/invoices/:id
  */
 router.delete('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, res) => {
@@ -440,7 +468,10 @@ router.delete('/admin/invoices/:id', authenticateToken, requireAdmin, async (req
     if (error.message === 'Invoice not found') {
       return res.status(404).json({ error: error.message });
     }
-    if (error.message === 'Only draft invoices can be deleted') {
+    if (
+      error.message === 'Only draft invoices can be deleted'
+      || error.message === 'Only unpaid (draft/published) invoices can be deleted'
+    ) {
       return res.status(400).json({ error: error.message });
     }
     res.status(500).json({ error: error.message });

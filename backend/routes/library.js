@@ -776,15 +776,14 @@ router.get('/assets/download', async (req, res, next) => {
     const rawContentType = asset.contentType || 'application/octet-stream';
     const resolvedContentType = shouldForcePdfContentType ? 'application/pdf' : rawContentType;
 
-    res.setHeader('Content-Type', resolvedContentType);
-    // Use RFC 5987 (filename*) for proper UTF-8 filenames (Arabic, etc.) with an ASCII fallback.
-    res.setHeader(
-      'Content-Disposition',
-      `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeRFC5987(safeName)}`
-    );
-
-    // Let browsers range-request PDFs (Chrome viewer does this for large files)
-    res.setHeader('Accept-Ranges', 'bytes');
+    const applyDownloadHeaders = () => {
+      res.setHeader('Content-Type', resolvedContentType);
+      // Use RFC 5987 (filename*) for proper UTF-8 filenames (Arabic, etc.) with an ASCII fallback.
+      res.setHeader(
+        'Content-Disposition',
+        `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeRFC5987(safeName)}`
+      );
+    };
 
     res.on('close', () => {
       logAssetDownload('response-closed', {
@@ -797,6 +796,10 @@ router.get('/assets/download', async (req, res, next) => {
     if (asset.storagePath) {
       try {
         const stats = await fsPromises.stat(asset.storagePath);
+
+        applyDownloadHeaders();
+        // Let browsers range-request PDFs (Chrome viewer does this for large files)
+        res.setHeader('Accept-Ranges', 'bytes');
 
         const range = req.headers.range;
         if (range) {
@@ -866,6 +869,7 @@ router.get('/assets/download', async (req, res, next) => {
     }
 
     const payloadBytes = asset.bytes || asset.data?.length || 0;
+    applyDownloadHeaders();
     res.setHeader('Content-Length', payloadBytes);
     logAssetDownload('send-buffer', { ...logContext, payloadBytes });
     return res.send(asset.data);

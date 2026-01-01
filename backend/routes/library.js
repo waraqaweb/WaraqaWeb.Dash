@@ -439,14 +439,15 @@ router.post(
   optionalAuth,
   async (req, res, next) => {
     try {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      // IMPORTANT: do not use req.protocol here (behind nginx it is usually "http").
+      // We return same-origin relative URLs for local assets/previews, so no baseUrl is needed.
       const payload = await libraryService.getDownloadUrl({
         itemId: req.params.itemId,
         user: req.user,
         shareToken: shareTokenFromRequest(req),
         attachment: req.body?.attachment !== false,
         format: req.body?.format,
-        baseUrl
+        baseUrl: null
       });
       res.json(payload);
     } catch (error) {
@@ -614,13 +615,19 @@ router.get(
       }
 
       // If we already generated a same-origin token URL (local provider), just redirect.
-      if (payload.url.startsWith(`${baseUrl}/api/library/assets/download?`)) {
+      if (
+        payload.url.startsWith('/api/library/assets/download?') ||
+        payload.url.startsWith(`${baseUrl}/api/library/assets/download?`)
+      ) {
         logPreview('redirect-local', { ...logContext, target: payload.url });
         return res.redirect(302, payload.url);
       }
 
       // If we generated a same-origin tokenized preview URL (remote provider), redirect to it.
-      if (payload.url.startsWith(`${baseUrl}/api/library/items/${encodeURIComponent(req.params.itemId)}/preview?token=`)) {
+      if (
+        payload.url.startsWith(`/api/library/items/${encodeURIComponent(req.params.itemId)}/preview?token=`) ||
+        payload.url.startsWith(`${baseUrl}/api/library/items/${encodeURIComponent(req.params.itemId)}/preview?token=`)
+      ) {
         logPreview('redirect-token-preview', { ...logContext, target: payload.url });
         return res.redirect(302, payload.url);
       }

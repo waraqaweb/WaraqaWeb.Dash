@@ -776,9 +776,6 @@ async function getDownloadUrl({ itemId, user, shareToken, attachment = true, for
   let downloadPayload;
 
   if (provider === 'local') {
-    if (!baseUrl) {
-      throw httpError(500, 'Download base URL missing', 'DOWNLOAD_BASE_URL');
-    }
     const assetId = storage.metadata?.assetId || storage.publicId;
     if (!assetId) {
       throw httpError(404, 'Stored asset missing', 'ASSET_NOT_FOUND');
@@ -795,7 +792,9 @@ async function getDownloadUrl({ itemId, user, shareToken, attachment = true, for
     );
 
     downloadPayload = {
-      url: `${baseUrl}/api/library/assets/download?token=${encodeURIComponent(token)}`,
+      // Same-origin relative URL prevents mixed-content issues in HTTPS deployments
+      // even if the backend sees req.protocol as "http" behind nginx.
+      url: `/api/library/assets/download?token=${encodeURIComponent(token)}`,
       expiresAt: new Date(Date.now() + DOWNLOAD_TOKEN_TTL_SECONDS * 1000),
       fileName: storage.fileName
     };
@@ -813,7 +812,7 @@ async function getDownloadUrl({ itemId, user, shareToken, attachment = true, for
     // Inline preview in browsers is often blocked when the storage provider sets strict
     // cross-origin resource policies. For inline previews, return a same-origin tokenized
     // proxy URL that streams the signed upstream URL.
-    if (attachment === false && baseUrl) {
+    if (attachment === false) {
       const token = jwt.sign(
         {
           itemId: item._id.toString(),
@@ -827,7 +826,8 @@ async function getDownloadUrl({ itemId, user, shareToken, attachment = true, for
       );
 
       downloadPayload = {
-        url: `${baseUrl}/api/library/items/${item._id.toString()}/preview?token=${encodeURIComponent(token)}`,
+        // Same-origin relative URL prevents mixed-content issues in HTTPS deployments.
+        url: `/api/library/items/${item._id.toString()}/preview?token=${encodeURIComponent(token)}`,
         expiresAt: new Date(Date.now() + DOWNLOAD_TOKEN_TTL_SECONDS * 1000),
         fileName: storage.fileName
       };

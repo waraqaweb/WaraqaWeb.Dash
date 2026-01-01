@@ -61,6 +61,7 @@ const GuardiansPage = () => {
   const [totalPages, setTotalPages] = useState(1);
   const itemsPerPage = 30;
   const [statusCounts, setStatusCounts] = useState({ active: 0, inactive: 0, all: 0 });
+  const [hoursAdjustments, setHoursAdjustments] = useState({});
 
   const fetchStatusCounts = useCallback(async () => {
     try {
@@ -133,6 +134,40 @@ const GuardiansPage = () => {
 
   const toggleExpanded = (guardianId) => {
     setExpandedGuardian(expandedGuardian === guardianId ? null : guardianId);
+  };
+
+  const setHoursAdjustmentValue = (guardianId, patch) => {
+    setHoursAdjustments((prev) => {
+      const existing = prev[guardianId] || { action: 'add', hours: '', reason: '' };
+      return { ...prev, [guardianId]: { ...existing, ...patch } };
+    });
+  };
+
+  const handleManualHoursAdjustment = async (guardianId) => {
+    const draft = hoursAdjustments[guardianId] || { action: 'add', hours: '', reason: '' };
+    const hoursValue = Number(draft.hours);
+    if (!Number.isFinite(hoursValue)) {
+      setError('Please enter a valid hours number');
+      return;
+    }
+
+    try {
+      await api.post(`/users/admin/guardians/${guardianId}/hours`, {
+        action: draft.action,
+        hours: hoursValue,
+        reason: draft.reason || undefined,
+      });
+
+      setHoursAdjustments((prev) => ({
+        ...prev,
+        [guardianId]: { action: draft.action, hours: '', reason: '' },
+      }));
+
+      await fetchGuardians();
+    } catch (err) {
+      console.error('Manual guardian hours adjustment error:', err);
+      setError(err?.response?.data?.message || 'Failed to update guardian hours');
+    }
   };
 
   const handleStatusChange = async (guardianId, newStatus) => {
@@ -436,6 +471,41 @@ const GuardiansPage = () => {
             <Clock className="h-4 w-4 text-muted-foreground" />
             <span>Total Hours: {guardian.guardianInfo?.totalHours || 0}</span>
           </div>
+          {isAdmin && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <span className="text-xs text-muted-foreground">Manual adjustment (admin only)</span>
+              <select
+                value={(hoursAdjustments[guardian._id]?.action) || 'add'}
+                onChange={(e) => setHoursAdjustmentValue(guardian._id, { action: e.target.value })}
+                className="h-8 rounded-md border border-border bg-input px-2 text-xs text-foreground"
+              >
+                <option value="add">Add</option>
+                <option value="subtract">Subtract</option>
+                <option value="set">Set</option>
+              </select>
+              <input
+                type="number"
+                step="0.25"
+                value={(hoursAdjustments[guardian._id]?.hours) ?? ''}
+                onChange={(e) => setHoursAdjustmentValue(guardian._id, { hours: e.target.value })}
+                placeholder="Hours"
+                className="h-8 w-24 rounded-md border border-border bg-input px-2 text-xs text-foreground"
+              />
+              <input
+                type="text"
+                value={(hoursAdjustments[guardian._id]?.reason) ?? ''}
+                onChange={(e) => setHoursAdjustmentValue(guardian._id, { reason: e.target.value })}
+                placeholder="Reason (optional)"
+                className="h-8 w-52 max-w-full rounded-md border border-border bg-input px-2 text-xs text-foreground"
+              />
+              <button
+                onClick={() => handleManualHoursAdjustment(guardian._id)}
+                className="h-8 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+              >
+                Apply
+              </button>
+            </div>
+          )}
           <div className="flex items-center space-x-2">
             <CreditCard className="h-4 w-4 text-muted-foreground" />
             <span>

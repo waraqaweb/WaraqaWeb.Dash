@@ -14,6 +14,7 @@ const { body, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Student = require('../models/Student');
+const GuardianHoursAudit = require('../models/GuardianHoursAudit');
 const Notification = require('../models/Notification');
 const Class = require('../models/Class');
 const { isValidTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
@@ -257,6 +258,162 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
     res.status(500).json({
       message: 'Failed to fetch users',
       error: error.message
+    });
+  }
+});
+
+/**
+ * Manual adjust guardian total hours (Admin only)
+ * This does NOT create an invoice and does NOT touch classes/students.
+ * POST /api/users/admin/guardians/:guardianId/hours
+ * Body: { action: 'add'|'subtract'|'set', hours: number, reason?: string }
+ */
+router.post('/admin/guardians/:guardianId/hours', [
+  authenticateToken,
+  requireAdmin,
+  body('action').isIn(['add', 'subtract', 'set']).withMessage('Action must be add, subtract, or set'),
+  body('hours').isNumeric().withMessage('Hours must be a number'),
+  body('reason').optional({ nullable: true }).isString().trim().isLength({ max: 500 }).withMessage('Reason must be at most 500 characters'),
+], async (req, res) => {
+  const { guardianId } = req.params;
+
+  // Check for validation errors
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      message: 'Validation failed',
+      errors: errors.array(),
+    });
+  }
+
+  const { action, hours, reason } = req.body;
+  const hoursValue = Number(hours);
+  const rounded = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    return Math.round(num * 1000) / 1000;
+  };
+
+  let guardian = null;
+  let beforeSnapshot = null;
+  let afterSnapshot = null;
+
+  try {
+    guardian = await User.findById(guardianId);
+    if (!guardian) {
+      return res.status(404).json({ message: 'Guardian not found' });
+    }
+    if (guardian.role !== 'guardian') {
+      return res.status(400).json({ message: 'User is not a guardian' });
+    }
+
+    guardian.guardianInfo = guardian.guardianInfo && typeof guardian.guardianInfo === 'object' ? guardian.guardianInfo : {};
+
+    const prevAutoTotalHours = guardian.guardianInfo.autoTotalHours;
+    const beforeTotal = Number(guardian.guardianInfo.totalHours || 0);
+    const safeBeforeTotal = Number.isFinite(beforeTotal) ? beforeTotal : 0;
+    let newTotal = safeBeforeTotal;
+
+    switch (action) {
+      case 'add':
+        newTotal = safeBeforeTotal + hoursValue;
+        break;
+      case 'subtract':
+        newTotal = safeBeforeTotal - hoursValue;
+        break;
+      case 'set':
+        newTotal = hoursValue;
+        break;
+      default:
+        return res.status(400).json({ message: 'Invalid action' });
+    }
+
+    beforeSnapshot = {
+      guardianId: guardian._id,
+      autoTotalHours: prevAutoTotalHours,
+      totalHours: rounded(safeBeforeTotal),
+    };
+
+    // Prevent future autosync from overwriting the manual correction.
+    guardian.guardianInfo.autoTotalHours = false;
+    guardian.guardianInfo.totalHours = rounded(newTotal);
+
+    await guardian.save();
+
+    // Best-effort sync to the legacy Guardian model (if present)
+    try {
+      const GuardianModel = require('../models/Guardian');
+      const guardianModel = await GuardianModel.findOne({ user: guardian._id });
+      if (guardianModel) {
+        guardianModel.totalRemainingMinutes = Math.max(0, Math.round((Number(guardian.guardianInfo.totalHours || 0) || 0) * 60));
+        await guardianModel.save();
+      }
+    } catch (syncErr) {
+      console.warn('Manual guardian hours: failed to sync Guardian model', syncErr && syncErr.message);
+    }
+
+    afterSnapshot = {
+      guardianId: guardian._id,
+      autoTotalHours: guardian.guardianInfo.autoTotalHours,
+      totalHours: guardian.guardianInfo.totalHours,
+    };
+
+    // Audit (non-blocking)
+    try {
+      await GuardianHoursAudit.logAction({
+        action: 'hours_manual_adjust',
+        entityType: 'User',
+        entityId: guardian._id,
+        actor: req.user?.id || null,
+        actorRole: 'admin',
+        actorIP: req.ip,
+        actorUserAgent: req.get('user-agent'),
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        reason: typeof reason === 'string' ? reason.trim() : null,
+        metadata: {
+          requestedAction: action,
+          requestedHours: hoursValue,
+        },
+        success: true,
+      });
+    } catch (auditErr) {
+      console.warn('Manual guardian hours: audit log failed', auditErr && auditErr.message);
+    }
+
+    return res.json({
+      message: 'Guardian hours updated successfully',
+      guardianId: guardian._id,
+      totalHours: guardian.guardianInfo.totalHours,
+      autoTotalHours: guardian.guardianInfo.autoTotalHours,
+    });
+  } catch (error) {
+    console.error('Manual guardian hours error:', error);
+
+    // Attempt to record failed audit (best-effort)
+    try {
+      await GuardianHoursAudit.logAction({
+        action: 'hours_manual_adjust',
+        entityType: 'User',
+        entityId: guardian ? guardian._id : guardianId,
+        actor: req.user?.id || null,
+        actorRole: 'admin',
+        actorIP: req.ip,
+        actorUserAgent: req.get('user-agent'),
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        reason: typeof reason === 'string' ? reason.trim() : null,
+        metadata: { requestedAction: action, requestedHours: hoursValue },
+        success: false,
+        errorMessage: error?.message || 'Unknown error',
+      });
+    } catch (auditErr) {
+      console.warn('Manual guardian hours: failed audit log failed', auditErr && auditErr.message);
+    }
+
+    return res.status(500).json({
+      message: 'Failed to update guardian hours',
+      error: error.message,
     });
   }
 });

@@ -9,6 +9,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+# Force a stable Compose project name so volumes/networks remain consistent.
+# This prevents accidental "missing data" when running compose from a different folder.
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-waraqa}"
+COMPOSE=(docker compose -p "$COMPOSE_PROJECT_NAME")
+
 MODE="${1:-auto}"  # auto | all | no-build | pull
 
 export DOCKER_BUILDKIT=1
@@ -53,25 +58,25 @@ SERVICES_TRIMMED="$(printf "%s" "$SERVICES" | tr -d ' ' || true)"
 
 if [[ "$MODE" == "all" ]]; then
   echo "[deploy] Rebuilding ALL services"
-  docker compose up -d --build
+  "${COMPOSE[@]}" up -d --build
 elif [[ "$MODE" == "pull" ]]; then
   echo "[deploy] Pulling prebuilt images (GHCR)"
-  docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
-  docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+  "${COMPOSE[@]}" -f docker-compose.yml -f docker-compose.ghcr.yml pull
+  "${COMPOSE[@]}" -f docker-compose.yml -f docker-compose.ghcr.yml up -d
 elif [[ "$MODE" == "no-build" ]]; then
   echo "[deploy] No build; restarting containers"
-  docker compose up -d
+  "${COMPOSE[@]}" up -d
 elif [[ -n "$SERVICES_TRIMMED" ]]; then
   echo "[deploy] Rebuilding services:$SERVICES"
   if printf "%s\n" "$SERVICES" | grep -q "frontend"; then
     echo "[deploy] NOTE: frontend rebuilds can take several minutes on small droplets (Vite + npm ci)."
   fi
-  docker compose up -d --build $SERVICES
+  "${COMPOSE[@]}" up -d --build $SERVICES
 else
   echo "[deploy] No build needed; restarting containers"
-  docker compose up -d
+  "${COMPOSE[@]}" up -d
 fi
 
-docker compose ps
+"${COMPOSE[@]}" ps
 
 echo "[deploy] done: $NEW_SHA"

@@ -79,6 +79,64 @@ const getHijriCalendarCandidates = ({ region }) => {
   return ['islamic', 'islamic-civil', 'islamic-umalqura'];
 };
 
+const hijriMonthNamesEn = [
+  'Muharram',
+  'Safar',
+  'Rabiʿ al-Awwal',
+  'Rabiʿ al-Thani',
+  'Jumada al-Ula',
+  'Jumada al-Akhirah',
+  'Rajab',
+  'Sha\'ban',
+  'Ramadan',
+  'Shawwal',
+  'Dhu al-Qa\'dah',
+  'Dhu al-Hijjah'
+];
+
+const getGregorianYmdInTimeZone = ({ date, timeZone }) => {
+  const tz = timeZone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined);
+  try {
+    const dtf = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    const parts = typeof dtf.formatToParts === 'function' ? dtf.formatToParts(date) : null;
+    const y = parts ? Number(parts.find(p => p.type === 'year')?.value) : NaN;
+    const m = parts ? Number(parts.find(p => p.type === 'month')?.value) : NaN;
+    const d = parts ? Number(parts.find(p => p.type === 'day')?.value) : NaN;
+    if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d)) return { y, m, d, timeZone: tz };
+  } catch (e) {
+    // ignore
+  }
+  // Fallback to local date parts
+  return { y: date.getFullYear(), m: date.getMonth() + 1, d: date.getDate(), timeZone: tz };
+};
+
+// Tabular (civil) Hijri conversion as a last resort when Intl Hijri calendars are unsupported.
+// This is an approximation and should be labeled as such in the UI.
+const gregorianToHijriCivil = ({ y, m, d }) => {
+  // Gregorian to Julian Day Number (integer)
+  const a = Math.floor((14 - m) / 12);
+  const y2 = y + 4800 - a;
+  const m2 = m + 12 * a - 3;
+  const jdn = d + Math.floor((153 * m2 + 2) / 5) + 365 * y2 + Math.floor(y2 / 4) - Math.floor(y2 / 100) + Math.floor(y2 / 400) - 32045;
+
+  // Julian day to Islamic civil date
+  const islamicEpoch = 1948439; // JDN for 1 Muharram 1 AH (civil) at midnight
+  const daysSinceEpoch = jdn - islamicEpoch;
+  const year = Math.floor((30 * daysSinceEpoch + 10646) / 10631);
+
+  const islamicToJdn = (iy, im, id) => {
+    const monthDays = Math.ceil(29.5 * (im - 1));
+    return id + monthDays + (iy - 1) * 354 + Math.floor((3 + 11 * iy) / 30) + islamicEpoch - 1;
+  };
+
+  let month = Math.min(12, Math.ceil((jdn - (29 + islamicToJdn(year, 1, 1))) / 29.5) + 1);
+  if (!Number.isFinite(month) || month < 1) month = 1;
+  if (month > 12) month = 12;
+  const day = jdn - islamicToJdn(year, month, 1) + 1;
+
+  return { year, month, day };
+};
+
 const formatHijriDate = ({ date = new Date(), timeZone, locale }) => {
   const resolvedLocale = locale || (typeof navigator !== 'undefined' ? navigator.language : 'en-US');
   const resolvedTimeZone = timeZone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined);
@@ -124,7 +182,29 @@ const formatHijriDate = ({ date = new Date(), timeZone, locale }) => {
     }
   }
 
-  return { ok: false, formatted: '', calendar: null, timeZone: resolvedTimeZone, region: region || null, parts: null, dayNumber: null };
+  // Fallback: civil/tabular Hijri estimate (always available).
+  try {
+    const { y, m, d, timeZone: tz } = getGregorianYmdInTimeZone({ date, timeZone: resolvedTimeZone });
+    const civil = gregorianToHijriCivil({ y, m, d });
+    const monthName = hijriMonthNamesEn[(civil.month || 1) - 1] || 'Hijri';
+    const formatted = `${monthName} ${civil.day}, ${civil.year} AH`;
+    return {
+      ok: true,
+      formatted,
+      calendar: 'islamic-civil-estimated',
+      estimated: true,
+      timeZone: tz,
+      region: region || null,
+      parts: {
+        day: String(civil.day),
+        month: monthName,
+        year: String(civil.year),
+      },
+      dayNumber: Number.isFinite(civil.day) ? civil.day : null,
+    };
+  } catch (e) {
+    return { ok: false, formatted: '', calendar: null, timeZone: resolvedTimeZone, region: region || null, parts: null, dayNumber: null };
+  }
 };
 
 const getLunarPhaseInfo = (date = new Date()) => {
@@ -220,6 +300,11 @@ const HijriDateCard = ({ variant = 'card', timeZone, locale }) => {
       <div className="mt-1 text-lg font-semibold text-foreground leading-snug">{hijri.formatted}</div>
       <div className="mt-1 text-sm text-muted-foreground">{formatDateDDMMMYYYY(now)}</div>
       <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs">
+        {hijri.estimated && (
+          <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-muted-foreground">
+            Estimated
+          </span>
+        )}
         {hijriDayLabel && (
           <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-primary">
             {hijriDayLabel}

@@ -45,6 +45,10 @@ git reset --hard origin/main
 git rev-parse HEAD > "$PREV_FILE"
 NEW_SHA="$(git rev-parse HEAD)"
 
+# Surface the deployed version inside running containers (used by /api/health).
+export APP_VERSION="${APP_VERSION:-$NEW_SHA}"
+export BUILD_TIME="${BUILD_TIME:-$(date -u +%s)}"
+
 # Compute changed paths between previous and new SHA
 CHANGED="$(git diff --name-only "$OLD_SHA" "$NEW_SHA" || true)"
 

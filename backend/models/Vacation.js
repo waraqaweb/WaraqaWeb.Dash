@@ -6,6 +6,9 @@ const mongoose = require('mongoose');
 const vacationSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // teacher or student
   role: { type: String, enum: ['teacher', 'student'], required: true },
+  // Optional snapshot fields for student vacations (since student ids may not exist in User collection)
+  guardianId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  userName: { type: String },
   startDate: { type: Date, required: true },
   endDate: { type: Date, required: true },
   reason: { type: String, required: true },

@@ -31,6 +31,14 @@ const addDays = (date, days) => {
   return copy;
 };
 
+const makeMonthDayDate = (year, monthIndex, day) => new Date(Date.UTC(year, monthIndex, day, 12, 0, 0));
+
+const weekdayIndex = (date, timezone) => {
+  const short = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: timezone }).format(date);
+  const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[short] ?? 0;
+};
+
 
 const TeacherSyncModal = ({ open, onClose, onBooked }) => {
   const { user } = useAuth();
@@ -42,6 +50,7 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
   const [availability, setAvailability] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlotId, setSelectedSlotId] = useState(null);
+  const [selectedDayKey, setSelectedDayKey] = useState('');
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -82,6 +91,7 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
     setStudentsNotes('');
     setAgenda('');
     setSelectedSlotId(null);
+    setSelectedDayKey('');
     setCalendarPreference(getStoredCalendarPreference());
   }, [open, baseTimezone]);
 
@@ -101,6 +111,59 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
       return acc;
     }, {});
   }, [availability, timezone]);
+
+  const minDayKey = useMemo(() => formatDayKey(new Date(), timezone), [timezone]);
+  const maxDayKey = useMemo(() => formatDayKey(addDays(new Date(), 10), timezone), [timezone]);
+
+  const visibleMonth = useMemo(() => {
+    const monthKey = minDayKey.slice(0, 7); // YYYY-MM
+    const [y, m] = monthKey.split('-');
+    const year = Number(y);
+    const monthIndex = Number(m) - 1;
+    return {
+      year: Number.isFinite(year) ? year : new Date().getUTCFullYear(),
+      monthIndex: Number.isFinite(monthIndex) ? monthIndex : new Date().getUTCMonth(),
+    };
+  }, [minDayKey]);
+
+  const calendarGrid = useMemo(() => {
+    const { year, monthIndex } = visibleMonth;
+    const first = makeMonthDayDate(year, monthIndex, 1);
+    const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0, 12, 0, 0)).getUTCDate();
+    const firstWeekday = weekdayIndex(first, timezone);
+    const cells = [];
+    for (let i = 0; i < firstWeekday; i += 1) cells.push(null);
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      cells.push(makeMonthDayDate(year, monthIndex, day));
+    }
+    while (cells.length % 7 !== 0) cells.push(null);
+    return { year, monthIndex, cells };
+  }, [visibleMonth, timezone]);
+
+  const dayEntries = useMemo(() => {
+    return Object.entries(groupedSlots)
+      .filter(([key]) => key >= minDayKey && key <= maxDayKey)
+      .sort(([a], [b]) => a.localeCompare(b));
+  }, [groupedSlots, minDayKey, maxDayKey]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (dayEntries.length === 0) {
+      if (selectedDayKey) setSelectedDayKey('');
+      return;
+    }
+
+    const availableKeys = new Set(dayEntries.map(([key]) => key));
+    if (!selectedDayKey || !availableKeys.has(selectedDayKey)) {
+      setSelectedDayKey(dayEntries[0][0]);
+      setSelectedSlotId(null);
+    }
+  }, [open, dayEntries, selectedDayKey]);
+
+  const selectedDayGroup = selectedDayKey ? groupedSlots[selectedDayKey] : null;
+  const selectedDaySlots = (selectedDayGroup?.slots || [])
+    .slice()
+    .sort((a, b) => new Date(a.start) - new Date(b.start));
 
   const handleBook = async () => {
     if (!selectedSlotId) {
@@ -260,29 +323,87 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
             <p className="mt-4 text-sm text-amber-900">No sync blocks are open right now. Ping the admin team if you need one urgently.</p>
           )}
 
-          <div className="mt-4 space-y-3">
-            {Object.entries(groupedSlots).map(([dayKey, group]) => (
-              <div key={dayKey} className="rounded-xl border border-amber-100 bg-white p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">{group.title}</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {group.slots.map((slot) => (
-                    <button
-                      type="button"
-                      key={slot.startUtc}
-                      onClick={() => setSelectedSlotId(slot.startUtc)}
-                      className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                        selectedSlotId === slot.startUtc
-                          ? 'bg-[#2C736C] text-white'
-                          : 'bg-amber-50 text-amber-900 hover:bg-amber-100'
-                      }`}
-                    >
-                      {formatTime(new Date(slot.start), timezone)}
-                    </button>
+          {!loadingSlots && availability.length > 0 && !error && (
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-amber-100 bg-white p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Day</p>
+                  <p className="text-xs text-amber-900/70">Next 10 days</p>
+                </div>
+
+                <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-amber-900/70">
+                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
+                    <div key={d}>{d}</div>
                   ))}
                 </div>
+
+                <div className="mt-2 grid grid-cols-7 gap-1">
+                  {calendarGrid.cells.map((cell, idx) => {
+                    if (!cell) return <div key={`empty_${idx}`} />;
+
+                    const dayKey = formatDayKey(cell, timezone);
+                    const inRange = dayKey >= minDayKey && dayKey <= maxDayKey;
+                    const hasSlots = Boolean(groupedSlots[dayKey]?.slots?.length);
+                    const disabled = !inRange || !hasSlots || submitting;
+                    const selected = selectedDayKey === dayKey;
+                    const dayNumber = new Intl.DateTimeFormat('en-US', { day: 'numeric', timeZone: timezone }).format(cell);
+
+                    return (
+                      <button
+                        key={dayKey}
+                        type="button"
+                        onClick={() => {
+                          setSelectedDayKey(dayKey);
+                          setSelectedSlotId(null);
+                        }}
+                        disabled={disabled}
+                        className={`h-9 w-full rounded-lg border text-sm transition ${
+                          selected
+                            ? 'border-[#2C736C] bg-[#2C736C] text-white'
+                            : 'border-amber-100 bg-white hover:border-[#2C736C]'
+                        } ${hasSlots ? 'font-bold' : 'font-semibold'} ${disabled ? 'opacity-40 hover:border-amber-100' : ''}`}
+                      >
+                        {dayNumber}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {dayEntries.length === 0 && (
+                  <p className="mt-3 text-sm text-amber-900">No available days in the next 10 days.</p>
+                )}
               </div>
-            ))}
-          </div>
+
+              <div className="rounded-xl border border-amber-100 bg-white p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Times</p>
+                {!selectedDayKey ? (
+                  <p className="mt-2 text-sm text-amber-900">Choose a day to see available times.</p>
+                ) : selectedDaySlots.length === 0 ? (
+                  <p className="mt-2 text-sm text-amber-900">No times available on this day.</p>
+                ) : (
+                  <div className="mt-2 max-h-48 overflow-y-auto pr-1">
+                    <div className="flex flex-wrap gap-2">
+                      {selectedDaySlots.map((slot) => (
+                        <button
+                          type="button"
+                          key={slot.startUtc}
+                          onClick={() => setSelectedSlotId(slot.startUtc)}
+                          className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                            selectedSlotId === slot.startUtc
+                              ? 'bg-[#2C736C] text-white'
+                              : 'bg-amber-50 text-amber-900 hover:bg-amber-100'
+                          }`}
+                          disabled={submitting}
+                        >
+                          {formatTime(new Date(slot.start), timezone)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </Modal>

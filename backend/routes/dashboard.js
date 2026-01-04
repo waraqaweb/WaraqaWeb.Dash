@@ -13,6 +13,7 @@ const UserActivity = require('../models/UserActivity');
 const Class = require('../models/Class');
 const Invoice = require('../models/Invoice');
 const Student = require('../models/Student');
+const Vacation = require('../models/Vacation');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 const resolveQueryResult = async (queryLike, fallbackValue = []) => {
@@ -132,6 +133,30 @@ router.get('/stats', authenticateToken, async (req, res) => {
           flatStats.dailyUniqueDashboardUsers = dailyUniqueDashboardUsers;
           flatStats.uniqueUsersLast30Days = uniqueUsersLast30Days;
           flatStats.currentActiveDashboardUsers = currentActiveDashboardUsers;
+          // Attach active student vacations (computed live so it stays correct even when stats are cached)
+          try {
+            const now = new Date();
+            const activeStudentVacations = await Vacation.find({
+              role: 'student',
+              approvalStatus: 'approved',
+              status: { $in: ['approved', 'active'] },
+              startDate: { $lte: now },
+              $expr: { $gte: [ { $ifNull: ['$actualEndDate', '$endDate'] }, now ] }
+            }).select('user userName guardianId startDate endDate actualEndDate').lean();
+
+            flatStats.studentsOnVacationList = (activeStudentVacations || []).map(v => ({
+              studentId: v.user,
+              studentName: v.userName || 'Student',
+              guardianId: v.guardianId || null,
+              startDate: v.startDate,
+              endDate: v.actualEndDate || v.endDate
+            }));
+            flatStats.studentsOnVacationCount = flatStats.studentsOnVacationList.length;
+          } catch (e) {
+            flatStats.studentsOnVacationList = [];
+            flatStats.studentsOnVacationCount = 0;
+          }
+
           return res.json({ success: true, role: 'admin', meta: { generatedAt: new Date() }, cached: !isRecent, stats: Object.assign({}, flatStats, { nested: payload }) });
         }
 
@@ -182,6 +207,30 @@ router.get('/stats', authenticateToken, async (req, res) => {
   flatStats.dailyUniqueDashboardUsers = dailyUniqueDashboardUsers;
   flatStats.uniqueUsersLast30Days = uniqueUsersLast30Days;
   flatStats.currentActiveDashboardUsers = currentActiveDashboardUsers;
+  // Attach active student vacations (computed live)
+  try {
+    const now = new Date();
+    const activeStudentVacations = await Vacation.find({
+      role: 'student',
+      approvalStatus: 'approved',
+      status: { $in: ['approved', 'active'] },
+      startDate: { $lte: now },
+      $expr: { $gte: [ { $ifNull: ['$actualEndDate', '$endDate'] }, now ] }
+    }).select('user userName guardianId startDate endDate actualEndDate').lean();
+
+    flatStats.studentsOnVacationList = (activeStudentVacations || []).map(v => ({
+      studentId: v.user,
+      studentName: v.userName || 'Student',
+      guardianId: v.guardianId || null,
+      startDate: v.startDate,
+      endDate: v.actualEndDate || v.endDate
+    }));
+    flatStats.studentsOnVacationCount = flatStats.studentsOnVacationList.length;
+  } catch (e) {
+    flatStats.studentsOnVacationList = [];
+    flatStats.studentsOnVacationCount = 0;
+  }
+
   return res.json({ success: true, role: 'admin', meta: { generatedAt: new Date() }, cached: false, stats: Object.assign({}, flatStats, { nested: payload }) });
       } catch (err) {
         console.timeEnd('dashboard:admin');
@@ -193,6 +242,37 @@ router.get('/stats', authenticateToken, async (req, res) => {
     // Teacher view
     if (role === 'teacher') {
       const teacherId = req.user._id;
+      // Active student vacations for this teacher's students (last 90 days)
+      let studentsOnVacationList = [];
+      try {
+        const now = new Date();
+        const activeWindow = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+        const studentAgg = await Class.aggregate([
+          { $match: { teacher: teacherId, scheduledDate: { $gte: activeWindow } } },
+          { $group: { _id: '$student.studentId', studentName: { $first: '$student.studentName' } } },
+          { $limit: 500 }
+        ]).exec();
+        const studentIds = (studentAgg || []).map(r => r?._id).filter(Boolean);
+        if (studentIds.length) {
+          const activeVac = await Vacation.find({
+            role: 'student',
+            user: { $in: studentIds },
+            approvalStatus: 'approved',
+            status: { $in: ['approved', 'active'] },
+            startDate: { $lte: now },
+            $expr: { $gte: [ { $ifNull: ['$actualEndDate', '$endDate'] }, now ] }
+          }).select('user userName startDate endDate actualEndDate').lean();
+          const nameById = new Map((studentAgg || []).map(r => [String(r._id), r.studentName]));
+          studentsOnVacationList = (activeVac || []).map(v => ({
+            studentId: v.user,
+            studentName: v.userName || nameById.get(String(v.user)) || 'Student',
+            startDate: v.startDate,
+            endDate: v.actualEndDate || v.endDate
+          }));
+        }
+      } catch (e) {
+        studentsOnVacationList = [];
+      }
 
       // Hours & classes completed this month
       const monthStart = new Date(currentYear, currentMonth - 1, 1);
@@ -489,6 +569,8 @@ router.get('/stats', authenticateToken, async (req, res) => {
           cancellationsThisMonth,
           studentsWithClassesThisMonth,
           nextClass,
+          studentsOnVacationCount: studentsOnVacationList.length,
+          studentsOnVacationList,
           pendingReportsCount,
           pendingReports,
           overdueReportsCount,
@@ -569,6 +651,32 @@ router.get('/stats', authenticateToken, async (req, res) => {
         } catch (fallbackErr) {
           console.warn('dashboard: myChildren fallback via Student collection failed', fallbackErr && fallbackErr.message);
         }
+      }
+
+      // Active student vacations for this guardian's children
+      let studentsOnVacationList = [];
+      try {
+        const now = new Date();
+        const childIds = (myChildren || []).map(c => c?._id).filter(Boolean);
+        if (childIds.length) {
+          const activeVac = await Vacation.find({
+            role: 'student',
+            user: { $in: childIds },
+            approvalStatus: 'approved',
+            status: { $in: ['approved', 'active'] },
+            startDate: { $lte: now },
+            $expr: { $gte: [ { $ifNull: ['$actualEndDate', '$endDate'] }, now ] }
+          }).select('user userName startDate endDate actualEndDate').lean();
+          const nameById = new Map((myChildren || []).map(c => [String(c._id), c.studentName]));
+          studentsOnVacationList = (activeVac || []).map(v => ({
+            studentId: v.user,
+            studentName: v.userName || nameById.get(String(v.user)) || 'Student',
+            startDate: v.startDate,
+            endDate: v.actualEndDate || v.endDate
+          }));
+        }
+      } catch (e) {
+        studentsOnVacationList = [];
       }
       // Fetch guardian record to read guardianInfo.totalHours (remaining hours)
       let guardianHours = null;
@@ -743,13 +851,13 @@ router.get('/stats', authenticateToken, async (req, res) => {
         }));
 
         // attach to data for guardian view
-        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, recentLastClasses, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30 } });
+        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, recentLastClasses, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList } });
       } catch (e) {
         console.warn('dashboard: failed to build recentLastClasses', e && e.message);
-        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30 } });
+        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList } });
       }
 
-      return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30 } });
+      return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList } });
     }
 
     // Student (embedded under guardian) or other roles: provide lightweight view

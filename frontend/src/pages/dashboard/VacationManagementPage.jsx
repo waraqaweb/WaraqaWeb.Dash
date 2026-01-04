@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import VacationModal from '../../components/dashboard/VacationModal';
 import VacationDetailsModal from '../../components/dashboard/VacationDetailsModal';
+import GuardianStudentVacationModal from '../../components/dashboard/GuardianStudentVacationModal';
 
 const VacationManagementPage = () => {
   const { user } = useAuth();
@@ -66,6 +67,7 @@ const VacationManagementPage = () => {
   const [detailImpact, setDetailImpact] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
+  const [showGuardianStudentModal, setShowGuardianStudentModal] = useState(false);
 
   const availableTabs = useMemo(() => {
     const tabs = [];
@@ -78,6 +80,10 @@ const VacationManagementPage = () => {
     }
 
     if (user?.role === 'teacher') {
+      tabs.push({ id: 'my-vacations', label: 'My Vacations', icon: Calendar });
+    }
+
+    if (user?.role === 'guardian') {
       tabs.push({ id: 'my-vacations', label: 'My Vacations', icon: Calendar });
     }
 
@@ -103,6 +109,9 @@ const VacationManagementPage = () => {
       } else if (activeTab === 'my-vacations' && user?.role === 'teacher') {
         const teacherId = user?._id || user?.id;
         const res = await api.get(`/vacations/user/${teacherId}`);
+        setMyVacations(res.data.vacations || []);
+      } else if (activeTab === 'my-vacations' && user?.role === 'guardian') {
+        const res = await api.get('/vacations/guardian');
         setMyVacations(res.data.vacations || []);
       }
     } catch (err) {
@@ -306,6 +315,91 @@ const VacationManagementPage = () => {
     return matchesSearch && matchesFilter;
   });
 
+  const groupedGuardianMyVacations = useMemo(() => {
+    if (user?.role !== 'guardian') return [];
+
+    const localDayKey = (value) => {
+      const d = value instanceof Date ? value : new Date(value);
+      if (Number.isNaN(d.getTime())) return '';
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
+    const minuteBucket = (value) => {
+      const d = value ? new Date(value) : null;
+      const ms = d && !Number.isNaN(d.getTime()) ? d.getTime() : 0;
+      return Math.floor(ms / 60000);
+    };
+
+    const groups = new Map();
+
+    for (const v of (filteredMyVacations || [])) {
+      if (!v) continue;
+      const status = v.lifecycleStatus || v.status || 'pending';
+      const startKey = localDayKey(v.startDate);
+      const endKey = localDayKey(v.effectiveEndDate || v.actualEndDate || v.endDate);
+      const createdBucket = minuteBucket(v.createdAt);
+      const reason = v.reason || '';
+      const key = `${status}::${startKey}::${endKey}::${reason}::${createdBucket}`;
+
+      const existing = groups.get(key) || {
+        key,
+        status,
+        reason,
+        startDate: v.startDate,
+        endDate: v.effectiveEndDate || v.actualEndDate || v.endDate,
+        createdAt: v.createdAt,
+        vacations: [],
+        studentNames: []
+      };
+
+      existing.vacations.push(v);
+      if (v.userName) existing.studentNames.push(v.userName);
+      groups.set(key, existing);
+    }
+
+    const normalize = (name) => String(name || '').trim();
+
+    return Array.from(groups.values())
+      .map((g) => {
+        const deduped = Array.from(new Set((g.studentNames || []).map(normalize).filter(Boolean)));
+        deduped.sort((a, b) => a.localeCompare(b));
+        return { ...g, studentNames: deduped };
+      })
+      .sort((a, b) => {
+        const aMs = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bMs = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bMs - aMs;
+      });
+  }, [filteredMyVacations, user?.role]);
+
+  const handleDeleteGuardianVacationGroup = async (group) => {
+    if (!group || !Array.isArray(group.vacations) || group.vacations.length === 0) return;
+
+    const canDelete = group.vacations.every((v) => {
+      const status = v.lifecycleStatus || v.status;
+      return ['pending', 'rejected'].includes(status);
+    });
+
+    if (!canDelete) {
+      alert('Only pending or rejected vacations can be deleted.');
+      return;
+    }
+
+    const confirmMsg = `Delete this vacation request for ${group.vacations.length} student${group.vacations.length === 1 ? '' : 's'}?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await Promise.allSettled(group.vacations.map((v) => api.delete(`/vacations/${v._id}`)));
+      await fetchData();
+    } catch (e) {
+      console.error('Error deleting guardian vacation group', e);
+      alert('Error deleting vacation request. Please try again.');
+    }
+  };
+
   const vacationSummaryRows = useMemo(() => {
     if (user?.role !== 'admin') return [];
 
@@ -506,9 +600,16 @@ const VacationManagementPage = () => {
           <div className="divide-y divide-gray-200">
             {filteredIndividualVacations.map((vacation) => {
               const status = vacation.lifecycleStatus || vacation.status;
+              const isStudentVacation = vacation?.role === 'student';
               const teacherName = vacation.user?.fullName || `${vacation.user?.firstName || vacation.teacher?.firstName || ''} ${vacation.user?.lastName || vacation.teacher?.lastName || ''}`.trim();
+              const studentName = vacation.userName || vacation.studentName || '';
+              const displayName = isStudentVacation ? (studentName || 'Student') : (teacherName || 'Unknown Teacher');
               const effectiveEndDate = vacation.effectiveEndDate || vacation.actualEndDate || vacation.endDate;
               const teacherId = vacation.user?._id || vacation.user?.id || vacation.teacher?._id;
+              const impactedTeachers = Array.isArray(vacation.impactedTeachers) ? vacation.impactedTeachers : [];
+              const impactedTeacherNames = impactedTeachers
+                .map((t) => (typeof t === 'string' ? t : (t?.name || '')))
+                .filter(Boolean);
 
               return (
               <div key={vacation._id} className="p-6 hover:bg-gray-50">
@@ -516,7 +617,7 @@ const VacationManagementPage = () => {
                   <div className="flex-1">
                     <div className="flex items-center space-x-3 mb-2">
                       <h3 className="text-lg font-semibold text-gray-900">
-                            {teacherName || 'Unknown Teacher'}
+                            {displayName}
                       </h3>
                           <span className={`inline-flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(status)}`}>
                             {getStatusIcon(status)}
@@ -524,6 +625,9 @@ const VacationManagementPage = () => {
                       </span>
                     </div>
                     <p className="text-gray-600 mb-2">{vacation.reason}</p>
+                    {isStudentVacation && impactedTeacherNames.length > 0 && (
+                      <p className="text-sm text-gray-500 mb-2">Teachers: {impactedTeacherNames.join(', ')}</p>
+                    )}
                     <div className="flex items-center space-x-4 text-sm text-gray-500">
                       <div className="flex items-center space-x-1">
                         <Calendar className="h-4 w-4" />
@@ -531,7 +635,7 @@ const VacationManagementPage = () => {
                       </div>
                       <div className="flex items-center space-x-1">
                         <Users className="h-4 w-4" />
-                            <span>{vacation.substitutes?.length || 0} students configured</span>
+                            <span>{isStudentVacation ? '1 student' : `${vacation.substitutes?.length || 0} students configured`}</span>
                       </div>
                     </div>
                   </div>
@@ -723,7 +827,13 @@ const VacationManagementPage = () => {
         </div>
         <div className="flex space-x-3">
           <button
-            onClick={() => handleCreateVacation('individual')}
+            onClick={() => {
+              if (user?.role === 'guardian') {
+                setShowGuardianStudentModal(true);
+              } else {
+                handleCreateVacation('individual');
+              }
+            }}
             className="bg-custom-teal text-white px-4 py-2 rounded-lg hover:bg-custom-teal-dark flex items-center space-x-2"
           >
             <Plus className="h-4 w-4" />
@@ -746,9 +856,64 @@ const VacationManagementPage = () => {
           </div>
         ) : (
           <div className="divide-y divide-gray-200">
-            {filteredMyVacations.map((vacation) => {
+            {user?.role === 'guardian'
+              ? groupedGuardianMyVacations.map((group) => {
+                  const status = group.status;
+                  const studentCount = group.vacations.length;
+                  const names = group.studentNames || [];
+                  const shown = names.slice(0, 4);
+                  const remaining = Math.max(0, names.length - shown.length);
+
+                  return (
+                    <div key={group.key} className="p-6 hover:bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-3 mb-2">
+                            <h3 className="text-lg font-semibold text-gray-900">{group.reason}</h3>
+                            <span className={`inline-flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(status)}`}>
+                              {getStatusIcon(status)}
+                              <span className="capitalize">{status}</span>
+                            </span>
+                          </div>
+
+                          <div className="text-sm text-gray-600 mb-2">
+                            Students: {studentCount}
+                            {shown.length > 0 && (
+                              <>
+                                {' '}· {shown.join(', ')}{remaining ? ` +${remaining} more` : ''}
+                              </>
+                            )}
+                          </div>
+
+                          <div className="flex items-center space-x-4 text-sm text-gray-500">
+                            <div className="flex items-center space-x-1">
+                              <Calendar className="h-4 w-4" />
+                              <span>{formatDateTime(group.startDate)} - {formatDateTime(group.endDate)}</span>
+                            </div>
+                            <div className="flex items-center space-x-1">
+                              <Users className="h-4 w-4" />
+                              <span>Student vacation</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => handleDeleteGuardianVacationGroup(group)}
+                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              : filteredMyVacations.map((vacation) => {
               const status = vacation.lifecycleStatus || vacation.status;
               const effectiveEndDate = vacation.effectiveEndDate || vacation.actualEndDate || vacation.endDate;
+              const isStudentVacation = vacation.role === 'student';
               return (
               <div key={vacation._id} className="p-6 hover:bg-gray-50">
                 <div className="flex items-center justify-between">
@@ -760,6 +925,11 @@ const VacationManagementPage = () => {
                         <span className="capitalize">{status}</span>
                       </span>
                     </div>
+                    {user?.role === 'guardian' && isStudentVacation && (
+                      <div className="text-sm text-gray-600 mb-2">
+                        Student: {vacation.userName || 'Student'}
+                      </div>
+                    )}
                     <div className="flex items-center space-x-4 text-sm text-gray-500">
                       <div className="flex items-center space-x-1">
                         <Calendar className="h-4 w-4" />
@@ -767,7 +937,7 @@ const VacationManagementPage = () => {
                       </div>
                       <div className="flex items-center space-x-1">
                         <Users className="h-4 w-4" />
-                        <span>{vacation.substitutes?.length || 0} students configured</span>
+                        <span>{isStudentVacation ? 'Student vacation' : `${vacation.substitutes?.length || 0} students configured`}</span>
                       </div>
                     </div>
                     {status === 'rejected' && vacation.rejectionReason && (
@@ -779,15 +949,17 @@ const VacationManagementPage = () => {
                     )}
                   </div>
                   <div className="flex items-center space-x-2">
-                    <button 
-                      onClick={() => handleViewVacationDetails(vacation)}
-                      className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
-                      title="View Details"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
+                    {user?.role !== 'guardian' && (
+                      <button 
+                        onClick={() => handleViewVacationDetails(vacation)}
+                        className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                        title="View Details"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    )}
                     
-                    {status === 'pending' && (
+                    {status === 'pending' && user?.role !== 'guardian' && (
                       <>
                         <button 
                           onClick={() => handleEditVacation(vacation, 'individual')}
@@ -804,6 +976,16 @@ const VacationManagementPage = () => {
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </>
+                    )}
+
+                    {status === 'pending' && user?.role === 'guardian' && (
+                      <button 
+                        onClick={() => handleDeleteVacation(vacation)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                        title="Delete"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     )}
 
                     {['approved', 'active'].includes(status) && (
@@ -875,6 +1057,15 @@ const VacationManagementPage = () => {
         impact={detailImpact}
         loading={detailLoading}
         error={detailError}
+      />
+
+      <GuardianStudentVacationModal
+        isOpen={showGuardianStudentModal}
+        onClose={() => setShowGuardianStudentModal(false)}
+        onSuccess={async () => {
+          await fetchData();
+          setShowGuardianStudentModal(false);
+        }}
       />
 
       {/* Approval Modal */}

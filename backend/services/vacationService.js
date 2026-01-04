@@ -328,31 +328,18 @@ async function applyVacationToClasses(vacation) {
         try {
           summary.processedClasses += 1;
           impactedStudentSet.add(String(cls.student.studentId));
-          if (vacation.status === 'cancelled') {
-            cls.status = 'cancelled';
-            if (!cls.cancellation) {
-              cls.cancellation = {};
-            }
-            cls.cancellation.reason = 'Student vacation';
-            cls.cancellation.cancelledBy = vacation.approvedBy;
-            cls.cancellation.cancelledAt = new Date();
-            cls.cancellation.isTemporary = false;
-            cls.cancellation.vacationId = vacation._id;
-            summary.cancelled += 1;
-          } else {
-            // For hold status, mark it as on_hold and hide from lists
-            cls.status = 'on_hold';
-            if (!cls.cancellation) {
-              cls.cancellation = {};
-            }
-            cls.cancellation.reason = 'Student vacation - temporary hold';
-            cls.cancellation.cancelledBy = vacation.approvedBy;
-            cls.cancellation.cancelledAt = new Date();
-            cls.cancellation.isTemporary = true; // Custom flag for held classes
-            cls.hidden = true; // This will make it not appear in lists
-            cls.cancellation.vacationId = vacation._id;
-            summary.onHold += 1;
+          // Student vacations always cancel classes in the window
+          cls.status = 'cancelled';
+          cls.hidden = false;
+          if (!cls.cancellation) {
+            cls.cancellation = {};
           }
+          cls.cancellation.reason = 'Student vacation';
+          cls.cancellation.cancelledBy = vacation.approvedBy;
+          cls.cancellation.cancelledAt = new Date();
+          cls.cancellation.isTemporary = false;
+          cls.cancellation.vacationId = vacation._id;
+          summary.cancelled += 1;
           await cls.save();
           console.log(`Updated student class ${cls._id} with status ${cls.status}`);
         } catch (classError) {

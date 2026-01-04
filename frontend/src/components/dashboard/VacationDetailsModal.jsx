@@ -56,8 +56,8 @@ const VacationDetailsModal = ({ isOpen, onClose, vacation, impact, loading, erro
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <div>
             <h2 className="text-xl font-semibold text-gray-900">Vacation impact details</h2>
-            {vacation?.user?.fullName && (
-              <p className="text-sm text-gray-500">{vacation.user.fullName}</p>
+            {(vacation?.user?.fullName || vacation?.userName) && (
+              <p className="text-sm text-gray-500">{vacation?.user?.fullName || vacation?.userName}</p>
             )}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">

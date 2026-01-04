@@ -541,6 +541,10 @@ const userSchema = new mongoose.Schema({
       type: Boolean,
       default: true
     },
+    meetingsEnabled: {
+      type: Boolean,
+      default: true
+    },
     defaultBufferMinutes: {
       type: Number,
       default: 5,

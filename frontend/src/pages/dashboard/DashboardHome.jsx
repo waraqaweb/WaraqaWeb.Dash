@@ -53,6 +53,189 @@ const formatClassDate = (d) => {
   return `${weekday}, ${day} ${month} ${year} ${hour}:${minute} ${ampm}`;
 };
 
+const getRegionFromLocale = (locale = '') => {
+  const match = String(locale || '').match(/-([A-Z]{2})\b/);
+  return match ? match[1] : null;
+};
+
+const getRegionFromTimeZone = (timeZone = '') => {
+  const tz = String(timeZone || '');
+  if (tz === 'Asia/Riyadh') return 'SA';
+  if (tz === 'Asia/Dubai') return 'AE';
+  if (tz === 'Asia/Qatar') return 'QA';
+  if (tz === 'Asia/Kuwait') return 'KW';
+  if (tz === 'Asia/Bahrain') return 'BH';
+  if (tz === 'Asia/Muscat') return 'OM';
+  return null;
+};
+
+const getHijriCalendarCandidates = ({ region }) => {
+  // Best-effort: use Umm al-Qura where it's the de-facto official source.
+  const umalquraRegions = new Set(['SA', 'AE', 'QA', 'KW', 'BH', 'OM']);
+  if (region && umalquraRegions.has(region)) {
+    return ['islamic-umalqura', 'islamic', 'islamic-civil'];
+  }
+  // Default to observational Hijri if supported; fallback to civil.
+  return ['islamic', 'islamic-civil', 'islamic-umalqura'];
+};
+
+const formatHijriDate = ({ date = new Date(), timeZone, locale }) => {
+  const resolvedLocale = locale || (typeof navigator !== 'undefined' ? navigator.language : 'en-US');
+  const resolvedTimeZone = timeZone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined);
+  const region = getRegionFromLocale(resolvedLocale) || getRegionFromTimeZone(resolvedTimeZone);
+
+  const candidates = getHijriCalendarCandidates({ region });
+  for (const calendar of candidates) {
+    try {
+      const dtf = new Intl.DateTimeFormat(resolvedLocale, {
+        calendar,
+        timeZone: resolvedTimeZone,
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+
+      const parts = typeof dtf.formatToParts === 'function' ? dtf.formatToParts(date) : null;
+      const dayPart = parts ? parts.find((p) => p.type === 'day')?.value : null;
+      const monthPart = parts ? parts.find((p) => p.type === 'month')?.value : null;
+      const yearPart = parts ? parts.find((p) => p.type === 'year')?.value : null;
+      const yearNumber = yearPart ? Number(String(yearPart).replace(/[^0-9]/g, '')) : NaN;
+
+      const dayNumber = dayPart ? Number(String(dayPart).replace(/[^0-9]/g, '')) : NaN;
+
+      // Heuristic: Hijri year should be ~14xx. If we get ~20xx it's probably Gregorian fallback.
+      if (Number.isFinite(yearNumber) && yearNumber > 1700) continue;
+
+      return {
+        ok: true,
+        formatted: dtf.format(date),
+        calendar,
+        timeZone: resolvedTimeZone,
+        region: region || null,
+        parts: {
+          day: dayPart || null,
+          month: monthPart || null,
+          year: yearPart || null,
+        },
+        dayNumber: Number.isFinite(dayNumber) ? dayNumber : null,
+      };
+    } catch (e) {
+      // try next candidate
+    }
+  }
+
+  return { ok: false, formatted: '', calendar: null, timeZone: resolvedTimeZone, region: region || null, parts: null, dayNumber: null };
+};
+
+const getLunarPhaseInfo = (date = new Date()) => {
+  // Best-effort astronomical phase (no API): compute moon age based on a known new moon epoch.
+  // Source concept is widely used: synodic month ~ 29.53058867 days.
+  const synodicMonthDays = 29.53058867;
+  const knownNewMoonUtcMs = Date.UTC(2000, 0, 6, 18, 14, 0); // 2000-01-06 18:14 UTC
+  const daysSince = (date.getTime() - knownNewMoonUtcMs) / (1000 * 60 * 60 * 24);
+  const age = ((daysSince % synodicMonthDays) + synodicMonthDays) % synodicMonthDays; // 0..29.53
+  const phase = age / synodicMonthDays; // 0..1
+  const illumination = 0.5 * (1 - Math.cos(2 * Math.PI * phase)); // 0..1
+  const waxing = phase < 0.5;
+
+  let label = '—';
+  if (age < 1.2 || age > synodicMonthDays - 1.2) label = 'New moon';
+  else if (age < 7.4) label = 'Waxing crescent';
+  else if (age < 8.8) label = 'First quarter';
+  else if (age < 13.8) label = 'Waxing gibbous';
+  else if (age < 16.0) label = 'Full moon';
+  else if (age < 22.1) label = 'Waning gibbous';
+  else if (age < 23.6) label = 'Last quarter';
+  else label = 'Waning crescent';
+
+  return {
+    label,
+    illumination,
+    waxing,
+    ageDays: Math.round(age * 10) / 10,
+  };
+};
+
+const MoonPhaseIcon = ({ date = new Date(), size = 56 }) => {
+  const info = getLunarPhaseInfo(date);
+  const r = 18;
+  const cx = 24;
+  const cy = 24;
+
+  // Reveal the lit portion by offsetting a dark mask circle.
+  const k = r * (1 - Math.cos(2 * Math.PI * ((info.ageDays || 0) / 29.53058867)));
+  const shadowCx = cx + (info.waxing ? -k : k);
+
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
+      <defs>
+        <clipPath id="moon-clip">
+          <circle cx={cx} cy={cy} r={r} />
+        </clipPath>
+
+        <radialGradient id="moon-lit" cx="30%" cy="30%" r="70%">
+          <stop offset="0%" stopColor="currentColor" stopOpacity="0.95" />
+          <stop offset="70%" stopColor="currentColor" stopOpacity="0.75" />
+          <stop offset="100%" stopColor="currentColor" stopOpacity="0.55" />
+        </radialGradient>
+
+        <radialGradient id="moon-dark" cx="60%" cy="60%" r="80%">
+          <stop offset="0%" stopColor="currentColor" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="currentColor" stopOpacity="0.65" />
+        </radialGradient>
+      </defs>
+
+      <g clipPath="url(#moon-clip)" className="text-primary">
+        <circle cx={cx} cy={cy} r={r} fill="url(#moon-lit)" />
+        <g className="text-foreground">
+          <circle cx={shadowCx} cy={cy} r={r} fill="url(#moon-dark)" />
+        </g>
+      </g>
+
+      <title>{`Moon illumination ${Math.round(info.illumination * 100)}%`}</title>
+    </svg>
+  );
+};
+
+const HijriDateCard = ({ variant = 'card', timeZone, locale }) => {
+  const now = new Date();
+  const hijri = formatHijriDate({ date: now, timeZone, locale });
+  if (!hijri.ok) return null;
+
+  if (variant === 'inline') {
+    return (
+      <div className="text-xs sm:text-sm text-muted-foreground whitespace-nowrap">
+        Hijri: <span className="text-foreground font-medium">{hijri.formatted}</span>
+      </div>
+    );
+  }
+
+  const lunar = getLunarPhaseInfo(now);
+  const hijriDayLabel = hijri.dayNumber ? `Hijri day ${hijri.dayNumber}` : null;
+
+  return (
+    <div className="h-full bg-gradient-to-br from-primary/15 via-card to-card rounded-xl border border-primary/20 p-4 flex flex-col items-center justify-center text-center shadow-sm">
+      <MoonPhaseIcon date={now} size={64} />
+      <div className="mt-2 text-xs font-medium tracking-wide text-muted-foreground">Hijri date</div>
+      <div className="mt-1 text-lg font-semibold text-foreground leading-snug">{hijri.formatted}</div>
+      <div className="mt-1 text-sm text-muted-foreground">{formatDateDDMMMYYYY(now)}</div>
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs">
+        {hijriDayLabel && (
+          <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-primary">
+            {hijriDayLabel}
+          </span>
+        )}
+        <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-foreground">
+          {lunar.label}
+        </span>
+        <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-muted-foreground">
+          {Math.round(lunar.illumination * 100)}% lit
+        </span>
+      </div>
+    </div>
+  );
+};
+
 /**
  * DashboardHome
  * - One file containing Admin / Teacher / Guardian / Student dashboards
@@ -431,6 +614,7 @@ const DashboardHome = () => {
                         )}
                       </div>
                   <div className="flex items-center space-x-3">
+                    <HijriDateCard variant="inline" timeZone={user?.timezone} />
                     <div className="text-sm text-muted-foreground">
                       {stats.data && stats.data.timestamps && stats.data.timestamps.computedAt && (
                         <span>Last updated {new Date(stats.data.timestamps.computedAt).toLocaleTimeString()}</span>
@@ -440,11 +624,7 @@ const DashboardHome = () => {
                       className="px-3 py-1 rounded border border-border bg-card text-sm"
                       onClick={async () => { try { await api.post('/dashboard/refresh'); await fetchStats(); } catch (e) { console.error(e); } }}
                     >↻ Refresh</button>
-                    <button
-                      className="px-3 py-1 rounded border border-border bg-card text-sm"
-                      onClick={() => setCompactAdmin(!compactAdmin)}
-                      aria-pressed={compactAdmin}
-                    >{compactAdmin ? 'Compact: On' : 'Compact: Off'}</button>
+
                   </div>
                 </div>
 
@@ -672,15 +852,32 @@ const DashboardHome = () => {
                   </div>
 
                   <div className="bg-card rounded-lg border border-border p-4">
-                    <h3 className="text-sm font-semibold mb-2">Teachers on Vacation</h3>
+                    <h3 className="text-sm font-semibold mb-2">Users on Vacation</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
-                      {(data.teachersOnVacationList || data.teachers?.teachersOnVacationList || []).slice(0,8).map((t, idx) => (
-                        <div key={idx} className="flex items-center justify-between">
-                          <div className="truncate">{t.firstName} {t.lastName}</div>
-                          <div className="text-xs">{t.vacationStartDate ? formatDateDDMMMYYYY(t.vacationStartDate) : ''}</div>
-                        </div>
-                      ))}
-                      {((data.teachersOnVacationList || data.teachers?.teachersOnVacationList || []).length === 0) && <div className="text-xs text-muted-foreground">No teachers on vacation</div>}
+                      {(() => {
+                        const teachers = (data.teachersOnVacationList || data.teachers?.teachersOnVacationList || []).map((t) => ({
+                          key: `t:${t._id || t.id || `${t.firstName || ''}${t.lastName || ''}`}`,
+                          label: `${t.firstName || ''} ${t.lastName || ''}`.trim() || 'Teacher',
+                          until: t.vacationEndDate || t.vacationEnd || t.endDate || null
+                        }));
+                        const students = (data.studentsOnVacationList || data.students?.studentsOnVacationList || []).map((s) => ({
+                          key: `s:${s.studentId || s._id || s.id}`,
+                          label: s.studentName || s.userName || 'Student',
+                          until: s.endDate || s.effectiveEndDate || null
+                        }));
+                        const combined = [...teachers, ...students].slice(0, 8);
+
+                        return combined.length === 0 ? (
+                          <div className="text-xs text-muted-foreground">No users on vacation</div>
+                        ) : (
+                          combined.map((u) => (
+                            <div key={u.key} className="flex items-center justify-between">
+                              <div className="truncate">{u.label}</div>
+                              <div className="text-xs">{u.until ? `until ${formatDateDDMMMYYYY(u.until)}` : ''}</div>
+                            </div>
+                          ))
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -697,14 +894,38 @@ const DashboardHome = () => {
       + (Array.isArray(data.overdueReports) ? data.overdueReports.length : 0);
     return (
       <div className="space-y-4 sm:space-y-6">
-        <div className="bg-card rounded-lg p-4 sm:p-6 border border-border">
-          <h2 className="text-xl sm:text-2xl font-semibold mb-1 sm:mb-2 text-foreground">{greetingTitle}</h2>
-          {greetingSubtitle ? (
-            <p className="text-sm text-muted-foreground">{greetingSubtitle}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">You have <strong className="text-foreground">{upcomingCount}</strong> classes scheduled for today. Keep up the great work!</p>
-          )}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="bg-gradient-to-r from-primary/10 to-card rounded-xl p-3 sm:p-4 border border-primary/20 lg:col-span-2 shadow-sm">
+            <h2 className="text-xl sm:text-2xl font-semibold mb-1 sm:mb-2 text-foreground">{greetingTitle}</h2>
+            {greetingSubtitle ? (
+              <p className="text-sm text-muted-foreground">{greetingSubtitle}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">You have <strong className="text-foreground">{upcomingCount}</strong> classes scheduled for today. Keep up the great work!</p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Timezone: {user?.timezone || '—'}</span>
+              <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-xs font-medium text-foreground">Upcoming: {upcomingCount}</span>
+              <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-xs font-medium text-muted-foreground">Pending reports: {pendingTotal}</span>
+            </div>
+          </div>
+          <div className="lg:col-span-1">
+            <HijriDateCard timeZone={user?.timezone} />
+          </div>
         </div>
+
+        {Array.isArray(data.studentsOnVacationList) && data.studentsOnVacationList.length > 0 && (
+          <div className="bg-card rounded-lg border border-border p-4">
+            <h3 className="text-sm font-semibold mb-2">Currently on vacation</h3>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              {data.studentsOnVacationList.slice(0, 6).map((s) => (
+                <div key={s.studentId || s._id} className="flex items-center justify-between">
+                  <div className="truncate">{s.studentName || 'Student'}</div>
+                  <div className="text-xs">{s.endDate ? `until ${formatDateDDMMMYYYY(s.endDate)}` : ''}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {teacherSyncSuccess?.meeting && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
@@ -806,19 +1027,65 @@ const DashboardHome = () => {
       : Number(data.myChildren || 0);
     const lastPaid = data.lastPaidInfo || data.lastPaidInvoice || null;
     const upcomingClass = Array.isArray(data.upcomingClasses) && data.upcomingClasses.length > 0 ? data.upcomingClasses[0] : (data.nextClass || null);
+    const remainingHours = data.guardianHours ?? data.guardianInfo?.totalHours ?? 0;
 
     // (greeting computed globally as greetingTitle/greetingSubtitle)
 
     return (
       <div className="space-y-4 sm:space-y-6">
-        <div className="bg-gradient-to-r from-[#eaf5f2] to-[#2c736c] rounded-lg p-4 sm:p-5 text-foreground">
-          <h2 className="text-xl font-semibold mb-1">{greetingTitle}</h2>
-          {greetingSubtitle ? (
-            <p className="text-sm opacity-85">{greetingSubtitle}</p>
-          ) : (
-            <p className="text-sm opacity-85">{lastLoginGlobal ? `Last visit: ${lastLoginGlobal ? formatClassDate(lastLoginGlobal) : '—'}` : `Welcome—this looks like your first visit.`}</p>
-          )}
+        <div className="grid grid-cols-1 lg:grid-cols-3 lg:grid-rows-2 gap-4">
+          <div className="lg:col-span-2 lg:row-span-1 rounded-2xl border border-border bg-gradient-to-r from-sidebar-accent/45 via-sidebar-accent/25 to-primary/35 p-4 sm:p-5 shadow-sm">
+            <h2 className="text-xl font-semibold mb-1 text-foreground">{greetingTitle}</h2>
+            {greetingSubtitle ? (
+              <p className="text-sm text-muted-foreground">{greetingSubtitle}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">{lastLoginGlobal ? `Last visit: ${lastLoginGlobal ? formatClassDate(lastLoginGlobal) : '—'}` : `Welcome—this looks like your first visit.`}</p>
+            )}
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="rounded-full border border-primary/20 bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Timezone: {user?.timezone || '—'}</span>
+              <span className="rounded-full border border-border bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Students: {myChildrenCount}</span>
+              <span className="rounded-full border border-border bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Remaining: {remainingHours} hrs</span>
+              {upcomingClass?.scheduledDate && (
+                <span className="rounded-full border border-border bg-background/70 px-2 py-0.5 text-xs font-medium text-muted-foreground">Next: {formatDateDDMMMYYYY(upcomingClass.scheduledDate)}</span>
+              )}
+            </div>
+          </div>
+
+          {/* Force placement: start at col 3 / row 1 so it can span both rows */}
+          <div className="lg:col-start-3 lg:row-start-1 lg:row-span-2 h-full">
+            <HijriDateCard timeZone={user?.timezone} />
+          </div>
+
+          <div className="lg:col-span-2 lg:row-span-1 rounded-2xl border border-yellow-300/70 bg-yellow-50 p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between shadow-sm">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium tracking-[0.25em] text-yellow-700 uppercase">Need a check-in?</p>
+              <h3 className="text-base sm:text-lg font-semibold text-yellow-950">Schedule an admin follow-up</h3>
+              <p className="text-sm text-yellow-900/80">Pick a yellow slot to review progress, billing, or future plans. One per student each month.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowGuardianFollowUpModal(true)}
+              className="inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-sm hover:opacity-95"
+            >
+              Schedule follow-up
+            </button>
+          </div>
         </div>
+
+        {Array.isArray(data.studentsOnVacationList) && data.studentsOnVacationList.length > 0 && (
+          <div className="bg-card rounded-lg border border-border p-4">
+            <h3 className="text-sm font-semibold mb-2">Currently on vacation</h3>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              {data.studentsOnVacationList.slice(0, 6).map((s) => (
+                <div key={s.studentId || s._id} className="flex items-center justify-between">
+                  <div className="truncate">{s.studentName || 'Student'}</div>
+                  <div className="text-xs">{s.endDate ? `until ${formatDateDDMMMYYYY(s.endDate)}` : ''}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {guardianBookingSuccess?.meeting && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
@@ -858,25 +1125,10 @@ const DashboardHome = () => {
           </div>
         )}
 
-        <div className="rounded-3xl border border-[#FACC15] bg-[#FFF9DB] p-5 shadow-sm flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-[#c0680e]">Need a check-in?</p>
-            <h3 className="text-lg font-semibold text-[#2f2001]">Schedule an admin follow-up</h3>
-            <p className="text-sm text-[#5f4506]">Pick a yellow slot to review progress, billing, or future plans. One per student each month.</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowGuardianFollowUpModal(true)}
-            className="inline-flex items-center justify-center rounded-full bg-[#2C736C] px-5 py-2 text-sm font-semibold text-white shadow"
-          >
-            Schedule follow-up
-          </button>
-        </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-          <StatCard title="My Students" value={myChildrenCount} Icon={Users} color="bg-slate-50 text-slate-700" />
+          <StatCard title="My Students" value={myChildrenCount} Icon={Users} color="bg-sidebar-accent/25 text-sidebar-accent-foreground" />
           {/* Combined Hours card: total hours + small per-student list */}
-          <div className="bg-card rounded-lg border border-border p-4">
+          <div className="bg-gradient-to-br from-primary/5 via-card to-card rounded-lg border border-primary/15 p-4">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Hours (last 30 days)</p>
@@ -896,12 +1148,12 @@ const DashboardHome = () => {
                 )}
               </div>
               <div className="flex flex-col items-center">
-                <div className="h-10 w-10 rounded-full flex items-center justify-center bg-accent/10 text-accent">
+                <div className="h-10 w-10 rounded-full flex items-center justify-center bg-primary/10 text-primary">
                   <Calendar className="h-5 w-5" />
                 </div>
                 {Array.isArray(data.recentStudentHours) && data.recentStudentHours.length > 0 && (
                   <button
-                    className="mt-2 text-xs text-accent hover:underline"
+                    className="mt-2 text-xs text-primary hover:underline"
                     onClick={() => navigate(isGuardian() ? '/dashboard/my-students' : '/dashboard/students')}
                   >
                     View all
@@ -912,7 +1164,7 @@ const DashboardHome = () => {
           </div>
 
           {/* Custom Last Paid Hours card: larger hours, smaller timestamp, small message when none */}
-          <div className="bg-card rounded-lg border border-border p-4">
+          <div className="bg-gradient-to-br from-sidebar-accent/10 via-card to-card rounded-lg border border-sidebar-accent/25 p-4">
             <p className="text-sm font-medium text-muted-foreground">Last paid hours</p>
             {lastPaid && (lastPaid.hours != null) ? (
               <div className="mt-2">
@@ -923,7 +1175,7 @@ const DashboardHome = () => {
               <div className="mt-2 text-xs text-muted-foreground">No paid hours yet</div>
             )}
           </div>
-          <StatCard title="Remaining hours" value={`${(data.guardianHours ?? data.guardianInfo?.totalHours ?? 0)} hrs`} Icon={Clock} color="bg-card text-foreground" />
+          <StatCard title="Remaining hours" value={`${(data.guardianHours ?? data.guardianInfo?.totalHours ?? 0)} hrs`} Icon={Clock} color="bg-primary/10 text-primary" />
         </div>
         {/* per-student list merged into the Hours card above */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -976,13 +1228,22 @@ const DashboardHome = () => {
 
   const renderStudentDashboard = () => (
     <div className="space-y-6">
-      <div className="bg-gradient-to-r from-slate-300 to-slate-100 rounded-lg p-6 text-foreground">
-        <h2 className="text-2xl font-bold mb-2">{greetingTitle}</h2>
-        {greetingSubtitle ? (
-          <p className="opacity-90">{greetingSubtitle}</p>
-        ) : (
-          <p className="opacity-90">You have {stats.data.upcomingClasses || 0} classes coming up.</p>
-        )}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="bg-gradient-to-r from-primary/10 to-card rounded-xl p-3 sm:p-4 border border-primary/20 lg:col-span-2 shadow-sm">
+          <h2 className="text-xl sm:text-2xl font-semibold mb-2 text-foreground">{greetingTitle}</h2>
+          {greetingSubtitle ? (
+            <p className="text-sm text-muted-foreground">{greetingSubtitle}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground">You have <strong className="text-foreground">{stats.data.upcomingClasses || 0}</strong> classes coming up.</p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Timezone: {user?.timezone || '—'}</span>
+            <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-xs font-medium text-foreground">Upcoming: {stats.data.upcomingClasses || 0}</span>
+          </div>
+        </div>
+        <div className="lg:col-span-1">
+          <HijriDateCard timeZone={user?.timezone} />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -1028,7 +1289,7 @@ const DashboardHome = () => {
 
   // ----- Final render (role-based) -----
   return (
-    <div className="p-4 sm:p-6">
+    <div className="p-3 sm:p-4">
       {latestFeedback && (
         <div className="mb-6 rounded-2xl border border-border bg-card p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">

@@ -51,9 +51,10 @@ const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
       const payload = {
         type: 'monthly',
         teacherId: teacher._id || prompt.teacherId,
-        classRating: (Number(classStars) || 0) * 2,
-        teacherRating: (Number(teacherStars) || 0) * 2,
-        progressEvaluation,
+        classId: prompt.classId || undefined,
+        attendanceOnTime: (Number(classStars) || 0) * 2,
+        connectionQuality: (Number(teacherStars) || 0) * 2,
+        progressEvaluation: Number(progressEvaluation) || 0,
         notes,
       };
       const res = await api.post('/feedbacks', payload);
@@ -63,8 +64,8 @@ const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
           action: 'submitted',
           type: 'monthly',
           feedback: serverFeedback || buildFeedbackSummary({
-            classRating: payload.classRating,
-            teacherRating: payload.teacherRating,
+            attendanceOnTime: payload.attendanceOnTime,
+            connectionQuality: payload.connectionQuality,
             progressEvaluation: payload.progressEvaluation,
             notes: payload.notes,
             createdAt: new Date().toISOString(),

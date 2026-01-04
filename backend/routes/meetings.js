@@ -98,6 +98,45 @@ router.get('/availability', optionalAuth, async (req, res) => {
   }
 });
 
+router.get('/availability/timeoff', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { rangeStart, rangeEnd, includeInactive } = req.query;
+    const response = await meetingService.listMeetingTimeOff({
+      adminId: parseAdminId(req),
+      rangeStart,
+      rangeEnd,
+      includeInactive: includeInactive === 'true'
+    });
+    res.json({ periods: response.periods });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/availability/timeoff', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const period = await meetingService.createMeetingTimeOff({
+      adminId: parseAdminId(req),
+      payload: req.body
+    });
+    res.status(201).json({ message: 'Time off created', period });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.delete('/availability/timeoff/:timeOffId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    await meetingService.deleteMeetingTimeOff({
+      adminId: parseAdminId(req),
+      timeOffId: req.params.timeOffId
+    });
+    res.json({ message: 'Time off deleted' });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.post('/book', optionalAuth, async (req, res) => {
   try {
     const {

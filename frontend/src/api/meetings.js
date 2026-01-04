@@ -41,6 +41,21 @@ export async function deleteMeetingAvailabilitySlot(slotId) {
   return data;
 }
 
+export async function listMeetingTimeOff(params = {}) {
+  const { data } = await api.get(`${BASE}/availability/timeoff`, { params });
+  return data;
+}
+
+export async function createMeetingTimeOff(payload) {
+  const { data } = await api.post(`${BASE}/availability/timeoff`, payload);
+  return data.period;
+}
+
+export async function deleteMeetingTimeOff(timeOffId) {
+  const { data } = await api.delete(`${BASE}/availability/timeoff/${timeOffId}`);
+  return data;
+}
+
 export async function submitMeetingReport(meetingId, payload) {
   if (!meetingId) throw new Error('meetingId is required to submit a report');
   const { data } = await api.post(`${BASE}/${meetingId}/report`, payload);

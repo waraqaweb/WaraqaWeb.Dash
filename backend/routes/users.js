@@ -13,6 +13,8 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const Teacher = require('../models/Teacher');
+const Guardian = require('../models/Guardian');
 const Student = require('../models/Student');
 const GuardianHoursAudit = require('../models/GuardianHoursAudit');
 const Notification = require('../models/Notification');
@@ -1727,6 +1729,80 @@ router.put('/:id/status', authenticateToken, requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Update status error:', error);
     res.status(500).json({ message: 'Failed to update status', error: error.message });
+  }
+});
+
+/**
+ * Hard delete a user (Admin only)
+ * DELETE /api/users/:id
+ *
+ * Notes:
+ * - Permanent delete; no restore flow (must create new account).
+ * - Prevent deleting self.
+ * - Best-effort cleanup of related role documents.
+ */
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ message: 'Invalid user id' });
+  }
+
+  const requesterId = String(req.user?._id || req.user?.id || req.user?.userId || '');
+  if (requesterId && requesterId === String(id)) {
+    return res.status(400).json({ message: 'You cannot delete your own account' });
+  }
+
+  const userToDelete = await User.findById(id);
+  if (!userToDelete) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+
+  const userId = userToDelete._id;
+
+  const runDelete = async (session = null) => {
+    const withSession = (query) => (session ? query.session(session) : query);
+
+    // If the user is a guardian, remove standalone students linked to them.
+    await withSession(Student.deleteMany({ guardian: userId }));
+
+    // If the user is a teacher, ensure students don't retain stale references.
+    await withSession(Student.updateMany(
+      { currentTeachers: userId },
+      { $pull: { currentTeachers: userId } }
+    ));
+
+    // Delete role documents (if any)
+    await withSession(Teacher.deleteMany({ user: userId }));
+    await withSession(Guardian.deleteMany({ user: userId }));
+
+    // Finally delete the user.
+    await withSession(User.deleteOne({ _id: userId }));
+  };
+
+  try {
+    // Try transaction first (replica sets / Atlas). Fall back gracefully if unsupported.
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await runDelete(session);
+      });
+    } catch (txErr) {
+      const msg = String(txErr?.message || '');
+      const txUnsupported = msg.includes('Transaction') || msg.includes('replica set') || msg.includes('not supported');
+      if (!txUnsupported) throw txErr;
+      await runDelete(null);
+    } finally {
+      session.endSession();
+    }
+
+    return res.json({
+      message: 'User deleted permanently',
+      deletedUserId: String(userId),
+    });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    return res.status(500).json({ message: 'Failed to delete user', error: error.message });
   }
 });
 

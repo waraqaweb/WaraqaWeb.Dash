@@ -63,6 +63,62 @@ export default function ProfilePage() {
 
   const [editModalUser, setEditModalUser] = useState(null);
 
+  const [deleteModalUser, setDeleteModalUser] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+
+  const getDeleteConfirmationKey = (u) => {
+    const email = (u?.email || '').trim();
+    if (email) return email;
+    return `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
+  };
+
+  const openDeleteModal = (u) => {
+    setDeleteError(null);
+    setDeleteConfirmText('');
+    setDeleteModalUser(u);
+  };
+
+  const closeDeleteModal = () => {
+    setDeleteLoading(false);
+    setDeleteError(null);
+    setDeleteConfirmText('');
+    setDeleteModalUser(null);
+  };
+
+  const confirmDeleteEnabled = (() => {
+    if (!deleteModalUser) return false;
+    const expected = getDeleteConfirmationKey(deleteModalUser);
+    if (!expected) return false;
+    return deleteConfirmText.trim().toLowerCase() === expected.trim().toLowerCase();
+  })();
+
+  const copyDeleteKey = async () => {
+    if (!deleteModalUser) return;
+    const key = getDeleteConfirmationKey(deleteModalUser);
+    if (!key) return;
+    try {
+      await navigator.clipboard.writeText(key);
+    } catch (e) {
+      // no-op (clipboard may be blocked)
+    }
+  };
+
+  const doDeleteUser = async () => {
+    if (!deleteModalUser || deleteLoading) return;
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      await api.delete(`/users/${deleteModalUser._id}`);
+      closeDeleteModal();
+      fetchAllUsers();
+    } catch (err) {
+      setDeleteError(err?.response?.data?.message || 'Failed to delete user');
+      setDeleteLoading(false);
+    }
+  };
+
   const toggleActive = async (u) => {
     try {
       const newStatus = !u.isActive;
@@ -133,6 +189,7 @@ export default function ProfilePage() {
   // Dev preview state for feedback modals
   const [previewFirstOpen, setPreviewFirstOpen] = useState(false);
   const [previewMonthlyOpen, setPreviewMonthlyOpen] = useState(false);
+  const [profileMonthlyPrompt, setProfileMonthlyPrompt] = useState(null);
 
   // Onboarding/local tooltip state needs to be a stable hook (always declared)
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
@@ -388,7 +445,41 @@ export default function ProfilePage() {
               <button onClick={() => setEditModalUser(profile)} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">Edit</button>
               <button onClick={() => setShowChangePwd(true)} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">Password</button>
               {/* Preview triggers for feedback modals (dev/testing) */}
-              <button onClick={() => setPreviewMonthlyOpen(true)} className="text-sm px-3 py-2 bg-purple-50 text-purple-700 border border-purple-100 rounded">Share your feedback </button>
+              <button
+                onClick={async () => {
+                  // Guardians need a real teacher target; the old preview prompt used the current profile id,
+                  // which caused "Teacher not found" and the UI showed "Failed to submit feedback".
+                  if (profile?.role === 'guardian') {
+                    try {
+                      const res = await api.get('/feedbacks/pending');
+                      const monthly = (res.data?.monthlyPrompts || [])[0];
+                      if (!monthly?.teacherId) {
+                        alert('No teachers found to submit feedback for yet.');
+                        return;
+                      }
+
+                      setProfileMonthlyPrompt({
+                        teacher: monthly.teacher,
+                        teacherId: monthly.teacherId,
+                        classId: monthly.classId || null,
+                        scheduledDate: monthly.scheduledDate || null,
+                      });
+                      setPreviewMonthlyOpen(true);
+                    } catch (err) {
+                      console.error('Load monthly feedback prompt error', err);
+                      alert(err.response?.data?.message || 'Failed to load feedback prompt');
+                    }
+                    return;
+                  }
+
+                  // Non-guardians keep the existing preview behavior.
+                  setProfileMonthlyPrompt(null);
+                  setPreviewMonthlyOpen(true);
+                }}
+                className="text-sm px-3 py-2 bg-purple-50 text-purple-700 border border-purple-100 rounded"
+              >
+                Share your feedback
+              </button>
             </div>
           </div>
 
@@ -614,6 +705,14 @@ export default function ProfilePage() {
                         <button onClick={() => { setEditModalUser({ ...u }); }} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">Edit</button>
                         <button onClick={() => toggleActive(u)} className={`text-sm px-3 py-2 rounded ${u.isActive ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{u.isActive ? 'Deactivate' : 'Activate'}</button>
                         <button onClick={() => openInfoModal(u)} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">Info</button>
+                        <button
+                          onClick={() => openDeleteModal(u)}
+                          disabled={String(u._id) === String(user?._id)}
+                          className={`text-sm px-3 py-2 rounded border ${String(u._id) === String(user?._id) ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-red-600 text-white border-red-600'}`}
+                          title={String(u._id) === String(user?._id) ? 'You cannot delete your own account' : 'Delete user'}
+                        >
+                          Delete
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -644,6 +743,62 @@ export default function ProfilePage() {
                 </div>
               </div>
             )}
+
+            {/* Delete confirmation modal */}
+            {deleteModalUser && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center">
+                <div className="fixed inset-0 bg-black bg-opacity-40 z-40" onClick={closeDeleteModal} />
+                <div className="relative bg-white rounded-lg shadow-lg w-full max-w-lg p-4 z-50">
+                  <h3 className="text-lg font-semibold mb-2">Delete user</h3>
+                  <div className="text-sm text-gray-700">
+                    <div className="mb-2">
+                      This will permanently delete the user from the database. The only way to restore access is to create a new account.
+                    </div>
+                    <div className="mb-2">
+                      <div className="font-semibold">User</div>
+                      <div>{deleteModalUser.firstName} {deleteModalUser.lastName}</div>
+                      <div className="text-gray-600">{deleteModalUser.email}</div>
+                    </div>
+
+                    <div className="mb-2">
+                      <div className="font-semibold">To confirm, copy and paste this value:</div>
+                      <div className="mt-1 flex items-center gap-2">
+                        <div className="flex-1 px-3 py-2 rounded border bg-gray-50 text-gray-900 text-sm break-all">
+                          {getDeleteConfirmationKey(deleteModalUser)}
+                        </div>
+                        <button onClick={copyDeleteKey} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+
+                    <input
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder="Paste here to confirm"
+                      className="w-full px-3 py-2 border rounded"
+                      autoFocus
+                    />
+
+                    {deleteError && (
+                      <div className="mt-2 p-2 rounded bg-red-50 text-red-700 text-sm">{deleteError}</div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex justify-end gap-2">
+                    <button type="button" onClick={closeDeleteModal} className="btn-secondary">Cancel</button>
+                    <button
+                      type="button"
+                      onClick={doDeleteUser}
+                      disabled={!confirmDeleteEnabled || deleteLoading}
+                      className={`btn-submit ${(!confirmDeleteEnabled || deleteLoading) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
+                      {deleteLoading ? 'Deleting...' : 'Delete permanently'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
         {/* Unified Profile Edit Modal (self or admin) */}
@@ -670,11 +825,19 @@ export default function ProfilePage() {
             open={previewMonthlyOpen}
             onClose={() => setPreviewMonthlyOpen(false)}
             onSubmitted={() => setPreviewMonthlyOpen(false)}
-            prompt={{
-              teacher: { _id: profile.teacherInfo?._id || profile._id, firstName: profile.teacherInfo?.firstName || 'Test', lastName: profile.teacherInfo?.lastName || 'Teacher' },
-              classId: `preview-mo-${Date.now()}`,
-              scheduledDate: new Date()
-            }}
+            prompt={
+              profile?.role === 'guardian'
+                ? profileMonthlyPrompt
+                : {
+                    teacher: {
+                      _id: profile.teacherInfo?._id || profile._id,
+                      firstName: profile.teacherInfo?.firstName || 'Test',
+                      lastName: profile.teacherInfo?.lastName || 'Teacher'
+                    },
+                    classId: `preview-mo-${Date.now()}`,
+                    scheduledDate: new Date()
+                  }
+            }
           />
         )}
       </div>

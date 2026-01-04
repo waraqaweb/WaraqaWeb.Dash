@@ -3,6 +3,12 @@ import { formatDateDDMMMYYYY } from '../../utils/date';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
+import { Archive, Check, ChevronLeft, ChevronRight, MessageSquare, Search as SearchIcon } from 'lucide-react';
+
+const STATUS_TABS = [
+  { key: 'unread', label: 'Unread' },
+  { key: 'read', label: 'Read' },
+];
 
 const METRIC_FIELDS = [
   { key: 'firstClassRating', label: 'First class' },
@@ -22,8 +28,8 @@ const TEXT_FIELDS = [
 ];
 
 const TYPE_STYLES = {
-  monthly: 'border-violet-100 bg-violet-50 text-violet-700',
-  first_class: 'border-sky-100 bg-sky-50 text-sky-700',
+  monthly: 'border-border bg-muted/30 text-foreground',
+  first_class: 'border-border bg-muted/30 text-foreground',
 };
 
 const formatTypeLabel = (value = '') => {
@@ -113,7 +119,7 @@ const StarRating = ({ value = 0 }) => {
       {Array.from({ length: 5 }).map((_, idx) => (
         <svg
           key={idx}
-          className={`h-4 w-4 ${idx < normalized ? 'text-amber-400' : 'text-slate-200'}`}
+          className={`h-4 w-4 ${idx < normalized ? 'text-primary' : 'text-muted-foreground/30'}`}
           viewBox="0 0 20 20"
           fill="currentColor"
           aria-hidden="true"
@@ -129,15 +135,15 @@ const MetricTile = ({ label, value }) => {
   const safeValue = Math.round((Number(value) || 0) * 10) / 10;
   const percentage = Math.max(0, Math.min(100, (Number(value) || 0) * 10));
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
       <div className="mt-1 flex items-baseline gap-1.5">
-        <span className="text-2xl font-semibold text-slate-900">{safeValue}</span>
-        <span className="text-sm text-slate-400">/ 10</span>
+        <span className="text-2xl font-semibold text-foreground">{safeValue}</span>
+        <span className="text-sm text-muted-foreground">/ 10</span>
       </div>
       <div className="mt-3 flex items-center gap-3">
-        <div className="h-1.5 flex-1 rounded-full bg-slate-100">
-          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${percentage}%` }} />
+        <div className="h-1.5 flex-1 rounded-full bg-muted">
+          <div className="h-full rounded-full bg-primary" style={{ width: `${percentage}%` }} />
         </div>
         <StarRating value={value} />
       </div>
@@ -146,30 +152,30 @@ const MetricTile = ({ label, value }) => {
 };
 
 const NoteBlock = ({ label, text }) => (
-  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-700">
-    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+  <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm text-foreground">
+    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
     <p className="mt-2 whitespace-pre-wrap leading-relaxed">{text}</p>
   </div>
 );
 
 const SummaryCard = ({ label, value, helper }) => (
-  <div className="min-w-[140px] rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-center shadow-sm">
-    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-    <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
-    {helper && <p className="text-xs text-slate-500">{helper}</p>}
+  <div className="min-w-[140px] rounded-lg border border-border bg-muted/30 px-4 py-3 text-center shadow-sm">
+    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+    <p className="mt-1 text-2xl font-semibold text-foreground">{value}</p>
+    {helper && <p className="text-xs text-muted-foreground">{helper}</p>}
   </div>
 );
 
 const LoadingPlaceholder = () => (
   <div className="space-y-4">
     {Array.from({ length: 3 }).map((_, idx) => (
-      <div key={idx} className="rounded-3xl border border-slate-200 bg-white/70 p-5 shadow-sm">
-        <div className="h-4 w-48 animate-pulse rounded-full bg-slate-200" />
-        <div className="mt-3 h-3 w-full animate-pulse rounded-full bg-slate-100" />
-        <div className="mt-2 h-3 w-3/4 animate-pulse rounded-full bg-slate-100" />
+      <div key={idx} className="rounded-lg border border-border bg-card p-5 shadow-sm">
+        <div className="h-4 w-48 animate-pulse rounded-full bg-muted" />
+        <div className="mt-3 h-3 w-full animate-pulse rounded-full bg-muted/60" />
+        <div className="mt-2 h-3 w-3/4 animate-pulse rounded-full bg-muted/60" />
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          <div className="h-20 animate-pulse rounded-2xl bg-slate-100" />
-          <div className="h-20 animate-pulse rounded-2xl bg-slate-100" />
+          <div className="h-20 animate-pulse rounded-lg bg-muted/60" />
+          <div className="h-20 animate-pulse rounded-lg bg-muted/60" />
         </div>
       </div>
     ))}
@@ -179,6 +185,7 @@ const LoadingPlaceholder = () => (
 const FeedbacksAdmin = () => {
   const { searchTerm } = useSearch();
   const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
   const [feedbacks, setFeedbacks] = useState([]);
   const [activeTab, setActiveTab] = useState('unread');
   const [page, setPage] = useState(1);
@@ -187,10 +194,17 @@ const FeedbacksAdmin = () => {
   const [loading, setLoading] = useState(false);
   const [notifCount, setNotifCount] = useState(0);
 
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedQ(q);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [q]);
+
   const fetchList = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await api.get('/feedbacks', { params: { q, page, limit, archived: false } });
+      const res = await api.get('/feedbacks', { params: { q: debouncedQ, page, limit, archived: false } });
       if (res.data && res.data.success) {
         setFeedbacks(res.data.feedbacks || []);
         setTotal(res.data.total || 0);
@@ -200,7 +214,7 @@ const FeedbacksAdmin = () => {
     } finally {
       setLoading(false);
     }
-  }, [q, page, limit]);
+  }, [debouncedQ, page, limit]);
 
   useEffect(() => {
     fetchList();
@@ -323,44 +337,55 @@ const FeedbacksAdmin = () => {
     setPage(1);
   };
 
+  const totalPages = useMemo(() => {
+    const safeTotal = Number(total) || 0;
+    const safeLimit = Number(limit) || 1;
+    return Math.max(1, Math.ceil(safeTotal / safeLimit));
+  }, [total, limit]);
+
   return (
-    <div className="min-h-[calc(100vh-120px)] bg-gradient-to-br from-slate-50 via-white to-slate-100 pb-10 pt-4">
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4">
-        <section className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-sm backdrop-blur">
+    <div className="p-6 bg-background min-h-screen">
+      <div className="mx-auto flex max-w-6xl flex-col gap-6">
+        <section className="bg-card rounded-lg shadow-sm border border-border p-5">
           <div className="flex flex-wrap items-start gap-6">
             <div className="flex min-w-[220px] flex-1 flex-col gap-2">
-              <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">Feedback hub</p>
-              <h1 className="text-3xl font-semibold text-slate-900">Guardian insights</h1>
-              <p className="text-sm text-slate-500">
-                Review submissions and manage follow-ups.
-              </p>
+              <h1 className="text-xl font-semibold text-foreground">Feedbacks</h1>
+              <p className="text-sm text-muted-foreground">Guardian feedback and ratings overview.</p>
+              
             </div>
             <div className="flex flex-wrap gap-4">
-              <SummaryCard label="Unread" value={summary.unread} helper="Awaiting review" />
-              <SummaryCard label="Read" value={summary.read} helper="Filed & acknowledged" />
+              <SummaryCard label="Unread" value={summary.unread}  />
+              <SummaryCard label="Read" value={summary.read}  />
               <SummaryCard
                 label="Avg. teacher score"
                 value={summary.avgTeacher != null ? `${summary.avgTeacher} / 10` : '--'}
-                helper="Across submitted ratings"
+                
               />
-              <SummaryCard label="New alerts" value={notifCount} helper="Arrived live" />
+              <SummaryCard label="New alerts" value={notifCount} />
             </div>
           </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
-            <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
-              {['unread', 'read'].map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => handleTabChange(tab)}
-                  className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                    activeTab === tab ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600'
-                  }`}
-                >
-                  {tab === 'unread' ? `Unread (${summary.unread})` : `Read (${summary.read})`}
-                </button>
-              ))}
+            <div className="flex flex-wrap gap-2">
+              {STATUS_TABS.map((tab) => {
+                const isSelected = activeTab === tab.key;
+                const count = tab.key === 'unread' ? summary.unread : summary.read;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => handleTabChange(tab.key)}
+                    className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
+                      isSelected
+                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                        : 'bg-transparent border-border text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{count}</span>
+                  </button>
+                );
+              })}
             </div>
 
             <div className="relative min-w-[220px] flex-1">
@@ -368,19 +393,16 @@ const FeedbacksAdmin = () => {
                 type="search"
                 value={q}
                 onChange={handleQueryChange}
-                className="w-full rounded-2xl border border-slate-200 bg-white/80 px-4 py-2 text-sm shadow-inner placeholder:text-slate-400"
+                className="w-full rounded-md border border-border bg-input px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground"
                 placeholder="Search guardians, teachers, classes, or IDs"
               />
-              <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">
-                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <circle cx="9" cy="9" r="5" />
-                  <path d="M13.5 13.5L17 17" strokeLinecap="round" />
-                </svg>
+              <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">
+                <SearchIcon className="h-4 w-4" />
               </span>
             </div>
 
-            <div className="text-xs font-medium text-slate-500">
-              Showing {filteredFeedbacks.length} of {total || filteredFeedbacks.length} entries
+            <div className="text-xs font-medium text-muted-foreground">
+              Showing {filteredFeedbacks.length} of {total || filteredFeedbacks.length}
             </div>
           </div>
         </section>
@@ -389,9 +411,10 @@ const FeedbacksAdmin = () => {
           {loading ? (
             <LoadingPlaceholder />
           ) : filteredFeedbacks.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-slate-300 bg-white/70 p-10 text-center text-slate-500">
-              <p className="text-base font-semibold text-slate-600">No feedback matches your filters</p>
-              <p className="mt-1 text-sm">Try switching tabs, clearing the search, or wait for new submissions.</p>
+            <div className="rounded-lg border border-dashed border-border bg-card p-10 text-center text-muted-foreground">
+              <MessageSquare className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+              <p className="text-base font-semibold text-foreground">No feedback matches your filters</p>
+              <p className="mt-1 text-sm">Switch tabs, clear search, or wait for submissions.</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -405,36 +428,36 @@ const FeedbacksAdmin = () => {
                 return (
                   <article
                     key={f._id}
-                    className="rounded-3xl border border-slate-200 bg-white/95 p-5 shadow-[0_25px_60px_-35px_rgba(15,23,42,0.45)] transition hover:-translate-y-0.5 hover:shadow-lg"
+                    className="bg-card rounded-lg shadow-sm border border-border p-4"
                   >
                     <div className="flex flex-wrap items-start gap-4">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-lg font-semibold text-slate-600">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-muted/30 text-lg font-semibold text-foreground">
                         {getGuardianInitials(f)}
                       </div>
                       <div className="min-w-[220px] flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                          <span className="text-base font-semibold text-slate-900">{getGuardianName(f)}</span>
+                        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                          <span className="text-base font-semibold text-foreground">{getGuardianName(f)}</span>
                           {teacherName && (
                             <>
-                              <span className="text-slate-300" aria-hidden="true">|</span>
+                              <span className="text-muted-foreground/40" aria-hidden="true">|</span>
                               <span>Teacher {teacherName}</span>
                             </>
                           )}
                           {f.class?.name && (
                             <>
-                              <span className="text-slate-300" aria-hidden="true">|</span>
+                              <span className="text-muted-foreground/40" aria-hidden="true">|</span>
                               <span>{f.class.name}</span>
                             </>
                           )}
                         </div>
-                        <p className="text-xs text-slate-500">{formatDateTime(f.createdAt)}</p>
+                        <p className="text-xs text-muted-foreground">{formatDateTime(f.createdAt)}</p>
                       </div>
                       <div className="flex flex-col items-end gap-2">
                         <span
                           className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${
                             isRead
-                              ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
-                              : 'border-amber-100 bg-amber-50 text-amber-700'
+                              ? 'border-border bg-muted/30 text-muted-foreground'
+                              : 'border-primary/20 bg-primary/10 text-primary'
                           }`}
                         >
                           {isRead ? 'Read' : 'Unread'}
@@ -442,7 +465,7 @@ const FeedbacksAdmin = () => {
                         {f.type && (
                           <span
                             className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${
-                              TYPE_STYLES[f.type] || 'border-slate-200 bg-slate-50 text-slate-700'
+                              TYPE_STYLES[f.type] || 'border-border bg-muted/30 text-foreground'
                             }`}
                           >
                             {formatTypeLabel(f.type)}
@@ -456,7 +479,7 @@ const FeedbacksAdmin = () => {
                         {chips.map((chip) => (
                           <span
                             key={`${chip.label}`}
-                            className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-0.5 text-xs font-medium text-slate-600"
+                            className="inline-flex items-center rounded-full border border-border bg-muted/30 px-3 py-0.5 text-xs font-medium text-muted-foreground"
                           >
                             {chip.label}
                           </span>
@@ -481,21 +504,25 @@ const FeedbacksAdmin = () => {
                     )}
 
                     <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm">
-                      <span className="text-xs text-slate-400">Ref #{String(f._id).slice(-6)}</span>
+                      <span className="text-xs text-muted-foreground">Ref #{String(f._id).slice(-6)}</span>
                       <div className="flex flex-wrap gap-2">
                         {!isRead && (
                           <button
                             onClick={() => markRead(f._id)}
-                            className="rounded-full border border-emerald-200 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-500/20"
+                            className="h-9 w-9 inline-flex items-center justify-center rounded-md border border-border bg-input text-foreground hover:bg-muted transition-colors"
+                            title="Mark as read"
+                            aria-label="Mark as read"
                           >
-                            Mark as read
+                            <Check className="h-4 w-4" />
                           </button>
                         )}
                         <button
                           onClick={() => archive(f._id)}
-                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                          className="h-9 w-9 inline-flex items-center justify-center rounded-md border border-border bg-input text-foreground hover:bg-muted transition-colors"
+                          title="Archive"
+                          aria-label="Archive"
                         >
-                          Archive
+                          <Archive className="h-4 w-4" />
                         </button>
                       </div>
                     </div>
@@ -506,31 +533,31 @@ const FeedbacksAdmin = () => {
           )}
         </section>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
-          <span>Total records: {total}</span>
-          <div className="flex gap-2">
+        {totalPages > 1 && (
+          <div className="flex justify-center items-center space-x-2">
             <button
-              disabled={page <= 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className={`rounded-full border px-4 py-2 font-medium transition ${
-                page <= 1 ? 'cursor-not-allowed border-slate-200 text-slate-300' : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-              }`}
+              disabled={page === 1}
+              className="h-9 w-9 inline-flex items-center justify-center border border-border rounded-md bg-input text-foreground disabled:opacity-50 disabled:cursor-not-allowed hover:bg-muted transition-colors"
+              aria-label="Previous page"
+              title="Previous"
             >
-              Previous
+              <ChevronLeft className="h-4 w-4" />
             </button>
+            <span className="px-3 py-2 text-sm text-muted-foreground">
+              Page {page} of {totalPages}
+            </span>
             <button
-              disabled={page * limit >= total}
-              onClick={() => setPage((p) => p + 1)}
-              className={`rounded-full border px-4 py-2 font-medium transition ${
-                page * limit >= total
-                  ? 'cursor-not-allowed border-slate-200 text-slate-300'
-                  : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-              }`}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className="h-9 w-9 inline-flex items-center justify-center border border-border rounded-md bg-input text-foreground disabled:opacity-50 disabled:cursor-not-allowed hover:bg-muted transition-colors"
+              aria-label="Next page"
+              title="Next"
             >
-              Next
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

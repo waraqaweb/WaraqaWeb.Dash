@@ -7,6 +7,8 @@ const moment = require('moment-timezone');
 const mongoose = require('mongoose');
 const Meeting = require('../models/Meeting');
 const MeetingAvailabilitySlot = require('../models/MeetingAvailabilitySlot');
+const MeetingUnavailablePeriod = require('../models/MeetingUnavailablePeriod');
+const SystemVacation = require('../models/SystemVacation');
 const User = require('../models/User');
 const notificationService = require('./notificationService');
 const {
@@ -27,6 +29,28 @@ const MAX_LOOKAHEAD_DAYS = 35;
 const DEFAULT_LOOKAHEAD_DAYS = 21;
 const MIN_DURATION_MINUTES = 15;
 const ADMIN_CALENDAR_EMAIL = 'waraqainc@gmail.com';
+
+const isMeetingsEnabled = (admin) => {
+  // Default true if missing.
+  return admin?.adminSettings?.meetingsEnabled !== false;
+};
+
+const fetchSystemVacations = async ({ rangeStart, rangeEnd }) => {
+  return SystemVacation.find({
+    isActive: true,
+    startDate: { $lt: rangeEnd },
+    endDate: { $gt: rangeStart }
+  }).select('startDate endDate name message timezone');
+};
+
+const fetchMeetingTimeOff = async ({ adminId, rangeStart, rangeEnd }) => {
+  return MeetingUnavailablePeriod.find({
+    adminId,
+    isActive: true,
+    startDateTime: { $lt: rangeEnd },
+    endDateTime: { $gt: rangeStart }
+  }).sort({ startDateTime: 1 });
+};
 
 const createError = (status, message, meta = {}) => {
   const err = new Error(message);
@@ -214,6 +238,9 @@ const computeAvailabilityWindows = async ({
   minimumDuration
 }) => {
   ensureMeetingType(meetingType);
+  if (!isMeetingsEnabled(admin)) {
+    return [];
+  }
   const adminId = admin._id;
   const timezone = viewerTimezone || admin.adminSettings?.meetingTimezone || admin.timezone || DEFAULT_TIMEZONE;
   const clamps = clampRange(rangeStart, rangeEnd);
@@ -236,7 +263,11 @@ const computeAvailabilityWindows = async ({
     return [];
   }
 
-  const busyMeetings = await fetchBusyMeetings({ adminId, meetingType, rangeStart: scopedStart, rangeEnd: scopedEnd });
+  const [busyMeetings, systemVacations, meetingTimeOff] = await Promise.all([
+    fetchBusyMeetings({ adminId, meetingType, rangeStart: scopedStart, rangeEnd: scopedEnd }),
+    fetchSystemVacations({ rangeStart: scopedStart, rangeEnd: scopedEnd }),
+    fetchMeetingTimeOff({ adminId, rangeStart: scopedStart, rangeEnd: scopedEnd })
+  ]);
 
   const windows = [];
   const cursor = moment(scopedStart).startOf('day');
@@ -260,7 +291,25 @@ const computeAvailabilityWindows = async ({
           end: new Date(meeting.scheduledEnd.getTime() + buffer * 60000)
         }));
 
-      const freeSegments = subtractIntervals(slotStartUtc, slotEndUtc, overlappingMeetings)
+      const overlappingVacations = (systemVacations || [])
+        .filter((vac) => vac.startDate < slotEndUtc && vac.endDate > slotStartUtc)
+        .map((vac) => ({
+          start: vac.startDate,
+          end: vac.endDate
+        }));
+
+      const overlappingTimeOff = (meetingTimeOff || [])
+        .filter((period) => period.startDateTime < slotEndUtc && period.endDateTime > slotStartUtc)
+        .map((period) => ({
+          start: period.startDateTime,
+          end: period.endDateTime
+        }));
+
+      const freeSegments = subtractIntervals(
+        slotStartUtc,
+        slotEndUtc,
+        [...overlappingMeetings, ...overlappingVacations, ...overlappingTimeOff]
+      )
         .filter((segment) => segment.end - segment.start >= minDuration * 60000);
 
       for (const segment of freeSegments) {
@@ -300,6 +349,9 @@ const hasSlotCoverage = ({ slot, adminTimezone, startUtc, endUtc }) => {
 
 const assertSlotAvailability = async ({ admin, meetingType, startUtc, endUtc }) => {
   ensureMeetingType(meetingType);
+  if (!isMeetingsEnabled(admin)) {
+    throw createError(400, 'Admin is not accepting meetings right now');
+  }
   const adminId = admin._id;
   const adminTimezone = admin.adminSettings?.meetingTimezone || admin.timezone || DEFAULT_TIMEZONE;
   const slots = await MeetingAvailabilitySlot.find({
@@ -324,6 +376,28 @@ const assertSlotAvailability = async ({ admin, meetingType, startUtc, endUtc }) 
 
   if (blockingMeeting) {
     throw createError(409, 'Requested time overlaps another meeting', { conflictId: blockingMeeting._id });
+  }
+
+  const [systemVacation, timeOff] = await Promise.all([
+    SystemVacation.findOne({
+      isActive: true,
+      startDate: { $lt: endUtc },
+      endDate: { $gt: startUtc }
+    }).select('_id name startDate endDate'),
+    MeetingUnavailablePeriod.findOne({
+      adminId,
+      isActive: true,
+      startDateTime: { $lt: endUtc },
+      endDateTime: { $gt: startUtc }
+    }).select('_id startDateTime endDateTime description')
+  ]);
+
+  if (systemVacation) {
+    throw createError(400, 'Requested time is blocked due to a public vacation', { vacationId: systemVacation._id });
+  }
+
+  if (timeOff) {
+    throw createError(400, 'Requested time is blocked (admin time off)', { timeOffId: timeOff._id });
   }
 
   return coveringSlot;
@@ -563,6 +637,73 @@ const deleteAvailabilitySlot = async ({ adminId, slotId }) => {
   }
   slot.isActive = false;
   await slot.save();
+  return true;
+};
+
+const listMeetingTimeOff = async ({ adminId, rangeStart, rangeEnd, includeInactive = false }) => {
+  const admin = await resolveAdmin(adminId);
+  const clamps = clampRange(rangeStart, rangeEnd);
+  const scopedStart = clamps.rangeStart;
+  const scopedEnd = clamps.rangeEnd;
+  const query = {
+    adminId: admin._id,
+    ...(includeInactive ? {} : { isActive: true })
+  };
+  if (scopedStart && scopedEnd) {
+    query.startDateTime = { $lt: scopedEnd };
+    query.endDateTime = { $gt: scopedStart };
+  }
+  const periods = await MeetingUnavailablePeriod.find(query).sort({ startDateTime: 1 });
+  return { admin, periods };
+};
+
+const createMeetingTimeOff = async ({ adminId, payload }) => {
+  const admin = await resolveAdmin(adminId);
+  const effectiveTimezone = payload.timezone || admin.adminSettings?.meetingTimezone || admin.timezone || DEFAULT_TIMEZONE;
+
+  let startDateTime;
+  let endDateTime;
+  if (payload?.startDateTime && payload?.endDateTime) {
+    startDateTime = new Date(payload.startDateTime);
+    endDateTime = new Date(payload.endDateTime);
+  } else if (payload?.date && payload?.startTime && payload?.endTime) {
+    const startInput = `${payload.date} ${payload.startTime}`;
+    const endInput = `${payload.date} ${payload.endTime}`;
+    startDateTime = convertToUTC(startInput, effectiveTimezone);
+    endDateTime = convertToUTC(endInput, effectiveTimezone);
+  } else {
+    throw createError(400, 'Provide either startDateTime/endDateTime or date/startTime/endTime');
+  }
+
+  if (!(startDateTime instanceof Date) || Number.isNaN(startDateTime.getTime())) {
+    throw createError(400, 'Invalid start date/time');
+  }
+  if (!(endDateTime instanceof Date) || Number.isNaN(endDateTime.getTime())) {
+    throw createError(400, 'Invalid end date/time');
+  }
+  if (endDateTime <= startDateTime) {
+    throw createError(400, 'End must be after start');
+  }
+
+  const record = new MeetingUnavailablePeriod({
+    adminId: admin._id,
+    startDateTime,
+    endDateTime,
+    timezone: effectiveTimezone,
+    description: payload.description || ''
+  });
+  await record.save();
+  return record;
+};
+
+const deleteMeetingTimeOff = async ({ adminId, timeOffId }) => {
+  const admin = await resolveAdmin(adminId);
+  const record = await MeetingUnavailablePeriod.findOne({ _id: timeOffId, adminId: admin._id });
+  if (!record) {
+    throw createError(404, 'Time off not found');
+  }
+  record.isActive = false;
+  await record.save();
   return true;
 };
 
@@ -826,5 +967,8 @@ module.exports = {
   listMeetings,
   submitMeetingReport,
   resolveAdmin,
-  buildCalendarLinks
+  buildCalendarLinks,
+  listMeetingTimeOff,
+  createMeetingTimeOff,
+  deleteMeetingTimeOff
 };

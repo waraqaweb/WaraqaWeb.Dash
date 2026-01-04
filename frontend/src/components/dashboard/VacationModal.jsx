@@ -13,6 +13,7 @@ const VacationModal = ({
   onSuccess
 }) => {
   const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [loading, setLoading] = useState(false);
   const [teachers, setTeachers] = useState([]);
   const createEmptyImpactState = () => ({ students: [], totalClasses: 0, totalStudents: 0, totalMinutes: 0 });
@@ -234,7 +235,11 @@ const VacationModal = ({
         if (new Date(individualForm.startDate) >= new Date(individualForm.endDate)) {
           newErrors.endDate = 'End date must be after start date';
         }
-        if (new Date(individualForm.startDate) < new Date()) {
+        // Allow starting today (date-only inputs often resolve to midnight)
+        const start = new Date(individualForm.startDate);
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        if (start < startOfToday) {
           newErrors.startDate = 'Start date cannot be in the past';
         }
       }
@@ -263,13 +268,15 @@ const VacationModal = ({
     try {
       if (type === 'individual') {
         const teacherId = individualForm.teacherId || user?._id || user?.id;
-        const substitutesPayload = (individualForm.studentHandling || [])
-          .filter(item => impactedStudentIds.has(String(item.student)))
-          .map((item) => ({
-            studentId: item.student,
-            handling: item.action === 'reschedule' ? 'hold' : item.action,
-            substituteTeacherId: item.substituteTeacherId || undefined
-          }));
+        const substitutesPayload = isAdmin
+          ? (individualForm.studentHandling || [])
+              .filter(item => impactedStudentIds.has(String(item.student)))
+              .map((item) => ({
+                studentId: item.student,
+                handling: item.action === 'reschedule' ? 'hold' : item.action,
+                substituteTeacherId: item.substituteTeacherId || undefined
+              }))
+          : [];
 
         const payload = {
           user: teacherId,
@@ -277,7 +284,7 @@ const VacationModal = ({
           startDate: new Date(individualForm.startDate).toISOString(),
           endDate: new Date(individualForm.endDate).toISOString(),
           reason: individualForm.reason,
-          substitutes: substitutesPayload
+          ...(isAdmin ? { substitutes: substitutesPayload } : {})
         };
 
         if (vacation) {
@@ -459,68 +466,70 @@ const VacationModal = ({
                   )}
                 </div>
 
-                {/* Student Handling */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Student Handling
-                  </label>
-                  <div className="text-sm text-gray-500 mb-3">
-                    {impactData.totalClasses > 0
-                      ? `${impactData.totalClasses} class${impactData.totalClasses === 1 ? '' : 'es'} across ${impactData.totalStudents} student${impactData.totalStudents === 1 ? '' : 's'} fall within this window.`
-                      : 'Select a teacher and date range to see which students are impacted.'}
-                    {impactLoading && <span className="ml-2 text-blue-600">Checking availability…</span>}
-                  </div>
-                  {impactError && (
-                    <p className="text-sm text-red-600 mb-3">{impactError}</p>
-                  )}
-                  <div className="max-h-56 overflow-y-auto border border-gray-200 rounded-lg">
-                    {impactLoading ? (
-                      <p className="p-4 text-gray-500 text-center">Loading impacted students…</p>
-                    ) : impactData.students.length === 0 ? (
-                      <p className="p-4 text-gray-500 text-center">No classes are affected during the selected window.</p>
-                    ) : (
-                      impactData.students.map(student => (
-                        <div key={student.studentId} className="p-3 border-b border-gray-100 last:border-b-0">
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                            <div>
-                              <p className="font-medium text-gray-900">
-                                {student.studentName}
-                              </p>
-                              <p className="text-sm text-gray-500">
-                                {student.classes.length} class{student.classes.length === 1 ? '' : 'es'}
-                                {student.firstClassStart && (
-                                  <>
-                                    {' '}· First: {formatDateTime(student.firstClassStart)}
-                                  </>
-                                )}
-                                {student.lastClassEnd && (
-                                  <>
-                                    {' '}· Last: {formatDateTime(student.lastClassEnd)}
-                                  </>
-                                )}
-                              </p>
-                              {student.guardianName && (
-                                <p className="text-xs text-gray-400">
-                                  Guardian: {student.guardianName}{student.guardianEmail ? ` · ${student.guardianEmail}` : ''}
-                                </p>
-                              )}
-                            </div>
-                            <select
-                              value={getStudentHandlingAction(student.studentId)}
-                              onChange={(e) => handleStudentHandlingChange(student.studentId, e.target.value)}
-                              className="text-sm border border-gray-300 rounded px-2 py-1"
-                            >
-                              <option value="">No Action</option>
-                              <option value="cancel">Cancel Classes</option>
-                              <option value="reschedule">Reschedule</option>
-                              <option value="substitute">Assign Substitute</option>
-                            </select>
-                          </div>
-                        </div>
-                      ))
+                {/* Student Handling (admin-only) */}
+                {isAdmin && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Student Handling
+                    </label>
+                    <div className="text-sm text-gray-500 mb-3">
+                      {impactData.totalClasses > 0
+                        ? `${impactData.totalClasses} class${impactData.totalClasses === 1 ? '' : 'es'} across ${impactData.totalStudents} student${impactData.totalStudents === 1 ? '' : 's'} fall within this window.`
+                        : 'Select a teacher and date range to see which students are impacted.'}
+                      {impactLoading && <span className="ml-2 text-blue-600">Checking availability…</span>}
+                    </div>
+                    {impactError && (
+                      <p className="text-sm text-red-600 mb-3">{impactError}</p>
                     )}
+                    <div className="max-h-56 overflow-y-auto border border-gray-200 rounded-lg">
+                      {impactLoading ? (
+                        <p className="p-4 text-gray-500 text-center">Loading impacted students…</p>
+                      ) : impactData.students.length === 0 ? (
+                        <p className="p-4 text-gray-500 text-center">No classes are affected during the selected window.</p>
+                      ) : (
+                        impactData.students.map(student => (
+                          <div key={student.studentId} className="p-3 border-b border-gray-100 last:border-b-0">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                              <div>
+                                <p className="font-medium text-gray-900">
+                                  {student.studentName}
+                                </p>
+                                <p className="text-sm text-gray-500">
+                                  {student.classes.length} class{student.classes.length === 1 ? '' : 'es'}
+                                  {student.firstClassStart && (
+                                    <>
+                                      {' '}· First: {formatDateTime(student.firstClassStart)}
+                                    </>
+                                  )}
+                                  {student.lastClassEnd && (
+                                    <>
+                                      {' '}· Last: {formatDateTime(student.lastClassEnd)}
+                                    </>
+                                  )}
+                                </p>
+                                {student.guardianName && (
+                                  <p className="text-xs text-gray-400">
+                                    Guardian: {student.guardianName}{student.guardianEmail ? ` · ${student.guardianEmail}` : ''}
+                                  </p>
+                                )}
+                              </div>
+                              <select
+                                value={getStudentHandlingAction(student.studentId)}
+                                onChange={(e) => handleStudentHandlingChange(student.studentId, e.target.value)}
+                                className="text-sm border border-gray-300 rounded px-2 py-1"
+                              >
+                                <option value="">No Action</option>
+                                <option value="cancel">Cancel Classes</option>
+                                <option value="reschedule">Reschedule</option>
+                                <option value="substitute">Assign Substitute</option>
+                              </select>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
               </>
             ) : (
               <>

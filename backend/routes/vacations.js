@@ -41,6 +41,20 @@ function serializeVacation(vacation) {
   return obj;
 }
 
+function toLocalDayStart(dateValue) {
+  const d = dateValue instanceof Date ? new Date(dateValue) : new Date(dateValue);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function toLocalDayEnd(dateValue) {
+  const d = dateValue instanceof Date ? new Date(dateValue) : new Date(dateValue);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
 // Search users by name or email
 router.get('/search-users', requireAuth, async (req, res) => {
   try {
@@ -73,15 +87,19 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     // Validate dates
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    // Normalize to day start/end to support date-only inputs
+    const start = toLocalDayStart(startDate);
+    const end = toLocalDayEnd(endDate);
     const now = new Date();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
 
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    if (!start || !end) {
       return res.status(400).json({ message: 'Invalid date format' });
     }
 
-    if (start < now) {
+    // Allow starting today
+    if (start < startOfToday) {
       return res.status(400).json({ message: 'Start date cannot be in the past' });
     }
 
@@ -93,8 +111,8 @@ router.post('/', requireAuth, async (req, res) => {
     const vacation = new Vacation({
       user,
       role,
-      startDate,
-      endDate,
+      startDate: start,
+      endDate: end,
       reason,
       requestedBy: req.user?._id,
       substitutes: [], // Empty array by default
@@ -172,6 +190,181 @@ router.post('/', requireAuth, async (req, res) => {
   }
 });
 
+// Guardian: create student vacation requests for multiple active students
+router.post('/guardian-students', requireAuth, async (req, res) => {
+  try {
+    if (req.user?.role !== 'guardian') {
+      return res.status(403).json({ message: 'Only guardians can submit student vacation requests' });
+    }
+
+    const { studentIds, startDate, endDate, reason } = req.body;
+    if (!Array.isArray(studentIds) || studentIds.length === 0 || !startDate || !endDate || !reason) {
+      return res.status(400).json({ message: 'Please provide studentIds, startDate, endDate, and reason' });
+    }
+
+    const start = toLocalDayStart(startDate);
+    const end = toLocalDayEnd(endDate);
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    if (!start || !end) {
+      return res.status(400).json({ message: 'Invalid date format' });
+    }
+    if (start < startOfToday) {
+      return res.status(400).json({ message: 'Start date cannot be in the past' });
+    }
+    if (end < start) {
+      return res.status(400).json({ message: 'End date must be after start date' });
+    }
+
+    const guardianId = req.user._id;
+    const guardian = await User.findById(guardianId).select('guardianInfo.students').lean();
+    const embeddedStudents = Array.isArray(guardian?.guardianInfo?.students) ? guardian.guardianInfo.students : [];
+    const embeddedById = new Map(embeddedStudents.map(s => [String(s?._id), s]));
+
+    const requestedIds = Array.from(new Set(studentIds.map((id) => String(id))));
+
+    // Allow students that exist either as embedded guardianInfo students or in Student collection
+    const studentDocs = await Student.find({
+      _id: { $in: requestedIds },
+      guardian: guardianId,
+      isActive: { $ne: false }
+    }).select('firstName lastName fullName').lean();
+    const studentDocById = new Map((studentDocs || []).map(s => [String(s._id), s]));
+
+    const invalid = [];
+    const normalized = [];
+    for (const id of requestedIds) {
+      const embedded = embeddedById.get(id);
+      const doc = studentDocById.get(id);
+      const isActive = embedded ? (embedded.isActive !== false) : true;
+      if (!embedded && !doc) {
+        invalid.push(id);
+        continue;
+      }
+      if (embedded && !isActive) {
+        invalid.push(id);
+        continue;
+      }
+      const name = (embedded?.studentName || embedded?.fullName || embedded?.name || embedded?.firstName)
+        ? String(embedded?.studentName || embedded?.fullName || embedded?.name || `${embedded?.firstName || ''} ${embedded?.lastName || ''}`).trim()
+        : ((doc?.fullName || `${doc?.firstName || ''} ${doc?.lastName || ''}`).replace(/\s+/g, ' ').trim());
+      normalized.push({ id, name: name || 'Student' });
+    }
+
+    if (invalid.length) {
+      return res.status(400).json({ message: 'Some students are not valid/active for this guardian', invalidStudentIds: invalid });
+    }
+
+    const vacationsToCreate = normalized.map((s) => ({
+      user: s.id,
+      role: 'student',
+      guardianId,
+      userName: s.name,
+      startDate: start,
+      endDate: end,
+      reason,
+      requestedBy: guardianId,
+      substitutes: [],
+      status: 'pending',
+      approvalStatus: 'pending'
+    }));
+
+    const created = await Vacation.insertMany(vacationsToCreate, { ordered: true });
+
+    // Notify admins (single notification per admin, includes count)
+    const admins = await User.find({ role: 'admin', isActive: true }).select('_id timezone').lean();
+    const requesterName = req.user?.fullName || req.user?.email || 'A guardian';
+    await Promise.allSettled(
+      (admins || []).map((admin) => {
+        const tz = admin?.timezone || DEFAULT_TIMEZONE;
+        const startLabel = formatTimeInTimezone(start, tz, 'DD MMM YYYY');
+        const endLabel = formatTimeInTimezone(end, tz, 'DD MMM YYYY');
+        return notificationService.createNotification({
+          userId: admin._id,
+          title: 'Student vacation request submitted',
+          message: `${requesterName} submitted a vacation request for ${normalized.length} student${normalized.length === 1 ? '' : 's'} (${startLabel} → ${endLabel}).`,
+          type: 'request',
+          relatedTo: 'vacation',
+          relatedId: created?.[0]?._id,
+          metadata: {
+            kind: 'student_vacation_request_submitted',
+            requesterId: String(guardianId),
+            vacationIds: (created || []).map(v => String(v._id)),
+            studentIds: normalized.map(s => String(s.id)),
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
+            recipientTimezone: tz
+          }
+        });
+      })
+    );
+
+    // Notify guardian
+    {
+      const tz = req.user?.timezone || DEFAULT_TIMEZONE;
+      const startLabel = formatTimeInTimezone(start, tz, 'DD MMM YYYY');
+      const endLabel = formatTimeInTimezone(end, tz, 'DD MMM YYYY');
+      await notificationService.createNotification({
+        userId: guardianId,
+        title: 'Vacation request submitted',
+        message: `Your vacation request (${startLabel} → ${endLabel}) was submitted for ${normalized.length} student${normalized.length === 1 ? '' : 's'} and is awaiting approval.`,
+        type: 'request',
+        relatedTo: 'vacation',
+        relatedId: created?.[0]?._id,
+        actionRequired: false,
+        metadata: {
+          kind: 'student_vacation_request_submitted',
+          vacationIds: (created || []).map(v => String(v._id)),
+          studentIds: normalized.map(s => String(s.id)),
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+          recipientTimezone: tz
+        }
+      });
+    }
+
+    return res.status(201).json({ message: 'Student vacation request(s) submitted successfully. Awaiting approval.', vacations: (created || []).map(serializeVacation) });
+  } catch (err) {
+    console.error('Create guardian student vacation error:', err);
+    return res.status(400).json({ message: err.message || 'Failed to create student vacation request(s)' });
+  }
+});
+
+// Guardian: list student vacations for all of this guardian's students
+router.get('/guardian', requireAuth, async (req, res) => {
+  try {
+    if (req.user?.role !== 'guardian') {
+      return res.status(403).json({ message: 'Only guardians can access this endpoint' });
+    }
+    const guardianId = req.user._id;
+
+    // Try to resolve student ids from embedded list, classes, and Student collection
+    const guardian = await User.findById(guardianId).select('guardianInfo.students').lean();
+    const embeddedStudents = Array.isArray(guardian?.guardianInfo?.students) ? guardian.guardianInfo.students : [];
+    const embeddedIds = embeddedStudents.map(s => s?._id).filter(Boolean).map(id => String(id));
+
+    const classAgg = await Class.aggregate([
+      { $match: { $or: [ { 'student.guardianId': guardianId }, { 'student.studentId': guardianId } ] } },
+      { $group: { _id: '$student.studentId' } },
+      { $limit: 500 }
+    ]).exec();
+    const classIds = (classAgg || []).map(r => r?._id).filter(Boolean).map(id => String(id));
+
+    const studentDocs = await Student.find({ guardian: guardianId, isActive: { $ne: false } }).select('_id').lean();
+    const docIds = (studentDocs || []).map(s => String(s._id));
+
+    const studentIdSet = new Set([ ...embeddedIds, ...classIds, ...docIds ]);
+    const studentIds = Array.from(studentIdSet);
+
+    const vacations = await Vacation.find({ role: 'student', user: { $in: studentIds } }).sort({ createdAt: -1 }).lean();
+    return res.json({ vacations: (vacations || []).map(v => ({ ...v, lifecycleStatus: computeLifecycleStatus(v), effectiveEndDate: v.actualEndDate || v.endDate })) });
+  } catch (err) {
+    console.error('Guardian vacations list error:', err);
+    return res.status(500).json({ message: 'Failed to load guardian vacations' });
+  }
+});
+
 // List vacations for a user (teacher or student)
 router.get('/user/:userId', requireAuth, async (req, res) => {
   try {
@@ -189,7 +382,47 @@ router.get('/', requireAuth, requireAdmin, async (req, res) => {
       .populate('user')
       .populate('substitutes.studentId')
       .populate('substitutes.substituteTeacherId');
-    res.json({ vacations: vacations.map(serializeVacation) });
+
+    const serialized = vacations.map(serializeVacation);
+
+    // Enrich student vacations with impacted teacher names for admin display.
+    // (Student vacations store `user` as Student/ObjectId, so populate('user') will be null.)
+    await Promise.all(
+      (serialized || []).map(async (vac) => {
+        if (!vac || vac.role !== 'student' || !vac.user) return;
+
+        const windowStart = toLocalDayStart(vac.startDate) || vac.startDate;
+        const windowEnd = toLocalDayEnd(vac.effectiveEndDate || vac.actualEndDate || vac.endDate) || (vac.effectiveEndDate || vac.actualEndDate || vac.endDate);
+
+        const classes = await Class.find({
+          'student.studentId': vac.user,
+          scheduledDate: { $gte: windowStart, $lte: windowEnd },
+          status: { $ne: 'pattern' }
+        })
+          .select('teacher')
+          .lean();
+
+        const teacherIds = Array.from(
+          new Set((classes || []).map((c) => String(c.teacher)).filter(Boolean))
+        );
+
+        if (teacherIds.length === 0) {
+          vac.impactedTeachers = [];
+          return;
+        }
+
+        const teachers = await User.find({ _id: { $in: teacherIds } })
+          .select('_id firstName lastName fullName email')
+          .lean();
+
+        vac.impactedTeachers = (teachers || []).map((t) => ({
+          _id: t._id,
+          name: t.fullName || `${t.firstName || ''} ${t.lastName || ''}`.trim() || t.email || 'Unknown teacher'
+        }));
+      })
+    );
+
+    res.json({ vacations: serialized });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -251,7 +484,15 @@ router.get('/:vacationId/impact', requireAuth, async (req, res) => {
     const isAdmin = req.user.role === 'admin';
     const isOwnerTeacher = req.user.role === 'teacher' && vacation.role === 'teacher' && requesterId === vacationOwnerId;
 
-    if (!isAdmin && !isOwnerTeacher) {
+    let isOwnerGuardian = false;
+    if (vacation.role === 'student' && req.user.role === 'guardian') {
+      const vacGuardianId = String(vacation.guardianId || '');
+      if (vacGuardianId && vacGuardianId === requesterId) {
+        isOwnerGuardian = true;
+      }
+    }
+
+    if (!isAdmin && !isOwnerTeacher && !isOwnerGuardian) {
       return res.status(403).json({ message: 'Not authorized to view this vacation impact' });
     }
 
@@ -263,6 +504,68 @@ router.get('/:vacationId/impact', requireAuth, async (req, res) => {
         endDate: vacation.actualEndDate || vacation.endDate,
         existingMappings: vacation.substitutes || []
       });
+    } else if (vacation.role === 'student') {
+      const studentId = String(vacation.user);
+      const start = toLocalDayStart(vacation.startDate) || vacation.startDate;
+      const endRaw = vacation.actualEndDate || vacation.endDate;
+      const end = toLocalDayEnd(endRaw) || endRaw;
+
+      const classes = await Class.find({
+        'student.studentId': studentId,
+        scheduledDate: { $gte: start, $lte: end },
+        status: { $ne: 'pattern' }
+      })
+        .populate('teacher', 'firstName lastName fullName email')
+        .select('_id scheduledDate duration subject teacher student')
+        .sort({ scheduledDate: 1 })
+        .lean();
+
+      const totalMinutes = (classes || []).reduce((sum, cls) => sum + (Number(cls.duration) || 0), 0);
+
+      const guardianId = vacation.guardianId || classes?.[0]?.student?.guardianId || null;
+      const guardian = guardianId
+        ? await User.findById(guardianId).select('firstName lastName fullName email').lean()
+        : null;
+
+      const guardianName = guardian
+        ? (guardian.fullName || `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim())
+        : null;
+
+      const mappedClasses = (classes || []).map((cls) => ({
+        classId: cls._id,
+        scheduledDate: cls.scheduledDate,
+        duration: cls.duration,
+        subject: cls.subject,
+        teacherName: cls.teacher
+          ? (cls.teacher.fullName || `${cls.teacher.firstName || ''} ${cls.teacher.lastName || ''}`.trim() || cls.teacher.email)
+          : null
+      }));
+
+      const firstClassStart = mappedClasses.length ? mappedClasses[0].scheduledDate : null;
+      const last = mappedClasses.length ? mappedClasses[mappedClasses.length - 1] : null;
+      const lastClassEnd = last && last.scheduledDate
+        ? new Date(new Date(last.scheduledDate).getTime() + (Number(last.duration) || 0) * 60 * 1000)
+        : null;
+
+      const studentName = vacation.userName || classes?.[0]?.student?.studentName || 'Student';
+
+      impact = {
+        totalStudents: 1,
+        totalClasses: mappedClasses.length,
+        totalMinutes,
+        students: [
+          {
+            studentId,
+            studentName,
+            guardianName,
+            guardianEmail: guardian?.email || null,
+            configuredHandling: { handling: 'cancel' },
+            firstClassStart,
+            lastClassEnd,
+            classes: mappedClasses
+          }
+        ]
+      };
     }
 
     res.json({
@@ -328,11 +631,43 @@ router.post('/:vacationId/approval', requireAuth, requireAdmin, async (req, res)
     // Save vacation first
     await vacation.save();
 
-    // Create notification for the teacher
-    await notificationService.createVacationStatusNotification(vacation, req.user);
+    // Create notification for the teacher (student vacations may not map to User)
+    if (vacation.role === 'teacher') {
+      await notificationService.createVacationStatusNotification(vacation, req.user);
+    }
 
     if (approved) {
       try {
+        // For student vacations, collect impacted teachers/guardian before applying changes
+        let studentContext = null;
+        let impactedTeacherIds = [];
+        let guardianId = vacation.guardianId || null;
+        if (vacation.role === 'student') {
+          const effectiveEnd = vacation.actualEndDate || vacation.endDate;
+          const startWindow = new Date(vacation.startDate);
+          const endWindow = new Date(effectiveEnd);
+          const classesInWindow = await Class.find({
+            'student.studentId': vacation.user,
+            status: { $nin: ['cancelled', 'cancelled_by_teacher', 'cancelled_by_guardian', 'cancelled_by_admin'] },
+            scheduledDate: { $lt: endWindow },
+            $expr: {
+              $gt: [
+                { $add: ['$scheduledDate', { $multiply: ['$duration', 60000] }] },
+                startWindow
+              ]
+            }
+          }).select('teacher student.studentName student.guardianId').lean();
+
+          const teacherSet = new Set((classesInWindow || []).map(c => String(c.teacher)).filter(Boolean));
+          impactedTeacherIds = Array.from(teacherSet);
+          if (!guardianId) {
+            const anyGuardian = (classesInWindow || []).find(c => c?.student?.guardianId)?.student?.guardianId;
+            guardianId = anyGuardian || null;
+          }
+          const studentName = vacation.userName || (classesInWindow?.[0]?.student?.studentName) || null;
+          studentContext = { studentName };
+        }
+
         // Apply vacation logic when approved
   impactSummary = await vacationService.applyVacationToClasses(vacation);
         
@@ -344,6 +679,52 @@ router.post('/:vacationId/approval', requireAuth, requireAdmin, async (req, res)
           vacation.actualStartDate = vacation.actualStartDate || now;
         }
         await vacation.save();
+
+        // Student vacation notifications (guardian + impacted teachers)
+        if (vacation.role === 'student') {
+          const tz = req.user?.timezone || DEFAULT_TIMEZONE;
+          const startLabel = formatTimeInTimezone(vacation.startDate, tz, 'DD MMM YYYY');
+          const endLabel = formatTimeInTimezone(vacation.actualEndDate || vacation.endDate, tz, 'DD MMM YYYY');
+          const studentName = studentContext?.studentName || vacation.userName || 'Student';
+
+          if (guardianId) {
+            await notificationService.createNotification({
+              userId: guardianId,
+              title: 'Vacation request approved',
+              message: `${studentName} vacation was approved (${startLabel} → ${endLabel}). Classes during this period were cancelled.`,
+              type: 'success',
+              relatedTo: 'vacation',
+              relatedId: vacation._id,
+              actionRequired: false,
+              metadata: {
+                kind: 'student_vacation_approved',
+                vacationId: String(vacation._id),
+                studentId: String(vacation.user),
+                startDate: new Date(vacation.startDate).toISOString(),
+                endDate: new Date(vacation.actualEndDate || vacation.endDate).toISOString()
+              }
+            });
+          }
+
+          await Promise.allSettled(
+            (impactedTeacherIds || []).map((teacherId) => {
+              return notificationService.createNotification({
+                userId: teacherId,
+                title: 'Student on vacation',
+                message: `${studentName} will be on vacation (${startLabel} → ${endLabel}). Affected classes were cancelled.`,
+                type: 'info',
+                relatedTo: 'vacation',
+                relatedId: vacation._id,
+                actionRequired: false,
+                metadata: {
+                  kind: 'student_vacation_approved',
+                  vacationId: String(vacation._id),
+                  studentId: String(vacation.user)
+                }
+              });
+            })
+          );
+        }
 
         if (vacation.role === 'teacher') {
           const tz = vacation.user?.timezone || DEFAULT_TIMEZONE;
@@ -378,15 +759,18 @@ router.post('/:vacationId/approval', requireAuth, requireAdmin, async (req, res)
       } catch (error) {
         console.error('Error applying vacation to classes:', error);
         // Create notification about the error
-        await notificationService.createNotification({
-          userId: vacation.user,
-          title: 'Vacation approved (schedule update pending)',
-          message: 'Your vacation request was approved, but we couldn’t fully update the class schedule. An administrator will review this.',
-          type: 'warning',
-          relatedTo: 'vacation',
-          relatedId: vacation._id,
-          actionRequired: false
-        });
+        // Only send this to real users; student vacations are handled separately
+        if (vacation.role === 'teacher') {
+          await notificationService.createNotification({
+            userId: vacation.user,
+            title: 'Vacation approved (schedule update pending)',
+            message: 'Your vacation request was approved, but we couldn’t fully update the class schedule. An administrator will review this.',
+            type: 'warning',
+            relatedTo: 'vacation',
+            relatedId: vacation._id,
+            actionRequired: false
+          });
+        }
         // Even if class updates fail, the vacation approval was saved
         await vacation.save();
         return res.status(200).json({

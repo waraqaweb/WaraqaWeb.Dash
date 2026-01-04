@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Calendar as CalendarIcon, Trash2, User as UserIcon, X } from "lucide-react";
-import api from "../../api/axios";
 import LoadingSpinner from "../ui/LoadingSpinner";
 import { formatDateDDMMMYYYY } from "../../utils/date";
 
@@ -59,12 +58,10 @@ const DeleteClassModal = ({
   classId,
   initialClass = null,
   onClose,
-  onDeleted,
   onCountdownStart, // New prop to notify parent that countdown has started
 }) => {
   const [classData, setClassData] = useState(initialClass);
   const [fetching, setFetching] = useState(false);
-  const [submittingScope, setSubmittingScope] = useState(null);
   const [error, setError] = useState("");
   const [selectedScope, setSelectedScope] = useState(null);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -82,62 +79,38 @@ const DeleteClassModal = ({
   }, [onClose, resetFlow]);
 
   const handleScopeSelect = useCallback((scope) => {
-    if (submittingScope !== null) return;
     setSelectedScope(scope);
     setIsConfirming(true);
     setError("");
-  }, [submittingScope]);
+  }, []);
 
   const cancelConfirm = useCallback(() => {
-    if (submittingScope !== null) return;
     setSelectedScope(null);
     setIsConfirming(false);
-  }, [submittingScope]);
-
-  const executeDelete = useCallback(async (scope) => {
-    if (!classId) {
-      setError("Missing class identifier");
-      return;
-    }
-
-    setSubmittingScope(scope);
-    setError("");
-
-    try {
-      const res = await api.delete(`/classes/${classId}?deleteType=${scope}`);
-      if (onDeleted) {
-        await onDeleted(scope, res.data);
-      }
-      // Note: We don't close here anymore - parent handles closing after countdown
-    } catch (err) {
-      const message = err?.response?.data?.message || "Failed to delete class";
-      setError(message);
-      setSelectedScope(scope);
-      setIsConfirming(true);
-    } finally {
-      setSubmittingScope(null);
-    }
-  }, [classId, onDeleted]);
+  }, []);
 
   const beginCountdown = useCallback(() => {
-    if (!selectedScope || submittingScope !== null) return;
+    if (!selectedScope) return;
+    if (!classId) {
+      setError('Missing class identifier');
+      return;
+    }
     const scope = selectedScope;
     
     // Notify parent that countdown has started
     if (onCountdownStart) {
-      onCountdownStart(scope, executeDelete);
+      onCountdownStart(scope, classId);
     }
     
     // Close the modal immediately
     if (onClose) {
       onClose();
     }
-  }, [executeDelete, selectedScope, submittingScope, onCountdownStart, onClose]);
+  }, [selectedScope, onCountdownStart, onClose, classId]);
 
   useEffect(() => {
     if (!isOpen) {
       setError("");
-      setSubmittingScope(null);
       resetFlow();
       return;
     }
@@ -252,7 +225,6 @@ const DeleteClassModal = ({
                       key={scope}
                       type="button"
                       onClick={() => handleScopeSelect(scope)}
-                      disabled={submittingScope !== null}
                       className={`${meta.buttonClass} ${isActive ? "ring-2 ring-offset-1 ring-blue-300" : ""}`}
                     >
                       <div className="flex flex-col">
@@ -276,11 +248,10 @@ const DeleteClassModal = ({
                 <button
                   type="button"
                   onClick={() => handleScopeSelect("single")}
-                  disabled={submittingScope !== null}
                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Trash2 className="h-4 w-4" />
-                  {submittingScope === "single" ? "Deleting…" : "Delete"}
+                  Delete
                 </button>
               </div>
             )}
@@ -292,34 +263,27 @@ const DeleteClassModal = ({
                   <div>
                     <p className="font-semibold">{confirmationMeta.confirmTitle}</p>
                     <p className="mt-1 text-amber-800/90">{confirmationMeta.confirmBody}</p>
-                    <p className="mt-2 text-xs text-amber-700">You'll have 10 seconds to undo after confirming.</p>
+                    <p className="mt-2 text-xs text-amber-700">You'll have 5 seconds to undo after confirming.</p>
                   </div>
                 </div>
 
-                {submittingScope !== null ? (
-                  <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-blue-900">
-                    <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-blue-500" aria-hidden />
-                    <p className="text-sm font-semibold">Deleting…</p>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={cancelConfirm}
-                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100"
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="button"
-                      onClick={beginCountdown}
-                      className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition ${confirmationMeta.confirmButtonClass}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Confirm Delete
-                    </button>
-                  </div>
-                )}
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={cancelConfirm}
+                    className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={beginCountdown}
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition ${confirmationMeta.confirmButtonClass}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Confirm Delete
+                  </button>
+                </div>
               </div>
             )}
           </div>

@@ -27,7 +27,7 @@ import DuplicateClassModal from "../../components/dashboard/DuplicateClassModal"
 import ClassesCalendarView from "../../components/dashboard/ClassesCalendarView";
 import { MEETING_TYPE_LABELS } from '../../constants/meetingConstants';
 import CancelClassModal from "../../components/dashboard/CancelClassModal";
-import DeleteCountdownToast from "../../components/ui/DeleteCountdownToast";
+import { useDeleteClassCountdown } from "../../contexts/DeleteClassCountdownContext";
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MEETING_LOOKBACK_DAYS = 60;
 const MEETING_LOOKAHEAD_DAYS = 90;
@@ -183,9 +183,7 @@ const ClassesPage = () => {
   const [rescheduleDetailsNotification, setRescheduleDetailsNotification] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteClass, setDeleteClass] = useState(null);
-  const [deleteCountdownActive, setDeleteCountdownActive] = useState(false);
-  const [deleteCountdown, setDeleteCountdown] = useState(10);
-  const deleteCountdownRef = useRef(null);
+  const { start: startDeleteCountdown } = useDeleteClassCountdown();
   // Ref to avoid temporal-dead-zone errors when effects reference fetchClasses
   const fetchClassesRef = useRef(null);
   const fetchTeachersRef = useRef(null);
@@ -1464,60 +1462,18 @@ Would you like to create another series anyway?`
     setDeleteClass(null);
   };
 
-  const handleDeleteCountdownStart = useCallback((scope, executeDeleteFn) => {
-    setDeleteCountdownActive(true);
-    setDeleteCountdown(10);
+  const handleDeleteCountdownStart = useCallback((scope, classId) => {
+    const baseMessage = deleteClass?.subject
+      ? `Deleting ${deleteClass.subject}`
+      : 'Deleting class';
 
-    // Start the countdown
-    deleteCountdownRef.current = setInterval(() => {
-      setDeleteCountdown((prev) => {
-        if (prev <= 1) {
-          // Execute the delete and cleanup
-          clearInterval(deleteCountdownRef.current);
-          deleteCountdownRef.current = null;
-          setDeleteCountdownActive(false);
-          executeDeleteFn(scope);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  }, []);
-
-  const handleDeleteUndo = useCallback(() => {
-    // Clear the countdown
-    if (deleteCountdownRef.current) {
-      clearInterval(deleteCountdownRef.current);
-      deleteCountdownRef.current = null;
-    }
-    setDeleteCountdownActive(false);
-    setDeleteCountdown(10);
-  }, []);
-
-  // Cleanup countdown on unmount
-  useEffect(() => {
-    return () => {
-      if (deleteCountdownRef.current) {
-        clearInterval(deleteCountdownRef.current);
-      }
-    };
-  }, []);
-
-  const handleDeleteSuccess = async (scope, response) => {
-    // Clear countdown state
-    setDeleteCountdownActive(false);
-    setDeleteCountdown(10);
-    
-    await fetchClasses();
-    const fallbackMessage = {
-      single: "Class deleted successfully.",
-      past: "Previous classes deleted successfully.",
-      future: "This and future classes deleted successfully.",
-      all: "Entire series deleted successfully."
-    }[scope] || "Class deleted successfully!";
-
-    alert(response?.message || fallbackMessage);
-  };
+    startDeleteCountdown({
+      classId,
+      scope,
+      message: baseMessage,
+      durationSeconds: 5
+    });
+  }, [startDeleteCountdown, deleteClass]);
 
   const handleOpenDuplicateModal = (classItem) => {
     setDuplicateClass(classItem);
@@ -3010,7 +2966,10 @@ Would you like to create another series anyway?`
         classData={cancelTargetClass}
         policy={getPolicyForClass(cancelTargetClass?._id)}
         policyLoading={policyLoading && focusedClassId === cancelTargetClass?._id}
-        onClose={handleCloseCancelModal}
+        onClose={() => {
+          setShowCancelModal(false);
+          setCancelTargetClass(null);
+        }}
         onCancelled={handleCancelSuccess}
         userRole={user?.role || (isAdminUser ? "admin" : isTeacherUser ? "teacher" : "guardian")}
         userTimezone={user?.timezone || DEFAULT_TIMEZONE}
@@ -3021,19 +2980,13 @@ Would you like to create another series anyway?`
         classId={deleteClass?._id}
         initialClass={deleteClass}
         onClose={handleCloseDeleteModal}
-        onDeleted={handleDeleteSuccess}
         onCountdownStart={handleDeleteCountdownStart}
       />
 
-      <DeleteCountdownToast
-        isActive={deleteCountdownActive}
-        countdown={deleteCountdown}
-        onUndo={handleDeleteUndo}
-        message="Deleting class"
-      />
     </div>
   );
 };
 
 export default ClassesPage;
+
 

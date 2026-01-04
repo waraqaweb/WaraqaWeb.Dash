@@ -30,6 +30,21 @@ import FeedbacksAdmin from './FeedbacksAdmin';
 import { Menu, X } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import VacationManagementPage from './VacationManagementPage';
+import { DeleteClassCountdownProvider, useDeleteClassCountdown } from '../../contexts/DeleteClassCountdownContext';
+import DeleteCountdownToast from '../../components/ui/DeleteCountdownToast';
+
+const DeleteCountdownHost = () => {
+  const { isActive, secondsLeft, message, error, undo } = useDeleteClassCountdown();
+  return (
+    <DeleteCountdownToast
+      isActive={isActive}
+      countdown={secondsLeft}
+      message={message}
+      error={error}
+      onUndo={undo}
+    />
+  );
+};
 
 const Dashboard = () => {
   const { user } = useAuth();
@@ -122,6 +137,7 @@ const Dashboard = () => {
 
   return (
     <SearchProvider>
+      <DeleteClassCountdownProvider>
       <div className="flex h-screen bg-background">
       {/* Sidebar */}
         <Sidebar 
@@ -203,6 +219,8 @@ const Dashboard = () => {
       )}
   {/* ProfileModal removed - sidebar now navigates to the Profile page */}
     </div>
+    <DeleteCountdownHost />
+    </DeleteClassCountdownProvider>
     </SearchProvider>
   );
 };

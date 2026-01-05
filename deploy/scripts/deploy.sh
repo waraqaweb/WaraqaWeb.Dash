@@ -66,7 +66,9 @@ if [[ "$MODE" == "all" ]]; then
 elif [[ "$MODE" == "pull" ]]; then
   echo "[deploy] Pulling prebuilt images (GHCR)"
   "${COMPOSE[@]}" -f docker-compose.yml -f docker-compose.ghcr.yml pull
-  "${COMPOSE[@]}" -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+  # Force-recreate so updated env (APP_VERSION/BUILD_TIME) and new image digests
+  # are definitely applied even when tags stay the same (e.g. :main).
+  "${COMPOSE[@]}" -f docker-compose.yml -f docker-compose.ghcr.yml up -d --force-recreate --remove-orphans
 elif [[ "$MODE" == "no-build" ]]; then
   echo "[deploy] No build; restarting containers"
   "${COMPOSE[@]}" up -d

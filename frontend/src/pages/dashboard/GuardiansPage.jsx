@@ -56,6 +56,8 @@ const GuardiansPage = () => {
   const sortOrder = 'asc';
   const [statusFilter, setStatusFilter] = useState('active');
   const [expandedGuardian, setExpandedGuardian] = useState(null);
+  const [linkedStudentsByGuardianId, setLinkedStudentsByGuardianId] = useState({});
+  const [linkedStudentsLoadingByGuardianId, setLinkedStudentsLoadingByGuardianId] = useState({});
   const [editingGuardian, setEditingGuardian] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -132,8 +134,39 @@ const GuardiansPage = () => {
     fetchGuardians();
   }, [fetchGuardians]);
 
+  const getStudentPictureUrl = (student) => {
+    if (!student) return null;
+    const pic = student.profilePicture;
+    if (!pic) return null;
+    if (typeof pic === 'string') return pic;
+    if (typeof pic === 'object') return pic.url || pic.thumbnail || null;
+    return null;
+  };
+
+  const fetchLinkedStudents = useCallback(async (guardianId) => {
+    if (!guardianId) return;
+    // Prevent refetch storms
+    if (linkedStudentsLoadingByGuardianId[guardianId]) return;
+    setLinkedStudentsLoadingByGuardianId((prev) => ({ ...prev, [guardianId]: true }));
+    try {
+      const res = await api.get(`/users/${guardianId}/students`);
+      const students = res.data?.students || [];
+      setLinkedStudentsByGuardianId((prev) => ({ ...prev, [guardianId]: students }));
+    } catch (err) {
+      console.warn('Failed to fetch linked students for guardian', guardianId, err?.message || err);
+      // Do not hard fail the page; fallback to embedded list
+      setLinkedStudentsByGuardianId((prev) => ({ ...prev, [guardianId]: null }));
+    } finally {
+      setLinkedStudentsLoadingByGuardianId((prev) => ({ ...prev, [guardianId]: false }));
+    }
+  }, [linkedStudentsLoadingByGuardianId]);
+
   const toggleExpanded = (guardianId) => {
-    setExpandedGuardian(expandedGuardian === guardianId ? null : guardianId);
+    const next = expandedGuardian === guardianId ? null : guardianId;
+    setExpandedGuardian(next);
+    if (next) {
+      fetchLinkedStudents(next);
+    }
   };
 
   const setHoursAdjustmentValue = (guardianId, patch) => {
@@ -549,16 +582,36 @@ const GuardiansPage = () => {
     </div>
 
     {/* Linked Students */}
-    {guardian.guardianInfo?.students && guardian.guardianInfo.students.length > 0 && (
+    {(() => {
+      const gid = guardian._id;
+      const merged = linkedStudentsByGuardianId[gid];
+      const isLoadingStudents = !!linkedStudentsLoadingByGuardianId[gid];
+      const fallbackEmbedded = guardian.guardianInfo?.students || [];
+      const studentsToShow = Array.isArray(merged) ? merged : fallbackEmbedded;
+
+      if (isLoadingStudents && !Array.isArray(merged)) {
+        return (
+          <div>
+            <h4 className="font-semibold text-foreground mb-3">Linked Students</h4>
+            <div className="text-sm text-muted-foreground">Loading students…</div>
+          </div>
+        );
+      }
+
+      if (!studentsToShow || studentsToShow.length === 0) {
+        return null;
+      }
+
+      return (
       <div>
         <h4 className="font-semibold text-foreground mb-3">Linked Students</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {guardian.guardianInfo.students.map((student) => (
+          {studentsToShow.map((student) => (
             <div key={student._id} className="bg-card border border-border rounded-lg p-3 flex flex-col space-y-1">
               <div className="flex items-center space-x-3">
                 <div className="h-10 w-10 bg-secondary rounded-full flex items-center justify-center">
-                  {student.profilePicture ? (
-                    <img src={student.profilePicture} alt="Profile" className="h-full w-full rounded-full object-cover" />
+                  {getStudentPictureUrl(student) ? (
+                    <img src={getStudentPictureUrl(student)} alt="Profile" className="h-full w-full rounded-full object-cover" />
                   ) : (
                     <span className="text-sm font-medium text-secondary-foreground">
                       {student.firstName?.charAt(0)}{student.lastName?.charAt(0)}
@@ -581,7 +634,8 @@ const GuardiansPage = () => {
           ))}
         </div>
       </div>
-    )}
+      );
+    })()}
   </div>
 )}
 

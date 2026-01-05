@@ -13,6 +13,7 @@ import { formatDateDDMMMYYYY } from '../../utils/date';
 import AddStudentModal from '../../components/dashboard/AddStudentModal';
 import EditStudentModal from '../../components/students/EditStudentModal';
 import api from '../../api/axios';
+import { deleteStudent as deleteStandaloneStudent } from '../../api/students';
 
 
 const STATUS_TABS = [
@@ -71,7 +72,7 @@ const MyStudentsPage = () => {
   const [, setLocalLoading] = useState(true);
   const [, setError] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [editingStudentId, setEditingStudentId] = useState(null);
+  const [editingStudent, setEditingStudent] = useState(null);
   const [expandedStudent, setExpandedStudent] = useState(null);
   const [localSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState(localSearchTerm);
@@ -410,7 +411,7 @@ const fetchStudents = async () => {
         setError('Failed to fetch students');
       }
     } else if (isGuardian && isGuardian()) {
-      response = await api.get(`/users/${user.id}/students`);
+      response = await api.get(`/users/${user._id || user.id}/students`);
       const arr = response.data.students || [];
       const withTZ = arr.map(st => ({ ...st, timezone: deriveStudentTimezone(st) }));
       fetchedArr = withTZ;
@@ -645,14 +646,33 @@ const fetchGuardiansList = async () => {
     fetchStudents();
   };
 
-  const handleRemoveStudent = async (studentId) => {
+  const handleRemoveStudent = async (student) => {
     if (!window.confirm('Are you sure you want to remove this student?')) {
       return;
     }
 
     try {
-      // FIX: Removed leading /api/ as axios base URL likely already includes it
-  await api.delete(`/users/${user.id}/students/${studentId}`);
+      const studentId = student?._id || student;
+      if (!studentId) throw new Error('Invalid student id');
+
+      // Admins can delete embedded students via guardian-scoped route, and standalone students via /students/:id
+      if (isAdmin && isAdmin()) {
+        if (student && student._source === 'standalone') {
+          await deleteStandaloneStudent(studentId);
+        } else {
+          const guardianId = student?.guardianId || student?.guardian?._id || student?.guardian;
+          if (guardianId) {
+            await api.delete(`/users/${guardianId}/students/${studentId}`);
+          } else {
+            // Fallback for unknown shapes
+            await deleteStandaloneStudent(studentId);
+          }
+        }
+      } else {
+        // Guardians remove from their own account
+        await api.delete(`/users/${user._id || user.id}/students/${studentId}`);
+      }
+
       console.log('🗑️ Student removed successfully');
       
       // Refresh the students list
@@ -673,8 +693,12 @@ const fetchGuardiansList = async () => {
   const handleToggleActive = async (student, newStatus) => {
     try {
       if (student && student._source === 'standalone') {
-        // standalone student stored as a User/Student document
-        await api.put(`/users/${student._id}/status`, { isActive: newStatus });
+        // standalone student stored in Student model (or legacy standalone user). Prefer Student endpoint.
+        try {
+          await api.put(`/students/${student._id}`, { isActive: newStatus });
+        } catch (_) {
+          await api.put(`/users/${student._id}/status`, { isActive: newStatus });
+        }
       } else if (student && (student._source === 'embedded' || student.guardianId)) {
         // embedded student under a guardian
         const guardianId = student.guardianId || student.guardian;
@@ -926,7 +950,7 @@ const fetchGuardiansList = async () => {
                     {/* Edit Button */}
                     {(!isTeacher || !isTeacher()) && (
                       <button
-                        onClick={() => setEditingStudentId(student._id)}
+                        onClick={() => setEditingStudent({ studentId: student._id, guardianId: student.guardianId || student.guardian || null })}
                         className="icon-button icon-button--blue"
                         title="Edit Student"
                       >
@@ -939,7 +963,7 @@ const fetchGuardiansList = async () => {
                     {/* Remove/Delete Button - hide for teachers */}
                     {(!isTeacher || !isTeacher()) && (
                       <button
-                        onClick={() => handleRemoveStudent(student._id)}
+                        onClick={() => handleRemoveStudent(student)}
                         className="icon-button icon-button--red"
                         title="Remove Student"
                       >
@@ -1090,11 +1114,11 @@ const fetchGuardiansList = async () => {
       ) : null}
 
       {/* Edit Student Modal */}
-      {editingStudentId && (!isTeacher || !isTeacher()) && (
+      {editingStudent && (!isTeacher || !isTeacher()) && (
         <EditStudentModal
-          studentId={editingStudentId}
-          guardianId={user._id}
-          onClose={() => setEditingStudentId(null)}
+          studentId={editingStudent.studentId}
+          guardianId={editingStudent.guardianId}
+          onClose={() => setEditingStudent(null)}
           onUpdated={fetchStudents}
         />
       )}

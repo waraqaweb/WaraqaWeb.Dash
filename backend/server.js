@@ -339,6 +339,9 @@ try {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
   res.json({ 
     status: 'OK', 
     message: 'Waraqa API is running',
@@ -350,6 +353,9 @@ app.get('/api/health', (req, res) => {
 
 // Lightweight version endpoint (useful for frontend display)
 app.get('/api/version', (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
   res.json({
     version: process.env.APP_VERSION || 'dev',
     buildTime: process.env.BUILD_TIME || null

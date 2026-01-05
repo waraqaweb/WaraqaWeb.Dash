@@ -164,11 +164,24 @@ router.post('/', authenticateToken, [
       lastName,
       email,
       guardian: guardianId,
-      spokenLanguages,
+      phone,
+      whatsapp,
+      grade,
+      school,
+      language,
+      timezone,
+      subjects,
       learningPreferences,
+      evaluationSummary,
+      notes,
       dateOfBirth,
-      gender
+      gender,
+      hoursRemaining,
+      isActive,
+      selfGuardian,
     } = req.body;
+
+    const isSelfEnrollment = !!selfGuardian;
 
     // Verify guardian exists and is actually a guardian
     const guardian = await User.findById(guardianId);
@@ -200,6 +213,70 @@ router.post('/', authenticateToken, [
     }
 
     // Check for self-enrollment (guardian enrolling themselves)
+    const mirrorStandaloneToEmbedded = async (studentDoc) => {
+      try {
+        const guardianUser = await User.findById(guardianId);
+        if (!guardianUser || guardianUser.role !== 'guardian') return;
+
+        if (!guardianUser.guardianInfo || typeof guardianUser.guardianInfo !== 'object') {
+          guardianUser.guardianInfo = { students: [] };
+        }
+        if (!Array.isArray(guardianUser.guardianInfo.students)) {
+          guardianUser.guardianInfo.students = [];
+        }
+
+        const keyEmail = (studentDoc.email || '').trim().toLowerCase();
+        const keyDob = studentDoc.dateOfBirth ? new Date(studentDoc.dateOfBirth).toISOString().slice(0, 10) : '';
+        const keyName = `${(studentDoc.firstName || '').trim().toLowerCase()}|${(studentDoc.lastName || '').trim().toLowerCase()}`;
+        const makeKey = (s) => {
+          const email = (s.email || '').trim().toLowerCase();
+          const dob = s.dateOfBirth ? new Date(s.dateOfBirth).toISOString().slice(0, 10) : '';
+          const name = `${(s.firstName || '').trim().toLowerCase()}|${(s.lastName || '').trim().toLowerCase()}`;
+          return email ? email : `${name}|${dob}`;
+        };
+
+        const desiredKey = keyEmail ? keyEmail : `${keyName}|${keyDob}`;
+        let embedded = guardianUser.guardianInfo.students.find((s) => {
+          if (studentDoc.selfGuardian) return s.selfGuardian === true;
+          return makeKey(s) === desiredKey;
+        });
+
+        if (!embedded) {
+          guardianUser.guardianInfo.students.push({
+            firstName: studentDoc.firstName,
+            lastName: studentDoc.lastName,
+            email: studentDoc.email,
+            grade: studentDoc.grade,
+            school: studentDoc.school,
+            language: studentDoc.language,
+            subjects: Array.isArray(studentDoc.subjects) ? studentDoc.subjects : [],
+            phone: studentDoc.phone,
+            whatsapp: studentDoc.whatsapp,
+            learningPreferences: studentDoc.learningPreferences,
+            evaluation: studentDoc.evaluation,
+            evaluationSummary: studentDoc.evaluationSummary,
+            dateOfBirth: studentDoc.dateOfBirth,
+            gender: studentDoc.gender,
+            timezone: studentDoc.timezone,
+            profilePicture: studentDoc.profilePicture || undefined,
+            isActive: typeof studentDoc.isActive === 'boolean' ? studentDoc.isActive : true,
+            hoursRemaining: typeof studentDoc.hoursRemaining === 'number' ? studentDoc.hoursRemaining : 0,
+            selfGuardian: !!studentDoc.selfGuardian,
+            totalClassesAttended: studentDoc.totalClassesAttended || 0,
+            currentTeachers: Array.isArray(studentDoc.currentTeachers) ? studentDoc.currentTeachers : [],
+            notes: studentDoc.notes,
+            standaloneStudentId: studentDoc._id,
+          });
+        } else if (!embedded.standaloneStudentId) {
+          embedded.standaloneStudentId = studentDoc._id;
+        }
+
+        await guardianUser.save();
+      } catch (mirrorErr) {
+        console.warn('Failed to mirror standalone student into embedded guardianInfo.students', mirrorErr && mirrorErr.message);
+      }
+    };
+
     if (isSelfEnrollment) {
       // Check if guardian already enrolled themselves
       const existingSelfEnrollment = await Student.findOne({
@@ -223,10 +300,16 @@ router.post('/', authenticateToken, [
         gender: guardian.gender || 'male',
         dateOfBirth: guardian.dateOfBirth,
         selfGuardian: true,
-        spokenLanguages: spokenLanguages || [],
-        subjects: subjects || [],
+        grade: grade || '',
+        school: school || '',
+        language: language || guardian.language || 'English',
+        timezone: timezone || guardian.timezone || 'UTC',
+        subjects: Array.isArray(subjects) ? subjects : [],
         learningPreferences: learningPreferences || '',
-        status: 'active'
+        evaluationSummary: evaluationSummary || '',
+        notes: notes || '',
+        hoursRemaining: typeof hoursRemaining === 'number' ? hoursRemaining : 0,
+        isActive: typeof isActive === 'boolean' ? isActive : true,
       });
 
       await student.save();
@@ -234,9 +317,11 @@ router.post('/', authenticateToken, [
       // Update Guardian model to include this student
       await Guardian.findOneAndUpdate(
         { user: guardianId },
-        { $push: { students: student._id } },
+        { $addToSet: { students: student._id } },
         { upsert: true }
       );
+
+      await mirrorStandaloneToEmbedded(student);
 
       res.status(201).json({
         message: 'Successfully enrolled yourself as a student',
@@ -249,14 +334,21 @@ router.post('/', authenticateToken, [
         lastName,
         email,
         guardian: guardianId,
-        spokenLanguages: spokenLanguages || [],
-        subjects: subjects || [],
         phone: phone || '',
+        whatsapp: whatsapp || '',
+        grade: grade || '',
+        school: school || '',
+        language: language || 'English',
+        timezone: timezone || 'UTC',
+        subjects: Array.isArray(subjects) ? subjects : [],
         learningPreferences: learningPreferences || '',
+        evaluationSummary: evaluationSummary || '',
+        notes: notes || '',
+        hoursRemaining: typeof hoursRemaining === 'number' ? hoursRemaining : 0,
         dateOfBirth: dateOfBirth || null,
         gender: gender || 'male',
         selfGuardian: false,
-        status: 'active'
+        isActive: typeof isActive === 'boolean' ? isActive : true,
       });
 
       await student.save();
@@ -264,9 +356,11 @@ router.post('/', authenticateToken, [
       // Update Guardian model to include this student
       await Guardian.findOneAndUpdate(
         { user: guardianId },
-        { $push: { students: student._id } },
+        { $addToSet: { students: student._id } },
         { upsert: true }
       );
+
+      await mirrorStandaloneToEmbedded(student);
 
       res.status(201).json({
         message: 'Student created successfully',
@@ -317,6 +411,21 @@ router.put('/:id', authenticateToken, [
     const { id } = req.params;
     const updates = req.body;
 
+    const existingStudent = await Student.findById(id).select('guardian');
+    if (!existingStudent) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    // Authorization: guardians can only update their own students, admins can update any
+    if (req.user.role === 'teacher') {
+      return res.status(403).json({ message: 'Teachers cannot update students' });
+    }
+    if (req.user.role === 'guardian') {
+      if (String(existingStudent.guardian) !== String(req.user._id)) {
+        return res.status(403).json({ message: 'You are not authorized to update this student' });
+      }
+    }
+
     // Filter out undefined fields to avoid overwriting with undefined values
     const filteredUpdates = Object.keys(updates).reduce((acc, key) => {
       if (updates[key] !== undefined && updates[key] !== null) {
@@ -327,11 +436,16 @@ router.put('/:id', authenticateToken, [
 
     // Update student
     const updatedStudent = await Student.findByIdAndUpdate(
-      id, 
-      filteredUpdates, 
+      id,
+      filteredUpdates,
       { new: true, runValidators: true }
-    ).populate('guardian', 'firstName lastName email phone')
-     .populate('currentTeachers', 'firstName lastName email');
+    )
+      .populate('guardian', 'firstName lastName email phone')
+      .populate('currentTeachers', 'firstName lastName email');
+
+    if (!updatedStudent) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
 
     res.json({
       message: 'Student updated successfully',

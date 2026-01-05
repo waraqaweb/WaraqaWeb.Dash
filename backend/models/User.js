@@ -114,6 +114,13 @@ const studentSubSchema = new mongoose.Schema({
     url: String,
     publicId: String
   },
+
+  // Link to standalone Student document (if/when mirrored)
+  standaloneStudentId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Student',
+    default: null,
+  },
   
   // Status and Hours
   isActive: {

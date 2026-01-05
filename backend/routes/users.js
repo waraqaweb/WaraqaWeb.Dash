@@ -888,7 +888,7 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
         _source: 'standalone'
       }));
 
-    // Deduplicate: prefer standalone when email matches; otherwise keep both
+    // Deduplicate: prefer embedded when a match exists (keeps embedded _id stable for guardian-scoped routes)
     const byKey = new Map();
     const makeKey = (s) => {
       const email = (s.email || '').toLowerCase();
@@ -902,9 +902,9 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
       if (!byKey.has(k)) {
         byKey.set(k, s);
       } else {
-        // Prefer standalone over embedded
+        // Prefer embedded over standalone
         const existing = byKey.get(k);
-        if (existing._source === 'embedded' && s._source === 'standalone') {
+        if (existing._source === 'standalone' && s._source === 'embedded') {
           byKey.set(k, s);
         }
       }
@@ -1336,6 +1336,73 @@ router.post('/:guardianId/students', [
     const updatedGuardian = await User.findById(guardianId).select('-password');
     const newStudent = updatedGuardian.guardianInfo.students[updatedGuardian.guardianInfo.students.length - 1];
     
+    // Best-effort: mirror to standalone Student model + link back to embedded subdoc.
+    // This keeps "normal" Student records available for flows that depend on Student collection.
+    try {
+      const keyEmail = (newStudent.email || '').trim().toLowerCase();
+      const keyDob = newStudent.dateOfBirth ? new Date(newStudent.dateOfBirth).toISOString().slice(0, 10) : '';
+      const keyName = `${(newStudent.firstName || '').trim().toLowerCase()}|${(newStudent.lastName || '').trim().toLowerCase()}`;
+
+      const findQuery = { guardian: guardianId };
+      if (newStudent.selfGuardian) {
+        findQuery.selfGuardian = true;
+      } else if (keyEmail) {
+        findQuery.email = keyEmail;
+      } else {
+        findQuery.firstName = newStudent.firstName;
+        findQuery.lastName = newStudent.lastName;
+        if (keyDob) findQuery.dateOfBirth = new Date(keyDob);
+      }
+
+      let standaloneStudent = await Student.findOne(findQuery);
+      if (!standaloneStudent) {
+        standaloneStudent = new Student({
+          firstName: newStudent.firstName,
+          lastName: newStudent.lastName,
+          email: keyEmail || undefined,
+          guardian: guardianId,
+          grade: newStudent.grade,
+          school: newStudent.school,
+          language: newStudent.language,
+          subjects: Array.isArray(newStudent.subjects) ? newStudent.subjects : [],
+          phone: newStudent.phone,
+          whatsapp: newStudent.whatsapp,
+          learningPreferences: newStudent.learningPreferences,
+          evaluation: newStudent.evaluation,
+          evaluationSummary: newStudent.evaluationSummary,
+          dateOfBirth: newStudent.dateOfBirth,
+          gender: newStudent.gender,
+          timezone: newStudent.timezone,
+          profilePicture: newStudent.profilePicture || undefined,
+          isActive: typeof newStudent.isActive === 'boolean' ? newStudent.isActive : true,
+          hoursRemaining: typeof newStudent.hoursRemaining === 'number' ? newStudent.hoursRemaining : 0,
+          selfGuardian: !!newStudent.selfGuardian,
+          totalClassesAttended: newStudent.totalClassesAttended || 0,
+          currentTeachers: Array.isArray(newStudent.currentTeachers) ? newStudent.currentTeachers : [],
+          notes: newStudent.notes,
+        });
+        await standaloneStudent.save();
+
+        await Guardian.findOneAndUpdate(
+          { user: guardianId },
+          { $addToSet: { students: standaloneStudent._id } },
+          { upsert: true }
+        );
+      }
+
+      // Link embedded -> standalone if not already linked
+      if (!newStudent.standaloneStudentId) {
+        const guardianToLink = await User.findById(guardianId);
+        const embeddedToLink = guardianToLink?.guardianInfo?.students?.id(newStudent._id);
+        if (embeddedToLink && !embeddedToLink.standaloneStudentId) {
+          embeddedToLink.standaloneStudentId = standaloneStudent._id;
+          await guardianToLink.save();
+        }
+      }
+    } catch (mirrorErr) {
+      console.warn('Failed to mirror embedded student to standalone Student model', mirrorErr && mirrorErr.message);
+    }
+
     res.status(201).json({
       message: 'Student added successfully',
       student: newStudent,

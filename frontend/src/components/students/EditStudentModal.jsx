@@ -9,6 +9,12 @@ const deriveStudentTimezone = (s) => {
   return s?.guardianTimezone || s?.timezone || s?.studentInfo?.guardianTimezone || s?.studentInfo?.timezone || 'UTC';
 };
 
+const normalizeStudentId = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  return String(value._id || value.id || value);
+};
+
 const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
   const { user, isAdmin, isTeacher } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -47,36 +53,68 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
         // Determine which guardian ID to use (state overrides prop when discovered)
         let guardianToUse = actualGuardianId || guardianId;
         
-        if (!guardianToUse || guardianToUse === 'null') {
-          // No guardianId provided - this means we're editing a User record with role 'student'
-          // Fetch the student directly as a User record
-        
-          const response = await api.get(`/users/${studentId}`);
-          const studentData = response.data;
-          
-          if (!studentData) {
-            throw new Error('Student not found');
-          }
-          
-          setStudent(studentData);
-            setFormData({
-            firstName: studentData.firstName || '',
-            lastName: studentData.lastName || '',
-            email: studentData.email || '',
-            phone: studentData.phone || '',
-              whatsapp: studentData.whatsapp || '',
-              grade: studentData.studentInfo?.grade || '',
-              school: studentData.studentInfo?.school || '',
-              spokenLanguages: studentData.spokenLanguages || (studentData.studentInfo?.spokenLanguages) || (studentData.studentInfo?.language ? [studentData.studentInfo.language] : []),
-            subjects: studentData.studentInfo?.subjects || [],
-            learningPreferences: studentData.studentInfo?.learningPreferences || '',
-            evaluationSummary: studentData.studentInfo?.evaluationSummary || '',
-            dateOfBirth: studentData.studentInfo?.dateOfBirth ? new Date(studentData.studentInfo.dateOfBirth).toISOString().split('T')[0] : '',
-            gender: studentData.studentInfo?.gender || 'male',
-            timezone: deriveStudentTimezone(studentData),
-            notes: studentData.studentInfo?.notes || '',
-            isActive: studentData.isActive !== undefined ? studentData.isActive : true
+        const setFromStandaloneStudentDoc = (doc) => {
+          const guardianIdFromDoc = normalizeStudentId(doc?.guardian?._id || doc?.guardian);
+          if (guardianIdFromDoc) setActualGuardianId(guardianIdFromDoc);
+          setStudent({ ...(doc || {}), _source: 'standalone' });
+          setFormData({
+            firstName: doc?.firstName || '',
+            lastName: doc?.lastName || '',
+            email: doc?.email || '',
+            phone: doc?.phone || '',
+            whatsapp: doc?.whatsapp || '',
+            grade: doc?.grade || '',
+            school: doc?.school || '',
+            spokenLanguages: doc?.spokenLanguages || (doc?.language ? [doc.language] : []),
+            subjects: doc?.subjects || [],
+            learningPreferences: doc?.learningPreferences || '',
+            evaluationSummary: doc?.evaluationSummary || '',
+            dateOfBirth: doc?.dateOfBirth ? new Date(doc.dateOfBirth).toISOString().split('T')[0] : '',
+            gender: doc?.gender || 'male',
+            timezone: deriveStudentTimezone(doc),
+            notes: doc?.notes || '',
+            isActive: doc?.isActive !== undefined ? doc.isActive : true,
           });
+        };
+
+        const setFromStandaloneUserDoc = (userDoc) => {
+          setStudent(userDoc);
+          setFormData({
+            firstName: userDoc?.firstName || '',
+            lastName: userDoc?.lastName || '',
+            email: userDoc?.email || '',
+            phone: userDoc?.phone || '',
+            whatsapp: userDoc?.whatsapp || '',
+            grade: userDoc?.studentInfo?.grade || '',
+            school: userDoc?.studentInfo?.school || '',
+            spokenLanguages: userDoc?.spokenLanguages || (userDoc?.studentInfo?.spokenLanguages) || (userDoc?.studentInfo?.language ? [userDoc.studentInfo.language] : []),
+            subjects: userDoc?.studentInfo?.subjects || [],
+            learningPreferences: userDoc?.studentInfo?.learningPreferences || '',
+            evaluationSummary: userDoc?.studentInfo?.evaluationSummary || '',
+            dateOfBirth: userDoc?.studentInfo?.dateOfBirth ? new Date(userDoc.studentInfo.dateOfBirth).toISOString().split('T')[0] : '',
+            gender: userDoc?.studentInfo?.gender || 'male',
+            timezone: deriveStudentTimezone(userDoc),
+            notes: userDoc?.studentInfo?.notes || '',
+            isActive: userDoc?.isActive !== undefined ? userDoc.isActive : true,
+          });
+        };
+
+        if (!guardianToUse || guardianToUse === 'null') {
+          // No guardianId provided. Try standalone Student model first, then fall back to legacy standalone User.
+          try {
+            const res = await api.get(`/students/${studentId}`);
+            if (res?.data?.student) {
+              setFromStandaloneStudentDoc(res.data.student);
+              return;
+            }
+          } catch (_) {
+            // ignore
+          }
+
+          const response = await api.get(`/users/${studentId}`);
+          const userDoc = response.data?.user;
+          if (!userDoc) throw new Error('Student not found');
+          setFromStandaloneUserDoc(userDoc);
         } else {
           // guardianId provided - this means we're editing an embedded student
           
@@ -116,6 +154,17 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
           } catch (embeddedError) {
             
             
+            // If the student is actually a standalone Student document, load it directly.
+            try {
+              const res = await api.get(`/students/${studentId}`);
+              if (res?.data?.student) {
+                setFromStandaloneStudentDoc(res.data.student);
+                return;
+              }
+            } catch (_) {
+              // ignore and continue
+            }
+
             // If the provided guardianId doesn't work, maybe it's wrong
             // Let's try to find the student by searching all guardians (admin only)
             if (isAdmin && isAdmin()) {
@@ -180,61 +229,24 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
                 
                 // If all else fails, try as standalone user
                 const response = await api.get(`/users/${studentId}`);
-                const studentData = response.data;
+                const studentData = response.data?.user;
                 
                 if (!studentData) {
                   throw new Error('Student not found');
                 }
                 
-                setStudent(studentData);
-                setFormData({
-                  firstName: studentData.firstName || '',
-                  lastName: studentData.lastName || '',
-                  email: studentData.email || '',
-                  phone: studentData.phone || '',
-                  whatsapp: studentData.whatsapp || '',
-                  grade: studentData.studentInfo?.grade || '',
-                  school: studentData.studentInfo?.school || '',
-                  spokenLanguages: studentData.spokenLanguages || (studentData.studentInfo?.spokenLanguages) || (studentData.studentInfo?.language ? [studentData.studentInfo.language] : []),
-                  subjects: studentData.studentInfo?.subjects || [],
-                  learningPreferences: studentData.studentInfo?.learningPreferences || '',
-                  evaluationSummary: studentData.studentInfo?.evaluationSummary || '',
-                  dateOfBirth: studentData.studentInfo?.dateOfBirth ? new Date(studentData.studentInfo.dateOfBirth).toISOString().split('T')[0] : '',
-                  gender: studentData.studentInfo?.gender || 'male',
-                  timezone: deriveStudentTimezone(studentData),
-                  notes: studentData.studentInfo?.notes || '',
-                  isActive: studentData.isActive !== undefined ? studentData.isActive : true
-                });
+                setFromStandaloneUserDoc(studentData);
               }
               } else {
               // For non-admin users, fallback to standalone user
               const response = await api.get(`/users/${studentId}`);
-              const studentData = response.data;
+              const studentData = response.data?.user;
               
               if (!studentData) {
                 throw new Error('Student not found');
               }
               
-              setStudent(studentData);
-              setFormData({
-                firstName: studentData.firstName || '',
-                lastName: studentData.lastName || '',
-                email: studentData.email || '',
-                phone: studentData.phone || '',
-                whatsapp: studentData.whatsapp || '',
-                grade: studentData.studentInfo?.grade || '',
-                school: studentData.studentInfo?.school || '',
-                language: studentData.studentInfo?.language || 'English',
-                subjects: studentData.studentInfo?.subjects || [],
-                learningPreferences: studentData.studentInfo?.learningPreferences || '',
-                evaluation: studentData.studentInfo?.evaluation || '',
-                evaluationSummary: studentData.studentInfo?.evaluationSummary || '',
-                dateOfBirth: studentData.studentInfo?.dateOfBirth ? new Date(studentData.studentInfo.dateOfBirth).toISOString().split('T')[0] : '',
-                gender: studentData.studentInfo?.gender || 'male',
-                timezone: studentData.timezone || 'UTC',
-                notes: studentData.studentInfo?.notes || '',
-                isActive: studentData.isActive !== undefined ? studentData.isActive : true
-              });
+              setFromStandaloneUserDoc(studentData);
             }
           }
         }
@@ -449,6 +461,7 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
       
 
       let response;
+      const isStandaloneStudentModel = !!(student && (student._source === 'standalone' || (student.guardian && !student.studentInfo && !student.role)));
 
       if (guardianToUpdate) {
         try {
@@ -459,26 +472,43 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
           
 
           if (status === 404) {
-            
-            const standalonePayload = buildStandaloneUpdatePayload(embeddedPayload);
-            response = await api.put(`/users/${studentId}`, standalonePayload);
+            // If student is not in embedded list, try standalone Student model first, then standalone User.
+            if (isStandaloneStudentModel) {
+              response = await api.put(`/students/${studentId}`, embeddedPayload);
+            } else {
+              try {
+                response = await api.put(`/students/${studentId}`, embeddedPayload);
+              } catch (studentErr) {
+                const standalonePayload = buildStandaloneUpdatePayload(embeddedPayload);
+                response = await api.put(`/users/${studentId}`, standalonePayload);
+              }
+            }
           } else {
             throw embeddedError;
           }
         }
       } else {
-        const standalonePayload = buildStandaloneUpdatePayload(embeddedPayload);
-        response = await api.put(`/users/${studentId}`, standalonePayload);
+        // No guardian context: try standalone Student model first, then standalone User.
+        if (isStandaloneStudentModel) {
+          response = await api.put(`/students/${studentId}`, embeddedPayload);
+        } else {
+          try {
+            response = await api.put(`/students/${studentId}`, embeddedPayload);
+          } catch (_) {
+            const standalonePayload = buildStandaloneUpdatePayload(embeddedPayload);
+            response = await api.put(`/users/${studentId}`, standalonePayload);
+          }
+        }
       }
 
       if (guardianToUpdate) {
-        setStudent(response.data.student);
+        setStudent(response.data?.student || response.data?.user || response.data);
       } else {
-        setStudent(response.data);
+        setStudent(response.data?.student || response.data?.user || response.data);
       }
 
       // If a new image file was selected, upload it to the student picture endpoint
-      if (uploadFile) {
+      if (uploadFile && !isStandaloneStudentModel) {
         try {
           const fd = new FormData();
           fd.append('file', uploadFile);
@@ -493,6 +523,8 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
         } catch (imgErr) {
           console.warn('Failed to upload student picture:', imgErr && imgErr.message);
         }
+      } else if (uploadFile && isStandaloneStudentModel) {
+        console.warn('Skipping student picture upload for standalone Student model');
       }
 
       if (onUpdated) onUpdated();

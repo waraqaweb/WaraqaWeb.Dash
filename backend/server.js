@@ -42,6 +42,38 @@ const server = http.createServer(app);
 // This prevents rate-limit from treating all users as a single IP (the proxy).
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Deployment/build version
+// - Must be a simple increasing number so admins can quickly confirm which build is running.
+// - Prefer env overrides when provided (e.g. CI/CD), otherwise fall back to a startup timestamp.
+const DEPLOY_VERSION = (() => {
+  const candidates = [
+    process.env.BUILD_VERSION,
+    process.env.APP_VERSION,
+  ].filter(Boolean);
+
+  for (const v of candidates) {
+    const s = String(v).trim();
+    if (/^\d+$/.test(s)) return s;
+  }
+
+  // If BUILD_TIME is set, attempt to derive a numeric version from it.
+  if (process.env.BUILD_TIME) {
+    const raw = String(process.env.BUILD_TIME).trim();
+    if (/^\d+$/.test(raw)) return raw;
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) return String(parsed);
+  }
+
+  return String(Date.now());
+})();
+
+const DEPLOY_BUILD_TIME = (() => {
+  if (process.env.BUILD_TIME) return process.env.BUILD_TIME;
+  const asNum = Number(DEPLOY_VERSION);
+  if (Number.isFinite(asNum)) return new Date(asNum).toISOString();
+  return new Date().toISOString();
+})();
+
 // Ensure we have a stable JWT secret in development.
 // Without this, logins can succeed/fail inconsistently and existing tokens may become invalid.
 if (!process.env.JWT_SECRET) {
@@ -346,8 +378,8 @@ app.get('/api/health', (req, res) => {
     status: 'OK', 
     message: 'Waraqa API is running',
     timestamp: new Date().toISOString(),
-    version: process.env.APP_VERSION || 'dev',
-    buildTime: process.env.BUILD_TIME || null
+    version: DEPLOY_VERSION,
+    buildTime: DEPLOY_BUILD_TIME
   });
 });
 
@@ -357,8 +389,8 @@ app.get('/api/version', (req, res) => {
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
   res.json({
-    version: process.env.APP_VERSION || 'dev',
-    buildTime: process.env.BUILD_TIME || null
+    version: DEPLOY_VERSION,
+    buildTime: DEPLOY_BUILD_TIME
   });
 });
 

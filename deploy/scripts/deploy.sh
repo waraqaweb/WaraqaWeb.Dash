@@ -47,7 +47,11 @@ NEW_SHA="$(git rev-parse HEAD)"
 
 # Surface the deployed version inside running containers (used by /api/health).
 export APP_VERSION="${APP_VERSION:-$NEW_SHA}"
-export BUILD_TIME="${BUILD_TIME:-$(date -u +%s)}"
+# BUILD_VERSION is intended to be a simple increasing number.
+# Default to a UTC timestamp that increases every deploy.
+export BUILD_VERSION="${BUILD_VERSION:-$(date -u +%Y%m%d%H%M%S)}"
+# BUILD_TIME is shown in Settings; keep it human-readable.
+export BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 # Compute changed paths between previous and new SHA
 CHANGED="$(git diff --name-only "$OLD_SHA" "$NEW_SHA" || true)"

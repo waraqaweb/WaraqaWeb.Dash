@@ -401,10 +401,13 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
             </div>
           </div>
 
-          {/* Contact Information */}
-          {!isSelfEnrollment && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+              Email
+            </label>
+            {!isSelfEnrollment && (
+              <div className="mt-1 flex items-center">
                 <input
                   type="checkbox"
                   id="useGuardianEmail"
@@ -420,39 +423,10 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
                   disabled={loading}
                 />
                 <label htmlFor="useGuardianEmail" className="text-sm font-medium text-gray-700">
-                  Use the guardian email for this student
+                  Use guardian email
                 </label>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="useGuardianPhone"
-                  checked={useGuardianPhone}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setUseGuardianPhone(checked);
-                    if (!checked) {
-                      setFormData((prev) => ({ ...prev, phone: '' }));
-                    }
-                  }}
-                  className="mr-2"
-                  disabled={loading}
-                />
-                <label htmlFor="useGuardianPhone" className="text-sm font-medium text-gray-700">
-                  Use the guardian phone for this student
-                </label>
-              </div>
-              <div className="text-xs text-gray-500">
-                Tip: Date of birth helps distinguish students under one account.
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-              Email
-            </label>
+            )}
             <input
               type="email"
               id="email"
@@ -460,13 +434,34 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
               value={formData.email}
               onChange={handleChange}
               disabled={loading || isSelfEnrollment || useGuardianEmail}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-custom-teal focus:border-blue-500 disabled:bg-gray-100"
+              className="mt-2 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-custom-teal focus:border-blue-500 disabled:bg-gray-100"
             />
           </div>
             <div>
               <label htmlFor="phone" className="block text-sm font-medium text-gray-700">
                 Phone
               </label>
+              {!isSelfEnrollment && (
+                <div className="mt-1 flex items-center">
+                  <input
+                    type="checkbox"
+                    id="useGuardianPhone"
+                    checked={useGuardianPhone}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setUseGuardianPhone(checked);
+                      if (!checked) {
+                        setFormData((prev) => ({ ...prev, phone: '' }));
+                      }
+                    }}
+                    className="mr-2"
+                    disabled={loading}
+                  />
+                  <label htmlFor="useGuardianPhone" className="text-sm font-medium text-gray-700">
+                    Use guardian phone
+                  </label>
+                </div>
+              )}
               <input
                 type="tel"
                 id="phone"
@@ -474,7 +469,7 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
                 value={formData.phone}
                 onChange={handleChange}
                 disabled={loading || isSelfEnrollment || useGuardianPhone}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-custom-teal focus:border-blue-500 disabled:bg-gray-100"
+                className="mt-2 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-custom-teal focus:border-blue-500 disabled:bg-gray-100"
               />
             </div>
             
@@ -496,6 +491,9 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
                 disabled={loading}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-custom-teal focus:border-blue-500 disabled:bg-gray-100"
               />
+              <div className="mt-1 text-xs text-gray-500">
+                Helps distinguish students.
+              </div>
             </div>
             <div>
               <label htmlFor="gender" className="block text-sm font-medium text-gray-700">

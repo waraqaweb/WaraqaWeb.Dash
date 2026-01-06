@@ -21,6 +21,9 @@ jobs:
           script: |
             set -e
             cd "${{ secrets.DO_APP_DIR }}"
+            # Stamp a simple increasing numeric build version for this deployment.
+            export BUILD_VERSION="${{ github.run_number }}"
+            export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             # One-time setup (safe if already done)
             chmod +x deploy/scripts/deploy.sh || true
 

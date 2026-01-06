@@ -4,6 +4,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 ARG APP_VERSION
+ARG BUILD_VERSION
 ARG BUILD_TIME
 
 # Install dependencies first (better layer caching)
@@ -15,6 +16,7 @@ COPY backend/ ./
 
 ENV NODE_ENV=production
 ENV PORT=5000
+ENV BUILD_VERSION=${BUILD_VERSION}
 ENV APP_VERSION=${APP_VERSION}
 ENV BUILD_TIME=${BUILD_TIME}
 

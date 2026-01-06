@@ -53,27 +53,38 @@ const makeStudentKey = (student = {}) => {
   const guardianId = String(student.guardianId || student.guardian || '');
   if (!guardianId) return null;
 
+  const source = String(student._source || '');
+  const selfGuardian = Boolean(student.selfGuardian || student.studentInfo?.selfGuardian);
+
+  // If we have a linkage between embedded<->standalone, use that as the merge key.
+  const linkedStandaloneId =
+    source === 'standalone'
+      ? (student._id || student.id)
+      : (student.standaloneStudentId || student.studentInfo?.standaloneStudentId);
+  if (linkedStandaloneId) {
+    return `${guardianId}|standalone:${String(linkedStandaloneId)}`;
+  }
+
+  // Self-enrollment should always be treated as a single logical student per guardian.
+  if (selfGuardian) {
+    return `${guardianId}|selfGuardian`;
+  }
+
+  // Email/phone are NOT reliable identifiers in this system (multiple students can share guardian contact info).
+  // Use name + DOB only when DOB exists.
   const first = normalize(student.firstName || student.studentInfo?.firstName);
   const last = normalize(student.lastName || student.studentInfo?.lastName);
-  const fallbackName = normalize(student.studentName) || [first, last].filter(Boolean).join('|');
   const dob = normalizeDate(student.dateOfBirth || student.studentInfo?.dateOfBirth);
-
-  const email = normalize(student.email || student.studentInfo?.email);
-  if (email) {
-    // Include additional identity cues with the email so siblings sharing a guardian email stay distinct
-    const hasExtraIdentity = Boolean(fallbackName || dob);
-    return hasExtraIdentity
-      ? `${guardianId}|email:${email}|name:${fallbackName || 'unknown'}|dob:${dob || 'unknown'}`
-      : `${guardianId}|email:${email}`;
+  if (dob && (first || last)) {
+    return `${guardianId}|name:${first || 'unknown'}|last:${last || 'unknown'}|dob:${dob}`;
   }
 
-  if (fallbackName || dob) {
-    return `${guardianId}|name:${fallbackName || 'unknown'}|dob:${dob || 'unknown'}`;
-  }
-
+  // Without email (and without a linkage id), DO NOT dedupe by name/DOB.
+  // Guardians can have multiple kids/family members that share names or missing DOBs.
+  // Treat each record as distinct by its own id.
   const idPart = student._id || student.id || student.studentId;
   if (idPart) {
-    return `${guardianId}|id:${String(idPart)}`;
+    return `${guardianId}|${source || 'unknown'}:${String(idPart)}`;
   }
 
   return `${guardianId}|hash:${Buffer.from(JSON.stringify(student)).toString('base64').slice(0, 24)}`;
@@ -90,6 +101,7 @@ const dedupeStudents = (students = []) => {
     }
 
     const existing = byKey.get(key);
+    // Default preference for admin lists: prefer standalone over embedded when we know they're the same student.
     if (existing && existing._source === 'embedded' && student._source === 'standalone') {
       byKey.set(key, student);
     }
@@ -888,25 +900,43 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
         _source: 'standalone'
       }));
 
-    // Deduplicate: prefer embedded when a match exists (keeps embedded _id stable for guardian-scoped routes)
+    // Deduplicate for guardian view:
+    // - Only merge when we have a strong match (linked id / selfGuardian / email)
+    // - Prefer embedded when merged (guardian-scoped endpoints rely on embedded _id)
     const byKey = new Map();
-    const makeKey = (s) => {
-      const email = (s.email || '').toLowerCase();
-      const dob = s.dateOfBirth ? new Date(s.dateOfBirth).toISOString().slice(0,10) : '';
-      const name = `${(s.firstName||'').trim().toLowerCase()}|${(s.lastName||'').trim().toLowerCase()}`;
+    const makeGuardianMergeKey = (s) => {
       const g = String(s.guardianId || guardianId);
-      return `${g}|${email || name+'|'+dob}`;
+      if (!g) return null;
+
+      // Linked embedded<->standalone
+      const linkedStandaloneId = s._source === 'standalone' ? s._id : s.standaloneStudentId;
+      if (linkedStandaloneId) return `${g}|standalone:${String(linkedStandaloneId)}`;
+
+      if (s.selfGuardian) return `${g}|selfGuardian`;
+
+      // Email/phone are not unique identifiers; do not merge by them.
+      const dob = s.dateOfBirth ? new Date(s.dateOfBirth).toISOString().slice(0, 10) : '';
+      const first = String(s.firstName || '').trim().toLowerCase();
+      const last = String(s.lastName || '').trim().toLowerCase();
+      if (dob && (first || last)) return `${g}|name:${first || 'unknown'}|last:${last || 'unknown'}|dob:${dob}`;
+
+      // No safe merge key -> keep each record distinct
+      if (s._source === 'embedded' && s._id) return `${g}|embedded:${String(s._id)}`;
+      if (s._source === 'standalone' && s._id) return `${g}|standalone:${String(s._id)}`;
+      return `${g}|hash:${Buffer.from(JSON.stringify(s)).toString('base64').slice(0, 24)}`;
     };
+
     for (const s of [...normEmbedded, ...normStandalone]) {
-      const k = makeKey(s);
+      const k = makeGuardianMergeKey(s);
+      if (!k) continue;
       if (!byKey.has(k)) {
         byKey.set(k, s);
-      } else {
-        // Prefer embedded over standalone
-        const existing = byKey.get(k);
-        if (existing._source === 'standalone' && s._source === 'embedded') {
-          byKey.set(k, s);
-        }
+        continue;
+      }
+      const existing = byKey.get(k);
+      // Prefer embedded over standalone
+      if (existing && existing._source === 'standalone' && s._source === 'embedded') {
+        byKey.set(k, s);
       }
     }
 
@@ -1209,25 +1239,7 @@ router.get('/teacher/:teacherId/students', authenticateToken, async (req, res) =
     // Normalize standalone
     const normStandalone = standalone.map(s => ({ ...s, guardianId: s.guardian, _source: 'standalone' }));
 
-    // Deduplicate: prefer standalone
-    const byKey = new Map();
-    const makeKey = (s) => {
-      const email = (s.email || '').toLowerCase();
-      const dob = s.dateOfBirth ? new Date(s.dateOfBirth).toISOString().slice(0,10) : '';
-      const name = `${(s.firstName||'').trim().toLowerCase()}|${(s.lastName||'').trim().toLowerCase()}`;
-      const g = String(s.guardianId || s.guardian || '');
-      return `${g}|${email || name+'|'+dob}`;
-    };
-    for (const s of [...embedded, ...normStandalone]) {
-      const k = makeKey(s);
-      if (!byKey.has(k)) byKey.set(k, s);
-      else {
-        const existing = byKey.get(k);
-        if (existing._source === 'embedded' && s._source === 'standalone') byKey.set(k, s);
-      }
-    }
-
-    let students = Array.from(byKey.values());
+    let students = dedupeStudents([...embedded, ...normStandalone]);
     const totalHours = students.reduce((sum, s) => sum + (Number(s.hoursRemaining) || 0), 0);
 
     // Enrich with guardian timezone and guardianName when possible
@@ -1274,7 +1286,7 @@ router.post('/:guardianId/students', [
     .optional()
     .matches(/^\+?[0-9]{7,15}$/)
     .withMessage('Please provide a valid WhatsApp number'),
-  body('dateOfBirth').optional().isISO8601().withMessage('Please provide a valid date of birth'),
+  body('dateOfBirth').notEmpty().isISO8601().withMessage('Date of birth is required'),
   body('gender').optional().isIn(['male', 'female']).withMessage('Invalid gender'),
   body('timezone').optional().isString().withMessage('Timezone must be a string'),
   body('grade').optional().isString().withMessage('Grade must be a string'),
@@ -1324,9 +1336,10 @@ router.post('/:guardianId/students', [
       studentData.email = guardian.email;
       studentData.phone = guardian.phone;
       studentData.whatsapp = guardian.phone; // Default to guardian's phone
-      studentData.dateOfBirth = guardian.dateOfBirth;
-      studentData.gender = guardian.gender;
-      studentData.timezone = guardian.timezone;
+      // Only override DOB if guardian has one; otherwise keep the submitted DOB (required for identity).
+      if (guardian.dateOfBirth) studentData.dateOfBirth = guardian.dateOfBirth;
+      if (guardian.gender) studentData.gender = guardian.gender;
+      if (guardian.timezone) studentData.timezone = guardian.timezone;
     }
     
     // Add the student using the User model method
@@ -1343,18 +1356,24 @@ router.post('/:guardianId/students', [
       const keyDob = newStudent.dateOfBirth ? new Date(newStudent.dateOfBirth).toISOString().slice(0, 10) : '';
       const keyName = `${(newStudent.firstName || '').trim().toLowerCase()}|${(newStudent.lastName || '').trim().toLowerCase()}`;
 
-      const findQuery = { guardian: guardianId };
-      if (newStudent.selfGuardian) {
-        findQuery.selfGuardian = true;
+      // Only attempt to re-use an existing Student when we have a strong identifier.
+      // Otherwise, create a new Student doc to avoid collapsing multiple kids.
+      let standaloneStudent = null;
+      if (newStudent.standaloneStudentId) {
+        standaloneStudent = await Student.findById(newStudent.standaloneStudentId);
+      } else if (newStudent.selfGuardian) {
+        standaloneStudent = await Student.findOne({ guardian: guardianId, selfGuardian: true });
       } else if (keyEmail) {
-        findQuery.email = keyEmail;
-      } else {
-        findQuery.firstName = newStudent.firstName;
-        findQuery.lastName = newStudent.lastName;
-        if (keyDob) findQuery.dateOfBirth = new Date(keyDob);
+        standaloneStudent = await Student.findOne({ guardian: guardianId, email: keyEmail });
+      } else if (keyDob) {
+        standaloneStudent = await Student.findOne({
+          guardian: guardianId,
+          firstName: newStudent.firstName,
+          lastName: newStudent.lastName,
+          dateOfBirth: new Date(keyDob),
+        });
       }
 
-      let standaloneStudent = await Student.findOne(findQuery);
       if (!standaloneStudent) {
         standaloneStudent = new Student({
           firstName: newStudent.firstName,

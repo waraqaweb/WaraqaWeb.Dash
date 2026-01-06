@@ -148,6 +148,10 @@ router.post('/', authenticateToken, [
     .isEmail()
     .normalizeEmail()
     .withMessage('Please provide a valid email'),
+  body('dateOfBirth')
+    .notEmpty()
+    .isISO8601()
+    .withMessage('Date of birth is required'),
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -227,19 +231,22 @@ router.post('/', authenticateToken, [
 
         const keyEmail = (studentDoc.email || '').trim().toLowerCase();
         const keyDob = studentDoc.dateOfBirth ? new Date(studentDoc.dateOfBirth).toISOString().slice(0, 10) : '';
-        const keyName = `${(studentDoc.firstName || '').trim().toLowerCase()}|${(studentDoc.lastName || '').trim().toLowerCase()}`;
-        const makeKey = (s) => {
-          const email = (s.email || '').trim().toLowerCase();
-          const dob = s.dateOfBirth ? new Date(s.dateOfBirth).toISOString().slice(0, 10) : '';
-          const name = `${(s.firstName || '').trim().toLowerCase()}|${(s.lastName || '').trim().toLowerCase()}`;
-          return email ? email : `${name}|${dob}`;
-        };
+        const keyFirst = (studentDoc.firstName || '').trim().toLowerCase();
+        const keyLast = (studentDoc.lastName || '').trim().toLowerCase();
 
-        const desiredKey = keyEmail ? keyEmail : `${keyName}|${keyDob}`;
-        let embedded = guardianUser.guardianInfo.students.find((s) => {
-          if (studentDoc.selfGuardian) return s.selfGuardian === true;
-          return makeKey(s) === desiredKey;
-        });
+        let embedded = null;
+        if (studentDoc.selfGuardian) {
+          embedded = guardianUser.guardianInfo.students.find((s) => s.selfGuardian === true);
+        } else if (keyEmail) {
+          embedded = guardianUser.guardianInfo.students.find((s) => String(s.email || '').trim().toLowerCase() === keyEmail);
+        } else if (keyDob) {
+          embedded = guardianUser.guardianInfo.students.find((s) => {
+            const sFirst = (s.firstName || '').trim().toLowerCase();
+            const sLast = (s.lastName || '').trim().toLowerCase();
+            const sDob = s.dateOfBirth ? new Date(s.dateOfBirth).toISOString().slice(0, 10) : '';
+            return sFirst === keyFirst && sLast === keyLast && sDob === keyDob;
+          });
+        }
 
         if (!embedded) {
           guardianUser.guardianInfo.students.push({
@@ -298,7 +305,7 @@ router.post('/', authenticateToken, [
         guardian: guardianId,
         phone: guardian.phone,
         gender: guardian.gender || 'male',
-        dateOfBirth: guardian.dateOfBirth,
+        dateOfBirth: guardian.dateOfBirth || dateOfBirth,
         selfGuardian: true,
         grade: grade || '',
         school: school || '',

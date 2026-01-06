@@ -13,6 +13,9 @@ import SpokenLanguagesSelect from '../ui/SpokenLanguagesSelect';
 const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
   const { user } = useAuth();
   const [isSelfEnrollment, setIsSelfEnrollment] = useState(false);
+  const [useGuardianEmail, setUseGuardianEmail] = useState(true);
+  const [useGuardianPhone, setUseGuardianPhone] = useState(true);
+  const [guardianContact, setGuardianContact] = useState(null);
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -39,6 +42,9 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
     if (isOpen) {
       setError('');
       setIsSelfEnrollment(false);
+      setUseGuardianEmail(true);
+      setUseGuardianPhone(true);
+      setGuardianContact(null);
       setFormData({
         firstName: '',
         lastName: '',
@@ -68,9 +74,37 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
     }
   }, [isOpen, user]);
 
+  // Fetch selected guardian contact details for admin flow
+  useEffect(() => {
+    if (!isOpen) return;
+    if (user?.role !== 'admin') return;
+
+    (async () => {
+      try {
+        if (!selectedGuardian?._id) {
+          setGuardianContact(null);
+          return;
+        }
+        const res = await api.get(`/users/${selectedGuardian._id}`);
+        const u = res.data?.user || res.data;
+        setGuardianContact({
+          email: u?.email || '',
+          phone: u?.phone || '',
+          firstName: u?.firstName || '',
+          lastName: u?.lastName || '',
+        });
+      } catch (err) {
+        console.warn('Failed to fetch guardian contact details', err && err.message);
+        setGuardianContact(null);
+      }
+    })();
+  }, [isOpen, user?.role, selectedGuardian]);
+
   // Auto-fill form when self-enrollment is selected
   useEffect(() => {
     if (isSelfEnrollment && user) {
+      setUseGuardianEmail(true);
+      setUseGuardianPhone(true);
       setFormData(prev => ({
         ...prev,
         firstName: user.firstName || '',
@@ -87,14 +121,29 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
         ...prev,
         firstName: '',
         lastName: '',
-        email: '',
-        phone: '',
+        email: useGuardianEmail ? (guardianContact?.email || user?.email || '') : '',
+        phone: useGuardianPhone ? (guardianContact?.phone || user?.phone || '') : '',
         dateOfBirth: '',
         gender: 'male',
         
       }));
     }
-  }, [isSelfEnrollment, user]);
+  }, [isSelfEnrollment, user, useGuardianEmail, useGuardianPhone, guardianContact]);
+
+  // Keep email/phone in sync when toggles change (non-self enrollment)
+  useEffect(() => {
+    if (!isOpen) return;
+    if (isSelfEnrollment) return;
+
+    const fallbackEmail = guardianContact?.email || user?.email || '';
+    const fallbackPhone = guardianContact?.phone || user?.phone || '';
+
+    setFormData(prev => ({
+      ...prev,
+      email: useGuardianEmail ? fallbackEmail : (prev.email || ''),
+      phone: useGuardianPhone ? fallbackPhone : (prev.phone || ''),
+    }));
+  }, [isOpen, isSelfEnrollment, useGuardianEmail, useGuardianPhone, guardianContact, user]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -117,6 +166,15 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
           ? new Date(formData.dateOfBirth).toISOString()
           : undefined,
       };
+
+      // If the user chose to use guardian contact info, enforce it in the payload.
+      // Email/phone are for notifications/contact, not identity.
+      if (!isSelfEnrollment) {
+        const fallbackEmail = guardianContact?.email || user?.email || '';
+        const fallbackPhone = guardianContact?.phone || user?.phone || '';
+        if (useGuardianEmail && fallbackEmail) payload.email = fallbackEmail;
+        if (useGuardianPhone && fallbackPhone) payload.phone = fallbackPhone;
+      }
 
       const cleanedPayload = Object.entries(payload).reduce((acc, [key, value]) => {
         if (value === undefined || value === null || value === '') {
@@ -344,7 +402,51 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
           </div>
 
           {/* Contact Information */}
-          
+          {!isSelfEnrollment && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="useGuardianEmail"
+                  checked={useGuardianEmail}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setUseGuardianEmail(checked);
+                    if (!checked) {
+                      setFormData((prev) => ({ ...prev, email: '' }));
+                    }
+                  }}
+                  className="mr-2"
+                  disabled={loading}
+                />
+                <label htmlFor="useGuardianEmail" className="text-sm font-medium text-gray-700">
+                  Use the guardian email for this student
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="useGuardianPhone"
+                  checked={useGuardianPhone}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setUseGuardianPhone(checked);
+                    if (!checked) {
+                      setFormData((prev) => ({ ...prev, phone: '' }));
+                    }
+                  }}
+                  className="mr-2"
+                  disabled={loading}
+                />
+                <label htmlFor="useGuardianPhone" className="text-sm font-medium text-gray-700">
+                  Use the guardian phone for this student
+                </label>
+              </div>
+              <div className="text-xs text-gray-500">
+                Tip: Date of birth helps distinguish students under one account.
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
@@ -357,7 +459,7 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
               name="email"
               value={formData.email}
               onChange={handleChange}
-              disabled={loading || isSelfEnrollment}
+              disabled={loading || isSelfEnrollment || useGuardianEmail}
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-custom-teal focus:border-blue-500 disabled:bg-gray-100"
             />
           </div>
@@ -371,7 +473,7 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
                 name="phone"
                 value={formData.phone}
                 onChange={handleChange}
-                disabled={loading || isSelfEnrollment}
+                disabled={loading || isSelfEnrollment || useGuardianPhone}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-custom-teal focus:border-blue-500 disabled:bg-gray-100"
               />
             </div>
@@ -382,7 +484,7 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label htmlFor="dateOfBirth" className="block text-sm font-medium text-gray-700">
-                Date of Birth
+                Date of Birth *
               </label>
               <input
                 type="date"
@@ -390,7 +492,8 @@ const AddStudentModal = ({ isOpen, onClose, onStudentAdded }) => {
                 name="dateOfBirth"
                 value={formData.dateOfBirth}
                 onChange={handleChange}
-                disabled={loading || isSelfEnrollment}
+                required
+                disabled={loading}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-custom-teal focus:border-blue-500 disabled:bg-gray-100"
               />
             </div>

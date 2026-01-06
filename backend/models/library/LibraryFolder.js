@@ -109,7 +109,8 @@ folderSchema.methods.userHasSecretAccess = function userHasSecretAccess(candidat
 };
 
 folderSchema.methods.allowsUser = function allowsUser(candidate = {}) {
-  if (!this.isSecret) return true;
+  const requireShareAccess = candidate?.requireShareAccess === true;
+  if (!this.isSecret && !requireShareAccess) return true;
   if (candidate?.bypassSecret === true) return true;
 
   const shareContext = candidate?.share || {};

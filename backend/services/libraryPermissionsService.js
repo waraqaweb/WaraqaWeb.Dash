@@ -102,12 +102,22 @@ async function getUserAccessContext({ user, email, shareToken } = {}) {
   const normalizedEmail = (email || user?.email || '').trim().toLowerCase() || null;
   const userId = user?._id ? user._id.toString() : null;
   const share = await buildShareContext({ userId, email: normalizedEmail, shareToken });
+
+  // By default, treat the library as private in production.
+  // Set LIBRARY_REQUIRE_SHARE_ACCESS=false to restore the previous behavior.
+  const envOverride = process.env.LIBRARY_REQUIRE_SHARE_ACCESS;
+  const requireShareAccess =
+    typeof envOverride === 'string'
+      ? envOverride.trim().toLowerCase() === 'true'
+      : process.env.NODE_ENV === 'production';
+
   return {
     userId,
     email: normalizedEmail,
     role: user?.role || null,
     isAdmin: user?.role === 'admin',
-    share
+    share,
+    requireShareAccess
   };
 }
 

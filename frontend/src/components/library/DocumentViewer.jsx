@@ -297,6 +297,7 @@ const DocumentViewer = ({ item, onClose }) => {
   const [inlineBlobUrl, setInlineBlobUrl] = useState(null);
   const [inlineLoading, setInlineLoading] = useState(false);
   const [inlineError, setInlineError] = useState(null);
+  const [inlineFrameLoaded, setInlineFrameLoaded] = useState(false);
   const [inlineRenderAttempted, setInlineRenderAttempted] = useState(false);
   const [inlineRenderState, setInlineRenderState] = useState({ status: 'idle', error: null });
   const [inlineRenderProgress, setInlineRenderProgress] = useState({ current: 0, total: 0 });
@@ -508,6 +509,7 @@ const DocumentViewer = ({ item, onClose }) => {
     setActivePage(1);
     setPreviewMode('pages');
     setInlineUrl(null);
+    setInlineFrameLoaded(false);
     cleanupInlineBlobUrl();
     inlinePdfBufferRef.current = null;
     setInlineError(null);
@@ -531,6 +533,37 @@ const DocumentViewer = ({ item, onClose }) => {
       console.warn('Failed to restore annotation cache', err);
     }
   }, [cleanupInlineBlobUrl, itemId, loadPages]);
+
+  // If the browser PDF viewer inside the iframe fails to load (common on some
+  // deployments/browsers), fall back to a same-origin blob preview.
+  useEffect(() => {
+    if (previewMode !== 'inline') return;
+    if (!inlineUrl) return;
+    if (inlineBlobUrl) return;
+
+    setInlineFrameLoaded(false);
+
+    let cancelled = false;
+    const resolved = new URL(inlineUrl, window.location.href);
+    const sameOrigin = resolved.origin === window.location.origin;
+
+    // Only attempt the blob fallback for same-origin URLs.
+    if (!sameOrigin) return;
+
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      if (inlineFrameLoaded) return;
+      // Try to make the preview reliable by downloading the PDF as a blob.
+      prepareInlineBlobPreview(inlineUrl).catch((err) => {
+        console.warn('Inline blob fallback failed', err);
+      });
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [previewMode, inlineUrl, inlineBlobUrl, inlineFrameLoaded, prepareInlineBlobPreview]);
 
   useEffect(() => {
     return () => {
@@ -1034,6 +1067,7 @@ const DocumentViewer = ({ item, onClose }) => {
                       src={inlineBlobUrl || inlineUrl}
                       title={`Preview of ${item.displayName}`}
                       className="h-full w-full"
+                      onLoad={() => setInlineFrameLoaded(true)}
                     />
                   </div>
                   {inlineError ? <p className="text-xs text-red-500">{inlineError}</p> : null}

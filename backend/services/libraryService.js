@@ -91,6 +91,7 @@ function buildFolderCandidate(access) {
     userId: access.userId,
     email: access.email,
     bypassSecret: access.isAdmin || access.share.spaceAccess,
+    requireShareAccess: Boolean(access.requireShareAccess),
     share: {
       spaceAccess: access.share.spaceAccess,
       folderIds: access.share.folderIds
@@ -115,7 +116,7 @@ function serializeTreeNode(folder) {
 }
 
 function canViewItem(item, folder, access) {
-  if (!item.effectiveSecret) return true;
+  if (!item.effectiveSecret && !access.requireShareAccess) return true;
   if (access.isAdmin || access.share.spaceAccess) return true;
 
   const itemId = asId(item._id);

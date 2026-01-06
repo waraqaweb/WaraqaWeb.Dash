@@ -1,10 +1,7 @@
-upstream backend_upstream {
-  server backend:5000;
-}
-
-upstream frontend_upstream {
-  server frontend:80;
-}
+## Upstream notes
+# Docker assigns containers new IPs when they are recreated.
+# If nginx resolves service names once at startup, it can temporarily keep stale IPs and return 502.
+# We force periodic DNS re-resolution via Docker's embedded DNS (127.0.0.11) by using variables.
 
 # Basic, practical abuse protection (lightweight)
 # IMPORTANT: limits are per *public IP*. Several real users may share one IP (NAT).
@@ -23,6 +20,10 @@ server {
   listen 80;
   server_name ${SERVER_NAMES};
 
+  resolver 127.0.0.11 valid=10s ipv6=off;
+  set $backend_upstream http://backend:5000;
+  set $frontend_upstream http://frontend:80;
+
   # ACME challenge for Let's Encrypt (certbot)
   location ^~ /.well-known/acme-challenge/ {
     root /var/www/certbot;
@@ -38,6 +39,10 @@ server {
 server {
   listen 443 ssl http2;
   server_name ${SERVER_NAMES};
+
+  resolver 127.0.0.11 valid=10s ipv6=off;
+  set $backend_upstream http://backend:5000;
+  set $frontend_upstream http://frontend:80;
 
   ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
   ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
@@ -67,7 +72,7 @@ server {
   # Auth endpoints are intentionally NOT rate-limited at nginx.
   # The backend has its own dedicated auth/login rate limiters.
   location ^~ /api/auth/ {
-    proxy_pass http://backend_upstream;
+    proxy_pass $backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -80,7 +85,7 @@ server {
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
     proxy_buffering off;
-    proxy_pass http://backend_upstream;
+    proxy_pass $backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -89,7 +94,7 @@ server {
 
   # Health/version are safe to exempt from nginx limits (backend also skips them).
   location = /api/health {
-    proxy_pass http://backend_upstream;
+    proxy_pass $backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -97,7 +102,7 @@ server {
   }
 
   location = /api/version {
-    proxy_pass http://backend_upstream;
+    proxy_pass $backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -108,7 +113,7 @@ server {
     # Only affects anonymous requests. Authenticated requests have an empty key and
     # are effectively not rate-limited at nginx.
     limit_req zone=anon_api_per_ip burst=40 nodelay;
-    proxy_pass http://backend_upstream;
+    proxy_pass $backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -117,7 +122,7 @@ server {
 
   # Socket.io (websockets)
   location ^~ /socket.io/ {
-    proxy_pass http://backend_upstream;
+    proxy_pass $backend_upstream;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -129,7 +134,7 @@ server {
 
   # Everything else -> dashboard container
   location / {
-    proxy_pass http://frontend_upstream;
+    proxy_pass $frontend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

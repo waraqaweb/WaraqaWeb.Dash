@@ -17,6 +17,9 @@ const formatBytes = (bytes = 0) => {
 const Settings = () => {
   const { user, socket } = useAuth();
 
+  const dashboardVersion = import.meta?.env?.VITE_BUILD_VERSION || import.meta?.env?.VITE_APP_VERSION || null;
+  const dashboardBuildTime = import.meta?.env?.VITE_BUILD_TIME || null;
+
   // Compact/condensed layout toggle (defaults to condensed for dense Google-like UI)
   const [condensed, setCondensed] = useState(true);
   const [firstClassWindowHours, setFirstClassWindowHours] = useState(24);
@@ -116,10 +119,12 @@ const Settings = () => {
           <div className="flex items-center justify-between mb-3">
             <div>
               <h1 className={`font-semibold ${condensed ? 'text-lg' : 'text-2xl'}`}>Settings</h1>
-              {(appVersion || appBuildTime) && (
+              {(appVersion || appBuildTime || dashboardVersion || dashboardBuildTime) && (
                 <div className="text-xs text-muted-foreground mt-1">
-                  Version: <span className="font-medium text-foreground">{appVersion || 'unknown'}</span>
-                  {appBuildTime ? <span> • Built: {new Date(appBuildTime).toLocaleString()}</span> : null}
+                  API: <span className="font-medium text-foreground">{appVersion || 'unknown'}</span>
+                  {appBuildTime ? <span> • API Built: {new Date(appBuildTime).toLocaleString()}</span> : null}
+                  {dashboardVersion ? <span> • Dashboard: <span className="font-medium text-foreground">{dashboardVersion}</span></span> : null}
+                  {dashboardBuildTime ? <span> • Dashboard Built: {new Date(dashboardBuildTime).toLocaleString()}</span> : null}
                 </div>
               )}
             </div>

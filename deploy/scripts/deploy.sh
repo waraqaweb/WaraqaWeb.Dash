@@ -48,8 +48,24 @@ NEW_SHA="$(git rev-parse HEAD)"
 # Surface the deployed version inside running containers (used by /api/health).
 export APP_VERSION="${APP_VERSION:-$NEW_SHA}"
 # BUILD_VERSION is intended to be a simple increasing number.
-# Default to a UTC timestamp that increases every deploy.
-export BUILD_VERSION="${BUILD_VERSION:-$(date -u +%Y%m%d%H%M%S)}"
+# - In CI/CD you should pass BUILD_VERSION explicitly (e.g. GitHub run_number).
+# - For manual SSH deploys, we auto-increment a local counter file.
+if [[ -z "${BUILD_VERSION:-}" ]]; then
+  COUNTER_FILE="${ROOT_DIR}/.deploy_version"
+  LAST=""
+  if [[ -f "$COUNTER_FILE" ]]; then
+    LAST="$(cat "$COUNTER_FILE" 2>/dev/null || true)"
+  fi
+
+  if [[ "$LAST" =~ ^[0-9]+$ ]]; then
+    BUILD_VERSION="$((LAST + 1))"
+  else
+    BUILD_VERSION="1"
+  fi
+
+  echo "$BUILD_VERSION" > "$COUNTER_FILE" 2>/dev/null || true
+  export BUILD_VERSION
+fi
 # BUILD_TIME is shown in Settings; keep it human-readable.
 export BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 

@@ -7,6 +7,7 @@
 
 const express = require('express');
 const { body, validationResult } = require('express-validator');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Student = require('../models/Student');
 const Guardian = require('../models/Guardian');
@@ -603,6 +604,27 @@ router.delete('/:id', authenticateToken, authorizeRoles('admin'), async (req, re
       { user: student.guardian },
       { $pull: { students: student._id } }
     );
+
+    // Also remove any embedded references for this guardian to avoid ghost students.
+    try {
+      const idObj = mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : null;
+      const ids = idObj ? [id, idObj] : [id];
+      await User.updateOne(
+        { _id: student.guardian, role: 'guardian' },
+        {
+          $pull: {
+            'guardianInfo.students': {
+              $or: [
+                { standaloneStudentId: { $in: ids } },
+                { _id: { $in: ids } }
+              ]
+            }
+          }
+        }
+      );
+    } catch (e) {
+      console.warn('Failed to remove embedded student reference during standalone delete', e && e.message);
+    }
 
     // Delete the student
     await Student.findByIdAndDelete(id);

@@ -29,6 +29,69 @@ const resolveQueryResult = async (queryLike, fallbackValue = []) => {
   }
 };
 
+const normalize = (value = '') => String(value || '').trim().toLowerCase();
+const normalizeDate = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+};
+
+// Dedupe key that does NOT rely on email/phone (multiple students can share guardian contact info).
+// Prefer a direct embedded<->standalone linkage when available.
+const makeStudentKey = (student = {}) => {
+  const guardianId = String(student.guardianId || student.guardian || '');
+  if (!guardianId) return null;
+
+  const source = String(student._source || '');
+  const selfGuardian = Boolean(student.selfGuardian || student.studentInfo?.selfGuardian);
+
+  const linkedStandaloneId =
+    source === 'standalone'
+      ? (student._id || student.id)
+      : (student.standaloneStudentId || student.studentInfo?.standaloneStudentId);
+  if (linkedStandaloneId) return `${guardianId}|standalone:${String(linkedStandaloneId)}`;
+
+  if (selfGuardian) return `${guardianId}|selfGuardian`;
+
+  const first = normalize(student.firstName || student.studentInfo?.firstName);
+  const last = normalize(student.lastName || student.studentInfo?.lastName);
+  const dob = normalizeDate(student.dateOfBirth || student.studentInfo?.dateOfBirth);
+  if (dob && (first || last)) return `${guardianId}|name:${first || 'unknown'}|last:${last || 'unknown'}|dob:${dob}`;
+
+  const idPart = student._id || student.id || student.studentId;
+  if (idPart) return `${guardianId}|${source || 'unknown'}:${String(idPart)}`;
+
+  return `${guardianId}|hash:${Buffer.from(JSON.stringify(student)).toString('base64').slice(0, 24)}`;
+};
+
+const dedupeStudents = (students = []) => {
+  const byKey = new Map();
+  const extras = [];
+  (students || []).forEach((student) => {
+    const key = makeStudentKey(student);
+    if (!key) return;
+    if (!byKey.has(key)) {
+      byKey.set(key, student);
+      return;
+    }
+
+    const existing = byKey.get(key);
+    // Prefer standalone record when it's the same logical student.
+    if (existing && existing._source === 'embedded' && student._source === 'standalone') {
+      byKey.set(key, student);
+      return;
+    }
+
+    const existingId = existing && (existing._id || existing.id || existing.studentId);
+    const incomingId = student && (student._id || student.id || student.studentId);
+    if (existingId && incomingId && String(existingId) !== String(incomingId)) {
+      extras.push(student);
+    }
+  });
+  return [...Array.from(byKey.values()), ...extras];
+};
+
 const router = express.Router();
 
 /**
@@ -619,38 +682,81 @@ router.get('/stats', authenticateToken, async (req, res) => {
       }
 
       // Compute the guardian's children (students) list.
-      // Include cases where the guardian is the student themselves (self-enrolled):
-      // either student.guardianId === guardianId OR student.studentId === guardianId.
+      // IMPORTANT:
+      // - Do not derive this solely from classes (a guardian can have multiple students even if only one has classes yet).
+      // - Merge embedded (User.guardianInfo.students) + standalone (Student collection) + a small legacy class-derived list.
       let myChildren = [];
       try {
-        const childrenAgg = await Class.aggregate([
-          { $match: { $or: [ { 'student.guardianId': guardianId }, { 'student.studentId': guardianId } ] } },
-          { $group: { _id: '$student.studentId', studentName: { $first: '$student.studentName' } } },
-          { $limit: 200 }
-        ]).exec();
-        myChildren = Array.isArray(childrenAgg) ? childrenAgg.map(c => ({ _id: c._id, studentName: c.studentName })) : [];
-      } catch (e) {
-        console.warn('dashboard: myChildren aggregation failed', e && e.message);
-        myChildren = [];
-      }
+        const guardianUser = await User.findById(guardianId).select('guardianInfo').lean();
+        const embedded = Array.isArray(guardianUser?.guardianInfo?.students) ? guardianUser.guardianInfo.students : [];
+        const embeddedChildren = embedded.map((s) => {
+          const studentName = (`${s.firstName || ''} ${s.lastName || ''}`).replace(/\s+/g, ' ').trim();
+          return {
+            _id: s._id,
+            guardianId,
+            firstName: s.firstName,
+            lastName: s.lastName,
+            dateOfBirth: s.dateOfBirth || s.studentInfo?.dateOfBirth,
+            selfGuardian: Boolean(s.selfGuardian || s.studentInfo?.selfGuardian),
+            standaloneStudentId: s.standaloneStudentId || s.studentInfo?.standaloneStudentId,
+            studentName: studentName || 'Student',
+            _source: 'embedded'
+          };
+        });
 
-      if (!myChildren.length) {
+        let standaloneChildren = [];
         try {
           const studentsFromCollection = await Student.find({ guardian: guardianId, isActive: { $ne: false } })
-            .select('firstName lastName fullName selfGuardian')
+            .select('firstName lastName fullName dateOfBirth selfGuardian')
             .limit(200)
             .lean();
-          myChildren = (studentsFromCollection || []).map((student) => {
+          standaloneChildren = (studentsFromCollection || []).map((student) => {
             const studentName = (student.fullName || `${student.firstName || ''} ${student.lastName || ''}`).replace(/\s+/g, ' ').trim();
             return {
               _id: student._id,
+              guardianId,
+              firstName: student.firstName,
+              lastName: student.lastName,
+              dateOfBirth: student.dateOfBirth,
+              selfGuardian: Boolean(student.selfGuardian),
               studentName: studentName || 'Student',
-              selfGuardian: Boolean(student.selfGuardian)
+              _source: 'standalone'
             };
           });
         } catch (fallbackErr) {
-          console.warn('dashboard: myChildren fallback via Student collection failed', fallbackErr && fallbackErr.message);
+          console.warn('dashboard: myChildren fetch via Student collection failed', fallbackErr && fallbackErr.message);
         }
+
+        let legacyClassChildren = [];
+        try {
+          // Include cases where the guardian is the student themselves (self-enrolled):
+          // either student.guardianId === guardianId OR student.studentId === guardianId.
+          const childrenAgg = await Class.aggregate([
+            { $match: { $or: [{ 'student.guardianId': guardianId }, { 'student.studentId': guardianId }] } },
+            { $group: { _id: '$student.studentId', studentName: { $first: '$student.studentName' } } },
+            { $limit: 200 }
+          ]).exec();
+          legacyClassChildren = Array.isArray(childrenAgg)
+            ? childrenAgg.map((c) => ({
+              _id: c._id,
+              guardianId,
+              studentName: c.studentName || 'Student',
+              _source: 'classAgg'
+            }))
+            : [];
+        } catch (e) {
+          console.warn('dashboard: myChildren legacy class aggregation failed', e && e.message);
+          legacyClassChildren = [];
+        }
+
+        myChildren = dedupeStudents([...embeddedChildren, ...standaloneChildren, ...legacyClassChildren]).map((s) => ({
+          _id: s._id,
+          studentName: s.studentName || 'Student',
+          selfGuardian: Boolean(s.selfGuardian)
+        }));
+      } catch (e) {
+        console.warn('dashboard: myChildren computation failed', e && e.message);
+        myChildren = [];
       }
 
       // Active student vacations for this guardian's children

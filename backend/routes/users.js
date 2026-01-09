@@ -92,6 +92,7 @@ const makeStudentKey = (student = {}) => {
 
 const dedupeStudents = (students = []) => {
   const byKey = new Map();
+  const extras = [];
   students.forEach((student) => {
     const key = makeStudentKey(student);
     if (!key) return;
@@ -104,9 +105,19 @@ const dedupeStudents = (students = []) => {
     // Default preference for admin lists: prefer standalone over embedded when we know they're the same student.
     if (existing && existing._source === 'embedded' && student._source === 'standalone') {
       byKey.set(key, student);
+      return;
+    }
+
+    // If we somehow have multiple distinct embedded students sharing the same linkage key
+    // (commonly caused by shared guardian email/phone), keep the additional records so
+    // guardians/admins can see all created students.
+    const existingId = existing && (existing._id || existing.id || existing.studentId);
+    const incomingId = student && (student._id || student.id || student.studentId);
+    if (existingId && incomingId && String(existingId) !== String(incomingId)) {
+      extras.push(student);
     }
   });
-  return Array.from(byKey.values());
+  return [...Array.from(byKey.values()), ...extras];
 };
 
 const sanitizeStudentHours = (students = []) =>
@@ -877,6 +888,124 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
     }
     
     const embedded = Array.isArray(guardian.guardianInfo?.students) ? guardian.guardianInfo.students : [];
+
+    // Reconcile embedded -> standalone (best effort):
+    // - Ensure every embedded student has its OWN standalone Student doc linked via standaloneStudentId
+    // - Repair legacy bad state where multiple embedded students point at the same standaloneStudentId
+    const createdStandalone = [];
+    const idToEmbedded = new Map();
+    for (const s of embedded) {
+      const sid = s && (s.standaloneStudentId || s.studentInfo?.standaloneStudentId);
+      if (!sid) continue;
+      const key = String(sid);
+      if (!idToEmbedded.has(key)) idToEmbedded.set(key, []);
+      idToEmbedded.get(key).push(s);
+    }
+
+    const makeStandaloneFromEmbedded = async (s) => {
+      const doc = new Student({
+        firstName: s.firstName,
+        lastName: s.lastName,
+        email: (s.email || '').trim().toLowerCase() || undefined,
+        guardian: guardianId,
+        grade: s.grade,
+        school: s.school,
+        language: s.language,
+        subjects: Array.isArray(s.subjects) ? s.subjects : [],
+        phone: s.phone,
+        whatsapp: s.whatsapp,
+        learningPreferences: s.learningPreferences,
+        evaluation: s.evaluation,
+        evaluationSummary: s.evaluationSummary,
+        dateOfBirth: s.dateOfBirth,
+        gender: s.gender,
+        timezone: s.timezone || guardian.timezone,
+        profilePicture: s.profilePicture || undefined,
+        isActive: typeof s.isActive === 'boolean' ? s.isActive : true,
+        hoursRemaining: typeof s.hoursRemaining === 'number' ? s.hoursRemaining : 0,
+        selfGuardian: !!s.selfGuardian,
+        totalClassesAttended: s.totalClassesAttended || 0,
+        currentTeachers: Array.isArray(s.currentTeachers) ? s.currentTeachers : [],
+        notes: s.notes,
+      });
+      await doc.save();
+      createdStandalone.push(doc);
+      try {
+        await Guardian.findOneAndUpdate(
+          { user: guardianId },
+          { $addToSet: { students: doc._id } },
+          { upsert: true }
+        );
+      } catch (gErr) {
+        console.warn('Failed to update Guardian.students during reconcile', gErr && gErr.message);
+      }
+      return doc;
+    };
+
+    // Repair duplicated standalone linkage
+    for (const [sid, list] of idToEmbedded.entries()) {
+      if (!Array.isArray(list) || list.length <= 1) continue;
+      // Keep the first link, split the rest so each embedded student can show up separately.
+      for (let i = 1; i < list.length; i++) {
+        try {
+          const newDoc = await makeStandaloneFromEmbedded(list[i]);
+          list[i].standaloneStudentId = newDoc._id;
+          if (list[i].studentInfo && typeof list[i].studentInfo === 'object') {
+            list[i].studentInfo.standaloneStudentId = newDoc._id;
+          }
+        } catch (e) {
+          console.warn('Failed to split duplicated standalone linkage', e && e.message);
+        }
+      }
+    }
+
+    // Ensure every embedded student has a standalone doc
+    for (const s of embedded) {
+      const sid = s && (s.standaloneStudentId || s.studentInfo?.standaloneStudentId);
+      if (sid) {
+        try {
+          const exists = await Student.exists({ _id: sid });
+          if (exists) continue;
+        } catch (e) {
+          // fall through to create
+        }
+      }
+
+      // Self-guardian: keep single standalone when possible
+      if (s.selfGuardian) {
+        try {
+          const existingSelf = await Student.findOne({ guardian: guardianId, selfGuardian: true });
+          if (existingSelf) {
+            s.standaloneStudentId = existingSelf._id;
+            if (s.studentInfo && typeof s.studentInfo === 'object') {
+              s.studentInfo.standaloneStudentId = existingSelf._id;
+            }
+            continue;
+          }
+        } catch (e) {
+          // fall through
+        }
+      }
+
+      try {
+        const newDoc = await makeStandaloneFromEmbedded(s);
+        s.standaloneStudentId = newDoc._id;
+        if (s.studentInfo && typeof s.studentInfo === 'object') {
+          s.studentInfo.standaloneStudentId = newDoc._id;
+        }
+      } catch (e) {
+        console.warn('Failed to create standalone student during reconcile', e && e.message);
+      }
+    }
+
+    if (createdStandalone.length) {
+      try {
+        await guardian.save();
+      } catch (e) {
+        console.warn('Failed to save guardian after reconcile', e && e.message);
+      }
+    }
+
     let standalone = [];
     try {
       standalone = await Student.find({ guardian: guardianId }).lean();
@@ -934,6 +1063,18 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
         continue;
       }
       const existing = byKey.get(k);
+
+      // If we collide on the linkage key but have two distinct embedded students,
+      // keep BOTH (this represents real multiple students, or legacy-bad linkage).
+      if (existing && existing._source === 'embedded' && s._source === 'embedded') {
+        const exId = existing._id;
+        const inId = s._id;
+        if (exId && inId && String(exId) !== String(inId)) {
+          byKey.set(`${k}|embedded:${String(inId)}`, s);
+          continue;
+        }
+      }
+
       // Prefer embedded over standalone
       if (existing && existing._source === 'standalone' && s._source === 'embedded') {
         byKey.set(k, s);
@@ -1356,22 +1497,14 @@ router.post('/:guardianId/students', [
       const keyDob = newStudent.dateOfBirth ? new Date(newStudent.dateOfBirth).toISOString().slice(0, 10) : '';
       const keyName = `${(newStudent.firstName || '').trim().toLowerCase()}|${(newStudent.lastName || '').trim().toLowerCase()}`;
 
-      // Only attempt to re-use an existing Student when we have a strong identifier.
-      // Otherwise, create a new Student doc to avoid collapsing multiple kids.
+      // IMPORTANT: students are not identified by email/phone in this system.
+      // To avoid collapsing multiple students into one, we create a NEW Student doc
+      // for each embedded student (except explicit linkage/self-guardian).
       let standaloneStudent = null;
       if (newStudent.standaloneStudentId) {
         standaloneStudent = await Student.findById(newStudent.standaloneStudentId);
       } else if (newStudent.selfGuardian) {
         standaloneStudent = await Student.findOne({ guardian: guardianId, selfGuardian: true });
-      } else if (keyEmail) {
-        standaloneStudent = await Student.findOne({ guardian: guardianId, email: keyEmail });
-      } else if (keyDob) {
-        standaloneStudent = await Student.findOne({
-          guardian: guardianId,
-          firstName: newStudent.firstName,
-          lastName: newStudent.lastName,
-          dateOfBirth: new Date(keyDob),
-        });
       }
 
       if (!standaloneStudent) {
@@ -1557,9 +1690,34 @@ router.delete('/:guardianId/students/:studentId', authenticateToken, async (req,
         message: 'User is not a guardian'
       });
     }
+
+    const embedded = guardian.guardianInfo?.students?.id(studentId);
+    if (!embedded) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    const linkedStandaloneId = embedded.standaloneStudentId || embedded.studentInfo?.standaloneStudentId || null;
     
     // Remove the student using the User model method
     await guardian.removeStudent(studentId);
+
+    // Best-effort: also delete the linked standalone Student doc if no other embedded student references it.
+    try {
+      if (linkedStandaloneId) {
+        const stillReferenced = (guardian.guardianInfo?.students || []).some(
+          (s) => String(s.standaloneStudentId || s.studentInfo?.standaloneStudentId || '') === String(linkedStandaloneId)
+        );
+        if (!stillReferenced) {
+          await Guardian.findOneAndUpdate(
+            { user: guardianId },
+            { $pull: { students: linkedStandaloneId } }
+          );
+          await Student.findByIdAndDelete(linkedStandaloneId);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to cleanup standalone student during embedded delete', e && e.message);
+    }
     
     // Fetch the updated guardian to get the updated total hours
     const updatedGuardian = await User.findById(guardianId).select('-password');

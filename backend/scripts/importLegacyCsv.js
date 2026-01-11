@@ -44,6 +44,64 @@ const TeacherInvoice = require('../models/TeacherInvoice');
 
 const DEFAULT_TEMP_PASSWORD = 'TempPassword123!';
 
+const sanitizeCsvString = (value) => {
+  const s = asString(value);
+  if (!s) return '';
+  const lowered = s.toLowerCase();
+  if (lowered === 'null' || lowered === 'undefined') return '';
+  return s;
+};
+
+const fromScientificNotationToDigits = (value) => {
+  const raw = asString(value);
+  if (!raw) return null;
+  const m = raw.match(/^([0-9]+)(?:\.([0-9]+))?e\+([0-9]+)$/i);
+  if (!m) return null;
+  const intPart = m[1] || '0';
+  const fracPart = m[2] || '';
+  const exp = Number(m[3] || 0);
+  if (!Number.isFinite(exp) || exp < 0) return null;
+
+  const digits = `${intPart}${fracPart}`.replace(/^0+/, '') || '0';
+  const decimalPlaces = fracPart.length;
+  const zerosToAppend = exp - decimalPlaces;
+  if (zerosToAppend < 0) return null;
+  return digits + '0'.repeat(zerosToAppend);
+};
+
+const normalizePhoneLoose = (value) => {
+  const raw = sanitizeCsvString(value);
+  if (!raw) return '';
+  if (raw === '0') return '';
+
+  const sciDigits = fromScientificNotationToDigits(raw);
+  const candidate = sciDigits || raw;
+  // Keep leading + if present, otherwise strip to digits.
+  const hasPlus = candidate.trim().startsWith('+');
+  const cleaned = candidate.replace(/[\s().\-\u200E\u200F\t]/g, '');
+  if (hasPlus) return cleaned;
+  return cleaned.replace(/[^0-9]/g, '');
+};
+
+const normalizeAddressLoose = (value) => {
+  const raw = sanitizeCsvString(value);
+  if (!raw) return null;
+
+  // Very lightweight parsing: treat the entire string as street, and try to
+  // infer city/state/country from comma-separated segments.
+  const parts = raw.split(',').map((p) => p.trim()).filter(Boolean);
+  const address = { street: raw };
+  if (parts.length === 2) {
+    address.city = parts[0];
+    address.country = parts[1];
+  } else if (parts.length >= 3) {
+    address.city = parts[0];
+    address.state = parts.slice(1, parts.length - 1).join(', ');
+    address.country = parts[parts.length - 1];
+  }
+  return address;
+};
+
 const parseArgs = (argv) => {
   const out = { _: [] };
   for (let i = 2; i < argv.length; i++) {
@@ -82,6 +140,11 @@ Safety:
   --apply                     actually write to DB (default is dry run)
   --update-existing-users      allow updating existing user profile fields (default: false)
   --update-existing-passwords overwrite passwords for existing users too (NOT recommended unless you intend it)
+
+Import options:
+  --guardian-password <pw>     password for NEW guardian accounts (default: ${DEFAULT_TEMP_PASSWORD})
+  --force-inactive             force NEW guardians/students to be created inactive (default: false)
+  --only-guardians-students    safety mode: refuse teachers/invoices imports (default: false)
 
 Examples:
   node scripts/importLegacyCsv.js --guardians "C:\\path\\guardians.csv" --students "C:\\path\\students.csv"
@@ -137,7 +200,9 @@ const safeParseDate = (value) => {
     'YYYY-MM-DD HH:mm:ss',
     'YYYY-MM-DD HH:mm:ss.S',
     'YYYY-MM-DD HH:mm:ss.SSS',
-    'YYYY-MM-DD'
+    'YYYY-MM-DD',
+    'M/D/YYYY',
+    'MM/DD/YYYY'
   ], true);
 
   if (m.isValid()) return m.toDate();
@@ -259,6 +324,8 @@ const normalizeHours = (value) => {
   return Math.round(n * 1000) / 1000;
 };
 
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const main = async () => {
   const args = parseArgs(process.argv);
 
@@ -271,6 +338,13 @@ const main = async () => {
   const apply = Boolean(args.apply);
   const updateExistingUsers = Boolean(args['update-existing-users']);
   const updateExistingPasswords = Boolean(args['update-existing-passwords']);
+  const forceInactive = Boolean(args['force-inactive']);
+  const onlyGuardiansStudents = Boolean(args['only-guardians-students']);
+
+  const guardianPasswordRaw = asString(args['guardian-password']);
+  const guardianPassword = guardianPasswordRaw || DEFAULT_TEMP_PASSWORD;
+  // If a fixed guardian password is explicitly provided, do not attempt to restore legacy bcrypt hashes.
+  const allowLegacyGuardianPasswordHash = !guardianPasswordRaw;
 
   const mongoUri = args['mongo-uri'] || process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
 
@@ -279,6 +353,16 @@ const main = async () => {
   const teacherCsvPath = args.teachers;
   const guardianInvoiceCsvPath = args['guardian-invoices'];
   const teacherInvoiceCsvPath = args['teacher-invoices'];
+
+  if (onlyGuardiansStudents) {
+    const extra = [];
+    if (teacherCsvPath) extra.push('--teachers');
+    if (guardianInvoiceCsvPath) extra.push('--guardian-invoices');
+    if (teacherInvoiceCsvPath) extra.push('--teacher-invoices');
+    if (extra.length) {
+      throw new Error(`--only-guardians-students is enabled. Remove these flags: ${extra.join(', ')}`);
+    }
+  }
 
   if (!guardianCsvPath && !studentCsvPath && !teacherCsvPath && !guardianInvoiceCsvPath && !teacherInvoiceCsvPath) {
     throw new Error('No input CSV provided. Pass at least one of: --guardians, --students, --teachers, --guardian-invoices, --teacher-invoices');
@@ -324,8 +408,12 @@ const main = async () => {
 
       const name = splitName(row.name);
       const timezone = normalizeTimezone(row.timeZone || row.timezone || row.time_zone, 'Africa/Cairo');
-      const phone = asString(row.phone);
-      const isActive = asString(row.status) === '1' || toBool01(row.status);
+      const phone = normalizePhoneLoose(row.phone);
+      const isActiveLegacy = asString(row.status) === '1' || toBool01(row.status);
+      const isActive = forceInactive ? false : isActiveLegacy;
+
+      const dateOfBirth = safeParseDate(row.birthday);
+      const address = normalizeAddressLoose(row.address);
 
       const hourlyRate = toNumber(row.hoursPrice);
       const transferPrice = toNumber(row.transferPrice);
@@ -360,11 +448,13 @@ const main = async () => {
           firstName: name.firstName,
           lastName: name.lastName,
           email,
-          password: DEFAULT_TEMP_PASSWORD,
+          password: guardianPassword,
           role: 'guardian',
           phone,
           timezone,
           isActive,
+          dateOfBirth: dateOfBirth || null,
+          address: address || undefined,
           guardianInfo: {
             paymentMethod,
             hourlyRate: hourlyRate ?? 10,
@@ -374,7 +464,7 @@ const main = async () => {
           }
         });
 
-        if (passwordHash && passwordHash.startsWith('$2')) {
+        if (allowLegacyGuardianPasswordHash && passwordHash && passwordHash.startsWith('$2')) {
           await User.updateOne({ _id: guardianUser._id }, { $set: { password: passwordHash } });
         }
 
@@ -397,8 +487,12 @@ const main = async () => {
           lastName: guardianUser.lastName || name.lastName,
           phone: guardianUser.phone || phone,
           timezone: guardianUser.timezone || timezone,
-          isActive: isActive
+          // Do not deactivate existing guardians unless operator explicitly wants to.
+          isActive: forceInactive ? guardianUser.isActive : isActive
         };
+
+        if (!guardianUser.dateOfBirth && dateOfBirth) updates.dateOfBirth = dateOfBirth;
+        if (!guardianUser.address && address) updates.address = address;
 
         // Merge guardianInfo safely
         updates.guardianInfo = guardianUser.guardianInfo && typeof guardianUser.guardianInfo === 'object'
@@ -440,7 +534,7 @@ const main = async () => {
   }
 
   // --- Teachers ---
-  if (teacherCsvPath) {
+  if (!onlyGuardiansStudents && teacherCsvPath) {
     const rows = parseCsvFile(teacherCsvPath);
     for (const row of rows) {
       stats.teachers.seen++;
@@ -590,6 +684,30 @@ const main = async () => {
       }
 
       if (!guardianUser || guardianUser.role !== 'guardian') {
+        // In DRY RUN, guardians may not exist yet (because we don't write).
+        // If the guardian is present in guardians.csv, simulate a new guardian so
+        // we can still estimate how many embedded/standalone students would be created.
+        if (!apply) {
+          const legacyGuardianId = asString(first?.legacyGuardianId);
+          const guardianEmailFromCsv = guardianLegacyIdToEmail.get(legacyGuardianId) || null;
+          if (guardianEmailFromCsv) {
+            const seenInGroup = new Set();
+            for (const { row } of entries) {
+              const studentName = splitName(row.name);
+              const key = `${studentName.firstName.toLowerCase()}|${studentName.lastName.toLowerCase()}|${asString(row.id)}`;
+              if (seenInGroup.has(key)) {
+                stats.embeddedStudents.skipped++;
+                stats.students.skipped++;
+                continue;
+              }
+              seenInGroup.add(key);
+              stats.embeddedStudents.added++;
+              stats.students.created++;
+            }
+            continue;
+          }
+        }
+
         // eslint-disable-next-line no-console
         console.warn(`Skipping students for guardian group=${groupKey}: guardian not found in target DB`);
         // Mark all as skipped
@@ -614,11 +732,23 @@ const main = async () => {
         if (studentEmail && !isValidEmailLoose(studentEmail)) studentEmail = null;
         const dob = safeParseDate(row.birthday);
         const studentTimezone = normalizeTimezone(row.timeZone || row.timezone, guardianUser.timezone || 'Africa/Cairo');
-        const phone = asString(row.phone);
+        const phone = normalizePhoneLoose(row.phone);
+        const isActiveLegacy = asString(row.status) === '1' || toBool01(row.status);
+        const isActiveNew = forceInactive ? false : isActiveLegacy;
+
+        const attendedRaw = asString(row.attendedHours);
+        const attendedNormalized = attendedRaw ? normalizeHours(attendedRaw) : null;
+        const legacyNotesBits = [
+          legacyStudentToken || '',
+          attendedRaw ? `legacy_attended_raw:${attendedRaw}` : '',
+          (attendedNormalized !== null && attendedRaw) ? `legacy_attended_hours:${attendedNormalized}` : '',
+          sanitizeCsvString(row.address) ? `legacy_address:${sanitizeCsvString(row.address)}` : ''
+        ].filter(Boolean);
+        const legacyNotes = legacyNotesBits.join(' | ');
 
         const already = existingEmbedded.some((s) => {
           // Prefer a stable marker (legacy id) to avoid skipping siblings who share an email.
-          if (legacyStudentToken && asString(s.notes) === legacyStudentToken) return true;
+          if (legacyStudentToken && asString(s.notes).includes(legacyStudentToken)) return true;
 
           const fn = asString(s.firstName);
           const ln = asString(s.lastName);
@@ -642,23 +772,71 @@ const main = async () => {
               phone,
               dateOfBirth: dob,
               timezone: studentTimezone,
-              isActive: asString(row.status) === '1' || toBool01(row.status),
+              isActive: isActiveNew,
               hoursRemaining: 0,
               totalClassesAttended: 0,
-              notes: legacyStudentToken || ''
+              notes: legacyNotes
             });
           }
         }
 
         // Standalone Student model
         if (apply) {
-          const match = legacyStudentToken
-            ? { guardian: guardianUser._id, notes: legacyStudentToken }
-            : { guardian: guardianUser._id, firstName: studentName.firstName, lastName: studentName.lastName };
+          // 1) Prefer stable legacy marker match (notes contains token)
+          let existingStudent = null;
+          if (legacyStudentToken) {
+            existingStudent = await Student.findOne({
+              guardian: guardianUser._id,
+              notes: { $regex: escapeRegex(legacyStudentToken) }
+            }).select('_id notes firstName lastName');
+          }
 
-          const existingStudent = await Student.findOne(match).select('_id notes');
+          // 2) Fallback match (avoid duplicating students created manually): guardian + (first,last)
+          if (!existingStudent) {
+            existingStudent = await Student.findOne({
+              guardian: guardianUser._id,
+              firstName: studentName.firstName,
+              lastName: studentName.lastName
+            }).select('_id notes firstName lastName');
+          }
+
           if (existingStudent) {
             stats.students.skipped++;
+
+            // Best-effort: tag the existing student with legacy marker for future idempotency
+            if (legacyStudentToken) {
+              const prevNotes = asString(existingStudent.notes);
+              if (!prevNotes.includes(legacyStudentToken)) {
+                const appended = prevNotes ? `${prevNotes} | ${legacyStudentToken}` : legacyStudentToken;
+                // Respect Student.notes maxlength (1000)
+                if (appended.length <= 1000) {
+                  await Student.updateOne({ _id: existingStudent._id }, { $set: { notes: appended } });
+                }
+              }
+            }
+
+            // Ensure Guardian model references this student
+            await Guardian.updateOne(
+              { user: guardianUser._id },
+              { $addToSet: { students: existingStudent._id } },
+              { upsert: true }
+            );
+
+            // Best-effort: ensure embedded student has standaloneStudentId set
+            try {
+              const embedded = guardianUser.guardianInfo.students.find((s) => {
+                if (legacyStudentToken && asString(s.notes).includes(legacyStudentToken)) return true;
+                const fn = asString(s.firstName).toLowerCase();
+                const ln = asString(s.lastName).toLowerCase();
+                return fn === studentName.firstName.toLowerCase() && ln === studentName.lastName.toLowerCase();
+              });
+              if (embedded && !embedded.standaloneStudentId) {
+                embedded.standaloneStudentId = existingStudent._id;
+                embeddedChanged = true;
+              }
+            } catch {
+              // ignore
+            }
           } else {
             const studentDoc = await Student.create({
               firstName: studentName.firstName,
@@ -669,9 +847,9 @@ const main = async () => {
               dateOfBirth: dob,
               timezone: studentTimezone,
               gender: 'male',
-              isActive: asString(row.status) === '1' || toBool01(row.status),
+              isActive: isActiveNew,
               hoursRemaining: 0,
-              notes: legacyStudentToken || ''
+              notes: legacyNotes
             });
 
             await Guardian.updateOne(
@@ -679,6 +857,22 @@ const main = async () => {
               { $addToSet: { students: studentDoc._id } },
               { upsert: true }
             );
+
+            // Also link embedded student to standalone id, best-effort
+            try {
+              const embedded = guardianUser.guardianInfo.students.find((s) => {
+                if (legacyStudentToken && asString(s.notes).includes(legacyStudentToken)) return true;
+                const fn = asString(s.firstName).toLowerCase();
+                const ln = asString(s.lastName).toLowerCase();
+                return fn === studentName.firstName.toLowerCase() && ln === studentName.lastName.toLowerCase();
+              });
+              if (embedded && !embedded.standaloneStudentId) {
+                embedded.standaloneStudentId = studentDoc._id;
+                embeddedChanged = true;
+              }
+            } catch {
+              // ignore
+            }
 
             stats.students.created++;
           }
@@ -692,7 +886,7 @@ const main = async () => {
   }
 
   // --- Guardian invoices (legacy) ---
-  if (guardianInvoiceCsvPath) {
+  if (!onlyGuardiansStudents && guardianInvoiceCsvPath) {
     const rows = parseCsvFile(guardianInvoiceCsvPath);
 
     for (const row of rows) {
@@ -795,7 +989,7 @@ const main = async () => {
   }
 
   // --- Teacher invoices (legacy) ---
-  if (teacherInvoiceCsvPath) {
+  if (!onlyGuardiansStudents && teacherInvoiceCsvPath) {
     const rows = parseCsvFile(teacherInvoiceCsvPath);
 
     for (const row of rows) {

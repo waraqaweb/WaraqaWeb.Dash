@@ -21,8 +21,26 @@ const resolveApiBase = () => {
     return url.replace(/:\/\/localhost:/, '://127.0.0.1:');
   };
 
+  const isProductionHost = (() => {
+    const origin = window.location?.origin || '';
+    return !/localhost|127\.0\.0\.1|::1/.test(origin);
+  })();
+
+  const looksLikeInternalApiBase = (url) => {
+    if (typeof url !== 'string') return false;
+    // These hosts work inside Docker but NOT in the end-user browser.
+    return /:\/\/(?:localhost|127\.0\.0\.1|::1)(?::|\/)/.test(url)
+      || /:\/\/backend(?::|\/)/.test(url);
+  };
+
   if (envApiBase) {
-    return normalizeLocalhost(envApiBase);
+    const normalized = normalizeLocalhost(envApiBase);
+    // Production safety: if the build accidentally bakes an internal/localhost URL,
+    // ignore it and fall back to same-origin (/api) via nginx.
+    if (isProductionHost && looksLikeInternalApiBase(normalized)) {
+      return null;
+    }
+    return normalized;
   }
 
   if (window.__API_BASE__) {

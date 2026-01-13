@@ -393,12 +393,11 @@ router.post('/search-teachers', authenticateToken, async (req, res) => {
 // POST /api/availability/share - Build a timezone-converted shareable message with available teachers
 router.post('/share', authenticateToken, async (req, res) => {
   try {
-    const { studentAvailability, additionalCriteria = {}, flexibility = {}, targetTimezone } = req.body;
+    const { studentAvailability, additionalCriteria = {}, flexibility = {}, targetTimezone, teacherId = null } = req.body;
     // Only allow sharing when user is authenticated; teachers and admins allowed
     if (!req.user) return res.status(401).json({ message: 'Unauthorized' });
 
-    const availabilityService = require('../services/availabilityService');
-    const payload = { studentAvailability, additionalCriteria, flexibility };
+    const payload = { studentAvailability, additionalCriteria, flexibility, teacherId };
     const { results, message } = await availabilityService.searchTeachersForSharing(payload, targetTimezone);
 
     res.json({ message, results });

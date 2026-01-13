@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "browsing + global search fixes"
+git commit -m "impreovements 13 Jan"
 git push origin main
 
 ---
@@ -20,27 +20,12 @@ chmod +x deploy/scripts/deploy.sh
 
 ---
 
-### Production deploy (DigitalOcean droplet) — safe-by-default
+### Production deploy (DigitalOcean droplet) — safe-by-default (daily)
 
 ### Copy/paste this whole block on the droplet.
 
 cd /opt/waraqa
-
 set -euo pipefail
-
-# IMPORTANT (Data safety):
-
-# - NEVER run: `docker compose down -v` or `docker system prune --volumes`
-
-# - MongoDB data is on a named volume mounted at /data/db
-
-# - Library files are on named volumes mounted at /data/library-assets + /data/library-uploads
-
-# Recommended (permissions): make library private unless user has approved access.
-
-# Ensure your droplet .env contains:
-
-# LIBRARY_REQUIRE_SHARE_ACCESS=true
 
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
@@ -56,39 +41,30 @@ exit 1
 fi
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
-# Record rollback point BEFORE updating code
+# Rollback point
 
 OLD_SHA="$(git rev-parse HEAD)"
 
-# Update code safely (no merges)
+# Update code safely
 
 git fetch origin
 git reset --hard origin/main
 NEW_SHA="$(git rev-parse HEAD)"
-
-CHANGED="$(git diff --name-only "$OLD_SHA" "$NEW_SHA" || true)"
 echo "Deploying: $OLD_SHA -> $NEW_SHA"
 
-# Validate compose file renders correctly
+# Validate compose renders (catches missing env vars)
 
 docker compose config -q
 
-SERVICES=""
-if printf "%s\n" "$CHANGED" | grep -qE '^(deploy/nginx/|docker-compose\.yml)'; then SERVICES="$SERVICES nginx"; fi
-if printf "%s\n" "$CHANGED" | grep -qE '^(backend/|deploy/backend/)'; then SERVICES="$SERVICES backend"; fi
-if printf "%s\n" "$CHANGED" | grep -qE '^(frontend/|deploy/frontend/)'; then SERVICES="$SERVICES frontend"; fi
+# Prefer GHCR pull deploy (fast + avoids building on droplet)
 
-if [ -n "$(printf "%s" "$SERVICES" | tr -d ' ')" ]; then
-echo "Rebuilding services:$SERVICES"
-echo "Building images (this can take a while on small droplets, especially frontend)..."
-docker compose build $SERVICES
-docker compose up -d $SERVICES
-else
-echo "No build needed; restarting containers"
-docker compose up -d
-fi
+echo "Pulling GHCR images..."
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
 
-# Avoid "Login failed" right after deploy by waiting until backend is ready.
+echo "Recreating containers (apply new images + env)..."
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d --force-recreate --remove-orphans
+
+# Wait for backend
 
 echo "Waiting for backend to be healthy (up to ~180s)..."
 healthy="0"
@@ -101,19 +77,43 @@ sleep 2
 done
 
 if [ "$healthy" != "1" ]; then
-echo "Backend did not become healthy. Showing latest logs..."
+echo "Backend did not become healthy. Showing logs..."
 docker compose logs --tail=200 backend || true
+docker compose logs --tail=200 mongo || true
 docker compose logs --tail=200 nginx || true
-echo "Rollback with: git reset --hard $OLD_SHA ; docker compose up -d --build"
+echo "Rollback with:"
+echo " git reset --hard $OLD_SHA"
+echo " docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d --force-recreate"
 exit 1
 fi
 
-# Verify Mongo + library volumes are present inside containers (non-destructive)
+# Reload nginx (important after recreating containers)
 
-echo "Checking mongo volume (should NOT be empty)..."
-docker compose exec -T mongo sh -lc 'du -sh /data/db || true; ls -lah /data/db | head -n 50 || true'
+echo "Reloading nginx to refresh upstream DNS..."
+docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 || docker compose restart nginx
 
-echo "Checking library storage mounts..."
+echo "Verifying nginx can reach backend + frontend..."
+if ! docker compose exec -T nginx sh -lc "wget -q -O- http://backend:5000/api/health >/dev/null" >/dev/null 2>&1; then
+echo "nginx -> backend failed. Showing nginx config + logs..."
+docker compose exec -T nginx nginx -T || true
+docker compose logs --tail=200 nginx || true
+docker compose logs --tail=200 backend || true
+exit 1
+fi
+
+if ! docker compose exec -T nginx sh -lc "wget -q --spider http://frontend:80/dashboard/ >/dev/null" >/dev/null 2>&1; then
+echo "nginx -> frontend failed. Showing logs..."
+docker compose logs --tail=200 nginx || true
+docker compose logs --tail=200 frontend || true
+exit 1
+fi
+
+# Non-destructive checks for critical mounts (helps catch volume/path mistakes)
+
+echo "Checking mongo volume..."
+docker compose exec -T mongo sh -lc 'du -sh /data/db || true; ls -lah /data/db | head -n 30 || true'
+
+echo "Checking library mounts..."
 docker compose exec -T backend sh -lc '
 echo "LIBRARY_LOCAL_ASSET_DIR=${LIBRARY_LOCAL_ASSET_DIR:-}";
   test "${LIBRARY_LOCAL_ASSET_DIR:-}" = "/data/library-assets" || { echo "ERROR: LIBRARY_LOCAL_ASSET_DIR must be /data/library-assets"; exit 1; };
@@ -123,32 +123,6 @@ rm -f "${LIBRARY_LOCAL_ASSET_DIR}/.write_test";
 du -sh "/data/library-assets" || true;
 du -sh "/data/library-uploads" || true;
 '
-
-# IMPORTANT: nginx can keep stale upstream IPs after backend/frontend containers are recreated.
-
-# Always reload/restart nginx after the deploy, and verify nginx can actually reach upstreams.
-
-echo "Reloading nginx to refresh upstream DNS..."
-docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 || docker compose restart nginx
-
-echo "Verifying nginx can reach backend + frontend..."
-if ! docker compose exec -T nginx sh -lc "wget -q -O- http://backend:5000/api/health >/dev/null" >/dev/null 2>&1; then
-echo "nginx -> backend failed. Showing latest logs + nginx config..."
-docker compose exec -T nginx nginx -T || true
-docker compose logs --tail=200 nginx || true
-docker compose logs --tail=200 backend || true
-echo "Rollback with: git reset --hard $OLD_SHA ; docker compose up -d --build"
-exit 1
-fi
-
-if ! docker compose exec -T nginx sh -lc "wget -q --spider http://frontend:80/dashboard/" >/dev/null 2>&1; then
-echo "nginx -> frontend failed. Showing latest logs + nginx config..."
-docker compose exec -T nginx nginx -T || true
-docker compose logs --tail=200 nginx || true
-docker compose logs --tail=200 frontend || true
-echo "Rollback with: git reset --hard $OLD_SHA ; docker compose up -d --build"
-exit 1
-fi
 
 docker compose ps
 echo "Deploy complete."

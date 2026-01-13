@@ -36,6 +36,7 @@
 			} from 'lucide-react';
 			import api from '../../api/axios';
 			import LoadingSpinner from '../../components/ui/LoadingSpinner';
+			import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 			const TEACHER_STATUS_TABS = [
 				{ id: 'active', label: 'Active' },
@@ -125,6 +126,28 @@
 
 				const fetchTeachers = async () => {
 					try {
+						const cacheKey = makeCacheKey('teachers:list', 'admin', {
+							page: currentPage,
+							limit: itemsPerPage,
+							search: (debouncedSearch || '').trim() || undefined,
+							sortBy,
+							order: sortOrder,
+							statusFilter,
+						});
+
+						const cached = readCache(cacheKey, { deps: ['users', 'classes'] });
+						if (cached.hit && cached.value) {
+							setTeachers(cached.value.teachers || []);
+							setTotalPages(cached.value.totalPages || 1);
+							if (cached.value.statusCounts) setStatusCounts(cached.value.statusCounts);
+							setError('');
+							setLoading(false);
+
+							if (cached.ageMs < 60_000) {
+								return;
+							}
+						}
+
 						setLoading(true);
 						const params = {
 							role: 'teacher',
@@ -141,32 +164,22 @@
 
 						const response = await api.get('/users', { params });
 						const fetched = response.data.users || [];
-
-						// Compute fallback values only for teachers missing monthlyHours (null/undefined)
-						const needFallback = fetched.filter(t => !(t.teacherInfo && (t.teacherInfo.monthlyHours !== undefined && t.teacherInfo.monthlyHours !== null)));
-						if (needFallback.length) {
-							const monthStart = new Date();
-							monthStart.setUTCDate(1);
-							monthStart.setUTCHours(0,0,0,0);
-							const now = new Date();
-							await Promise.all(needFallback.map(async (t) => {
-								try {
-									const classesRes = await api.get('/classes', { params: { teacher: t._id, dateFrom: monthStart.toISOString(), dateTo: now.toISOString(), limit: 1000 } });
-									const classes = classesRes.data.classes || [];
-									const countable = classes.filter(c => ['attended','missed_by_student','absent'].includes(String(c.status)));
-									const minutes = countable.reduce((s, c) => s + (Number(c.duration || 0) || 0), 0);
-									const hours = Math.round((minutes / 60) * 10) / 10; // one decimal
-									if (!t.teacherInfo) t.teacherInfo = {};
-									t.teacherInfo._computedMonthlyHours = hours;
-								} catch (err) {
-									console.warn('Failed to compute fallback hours for teacher', t._id, err && err.message);
-								}
-							}));
-						}
-
 						setTeachers(fetched);
-						setTotalPages((response.data.pagination && response.data.pagination.pages) || 1);
-						await fetchStatusCounts();
+						const nextTotalPages = (response.data.pagination && response.data.pagination.pages) || 1;
+						setTotalPages(nextTotalPages);
+
+						// Refresh counts in the background so list can render ASAP.
+						fetchStatusCounts();
+
+						writeCache(
+							cacheKey,
+							{
+								teachers: fetched,
+								totalPages: nextTotalPages,
+								statusCounts,
+							},
+							{ ttlMs: 5 * 60_000, deps: ['users', 'classes'] }
+						);
 					} catch (err) {
 						setError('Failed to fetch teachers');
 						console.error('Fetch teachers error:', err);

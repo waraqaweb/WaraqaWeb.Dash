@@ -6,6 +6,7 @@ import { getTimezoneOptions } from "../../utils/timezoneOptions";
 import { useAuth } from "../../contexts/AuthContext";
 import { useSearch } from "../../contexts/SearchContext";
 import api from '../../api/axios';
+import { makeCacheKey, readCache, writeCache } from "../../utils/sessionCache";
 import { listMeetings } from '../../api/meetings';
 import Select from "react-select";
 import {
@@ -33,6 +34,7 @@ const MEETING_LOOKBACK_DAYS = 60;
 const MEETING_LOOKAHEAD_DAYS = 90;
 const DESKTOP_MEETING_SPLIT_MIN_WIDTH = 1280;
 const MOBILE_MEETING_WINDOW_HOURS = 24;
+const ALL_TEACHERS_OPTION_VALUE = '__all_teachers__';
 
 const formatTimeLabel = (time) => {
   if (!time) return "";
@@ -66,6 +68,176 @@ const stripSlotTimezoneLabels = (text = "") => {
     .split("\n")
     .map((line) => (line.includes("•") ? line.replace(timezonePattern, "") : line))
     .join("\n");
+};
+
+const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+const parseTimeToMinutes = (raw = "") => {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  if (value === "24:00") return 24 * 60;
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours < 0 || hours > 24) return null;
+  if (minutes < 0 || minutes > 59) return null;
+  if (hours === 24 && minutes !== 0) return null;
+  return hours * 60 + minutes;
+};
+
+const formatMinutesAs12h = (totalMinutes, withPeriod = true) => {
+  if (!Number.isFinite(totalMinutes)) return "";
+  const normalized = totalMinutes === 24 * 60 ? 0 : totalMinutes;
+  const hours24 = Math.floor(normalized / 60) % 24;
+  const minutes = normalized % 60;
+  const period = hours24 >= 12 ? "PM" : "AM";
+  const hours12 = hours24 % 12 || 12;
+  const minuteLabel = minutes === 0 ? "" : `:${String(minutes).padStart(2, "0")}`;
+  const base = `${hours12}${minuteLabel}`;
+  return withPeriod ? `${base} ${period}` : base;
+};
+
+const formatTimeRangeSmart = (startHHMM, endHHMM) => {
+  const startMin = parseTimeToMinutes(startHHMM);
+  const endMin = parseTimeToMinutes(endHHMM);
+  if (startMin === null || endMin === null) {
+    return `${startHHMM || ""}${endHHMM ? `–${endHHMM}` : ""}`.trim();
+  }
+
+  // End may be 24:00 (end of day)
+  const startPeriod = Math.floor((startMin % (24 * 60)) / 60) >= 12 ? "PM" : "AM";
+  const endPeriod = Math.floor((endMin % (24 * 60)) / 60) >= 12 ? "PM" : "AM";
+
+  // If same AM/PM, omit it on the start time.
+  const startLabel = formatMinutesAs12h(startMin, startPeriod !== endPeriod);
+  const endLabel = formatMinutesAs12h(endMin, true);
+  return `${startLabel}–${endLabel}`;
+};
+
+const compressDaysLabel = (dayNums = []) => {
+  const unique = Array.from(new Set(dayNums.map(Number).filter((n) => Number.isFinite(n) && n >= 0 && n <= 6)))
+    .sort((a, b) => a - b);
+  if (unique.length === 0) return "";
+  if (unique.length === 7) return "Every day";
+
+  const all = [0, 1, 2, 3, 4, 5, 6];
+  const excluded = all.filter((d) => !unique.includes(d));
+  if (unique.length >= 5 && excluded.length <= 2) {
+    const excludedLabel = excluded
+      .map((d) => DAY_NAMES_FULL[d])
+      .join(excluded.length === 2 ? " and " : ", ");
+    return `Every day except ${excludedLabel}`;
+  }
+
+  // Build ranges like Tuesday–Wednesday, Friday
+  const parts = [];
+  let i = 0;
+  while (i < unique.length) {
+    const start = unique[i];
+    let end = start;
+    while (i + 1 < unique.length && unique[i + 1] === end + 1) {
+      i += 1;
+      end = unique[i];
+    }
+    if (start === end) parts.push(DAY_NAMES_FULL[start]);
+    else parts.push(`${DAY_NAMES_FULL[start]}–${DAY_NAMES_FULL[end]}`);
+    i += 1;
+  }
+  return parts.join(", ");
+};
+
+const buildConciseShareMessageFromResults = ({
+  results,
+  shareMode,
+  selectedTeacherId,
+  selectedTeacher,
+  user,
+  timezoneFriendlyLabel,
+}) => {
+  const list = ([]
+    .concat(results?.exactMatches || [])
+    .concat(results?.flexibleMatches || []))
+    .filter(Boolean);
+
+  const isAdminAllTeachers = shareMode === 'admin' && selectedTeacherId === ALL_TEACHERS_OPTION_VALUE;
+  const subjectLabel = isAdminAllTeachers
+    ? 'Availability (all teachers)'
+    : (shareMode === 'admin' && selectedTeacher
+      ? `Availability (${(selectedTeacher.firstName || "")} ${(selectedTeacher.lastName || "")}`.trim() + ')'
+      : `Availability (${(user?.firstName || "")} ${(user?.lastName || "")}`.trim() + ')');
+
+  const headerLines = [subjectLabel];
+  if (timezoneFriendlyLabel) {
+    headerLines.push(`Times shown in: ${timezoneFriendlyLabel}`);
+  }
+
+  const formatTeacherBlock = (teacherResult) => {
+    const teacherName = teacherResult?.teacher?.name || 'Teacher';
+    const slots = Array.isArray(teacherResult?.availableSlots) ? teacherResult.availableSlots : [];
+    if (!slots.length) return [teacherName, 'No available time slots found.'];
+
+    const groups = new Map();
+    for (const slot of slots) {
+      const start = slot?.displayStart;
+      const end = slot?.displayEnd;
+      const key = `${start || ''}__${end || ''}`;
+      const dayOfWeek = Number(slot?.dayOfWeek);
+      if (!groups.has(key)) {
+        groups.set(key, { start, end, days: new Set(), sortKey: parseTimeToMinutes(start) ?? 0 });
+      }
+      if (Number.isFinite(dayOfWeek)) {
+        groups.get(key).days.add(dayOfWeek);
+      }
+    }
+
+    const groupList = Array.from(groups.values()).sort((a, b) => a.sortKey - b.sortKey);
+    const lines = [];
+    for (const g of groupList) {
+      const daysLabel = compressDaysLabel(Array.from(g.days));
+      const timeLabel = formatTimeRangeSmart(g.start, g.end);
+      if (daysLabel) lines.push(`${daysLabel}: ${timeLabel}`);
+      else lines.push(timeLabel);
+    }
+
+    return [teacherName, ...lines];
+  };
+
+  // For a single teacher message, avoid repeating the teacher name twice.
+  if (!isAdminAllTeachers && list.length === 1) {
+    const teacherResult = list[0];
+    const slots = Array.isArray(teacherResult?.availableSlots) ? teacherResult.availableSlots : [];
+    if (!slots.length) return [...headerLines, '', 'No available time slots found.'].join('\n');
+
+    const groups = new Map();
+    for (const slot of slots) {
+      const start = slot?.displayStart;
+      const end = slot?.displayEnd;
+      const key = `${start || ''}__${end || ''}`;
+      const dayOfWeek = Number(slot?.dayOfWeek);
+      if (!groups.has(key)) {
+        groups.set(key, { start, end, days: new Set(), sortKey: parseTimeToMinutes(start) ?? 0 });
+      }
+      if (Number.isFinite(dayOfWeek)) groups.get(key).days.add(dayOfWeek);
+    }
+
+    const groupList = Array.from(groups.values()).sort((a, b) => a.sortKey - b.sortKey);
+    const lines = groupList.map((g) => {
+      const daysLabel = compressDaysLabel(Array.from(g.days));
+      const timeLabel = formatTimeRangeSmart(g.start, g.end);
+      return daysLabel ? `${daysLabel}: ${timeLabel}` : timeLabel;
+    });
+
+    return [...headerLines, '', ...lines].join('\n');
+  }
+
+  const blocks = list.map((teacherResult) => {
+    const blockLines = formatTeacherBlock(teacherResult);
+    return blockLines.join('\n');
+  });
+
+  return [...headerLines, '', ...blocks].join('\n\n');
 };
 
 const prettifyTimezoneLabel = (label = "", value = "") => {
@@ -678,7 +850,37 @@ const ClassesPage = ({ isActive = true }) => {
 // Fetch classes with filter
 const fetchClasses = useCallback(async () => {
   try {
-    setLoading(true);
+    const cacheKey = makeCacheKey(
+      'classes:list',
+      user?._id,
+      {
+        page: currentPage,
+        limit: 30,
+        filter: tabFilter,
+        search: (searchTerm || '').trim() || undefined,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
+        guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
+        global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+      }
+    );
+
+    const cached = readCache(cacheKey, { deps: ['classes'] });
+    if (cached.hit && cached.value) {
+      const cachedClasses = cached.value.classes || [];
+      const cachedTotalPages = cached.value.totalPages || 1;
+      setClasses(cachedClasses);
+      setTotalPages(cachedTotalPages);
+      setError('');
+      setLoading(false);
+
+      // Background revalidate if cache is getting old (keeps data fresh without blocking UI)
+      if (cached.ageMs < 60_000) {
+        return;
+      }
+    } else {
+      setLoading(true);
+    }
 
     const params = {
       page: currentPage,
@@ -706,6 +908,15 @@ const fetchClasses = useCallback(async () => {
     const apiTotalPages = Number(res.data?.pagination?.totalPages);
     setTotalPages(Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1);
     setError("");
+
+    writeCache(
+      cacheKey,
+      {
+        classes: fetchedClasses,
+        totalPages: Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1,
+      },
+      { ttlMs: 5 * 60_000, deps: ['classes'] }
+    );
   } catch (err) {
     console.error("Fetch classes error:", err);
     setError("Failed to fetch classes");
@@ -720,6 +931,7 @@ const fetchClasses = useCallback(async () => {
   statusFilter,
   tabFilter,
   teacherFilter,
+  user?._id,
 ]);
 
 // Keep a ref reference to fetchClasses so effects that are created earlier can call it
@@ -800,12 +1012,13 @@ fetchClassesRef.current = fetchClasses;
   }, [tabFilter, isLargeScreen, viewLayout]);
 
   const handleAdminTeacherChange = async (teacherId) => {
-    setSelectedTeacherId(teacherId);
+    const nextTeacherId = teacherId || null;
+    setSelectedTeacherId(nextTeacherId);
     setShareMessage("");
     setSelectedGuardianId(null);
     setRecipientPhone("");
 
-    if (!teacherId) {
+    if (!nextTeacherId || nextTeacherId === ALL_TEACHERS_OPTION_VALUE) {
       setTeacherAvailability(createAvailabilityState({
         availabilityStatus: 'unknown',
         isDefaultAvailability: false
@@ -813,7 +1026,7 @@ fetchClassesRef.current = fetchClasses;
       return;
     }
 
-    await fetchTeacherAvailability(teacherId);
+    await fetchTeacherAvailability(nextTeacherId);
   };
 
   const handleGuardianSelection = (guardianId) => {
@@ -847,9 +1060,9 @@ fetchClassesRef.current = fetchClasses;
     }
 
     if (nextMode === "admin") {
-      const defaultTeacher = selectedTeacherId || teachers?.[0]?._id || null;
-      if (defaultTeacher) {
-        setSelectedTeacherId(defaultTeacher);
+      const defaultTeacher = selectedTeacherId || teachers?.[0]?._id || ALL_TEACHERS_OPTION_VALUE;
+      setSelectedTeacherId(defaultTeacher);
+      if (defaultTeacher && defaultTeacher !== ALL_TEACHERS_OPTION_VALUE) {
         await fetchTeacherAvailability(defaultTeacher);
       } else {
         setTeacherAvailability(createAvailabilityState({
@@ -865,21 +1078,49 @@ fetchClassesRef.current = fetchClasses;
   // Floating FAB cluster is now handled by a reusable component (FABCluster)
 
   const handleGenerateShareMessage = async () => {
-    if (shareMode === "admin" && !selectedTeacherId) {
-      setShareMessage("Select a teacher before generating a share message.");
+    const isAdminAllTeachers = shareMode === 'admin' && selectedTeacherId === ALL_TEACHERS_OPTION_VALUE;
+    const isAdminSpecificTeacher = shareMode === 'admin' && selectedTeacherId && selectedTeacherId !== ALL_TEACHERS_OPTION_VALUE;
+
+    if (shareMode === 'admin' && !selectedTeacherId) {
+      setShareMessage("Select a teacher (or All teachers) before generating a share message.");
       return;
     }
 
-    if (shareMode === "admin" && selectedTeacherId) {
+    if (isAdminSpecificTeacher) {
       await fetchTeacherAvailability(selectedTeacherId);
     }
 
-    if (!hasShareableAvailability) {
+    if (!isAdminAllTeachers && !hasShareableAvailability) {
       setShareMessage("No availability information available. Please refresh or add slots.");
       return;
     }
     try {
       setShareLoading(true);
+
+      if (isAdminAllTeachers) {
+        const payload = {
+          studentAvailability: { preferredDays: [0, 1, 2, 3, 4, 5, 6], timeSlots: [], duration: 60 },
+          additionalCriteria: {},
+          flexibility: {},
+          teacherId: null
+        };
+        const res = await api.post("/availability/share", { ...payload, targetTimezone });
+        const results = res.data?.results;
+        if (results) {
+          setShareMessage(buildConciseShareMessageFromResults({
+            results,
+            shareMode,
+            selectedTeacherId,
+            selectedTeacher,
+            user,
+            timezoneFriendlyLabel,
+          }));
+        } else {
+          const rawMessage = res.data?.message || "No message generated";
+          setShareMessage(buildFriendlyShareMessage(rawMessage));
+        }
+        return;
+      }
 
       const isDefaultAvailability = teacherAvailability.isDefaultAvailability;
       let preferredDays = [];
@@ -919,13 +1160,25 @@ fetchClassesRef.current = fetchClasses;
         additionalCriteria: {},
         flexibility: {},
         teacherId: shareMode === "admin"
-          ? selectedTeacherId
+          ? (selectedTeacherId === ALL_TEACHERS_OPTION_VALUE ? undefined : selectedTeacherId)
           : (isTeacherUser ? user?._id : undefined)
       };
 
       const res = await api.post("/availability/share", { ...payload, targetTimezone });
-      const rawMessage = res.data?.message || "No message generated";
-      setShareMessage(buildFriendlyShareMessage(rawMessage));
+      const results = res.data?.results;
+      if (results) {
+        setShareMessage(buildConciseShareMessageFromResults({
+          results,
+          shareMode,
+          selectedTeacherId,
+          selectedTeacher,
+          user,
+          timezoneFriendlyLabel,
+        }));
+      } else {
+        const rawMessage = res.data?.message || "No message generated";
+        setShareMessage(buildFriendlyShareMessage(rawMessage));
+      }
     } catch (err) {
       console.error("Share availability error:", err);
       setShareMessage("Error generating share message");
@@ -933,6 +1186,67 @@ fetchClassesRef.current = fetchClasses;
       setShareLoading(false);
     }
   };
+
+  const shareRegenerateTimeoutRef = useRef(null);
+  const regenerateShareMessageRef = useRef(handleGenerateShareMessage);
+  useEffect(() => {
+    regenerateShareMessageRef.current = handleGenerateShareMessage;
+  }, [handleGenerateShareMessage]);
+
+  useEffect(() => {
+    const scheduleRefresh = () => {
+      if (!showShareModal) return;
+      if (!shareMessage) return; // only auto-refresh if user already generated a message
+
+      if (shareRegenerateTimeoutRef.current) {
+        clearTimeout(shareRegenerateTimeoutRef.current);
+      }
+
+      shareRegenerateTimeoutRef.current = setTimeout(() => {
+        try {
+          regenerateShareMessageRef.current?.();
+        } catch (e) {
+          // ignore
+        }
+      }, 500);
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('availability:refresh', scheduleRefresh);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('availability:refresh', scheduleRefresh);
+      }
+      if (shareRegenerateTimeoutRef.current) {
+        clearTimeout(shareRegenerateTimeoutRef.current);
+        shareRegenerateTimeoutRef.current = null;
+      }
+    };
+  }, [showShareModal, shareMessage]);
+
+  useEffect(() => {
+    const handler = () => {
+      try {
+        if (calendarAvailabilityTeacherId) {
+          refreshCalendarAvailability(calendarAvailabilityTeacherId);
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('availability:refresh', handler);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('availability:refresh', handler);
+      }
+    };
+  }, [calendarAvailabilityTeacherId, refreshCalendarAvailability]);
 
 
   const annotateStudentsWithGuardian = (studentsList, guardianId) => {
@@ -1411,7 +1725,48 @@ Would you like to create another series anyway?`
 
             if (conflicts.length > 0) {
               console.warn('Teacher availability conflicts detected for recurring update', { conflicts });
-              alert('Teacher not available for one or more recurring slots. Please choose different times or contact the teacher.');
+
+              const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+              const minutesToTime = (minutes) => {
+                if (!Number.isFinite(minutes) || minutes < 0) return '';
+                const h = Math.floor(minutes / 60) % 24;
+                const m = minutes % 60;
+                return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+              };
+
+              const tzLabel = availability?.timezone || editClass?.timezone || DEFAULT_TIMEZONE;
+              const slotsByDay = availability?.slotsByDay || {};
+
+              const lines = conflicts.map(({ idx, reason }) => {
+                const slot = (editClass.recurrenceDetails || [])[idx] || {};
+                const day = Number.isFinite(Number(slot.dayOfWeek)) ? Number(slot.dayOfWeek) : null;
+                const startMin = toMinutes(slot.time);
+                const duration = Number(slot.duration) || 0;
+                const endMin = startMin !== null ? startMin + duration : null;
+
+                const dayName = day !== null ? (dayNames[day] || `Day ${day}`) : 'Unknown day';
+                const reqStart = startMin !== null ? minutesToTime(startMin) : String(slot.time || '');
+                const reqEnd = endMin !== null ? minutesToTime(endMin) : '';
+                const reqRange = reqEnd ? `${reqStart}–${reqEnd}` : reqStart;
+
+                const daySlots = (day !== null ? slotsByDay[String(day)] : []) || [];
+                const daySlotsLabel = daySlots.length
+                  ? daySlots.map((av) => `${av.startTime || av.start || ''}–${av.endTime || av.end || ''}`).join(', ')
+                  : 'none';
+
+                if (reason === 'no_day_slots') {
+                  return `• ${dayName}: no availability windows (timezone ${tzLabel})`;
+                }
+                if (reason === 'not_covered') {
+                  return `• ${dayName}: requested ${reqRange} (${duration} min) is not fully covered. Available: ${daySlotsLabel} (timezone ${tzLabel})`;
+                }
+                if (reason === 'invalid_time') {
+                  return `• ${dayName}: invalid time/duration`;
+                }
+                return `• ${dayName}: not available`;
+              });
+
+              alert(`Teacher not available for one or more recurring slots:\n${lines.join('\n')}`);
               return;
             }
           }
@@ -2376,11 +2731,14 @@ Would you like to create another series anyway?`
   }), []);
 
   const teacherOptions = useMemo(() => (
-    teachers.map((teacher) => ({
-      value: teacher._id,
-      label: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.email,
-      subLabel: teacher.email || ''
-    }))
+    [
+      { value: ALL_TEACHERS_OPTION_VALUE, label: 'All teachers', subLabel: 'Generate availability for all teachers' },
+      ...teachers.map((teacher) => ({
+        value: teacher._id,
+        label: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.email,
+        subLabel: teacher.email || ''
+      }))
+    ]
   ), [teachers]);
 
   const selectedTeacherOption = useMemo(
@@ -2402,7 +2760,9 @@ Would you like to create another series anyway?`
   );
 
   const selectedTeacher = useMemo(() => (
-    selectedTeacherId ? teachers.find((t) => String(t._id) === String(selectedTeacherId)) : null
+    selectedTeacherId && selectedTeacherId !== ALL_TEACHERS_OPTION_VALUE
+      ? teachers.find((t) => String(t._id) === String(selectedTeacherId))
+      : null
   ), [teachers, selectedTeacherId]);
 
   const menuPortalTarget = typeof document !== "undefined" ? document.body : undefined;
@@ -2488,21 +2848,10 @@ Would you like to create another series anyway?`
   const resolvedTimezone = timezoneFriendlyLabel || user?.timezone || DEFAULT_TIMEZONE;
 
   const buildFriendlyShareMessage = (rawMessage) => {
-    const teacherName = shareMode === "admin" && selectedTeacher
-      ? `${selectedTeacher.firstName || ""} ${selectedTeacher.lastName || ""}`.trim()
-      : `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "our teaching team";
-
-    const isCollective = teacherName.toLowerCase().includes("team");
-    const intro = `Assalamu Alaykum! Here’s ${isCollective ? "our" : `${teacherName}’s`} availability for your family.`;
-    const timezoneNote = timezoneFriendlyLabel
-      ? `🕰️ All slots below are in ${timezoneFriendlyLabel}.`
-      : "";
-    const body = stripSlotTimezoneLabels(
-      convertMessageTimesTo12h((rawMessage || "").trim())
-    );
-    const closing = "Let me know which slots suit you best and I’ll reserve them right away.";
-
-    return [intro, timezoneNote, body, closing].filter(Boolean).join("\n\n");
+    // Fallback formatter (kept for safety). Prefer buildConciseShareMessageFromResults.
+    const body = stripSlotTimezoneLabels(convertMessageTimesTo12h((rawMessage || "").trim()));
+    const header = timezoneFriendlyLabel ? `Times shown in: ${timezoneFriendlyLabel}` : "";
+    return [header, body].filter(Boolean).join("\n\n");
   };
 
   const formatPhoneForWhatsApp = (raw) => (raw || "").replace(/\D+/g, "");
@@ -2516,7 +2865,8 @@ Would you like to create another series anyway?`
 
   const hasAvailability = (teacherAvailability?.slots || []).length > 0;
   const defaultAvailabilityActive = teacherAvailability?.isDefaultAvailability;
-  const hasShareableAvailability = defaultAvailabilityActive || hasAvailability;
+  const isAdminAllTeachersShare = shareMode === 'admin' && selectedTeacherId === ALL_TEACHERS_OPTION_VALUE;
+  const hasShareableAvailability = isAdminAllTeachersShare ? true : (defaultAvailabilityActive || hasAvailability);
   const canShareMessage = Boolean((shareMessage || "").trim());
   const canWhatsApp = canShareMessage && Boolean(formatPhoneForWhatsApp(recipientPhone));
 
@@ -2788,13 +3138,21 @@ Would you like to create another series anyway?`
                       <span className="text-xs font-medium text-gray-400">
                         {defaultAvailabilityActive
                           ? 'Default 24/7 availability'
-                          : hasAvailability
+                          : isAdminAllTeachersShare
+                            ? 'All teachers'
+                            : hasAvailability
                             ? `${teacherAvailability.slots.length} slot${teacherAvailability.slots.length !== 1 ? 's' : ''}`
                             : 'No slots saved'}
                       </span>
                     </div>
                     <div className="mt-4">
-                      {renderTeacherAvailabilitySummary()}
+                      {isAdminAllTeachersShare
+                        ? (
+                          <p className="text-sm text-gray-600">
+                            This will generate a message for all teachers.
+                          </p>
+                        )
+                        : renderTeacherAvailabilitySummary()}
                     </div>
                   </div>
 
@@ -2802,14 +3160,14 @@ Would you like to create another series anyway?`
                     <button
                       onClick={handleGenerateShareMessage}
                       className="inline-flex items-center justify-center rounded-full bg-[#2C736C] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#265f59] disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={shareLoading || !hasShareableAvailability || (shareMode === "admin" && !selectedTeacherId)}
+                      disabled={shareLoading || !hasShareableAvailability}
                     >
                       {shareLoading ? 'Generating…' : 'Generate friendly message'}
                     </button>
-                    {(!hasShareableAvailability || (shareMode === "admin" && !selectedTeacherId)) && (
+                    {!hasShareableAvailability && (
                       <p className="text-xs text-red-500">
-                        {shareMode === "admin" && !selectedTeacherId
-                          ? 'Select a teacher to craft a message.'
+                        {shareMode === "admin"
+                          ? 'Select a teacher or choose All teachers.'
                           : 'Add availability slots or refresh to continue.'}
                       </p>
                     )}

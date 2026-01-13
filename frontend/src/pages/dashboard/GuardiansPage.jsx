@@ -31,6 +31,7 @@ import {
 import ProfileEditModal from '../../components/dashboard/ProfileEditModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import api from '../../api/axios';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const GUARDIAN_STATUS_TABS = [
   { id: 'active', label: 'Active' },
@@ -116,6 +117,25 @@ const GuardiansPage = () => {
 
   const fetchGuardians = useCallback(async () => {
     try {
+      const cacheKey = makeCacheKey('guardians:list', 'admin', {
+        page: currentPage,
+        limit: itemsPerPage,
+        search: (debouncedSearch || '').trim() || undefined,
+        statusFilter,
+        sortBy,
+        order: sortOrder,
+      });
+
+      const cached = readCache(cacheKey, { deps: ['users', 'guardians'] });
+      if (cached.hit && cached.value) {
+        setGuardians(cached.value.guardians || []);
+        setTotalPages(cached.value.totalPages || 1);
+        if (cached.value.statusCounts) setStatusCounts(cached.value.statusCounts);
+        setError('');
+        setLoading(false);
+        if (cached.ageMs < 60_000) return;
+      }
+
       setLoading(true);
       const params = {
         role: 'guardian',
@@ -131,9 +151,17 @@ const GuardiansPage = () => {
       }
 
       const response = await api.get('/users', { params });
-      setGuardians(response.data.users);
-      setTotalPages(response.data.pagination.pages);
-      await fetchStatusCounts();
+      const fetched = response.data.users || [];
+      const nextTotalPages = response.data.pagination?.pages || 1;
+      setGuardians(fetched);
+      setTotalPages(nextTotalPages);
+      fetchStatusCounts();
+
+      writeCache(
+        cacheKey,
+        { guardians: fetched, totalPages: nextTotalPages, statusCounts },
+        { ttlMs: 5 * 60_000, deps: ['users', 'guardians'] }
+      );
     } catch (err) {
       setError('Failed to fetch guardians');
       console.error('Fetch guardians error:', err);
@@ -157,13 +185,22 @@ const GuardiansPage = () => {
 
   const fetchLinkedStudents = useCallback(async (guardianId) => {
     if (!guardianId) return;
+    if (linkedStudentsByGuardianId[guardianId]) return;
     // Prevent refetch storms
     if (linkedStudentsLoadingByGuardianId[guardianId]) return;
     setLinkedStudentsLoadingByGuardianId((prev) => ({ ...prev, [guardianId]: true }));
     try {
+      const cacheKey = makeCacheKey('guardians:linkedStudents', 'admin', { guardianId });
+      const cached = readCache(cacheKey, { deps: ['users', 'guardians'] });
+      if (cached.hit && cached.value) {
+        setLinkedStudentsByGuardianId((prev) => ({ ...prev, [guardianId]: cached.value }));
+        return;
+      }
+
       const res = await api.get(`/users/${guardianId}/students`);
       const students = res.data?.students || [];
       setLinkedStudentsByGuardianId((prev) => ({ ...prev, [guardianId]: students }));
+      writeCache(cacheKey, students, { ttlMs: 10 * 60_000, deps: ['users', 'guardians'] });
     } catch (err) {
       console.warn('Failed to fetch linked students for guardian', guardianId, err?.message || err);
       // Do not hard fail the page; fallback to embedded list
@@ -171,7 +208,7 @@ const GuardiansPage = () => {
     } finally {
       setLinkedStudentsLoadingByGuardianId((prev) => ({ ...prev, [guardianId]: false }));
     }
-  }, [linkedStudentsLoadingByGuardianId]);
+  }, [linkedStudentsLoadingByGuardianId, linkedStudentsByGuardianId]);
 
   const toggleExpanded = (guardianId) => {
     const next = expandedGuardian === guardianId ? null : guardianId;

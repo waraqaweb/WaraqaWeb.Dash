@@ -8,6 +8,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import api from '../api/axios';
 import { io } from 'socket.io-client';
+import { bumpDomainVersion } from '../utils/sessionCache';
 
 // Create the authentication context
 const AuthContext = createContext();
@@ -35,6 +36,43 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [socket, setSocket] = useState(globalSocket); // Use global socket
   const hasCheckedAuthRef = useRef(false);
+
+  // Keep list/availability UIs in sync when other users create/update/delete classes.
+  // We do this centrally so any screen that listens to these window events stays up-to-date.
+  useEffect(() => {
+    if (!socket) return;
+
+    const safeDispatch = (name) => {
+      try {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event(name));
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    const handleClassChange = () => {
+      try {
+        bumpDomainVersion('classes');
+        bumpDomainVersion('availability');
+      } catch (e) {
+        // ignore
+      }
+      safeDispatch('classes:refresh');
+      safeDispatch('availability:refresh');
+    };
+
+    socket.on('class:created', handleClassChange);
+    socket.on('class:updated', handleClassChange);
+    socket.on('class:deleted', handleClassChange);
+
+    return () => {
+      socket.off('class:created', handleClassChange);
+      socket.off('class:updated', handleClassChange);
+      socket.off('class:deleted', handleClassChange);
+    };
+  }, [socket]);
 
   // If the backend tells us the token is invalid/expired during an active session,
   // clear auth state so the UI can redirect back to login.

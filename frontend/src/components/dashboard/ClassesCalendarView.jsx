@@ -746,7 +746,19 @@ const ClassesCalendarView = ({
         const message = error?.response?.data?.message || "Failed to reschedule class";
         if (error?.response?.data?.availabilityError?.alternatives?.length) {
           const alternative = error.response.data.availabilityError.alternatives
-            .map((alt) => `${new Date(alt.start).toLocaleString()} (${alt.duration} min)`).join("\n");
+            .map((alt) => {
+              const startRaw = alt?.startDateTime || alt?.start || alt?.startTime;
+              const endRaw = alt?.endDateTime || alt?.end || alt?.endTime;
+              const start = startRaw ? new Date(startRaw) : null;
+              const end = endRaw ? new Date(endRaw) : null;
+              const duration = Number.isFinite(Number(alt?.duration))
+                ? Number(alt.duration)
+                : (start && end ? Math.round((end.getTime() - start.getTime()) / 60000) : null);
+
+              const startLabel = start ? start.toLocaleString() : 'Unknown start';
+              return `${startLabel}${Number.isFinite(duration) ? ` (${duration} min)` : ''}`;
+            })
+            .join("\n");
           alert(`${message}.\nSuggested slots:\n${alternative}`);
         } else {
           alert(message);

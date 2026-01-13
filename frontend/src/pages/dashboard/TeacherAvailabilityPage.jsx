@@ -68,6 +68,24 @@ const TeacherAvailabilityPage = () => {
     }
   }, [user?.role, fetchAvailability]);
 
+  useEffect(() => {
+    if (user?.role !== 'teacher') return;
+
+    const handler = () => {
+      fetchAvailability();
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('availability:refresh', handler);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('availability:refresh', handler);
+      }
+    };
+  }, [user?.role, fetchAvailability]);
+
   const handleAddSlot = async () => {
     try {
       await api.post('/availability/slots', {

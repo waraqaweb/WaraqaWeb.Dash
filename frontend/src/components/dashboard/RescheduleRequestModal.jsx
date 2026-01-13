@@ -119,6 +119,33 @@ const RescheduleRequestModal = ({
       .finally(() => setLoadingAvailability(false));
   }, [isOpen, teacherId, classData?.duration]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!teacherId) return;
+
+    const handler = () => {
+      setLoadingAvailability(true);
+      setSlotsError("");
+      api
+        .get(`/availability/slots/${teacherId}`)
+        .then((res) => setAvailability(res.data || null))
+        .catch((err) => {
+          const message = err?.response?.data?.message || "Failed to load availability";
+          setSlotsError(message);
+        })
+        .finally(() => setLoadingAvailability(false));
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('availability:refresh', handler);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('availability:refresh', handler);
+      }
+    };
+  }, [isOpen, teacherId]);
+
   const suggestions = useMemo(() => {
     if (!duration) return [];
 

@@ -1,5 +1,6 @@
 // /frontend/src/api/axios.js
 import axios from "axios";
+import { bumpDomainVersion } from "../utils/sessionCache";
 
 // Prefer environment-configured API base URL, fall back to browser origin.
 // Example: REACT_APP_API_URL=https://api.example.com/api
@@ -54,7 +55,37 @@ if (initialToken) {
 
 // Add response interceptor to handle auth errors
 instance.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    try {
+      const method = String(response?.config?.method || '').toLowerCase();
+      if (method && method !== 'get') {
+        const url = String(response?.config?.url || '');
+        // Very small, safe invalidation set: bump domain versions so cached GETs
+        // are ignored on next read.
+        if (url.startsWith('/classes')) {
+          bumpDomainVersion('classes');
+          bumpDomainVersion('availability');
+        }
+        if (url.startsWith('/invoices')) bumpDomainVersion('invoices');
+        if (url.startsWith('/library')) bumpDomainVersion('library');
+        if (url.startsWith('/availability')) bumpDomainVersion('availability');
+        if (url.startsWith('/students')) bumpDomainVersion('students');
+        if (url.startsWith('/users')) {
+          bumpDomainVersion('users');
+          bumpDomainVersion('students');
+          bumpDomainVersion('teachers');
+          bumpDomainVersion('guardians');
+        }
+        if (url.startsWith('/teachers')) bumpDomainVersion('teachers');
+        if (url.startsWith('/guardians')) bumpDomainVersion('guardians');
+        if (url.startsWith('/salaries')) bumpDomainVersion('salaries');
+      }
+    } catch (e) {
+      // ignore cache version bump failures
+    }
+
+    return response;
+  },
   (error) => {
     // Network / cache failures (no response) happen when the browser
     // fails to read from the HTTP cache/storage (service worker or disk)

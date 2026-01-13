@@ -15,6 +15,7 @@ import EditStudentModal from '../../components/students/EditStudentModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import api from '../../api/axios';
 import { deleteStudent as deleteStandaloneStudent } from '../../api/students';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 
 const STATUS_TABS = [
@@ -81,6 +82,7 @@ const MyStudentsPage = () => {
   const [guardianFilter] = useState('all');
   const [, setGuardiansList] = useState([]);
   const [classesHoursMap, setClassesHoursMap] = useState({});
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
   const [sortBy] = useState('firstName');
   const [sortOrder] = useState('asc');
   const [statusFilter, setStatusFilter] = useState('active');
@@ -176,32 +178,56 @@ const fetchStudents = async () => {
       return;
     }
 
-    if (isAdmin && isAdmin()) {
-      response = await api.get('/users/admin/all-students');
-      const arr = response.data.students || [];
 
-      let upcomingClassesArr = [];
-      try {
-        const classesRes = await api.get('/classes', { params: { filter: 'upcoming', limit: 5000 } });
-        upcomingClassesArr = classesRes.data.classes || [];
-      } catch (classesErr) {
-        console.warn('Failed to fetch upcoming classes for subjects (admin)', classesErr?.message || classesErr);
+    const cacheKey = makeCacheKey(
+      'students:list',
+      user?._id,
+      {
+        role: user?.role,
+        guardianFilter,
+        statusFilter,
+        globalFilter,
+        search: (effectiveSearchTerm || '').trim() || undefined,
       }
+    );
 
-      const subjectsByStudentId = buildUpcomingSubjectsByStudentId(upcomingClassesArr);
+    const cached = readCache(cacheKey, { deps: ['users', 'students', 'classes'] });
+    if (cached.hit && cached.value) {
+      setStudents(cached.value.students || []);
+      setTotalHours(cached.value.totalHours || 0);
+      setLocalLoading(false);
+      if (cached.ageMs < 60_000) return;
+    }
+
+    if (isAdmin && isAdmin()) {
+      // Fast first paint: ask for a limited list first (uses the optimized filtered flow).
+      // Then, if needed, the user can refine search/filters; we also cache the result.
+      response = await api.get('/users/admin/all-students', {
+        params: {
+          search: (effectiveSearchTerm || '').trim() || undefined,
+          limit: 400,
+        }
+      });
+      const arr = response.data.students || [];
       const withTZ = arr.map((st) => ({
         ...st,
         timezone: deriveStudentTimezone(st),
-        subjects: subjectsByStudentId[String(st?._id)] || st.subjects || []
+        subjects: Array.isArray(st.subjects) ? st.subjects : [],
       }));
       fetchedArr = withTZ;
       setStudents(withTZ);
       setTotalHours(response.data.totalHours || 0);
+
+      writeCache(
+        cacheKey,
+        { students: withTZ, totalHours: response.data.totalHours || 0 },
+        { ttlMs: 5 * 60_000, deps: ['users', 'students', 'classes'] }
+      );
   } else if (isTeacher && isTeacher()) {
       // For teachers show only students who have upcoming classes with this teacher.
       try {
         const teacherId = user._id || user.id;
-        const classesRes = await api.get('/classes', { params: { filter: 'upcoming', teacher: teacherId, limit: 5000 } });
+        const classesRes = await api.get('/classes', { params: { filter: 'upcoming', teacher: teacherId, limit: 2000 } });
         const classesArr = classesRes.data.classes || [];
         const upcomingNonCancelled = classesArr.filter((cls) => !isCancelledClassStatus(cls?.status));
         console.log('[MyStudentsPage] fetched upcoming classes for teacher', { count: upcomingNonCancelled.length, teacher: teacherId });
@@ -1142,6 +1168,57 @@ const fetchGuardiansList = async () => {
     </div>
   );
 };
+
+  // Fetch subjects only for currently visible page (admin & teacher).
+  useEffect(() => {
+    const run = async () => {
+      if (!user || loading) return;
+      if (!(isAdmin && isAdmin()) && !(isTeacher && isTeacher())) return;
+      if (!Array.isArray(paginatedStudents) || paginatedStudents.length === 0) return;
+
+      const ids = paginatedStudents
+        .map((s) => s && (s._id || s.id))
+        .filter(Boolean)
+        .map(String);
+      if (!ids.length) return;
+
+      // Only fetch if at least one visible student is missing subjects.
+      const missing = paginatedStudents.some((s) => !Array.isArray(s?.subjects) || s.subjects.length === 0);
+      if (!missing) return;
+
+      try {
+        setSubjectsLoading(true);
+        const params = {
+          filter: 'upcoming',
+          studentIds: ids.join(','),
+          limit: 2000,
+        };
+        // For teachers, keep teacher restriction.
+        if (isTeacher && isTeacher()) {
+          params.teacher = user._id || user.id;
+        }
+
+        const classesRes = await api.get('/classes', { params });
+        const classesArr = classesRes.data.classes || [];
+        const subjectsById = buildUpcomingSubjectsByStudentId(classesArr);
+
+        setStudents((prev) => (Array.isArray(prev) ? prev.map((st) => {
+          const sid = String(st?._id || st?.id || '');
+          if (!sid) return st;
+          const nextSubjects = subjectsById[sid];
+          if (!nextSubjects || (Array.isArray(st.subjects) && st.subjects.length)) return st;
+          return { ...st, subjects: nextSubjects };
+        }) : prev));
+      } catch (e) {
+        console.warn('Failed to fetch subjects for visible students', e?.message || e);
+      } finally {
+        setSubjectsLoading(false);
+      }
+    };
+
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, loading, currentPage, isAdmin, isTeacher, paginatedStudents]);
 
 export default MyStudentsPage;
 

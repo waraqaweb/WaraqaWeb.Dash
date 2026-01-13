@@ -218,6 +218,23 @@ async function validateTeacherAvailability(teacherId, startDateTime, endDateTime
     const teacherTimezone = teacher?.timezone || 'UTC';
     const slots = await AvailabilitySlot.findActiveByTeacher(teacherId);
 
+    const startLocalTeacher = moment(startDateTime).tz(teacherTimezone);
+    const endLocalTeacher = moment(endDateTime).tz(teacherTimezone);
+    const requestedDayOfWeekTeacher = startLocalTeacher.day();
+
+    const slotsForTeacherDay = slots
+      .filter((slot) => {
+        const slotTimezone = slot?.timezone || teacherTimezone;
+        if (slotTimezone !== teacherTimezone) return false;
+        return Number(slot.dayOfWeek) === Number(requestedDayOfWeekTeacher);
+      })
+      .map((slot) => ({
+        dayOfWeek: slot.dayOfWeek,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        timezone: slot?.timezone || teacherTimezone,
+      }));
+
     const fitsAnySlot = slots.some((slot) => {
       const slotTimezone = slot?.timezone || teacherTimezone;
 
@@ -246,7 +263,21 @@ async function validateTeacherAvailability(teacherId, startDateTime, endDateTime
         isAvailable: false,
         reason: 'Teacher not available during this time',
         conflictType: 'no_availability',
-        suggestedAction: 'Please choose a time when the teacher is available'
+        suggestedAction: 'Please choose a time when the teacher is available',
+        conflictDetails: {
+          teacherTimezone,
+          requested: {
+            startUtc: startDateTime,
+            endUtc: endDateTime,
+            startLocal: startLocalTeacher.format('YYYY-MM-DD HH:mm'),
+            endLocal: endLocalTeacher.format('YYYY-MM-DD HH:mm'),
+            dayOfWeek: requestedDayOfWeekTeacher,
+          },
+          slotsForDay: slotsForTeacherDay,
+          note: slotsForTeacherDay.length
+            ? 'Requested time must be fully contained within a single availability window.'
+            : 'No availability windows found for this day in teacher timezone.'
+        }
       };
     }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import {
   fetchTree,
   fetchFolderContents,
@@ -6,6 +7,7 @@ import {
   requestShareAccess,
   fetchShareStatus
 } from '../api/library';
+import { makeCacheKey, readCache, writeCache } from '../utils/sessionCache';
 
 const debounce = (fn, delay = 300) => {
   let timer;
@@ -16,6 +18,7 @@ const debounce = (fn, delay = 300) => {
 };
 
 export const useLibraryData = ({ searchTerm: externalSearchTerm = '', filter: externalFilter = 'all' } = {}) => {
+  const { user } = useAuth();
   const [tree, setTree] = useState([]);
   const [activeFolder, setActiveFolder] = useState(null);
   const [breadcrumb, setBreadcrumb] = useState([]);
@@ -36,17 +39,42 @@ export const useLibraryData = ({ searchTerm: externalSearchTerm = '', filter: ex
   const hydrateTree = useCallback(async () => {
     try {
       setIsTreeLoading(true);
+
+      const cacheKey = makeCacheKey('library:tree', user?._id, { kind: 'tree' });
+      const cached = readCache(cacheKey, { deps: ['library'] });
+      if (cached.hit && cached.value) {
+        return cached.value?.length ? cached.value : [];
+      }
+
       const { tree: apiTree } = await fetchTree();
-      return apiTree?.length ? apiTree : [];
+      const nextTree = apiTree?.length ? apiTree : [];
+      writeCache(cacheKey, nextTree, { ttlMs: 10 * 60_000, deps: ['library'] });
+      return nextTree;
     } finally {
       setIsTreeLoading(false);
     }
-  }, []);
+  }, [user?._id]);
 
   const loadFolder = useCallback(async (folderId = 'root', options = {}) => {
     setIsLoading(true);
     setError(null);
     try {
+      const cacheKey = makeCacheKey('library:folder', user?._id, { folderId, options });
+      const cached = readCache(cacheKey, { deps: ['library'] });
+      if (cached.hit && cached.value) {
+        const response = cached.value;
+        const nextBreadcrumb = response.breadcrumb?.length ? response.breadcrumb : [];
+        const nextFolders = response.folders?.length ? response.folders : [];
+        const nextItems = Array.isArray(response.items) ? response.items : [];
+        setActiveFolder(folderId);
+        setBreadcrumb(nextBreadcrumb);
+        setFolders(nextFolders);
+        setItems(nextItems);
+        setIsLoading(false);
+
+        if (cached.ageMs < 60_000) return;
+      }
+
       const response = await fetchFolderContents(folderId, options);
       const nextBreadcrumb = response.breadcrumb?.length ? response.breadcrumb : [];
       const nextFolders = response.folders?.length ? response.folders : [];
@@ -55,6 +83,8 @@ export const useLibraryData = ({ searchTerm: externalSearchTerm = '', filter: ex
       setBreadcrumb(nextBreadcrumb);
       setFolders(nextFolders);
       setItems(nextItems);
+
+      writeCache(cacheKey, response, { ttlMs: 10 * 60_000, deps: ['library'] });
     } catch (err) {
       console.error('Failed to load folder', err);
       setError('Unable to load folder');
@@ -63,7 +93,7 @@ export const useLibraryData = ({ searchTerm: externalSearchTerm = '', filter: ex
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [user?._id]);
 
   const hydrateShareRequests = useCallback(async () => {
     try {
@@ -83,16 +113,28 @@ export const useLibraryData = ({ searchTerm: externalSearchTerm = '', filter: ex
     }
     setIsLoading(true);
     try {
+      const cacheKey = makeCacheKey('library:search', user?._id, { q: nextTerm });
+      const cached = readCache(cacheKey, { deps: ['library'] });
+      if (cached.hit && cached.value) {
+        setItems(cached.value || []);
+        setFolders([]);
+        setBreadcrumb([]);
+        setIsLoading(false);
+        if (cached.ageMs < 60_000) return;
+      }
+
       const { items: results } = await searchLibrary({ q: nextTerm });
       setItems(results || []);
       setFolders([]);
       setBreadcrumb([]);
+
+      writeCache(cacheKey, results || [], { ttlMs: 10 * 60_000, deps: ['library'] });
     } catch (err) {
       console.error('Search failed', err);
     } finally {
       setIsLoading(false);
     }
-  }, [activeFolder, loadFolder]);
+  }, [activeFolder, loadFolder, user?._id]);
 
   const refreshTree = useCallback(async () => {
     const nextTree = await hydrateTree();

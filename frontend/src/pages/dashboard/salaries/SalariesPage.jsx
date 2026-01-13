@@ -11,6 +11,7 @@ import SalaryEditModal from "./SalaryEditModal";
 import SalaryCreateModal from "./SalaryCreateModal";
 import PrimaryButton from '../../../components/ui/PrimaryButton';
 import LoadingSpinner from '../../../components/ui/LoadingSpinner';
+import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
 const SalariesPage = () => {
   const { user } = useAuth();
@@ -52,6 +53,25 @@ const SalariesPage = () => {
 
   const fetchSalaries = async () => {
     try {
+      const cacheKey = makeCacheKey(
+        'salaries:list',
+        user?._id,
+        {
+          page: currentPage,
+          limit: itemsPerPage,
+          search: (debouncedSearch || '').trim() || undefined,
+          status: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+        }
+      );
+
+      const cached = readCache(cacheKey, { deps: ['invoices'] });
+      if (cached.hit && cached.value) {
+        setSalaries(cached.value.salaries || []);
+        setTotalPages(cached.value.totalPages || 1);
+        setLoading(false);
+        if (cached.ageMs < 60_000) return;
+      }
+
       setLoading(true);
       const params = {
         type: 'teacher_payment',
@@ -75,6 +95,15 @@ const SalariesPage = () => {
       const res = await api.get('/invoices', { params });
       setSalaries(res.data.invoices || []);
       setTotalPages(res.data.pagination?.pages || 1);
+
+      writeCache(
+        cacheKey,
+        {
+          salaries: res.data.invoices || [],
+          totalPages: res.data.pagination?.pages || 1,
+        },
+        { ttlMs: 5 * 60_000, deps: ['invoices'] }
+      );
     } catch (err) {
       console.error("Error fetching salaries:", err);
     } finally {
@@ -84,8 +113,16 @@ const SalariesPage = () => {
 
   const fetchStats = async () => {
     try {
+      const cacheKey = makeCacheKey('salaries:stats', user?._id, { kind: 'invoices-stats' });
+      const cached = readCache(cacheKey, { deps: ['invoices'] });
+      if (cached.hit && cached.value) {
+        setStats(cached.value);
+        if (cached.ageMs < 60_000) return;
+      }
+
       const res = await api.get("/invoices/stats");
       setStats(res.data.stats || res.data);
+      writeCache(cacheKey, res.data.stats || res.data, { ttlMs: 5 * 60_000, deps: ['invoices'] });
     } catch (err) {
       console.error("Error fetching stats:", err);
     }

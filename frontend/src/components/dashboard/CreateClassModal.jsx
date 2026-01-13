@@ -18,6 +18,13 @@ import {
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+function minutesToTime(minutes) {
+  if (!Number.isFinite(minutes) || minutes < 0) return '';
+  const h = Math.floor(minutes / 60) % 24;
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 export default function CreateClassModal({
   isOpen,
   onClose,
@@ -286,7 +293,40 @@ export default function CreateClassModal({
 
             if (conflicts.length > 0) {
               console.warn('Create recurring class availability conflicts', { conflicts });
-              alert('Teacher not available for one or more recurring slots. Please choose different times or contact the teacher.');
+
+              const tzLabel = availability?.timezone || currentNewClass?.timezone || adminTimezone || DEFAULT_TIMEZONE;
+              const slotsByDay = availability?.slotsByDay || {};
+
+              const lines = conflicts.map(({ idx, reason }) => {
+                const slot = (currentNewClass.recurrenceDetails || [])[idx] || {};
+                const day = Number.isFinite(Number(slot.dayOfWeek)) ? Number(slot.dayOfWeek) : null;
+                const startMin = toMinutes(slot.time);
+                const duration = Number(slot.duration) || 0;
+                const endMin = startMin !== null ? startMin + duration : null;
+
+                const dayName = day !== null ? (dayNames[day] || `Day ${day}`) : 'Unknown day';
+                const reqStart = startMin !== null ? minutesToTime(startMin) : String(slot.time || '');
+                const reqEnd = endMin !== null ? minutesToTime(endMin) : '';
+                const reqRange = reqEnd ? `${reqStart}–${reqEnd}` : reqStart;
+
+                const daySlots = (day !== null ? slotsByDay[String(day)] : []) || [];
+                const daySlotsLabel = daySlots.length
+                  ? daySlots.map((av) => `${av.startTime || av.start || ''}–${av.endTime || av.end || ''}`).join(', ')
+                  : 'none';
+
+                if (reason === 'no_day_slots') {
+                  return `• ${dayName}: no availability windows (timezone ${tzLabel})`;
+                }
+                if (reason === 'not_covered') {
+                  return `• ${dayName}: requested ${reqRange} (${duration} min) is not fully covered. Available: ${daySlotsLabel} (timezone ${tzLabel})`;
+                }
+                if (reason === 'invalid_time') {
+                  return `• ${dayName}: invalid time/duration`;
+                }
+                return `• ${dayName}: not available`;
+              });
+
+              alert(`Teacher not available for one or more recurring slots:\n${lines.join('\n')}`);
               return;
             }
           }
@@ -303,6 +343,43 @@ export default function CreateClassModal({
 
       const status = error?.response?.status;
       const data = error?.response?.data || {};
+
+      if (data?.availabilityError) {
+        const ae = data.availabilityError;
+        const reason = ae?.reason ? `\nReason: ${ae.reason}` : '';
+
+        let details = '';
+        if (ae?.conflictType === 'existing_class' && ae?.conflictDetails) {
+          const cd = ae.conflictDetails;
+          const start = cd?.startTime ? new Date(cd.startTime).toLocaleString() : '';
+          const end = cd?.endTime ? new Date(cd.endTime).toLocaleString() : '';
+          details = `\nConflicts with: ${cd?.studentName || 'a class'}${cd?.subject ? ` (${cd.subject})` : ''}${start && end ? `\nTime: ${start} – ${end}` : ''}`;
+        } else if (ae?.conflictType === 'no_availability' && ae?.conflictDetails) {
+          const cd = ae.conflictDetails;
+          const slotsForDay = Array.isArray(cd?.slotsForDay) ? cd.slotsForDay : [];
+          const slotLabel = slotsForDay.length
+            ? slotsForDay.map((s) => `${s.startTime}–${s.endTime}`).join(', ')
+            : 'none';
+          details = `\nRequested: ${cd?.requested?.startLocal || ''} – ${cd?.requested?.endLocal || ''} (${cd?.teacherTimezone || ''})\nAvailable windows: ${slotLabel}`;
+        }
+
+        const alternatives = Array.isArray(ae?.alternatives) ? ae.alternatives : [];
+        const alternativesText = alternatives.length
+          ? `\n\nSuggested slots:\n${alternatives
+              .slice(0, 5)
+              .map((alt) => {
+                const start = alt?.startDateTime || alt?.start || alt?.startTime;
+                const end = alt?.endDateTime || alt?.end || alt?.endTime;
+                const startLabel = start ? new Date(start).toLocaleString() : '';
+                const endLabel = end ? new Date(end).toLocaleString() : '';
+                return `- ${startLabel}${endLabel ? ` – ${endLabel}` : ''}`;
+              })
+              .join('\n')}`
+          : '';
+
+        alert(`${data?.message || 'Teacher not available'}${reason}${details}${alternativesText}`);
+        return;
+      }
 
       if (status === 409 && currentNewClass?.isRecurring) {
         // Offer override even if backend didn't provide structured duplicate info

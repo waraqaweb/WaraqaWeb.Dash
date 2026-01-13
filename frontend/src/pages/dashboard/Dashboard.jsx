@@ -20,6 +20,7 @@ import ClassesPage from './ClassesPage';
 import InvoicesPage from './InvoicesPage';
 import ClassReportPage from './ClassReportPage';
 import SalariesPage from './salaries/SalariesPage';
+import LibraryDashboard from '../library/LibraryDashboard';
 import TeacherAvailabilityPage from './TeacherAvailabilityPage';
 import MeetingAvailabilityAdminPage from './MeetingAvailabilityAdminPage';
 import Settings from "./Settings";
@@ -150,6 +151,8 @@ const Dashboard = () => {
         return <InvoicesPage isActive={isActive} />;
       case 'salaries':
         return <SalariesPage isActive={isActive} />;
+      case 'library':
+        return <LibraryDashboard isActive={isActive} />;
       case 'availability':
         return user?.role === 'admin'
           ? <MeetingAvailabilityAdminPage isActive={isActive} />
@@ -198,6 +201,8 @@ const Dashboard = () => {
         return 'Salaries';
       case 'availability':
         return user?.role === 'admin' ? 'Meeting Availability' : 'My Availability';
+      case 'library':
+        return 'Library';
       default:
         return activeView.charAt(0).toUpperCase() + activeView.slice(1);
     }

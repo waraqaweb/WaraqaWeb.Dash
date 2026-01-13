@@ -9,6 +9,7 @@
  */
 
 const express = require("express");
+const mongoose = require('mongoose');
 const router = express.Router();
 const { body, validationResult } = require("express-validator");
 const { authenticateToken, requireRole } = require("../middleware/auth");
@@ -18,7 +19,6 @@ const Notification = require("../models/Notification");
 require("../models/Student");
 const InvoiceModel = require("../models/Invoice");
 const InvoiceService = require('../services/invoiceService');
-const mongoose = require("mongoose");
 const systemVacationService = require("../services/systemVacationService");
 const availabilityService = require("../services/availabilityService");
 const {
@@ -626,6 +626,7 @@ router.get("/", authenticateToken, async (req, res) => {
       teacher,
       guardian,
       student,
+      studentIds,
       status,
       subject,
       search,
@@ -645,6 +646,15 @@ router.get("/", authenticateToken, async (req, res) => {
     if (teacher && teacher !== "all") filters.teacher = teacher;
     if (guardian && guardian !== "all") filters["student.guardianId"] = guardian;
     if (student && student !== "all") filters["student.studentId"] = student;
+
+    // Allow filtering by multiple student ids (comma-separated). Useful for fast per-page lookups.
+    if (studentIds && typeof studentIds === 'string') {
+      const rawParts = studentIds.split(',').map((v) => v.trim()).filter(Boolean);
+      const validIds = rawParts.filter((v) => mongoose.Types.ObjectId.isValid(v)).map((v) => new mongoose.Types.ObjectId(v));
+      if (validIds.length) {
+        filters['student.studentId'] = { $in: validIds };
+      }
+    }
     if (status && status !== "all") filters.status = status;
     if (subject) filters.subject = new RegExp(subject, "i");
 
@@ -805,25 +815,18 @@ router.get("/", authenticateToken, async (req, res) => {
       .populate("student.guardianId", "firstName lastName email phone")
       .sort(sortObj)
       .skip(skip)
-      .limit(limitNum);
+      .limit(limitNum)
+      .lean();
 
-
-    // enrich recurring info
-    const classes = await Promise.all(
-      rawClasses.map(async (c) => {
-        const obj = c.toObject();
-        if (obj.parentRecurringClass) {
-          const pattern = await Class.findById(obj.parentRecurringClass);
-          if (pattern) {
-            obj.isRecurring = true;
-            obj.parentRecurringClass = obj.parentRecurringClass;
-            obj.recurrence = pattern.recurrence;
-            obj.recurrenceDetails = pattern.recurrenceDetails || [];
-          }
-        }
-        return obj;
-      })
-    );
+    // Avoid N+1 queries for recurring patterns on list endpoints.
+    // The details are available from GET /api/classes/:id when needed.
+    const classes = (rawClasses || []).map((obj) => {
+      const isRecurring = Boolean(obj?.parentRecurringClass);
+      return {
+        ...obj,
+        isRecurring,
+      };
+    });
 
     const totalClasses = await Class.countDocuments(filters);
     const totalPages = Math.ceil(totalClasses / limitNum);

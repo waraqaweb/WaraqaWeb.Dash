@@ -38,6 +38,7 @@ import RefundInvoiceModal from '../../components/invoices/RefundInvoiceModal';
 import ConfirmModal from '../../components/ui/ConfirmModal';
 import Toast from '../../components/ui/Toast';
 import { computeInvoiceTotals } from '../../utils/invoiceTotals';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const getInvoicePaymentTimestamp = (invoice) => {
   if (!invoice) return 0;
@@ -49,7 +50,7 @@ const getInvoicePaymentTimestamp = (invoice) => {
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 const InvoicesPage = ({ isActive = true }) => {
-  const { isAdmin, isGuardian, socket } = useAuth();
+  const { isAdmin, isGuardian, socket, user } = useAuth();
   const { searchTerm, globalFilter } = useSearch();
   const location = useLocation();
   const navigate = useNavigate();
@@ -177,7 +178,35 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const fetchInvoices = async () => {
     try {
-      setLoading(true);
+      const cacheKey = makeCacheKey(
+        'invoices:list',
+        user?._id,
+        {
+          page: currentPage,
+          limit: itemsPerPage,
+          search: (debouncedSearch || '').trim() || undefined,
+          showDeleted: Boolean(showDeleted && isAdmin()),
+          activeTab,
+          statusFilter,
+          typeFilter,
+          segmentFilter,
+        }
+      );
+
+      const cached = readCache(cacheKey, { deps: ['invoices'] });
+      if (cached.hit && cached.value) {
+        setInvoices(cached.value.invoices || []);
+        setTotalPages(cached.value.totalPages || 1);
+        setGuardianStudentsMap(cached.value.guardianStudentsMap || {});
+        setError('');
+        setLoading(false);
+
+        if (cached.ageMs < 60_000) {
+          return;
+        }
+      } else {
+        setLoading(true);
+      }
       const params = {
         page: currentPage,
         limit: itemsPerPage,
@@ -231,17 +260,31 @@ const InvoicesPage = ({ isActive = true }) => {
       setTotalPages(data.pagination?.pages || 1);
 
       const guardianIds = [...new Set(invoiceList.map(inv => inv.guardian?._id).filter(Boolean))];
+      let nextGuardianStudentsMap = {};
       if (guardianIds.length > 0) {
         try {
           const response = await api.post('/users/students/batch', { guardianIds });
-          setGuardianStudentsMap(response.data?.map || {});
+          nextGuardianStudentsMap = response.data?.map || {};
+          setGuardianStudentsMap(nextGuardianStudentsMap);
         } catch (err) {
           console.error('Failed to fetch guardian students batch', err);
-          setGuardianStudentsMap({});
+          nextGuardianStudentsMap = {};
+          setGuardianStudentsMap(nextGuardianStudentsMap);
         }
       } else {
-        setGuardianStudentsMap({});
+        nextGuardianStudentsMap = {};
+        setGuardianStudentsMap(nextGuardianStudentsMap);
       }
+
+      writeCache(
+        cacheKey,
+        {
+          invoices: invoiceList,
+          totalPages: data.pagination?.pages || 1,
+          guardianStudentsMap: nextGuardianStudentsMap,
+        },
+        { ttlMs: 5 * 60_000, deps: ['invoices'] }
+      );
     } catch (err) {
       console.error(err);
       setError('Failed to fetch invoices');
@@ -252,8 +295,16 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const fetchStats = async () => {
     try {
+      const cacheKey = makeCacheKey('invoices:stats', user?._id, { kind: 'overview' });
+      const cached = readCache(cacheKey, { deps: ['invoices'] });
+      if (cached.hit && cached.value) {
+        setStats(cached.value);
+        if (cached.ageMs < 60_000) return;
+      }
+
       const { data } = await api.get('/invoices/stats/overview');
       setStats(data.stats);
+      writeCache(cacheKey, data.stats, { ttlMs: 5 * 60_000, deps: ['invoices'] });
     } catch (err) {
       console.error('Failed fetching invoice stats', err);
     }

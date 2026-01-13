@@ -299,7 +299,15 @@ const AppRoutes = () => {
         path="/dashboard/library"
         element={
           <ProtectedRoute>
-            <LibraryDashboard />
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboard/salaries"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <Dashboard />
           </ProtectedRoute>
         }
       />

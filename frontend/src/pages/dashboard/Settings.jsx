@@ -50,6 +50,9 @@ const Settings = () => {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [toast, setToast] = useState(null);
 
+  // Maintenance (admin)
+  const [generatingRecurring, setGeneratingRecurring] = useState(false);
+
   // App version (from backend)
   const [appVersion, setAppVersion] = useState(null);
   const [appBuildTime, setAppBuildTime] = useState(null);
@@ -287,6 +290,45 @@ const Settings = () => {
                 })()}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Maintenance card */}
+        {user?.role === 'admin' && (
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-medium">Maintenance</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  Manual tools for low-usage operations.
+                </div>
+              </div>
+              <button
+                disabled={generatingRecurring}
+                onClick={async () => {
+                  setGeneratingRecurring(true);
+                  try {
+                    const res = await api.post('/classes/maintenance/generate-recurring');
+                    const count = res.data?.count;
+                    setToast({
+                      type: 'success',
+                      message: `Recurring generation complete${typeof count === 'number' ? ` (${count} classes created)` : ''}`,
+                    });
+                  } catch (err) {
+                    setToast({
+                      type: 'error',
+                      message: err?.response?.data?.message || err?.message || 'Failed to generate recurring classes',
+                    });
+                  } finally {
+                    setGeneratingRecurring(false);
+                  }
+                }}
+                className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${generatingRecurring ? 'opacity-70' : ''}`}
+                title="Generate upcoming recurring class instances now"
+              >
+                {generatingRecurring ? 'Generating…' : 'Generate Recurring Classes Now'}
+              </button>
+            </div>
           </div>
         )}
       </div>

@@ -12,6 +12,7 @@ import { useSearch } from '../../contexts/SearchContext';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import AddStudentModal from '../../components/dashboard/AddStudentModal';
 import EditStudentModal from '../../components/students/EditStudentModal';
+import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import api from '../../api/axios';
 import { deleteStudent as deleteStandaloneStudent } from '../../api/students';
 
@@ -69,8 +70,8 @@ const MyStudentsPage = () => {
   const { searchTerm, globalFilter } = useSearch();
   const [students, setStudents] = useState([]);
   const [, setTotalHours] = useState(0);
-  const [, setLocalLoading] = useState(true);
-  const [, setError] = useState('');
+  const [localLoading, setLocalLoading] = useState(true);
+  const [error, setError] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState(null);
   const [expandedStudent, setExpandedStudent] = useState(null);
@@ -759,6 +760,8 @@ const fetchGuardiansList = async () => {
 
   // Do not early-return while loading so the search and filters stay mounted (prevents focus loss)
 
+  const isPageLoading = Boolean(loading || localLoading);
+
   // Derived student counts for header counters
   const totalStudents = (students || []).length;
   const activeStudents = (students || []).filter((student) => isStudentActive(student)).length;
@@ -811,7 +814,14 @@ const fetchGuardiansList = async () => {
       </div>
       
       {/* Students List */}
-  {sortedStudents.length === 0 ? (
+      {isPageLoading && sortedStudents.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12">
+          <LoadingSpinner text="Loading students…" />
+          {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
+        </div>
+      ) : null}
+
+      {sortedStudents.length === 0 ? (
         <div className="text-center py-10">
           <div className="text-muted-foreground mb-4">
             <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">

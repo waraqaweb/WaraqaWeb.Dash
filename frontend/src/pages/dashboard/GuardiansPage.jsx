@@ -29,6 +29,7 @@ import {
   Edit
 } from 'lucide-react';
 import ProfileEditModal from '../../components/dashboard/ProfileEditModal';
+import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import api from '../../api/axios';
 
 const GUARDIAN_STATUS_TABS = [
@@ -353,6 +354,12 @@ const GuardiansPage = () => {
         </div>
 
         {/* Guardians List */}
+        {loading && sortedGuardians.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12">
+            <LoadingSpinner text="Loading guardians…" />
+          </div>
+        ) : null}
+
         <div className="space-y-3">
           {sortedGuardians.map((guardian) => (
             <div key={guardian._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">

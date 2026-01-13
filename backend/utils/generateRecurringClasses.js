@@ -11,10 +11,18 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
   try {
     const pattern = recurringPattern.toObject ? recurringPattern.toObject() : recurringPattern;
 
-    // compute generation window
+    // compute generation window (rolling)
+    // - start: now
+    // - end: now + N months, but never beyond recurrence.endDate if provided
     const startDate = new Date();
     const endDate = new Date(startDate);
     endDate.setMonth(endDate.getMonth() + (pattern.recurrence?.generationPeriodMonths || periodMonths));
+    if (pattern.recurrence?.endDate) {
+      const seriesEnd = new Date(pattern.recurrence.endDate);
+      if (!Number.isNaN(seriesEnd.getTime()) && seriesEnd < endDate) {
+        endDate.setTime(seriesEnd.getTime());
+      }
+    }
 
     let perDayMap = perDayMapParam || new Map();
     if ((!perDayMap || perDayMap.size === 0) && Array.isArray(pattern.recurrenceDetails) && pattern.recurrenceDetails.length) {
@@ -102,6 +110,15 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
             createdBy: pattern.createdBy || null,
             status: 'scheduled',
           });
+
+          // Avoid duplicates when the rolling generation job runs repeatedly.
+          // (No unique index exists in the schema for recurring instances.)
+          const alreadyExists = await Class.exists({
+            parentRecurringClass: pattern._id,
+            scheduledDate: instanceDate,
+            status: { $ne: 'pattern' },
+          });
+          if (alreadyExists) continue;
 
           await inst.save();
           generated.push(inst);

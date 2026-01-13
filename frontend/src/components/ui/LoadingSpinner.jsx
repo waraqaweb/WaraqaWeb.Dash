@@ -19,16 +19,16 @@ const LoadingSpinner = ({ size = 'md', text = 'Loading...', fullScreen = false }
       <div className="flex flex-col items-center gap-3">
         <div
           aria-hidden="true"
-          className={`${sizeClasses[size]} border-4 border-slate-200 border-t-emerald-600 rounded-full animate-spin`}
+          className={`${sizeClasses[size]} border-4 border-border border-t-primary rounded-full animate-spin`}
         />
-        {text && <span className="text-sm text-slate-500 font-medium">{text}</span>}
+        {text && <span className="text-sm text-muted-foreground font-medium">{text}</span>}
       </div>
     </div>
   );
 
   if (fullScreen) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/60 backdrop-blur-sm">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
         {spinner}
       </div>
     );

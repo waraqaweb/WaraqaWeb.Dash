@@ -52,6 +52,7 @@ const Dashboard = () => {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeView, setActiveView] = useState('home');
+  const [mountedViews, setMountedViews] = useState(['home']);
 
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -82,8 +83,14 @@ const Dashboard = () => {
     }
   }, [location.pathname]);
 
-  const renderContent = () => {
-    switch (activeView) {
+  // Keep visited views mounted so lists don't reload on every tab switch.
+  useEffect(() => {
+    if (!activeView) return;
+    setMountedViews((prev) => (prev.includes(activeView) ? prev : [...prev, activeView]));
+  }, [activeView]);
+
+  const renderView = (viewKey) => {
+    switch (viewKey) {
       case 'home':
         return <DashboardHome />;
       case 'profile':
@@ -118,6 +125,25 @@ const Dashboard = () => {
       default:
         return <DashboardHome />;
     }
+  };
+
+  const renderContent = () => {
+    const viewsToRender = mountedViews.includes(activeView)
+      ? mountedViews
+      : [...mountedViews, activeView];
+
+    return (
+      <>
+        {viewsToRender.map((viewKey) => (
+          <div
+            key={viewKey}
+            className={viewKey === activeView ? 'block' : 'hidden'}
+          >
+            {renderView(viewKey)}
+          </div>
+        ))}
+      </>
+    );
   };
 
   const getPageTitle = () => {

@@ -682,7 +682,8 @@ const fetchClasses = useCallback(async () => {
 
     // Backend already sorts by scheduledDate, so no need to sort again
     setClasses(fetchedClasses);
-    setTotalPages(Math.ceil(res.data.total / 30));
+    const apiTotalPages = Number(res.data?.pagination?.totalPages);
+    setTotalPages(Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1);
     setError("");
   } catch (err) {
     console.error("Fetch classes error:", err);

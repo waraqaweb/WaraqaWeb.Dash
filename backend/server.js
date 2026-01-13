@@ -314,15 +314,15 @@ try {
   console.warn('Failed to start dashboard scheduled job:', e && e.message);
 }
 
-// Schedule recurring-classes generation job (daily at 00:05)
+// Schedule recurring-classes generation job (daily at 05:00)
 try {
   const cron = require('node-cron');
   const { runGenerateRecurringClasses } = require('./jobs/generateRecurringClassesJob');
-  cron.schedule('5 0 * * *', async () => {
+  cron.schedule('0 5 * * *', async () => {
     try {
       await runGenerateRecurringClasses();
     } catch (e) { console.error('Scheduled generateRecurringClasses failed:', e && e.message); }
-  });
+  }, { timezone: 'Africa/Cairo' });
   // Run once on startup (non-blocking) to ensure initial generation happens
   runGenerateRecurringClasses().catch((e) => console.warn('Initial generateRecurringClasses failed:', e && e.message));
 } catch (e) {

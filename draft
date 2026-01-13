@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "impreovements 13 Jan"
+git commit -m "Blank screen issue fixed"
 git push origin main
 
 ---

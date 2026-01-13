@@ -671,6 +671,57 @@ const fetchGuardiansList = async () => {
     return sortedStudents.slice(start, start + STUDENTS_PER_PAGE);
   }, [sortedStudents, currentPage]);
 
+  // Fetch subjects only for currently visible page (admin & teacher).
+  useEffect(() => {
+    const run = async () => {
+      if (!user || loading) return;
+      if (!(isAdmin && isAdmin()) && !(isTeacher && isTeacher())) return;
+      if (!Array.isArray(paginatedStudents) || paginatedStudents.length === 0) return;
+
+      const ids = paginatedStudents
+        .map((s) => s && (s._id || s.id))
+        .filter(Boolean)
+        .map(String);
+      if (!ids.length) return;
+
+      // Only fetch if at least one visible student is missing subjects.
+      const missing = paginatedStudents.some((s) => !Array.isArray(s?.subjects) || s.subjects.length === 0);
+      if (!missing) return;
+
+      try {
+        setSubjectsLoading(true);
+        const params = {
+          filter: 'upcoming',
+          studentIds: ids.join(','),
+          limit: 2000,
+        };
+        // For teachers, keep teacher restriction.
+        if (isTeacher && isTeacher()) {
+          params.teacher = user._id || user.id;
+        }
+
+        const classesRes = await api.get('/classes', { params });
+        const classesArr = classesRes.data.classes || [];
+        const subjectsById = buildUpcomingSubjectsByStudentId(classesArr);
+
+        setStudents((prev) => (Array.isArray(prev) ? prev.map((st) => {
+          const sid = String(st?._id || st?.id || '');
+          if (!sid) return st;
+          const nextSubjects = subjectsById[sid];
+          if (!nextSubjects || (Array.isArray(st.subjects) && st.subjects.length)) return st;
+          return { ...st, subjects: nextSubjects };
+        }) : prev));
+      } catch (e) {
+        console.warn('Failed to fetch subjects for visible students', e?.message || e);
+      } finally {
+        setSubjectsLoading(false);
+      }
+    };
+
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, loading, currentPage, isAdmin, isTeacher, paginatedStudents]);
+
 
 
   const handleStudentAdded = (newStudent) => {
@@ -1168,57 +1219,5 @@ const fetchGuardiansList = async () => {
     </div>
   );
 };
-
-  // Fetch subjects only for currently visible page (admin & teacher).
-  useEffect(() => {
-    const run = async () => {
-      if (!user || loading) return;
-      if (!(isAdmin && isAdmin()) && !(isTeacher && isTeacher())) return;
-      if (!Array.isArray(paginatedStudents) || paginatedStudents.length === 0) return;
-
-      const ids = paginatedStudents
-        .map((s) => s && (s._id || s.id))
-        .filter(Boolean)
-        .map(String);
-      if (!ids.length) return;
-
-      // Only fetch if at least one visible student is missing subjects.
-      const missing = paginatedStudents.some((s) => !Array.isArray(s?.subjects) || s.subjects.length === 0);
-      if (!missing) return;
-
-      try {
-        setSubjectsLoading(true);
-        const params = {
-          filter: 'upcoming',
-          studentIds: ids.join(','),
-          limit: 2000,
-        };
-        // For teachers, keep teacher restriction.
-        if (isTeacher && isTeacher()) {
-          params.teacher = user._id || user.id;
-        }
-
-        const classesRes = await api.get('/classes', { params });
-        const classesArr = classesRes.data.classes || [];
-        const subjectsById = buildUpcomingSubjectsByStudentId(classesArr);
-
-        setStudents((prev) => (Array.isArray(prev) ? prev.map((st) => {
-          const sid = String(st?._id || st?.id || '');
-          if (!sid) return st;
-          const nextSubjects = subjectsById[sid];
-          if (!nextSubjects || (Array.isArray(st.subjects) && st.subjects.length)) return st;
-          return { ...st, subjects: nextSubjects };
-        }) : prev));
-      } catch (e) {
-        console.warn('Failed to fetch subjects for visible students', e?.message || e);
-      } finally {
-        setSubjectsLoading(false);
-      }
-    };
-
-    run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, loading, currentPage, isAdmin, isTeacher, paginatedStudents]);
-
 export default MyStudentsPage;
 

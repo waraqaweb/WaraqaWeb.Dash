@@ -101,7 +101,7 @@ const prettifyTimezoneLabel = (label = "", value = "") => {
 
   return "";
 };
-const ClassesPage = () => {
+const ClassesPage = ({ isActive = true }) => {
   // router hooks for tab sync and route-backed modals
   const location = useLocation();
   const navigate = useNavigate();
@@ -122,6 +122,16 @@ const ClassesPage = () => {
       return layout === 'calendar' ? 'calendar' : 'list';
     } catch (e) {
       return 'list';
+    }
+  };
+
+  const getInitialPage = () => {
+    try {
+      const q = new URLSearchParams(location.search);
+      const raw = Number(q.get('page') || '1');
+      return Number.isFinite(raw) && raw > 0 ? raw : 1;
+    } catch (e) {
+      return 1;
     }
   };
 
@@ -166,7 +176,7 @@ const ClassesPage = () => {
   const [teacherFilter] = useState("all");
   const [guardianFilter] = useState("all");
   const [expandedClass, setExpandedClass] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(getInitialPage);
   const [totalPages, setTotalPages] = useState(1);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -280,37 +290,8 @@ const ClassesPage = () => {
   const normalizedSearchTerm = useMemo(() => (searchTerm || "").trim().toLowerCase(), [searchTerm]);
 
   const filteredClasses = useMemo(() => {
-    if (!normalizedSearchTerm) return classes;
-
-    return (classes || []).filter((classItem) => {
-      const teacherInfo = resolveTeacherInfo(classItem?.teacher);
-      const haystackValues = [
-        classItem?.title,
-        classItem?.subject,
-        classItem?.description,
-        classItem?.classCode,
-        classItem?.meetingLink,
-        classItem?.student?.studentName,
-        classItem?.student?.preferredName,
-        classItem?.student?.nickname,
-        classItem?.student?.guardianName
-      ];
-
-      if (teacherInfo?.label) {
-        haystackValues.push(teacherInfo.label);
-      }
-
-      const tokens = haystackValues
-        .filter(Boolean)
-        .map((value) => value.toString().toLowerCase());
-
-      if (teacherInfo?.haystack?.length) {
-        tokens.push(...teacherInfo.haystack);
-      }
-
-      return tokens.some((token) => token.includes(normalizedSearchTerm));
-    });
-  }, [classes, normalizedSearchTerm, resolveTeacherInfo]);
+    return classes;
+  }, [classes]);
 
 
   const mapAvailabilityResponse = useCallback((raw = {}) => createAvailabilityState({
@@ -344,7 +325,14 @@ const ClassesPage = () => {
   }, [createAvailabilityState, mapAvailabilityResponse, user?._id, user?.timezone]);
 
 
+  // When search/filters change, reset to the first page so server-side search works across all results.
   useEffect(() => {
+    if (!isActive) return;
+    setCurrentPage(1);
+  }, [isActive, searchTerm, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter]);
+
+  useEffect(() => {
+    if (!isActive) return;
     // Avoid referencing callback consts before initialization (TDZ) by calling refs.
     if (fetchClassesRef.current) {
       fetchClassesRef.current();
@@ -358,6 +346,7 @@ const ClassesPage = () => {
       setGuardians([]);
     }
   }, [
+    isActive,
     searchTerm,
     globalFilter,
     sortBy,
@@ -537,19 +526,49 @@ const ClassesPage = () => {
 
   // Keep tabFilter in sync when the URL query string changes (Back/Forward or manual URL edits)
   useEffect(() => {
+    if (!isActive) return;
     const q = new URLSearchParams(location.search);
     const tab = q.get('tab') || 'upcoming';
     if (tab !== tabFilter) setTabFilter(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search]);
+  }, [isActive, location.search]);
+
+  // Sync currentPage from URL (Back/Forward)
+  useEffect(() => {
+    if (!isActive) return;
+    try {
+      const q = new URLSearchParams(location.search);
+      const raw = Number(q.get('page') || '1');
+      const next = Number.isFinite(raw) && raw > 0 ? raw : 1;
+      if (next !== currentPage) setCurrentPage(next);
+    } catch (e) {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, location.search]);
+
+  // Persist currentPage in URL (refresh keeps your place)
+  useEffect(() => {
+    if (!isActive) return;
+    try {
+      const q = new URLSearchParams(location.search);
+      const currentParam = Number(q.get('page') || '1');
+      if (currentParam === Number(currentPage || 1)) return;
+      q.set('page', String(currentPage || 1));
+      navigate(`${location.pathname}?${q.toString()}`, { replace: false });
+    } catch (e) {
+      // ignore
+    }
+  }, [isActive, currentPage, location.pathname, location.search, navigate]);
 
   useEffect(() => {
+    if (!isActive) return;
     const q = new URLSearchParams(location.search);
     const layout = q.get('layout');
     const normalized = layout === 'calendar' ? 'calendar' : 'list';
     if (normalized !== viewLayout) setViewLayout(normalized);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search]);
+  }, [isActive, location.search]);
 
   const toggleCalendarAvailability = useCallback(() => {
     if (!calendarAvailability) return;
@@ -591,6 +610,7 @@ const ClassesPage = () => {
     const q = new URLSearchParams(location.search);
     q.set('view', 'classes');
     q.set('layout', nextLayout);
+    q.set('page', '1');
     navigate(`${location.pathname}?${q.toString()}`, { state: { background: location.state?.background }, replace: false });
     setViewLayout(nextLayout);
   };
@@ -600,6 +620,7 @@ const ClassesPage = () => {
     const q = new URLSearchParams(location.search);
     q.set('tab', nextTab);
     q.set('view', 'classes');
+    q.set('page', '1');
     navigate(`${location.pathname}?${q.toString()}`, { state: { background: location.state?.background }, replace: false });
     setTabFilter(nextTab);
   };

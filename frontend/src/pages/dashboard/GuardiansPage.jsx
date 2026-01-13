@@ -103,6 +103,17 @@ const GuardiansPage = () => {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
+  // Global search should search across all status tabs and all pages.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearch]);
+
+  useEffect(() => {
+    if ((debouncedSearch || '').trim() && statusFilter !== 'all') {
+      setStatusFilter('all');
+    }
+  }, [debouncedSearch, statusFilter]);
+
   const fetchGuardians = useCallback(async () => {
     try {
       setLoading(true);

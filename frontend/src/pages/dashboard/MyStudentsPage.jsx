@@ -120,6 +120,12 @@ const MyStudentsPage = () => {
     setCurrentPage(1);
   }, [statusFilter, guardianFilter, effectiveSearchTerm]);
 
+  useEffect(() => {
+    if ((effectiveSearchTerm || '').trim() && statusFilter !== 'all') {
+      setStatusFilter('all');
+    }
+  }, [effectiveSearchTerm, statusFilter]);
+
 
 const fetchStudents = async () => {
   setLocalLoading(true);

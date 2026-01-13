@@ -251,6 +251,8 @@ router.get('/', authenticateToken, async (req, res) => {
 
     const filter = {};
 
+    const smartSort = ['1', 'true', 'yes'].includes(String(req.query.smartSort || '').toLowerCase());
+
     // Exclude soft-deleted invoices by default. Admins may request deleted via ?deleted=true
     const showDeleted = String(req.query.deleted || '').toLowerCase() === 'true';
     if (!showDeleted) {
@@ -293,12 +295,68 @@ router.get('/', authenticateToken, async (req, res) => {
     }
     
     // Text search
-    if (search) {
-      filter.$or = [
-        { invoiceNumber: { $regex: search, $options: 'i' } },
-        { notes: { $regex: search, $options: 'i' } },
-        { 'items.description': { $regex: search, $options: 'i' } }
+    const escapeRegExp = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const normalizedSearch = typeof search === 'string' ? search.trim() : '';
+    if (normalizedSearch) {
+      const regex = new RegExp(escapeRegExp(normalizedSearch), 'i');
+
+      // Match on core invoice fields
+      const orConditions = [
+        { invoiceNumber: regex },
+        { notes: regex },
+        { 'items.description': regex },
       ];
+
+      // Also match guardian/teacher/student names/emails by resolving user ids.
+      // This enables "search by name" across tabs/pages.
+      const [guardianMatches, teacherMatches, studentMatches] = await Promise.all([
+        User.find({
+          role: 'guardian',
+          $or: [
+            { firstName: regex },
+            { lastName: regex },
+            { email: regex },
+            { phone: regex },
+          ],
+        }).select('_id').lean(),
+        User.find({
+          role: 'teacher',
+          $or: [
+            { firstName: regex },
+            { lastName: regex },
+            { email: regex },
+            { phone: regex },
+          ],
+        }).select('_id').lean(),
+        User.find({
+          role: 'student',
+          $or: [
+            { firstName: regex },
+            { lastName: regex },
+            { email: regex },
+            { phone: regex },
+          ],
+        }).select('_id').lean(),
+      ]);
+
+      const guardianIds = (guardianMatches || []).map((u) => u._id);
+      const teacherIds = (teacherMatches || []).map((u) => u._id);
+      const studentIds = (studentMatches || []).map((u) => u._id);
+
+      if (guardianIds.length) {
+        orConditions.push({ guardian: { $in: guardianIds } });
+      }
+
+      if (teacherIds.length) {
+        orConditions.push({ teacher: { $in: teacherIds } });
+        orConditions.push({ 'items.teacher': { $in: teacherIds } });
+      }
+
+      if (studentIds.length) {
+        orConditions.push({ 'items.student': { $in: studentIds } });
+      }
+
+      filter.$or = orConditions;
     }
     
 
@@ -328,16 +386,73 @@ router.get('/', authenticateToken, async (req, res) => {
 
     const sortOrder = String(order).toLowerCase() === 'desc' ? -1 : 1;
 
-    const invoices = await Invoice.find(filter)
-      .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
-      .populate('teacher', 'firstName lastName email')
-      .populate('items.student', 'firstName lastName')
-      .populate('items.teacher', 'firstName lastName')
-      .populate('items.class', CLASS_FIELDS_FOR_INVOICE)
-      .sort({ [sortBy]: sortOrder })
-      .skip(skip)
-      .limit(parseInt(limit))
-      .lean();
+    let invoices;
+    if (smartSort) {
+      // "Smart" global sorting:
+      // - unpaid invoices first
+      // - within each group: newest first (paidAt/paymentDate/createdAt fallback)
+      const limitNum = parseInt(limit);
+      const pipeline = [
+        { $match: filter },
+        {
+          $addFields: {
+            __unpaidRank: {
+              $cond: [{ $in: ['$status', ['paid', 'refunded']] }, 1, 0],
+            },
+            __effectiveSortDate: {
+              $ifNull: [
+                '$paidAt',
+                {
+                  $ifNull: [
+                    '$paidDate',
+                    { $ifNull: ['$paymentDate', '$createdAt'] },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+        {
+          $sort: {
+            __unpaidRank: 1,
+            __effectiveSortDate: -1,
+            createdAt: -1,
+            _id: -1,
+          },
+        },
+        { $skip: skip },
+        { $limit: limitNum },
+        { $project: { _id: 1 } },
+      ];
+
+      const idRows = await Invoice.aggregate(pipeline);
+      const ids = (idRows || []).map((r) => r._id).filter(Boolean);
+      if (!ids.length) {
+        invoices = [];
+      } else {
+        const docs = await Invoice.find({ _id: { $in: ids } })
+          .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+          .populate('teacher', 'firstName lastName email')
+          .populate('items.student', 'firstName lastName')
+          .populate('items.teacher', 'firstName lastName')
+          .populate('items.class', CLASS_FIELDS_FOR_INVOICE)
+          .lean();
+
+        const byId = new Map((docs || []).map((doc) => [String(doc._id), doc]));
+        invoices = ids.map((id) => byId.get(String(id))).filter(Boolean);
+      }
+    } else {
+      invoices = await Invoice.find(filter)
+        .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+        .populate('teacher', 'firstName lastName email')
+        .populate('items.student', 'firstName lastName')
+        .populate('items.teacher', 'firstName lastName')
+        .populate('items.class', CLASS_FIELDS_FOR_INVOICE)
+        .sort({ [sortBy]: sortOrder })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .lean();
+    }
 
     // IMPORTANT: Do NOT mutate or resave invoices during a GET. Previously this
     // route reloaded each invoice, recalculated totals and saved the document.

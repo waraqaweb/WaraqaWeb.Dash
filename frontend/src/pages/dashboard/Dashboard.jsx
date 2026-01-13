@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { SearchProvider } from '../../contexts/SearchContext';
+import { SearchProvider, useSearch } from '../../contexts/SearchContext';
 import Sidebar from '../../components/layout/Sidebar';
 import GlobalSearchBar from '../../components/ui/GlobalSearchBar';
 // Profile modal removed in favor of unified Profile page/modal
@@ -44,6 +44,48 @@ const DeleteCountdownHost = () => {
       onUndo={undo}
     />
   );
+};
+
+const DashboardQuerySync = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { searchTerm, setSearchTerm } = useSearch();
+
+  // Pull `q` from the URL (supports refresh/back to restore search).
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(location.search);
+      const q = params.get('q') || '';
+      if (q !== searchTerm) {
+        setSearchTerm(q);
+      }
+    } catch (err) {
+      // ignore URL parse issues
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
+
+  // Push `q` into the URL (debounced + replace to avoid breaking Back button).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const params = new URLSearchParams(location.search);
+        const q = (searchTerm || '').trim();
+        if (q) params.set('q', q);
+        else params.delete('q');
+        const next = params.toString();
+        const current = (location.search || '').replace(/^\?/, '');
+        if (next === current) return;
+        navigate({ pathname: location.pathname, search: next ? `?${next}` : '' }, { replace: true });
+      } catch (err) {
+        // ignore URL sync errors
+      }
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [location.pathname, location.search, navigate, searchTerm]);
+
+  return null;
 };
 
 const Dashboard = () => {
@@ -89,41 +131,41 @@ const Dashboard = () => {
     setMountedViews((prev) => (prev.includes(activeView) ? prev : [...prev, activeView]));
   }, [activeView]);
 
-  const renderView = (viewKey) => {
+  const renderView = (viewKey, isActive = false) => {
     switch (viewKey) {
       case 'home':
-        return <DashboardHome />;
+        return <DashboardHome isActive={isActive} />;
       case 'profile':
-        return <ProfilePage />;
+        return <ProfilePage isActive={isActive} />;
       case 'teachers':
-        return <TeachersPage />;
+        return <TeachersPage isActive={isActive} />;
       case 'guardians':
-        return <GuardiansPage />;
+        return <GuardiansPage isActive={isActive} />;
       case 'students':
       case 'my-students':
-        return <MyStudentsPage />;
+        return <MyStudentsPage isActive={isActive} />;
       case 'classes':
-        return <ClassesPage />;
+        return <ClassesPage isActive={isActive} />;
       case 'invoices':
-        return <InvoicesPage />;
+        return <InvoicesPage isActive={isActive} />;
       case 'salaries':
-        return <SalariesPage />;
+        return <SalariesPage isActive={isActive} />;
       case 'availability':
         return user?.role === 'admin'
-          ? <MeetingAvailabilityAdminPage />
-          : <TeacherAvailabilityPage />;
+          ? <MeetingAvailabilityAdminPage isActive={isActive} />
+          : <TeacherAvailabilityPage isActive={isActive} />;
       case 'feedbacks':
-        return <FeedbacksAdmin />;
+        return <FeedbacksAdmin isActive={isActive} />;
       case 'class-reports':
-        return <ClassReportPage />;
+        return <ClassReportPage isActive={isActive} />;
       case 'vacation-management':
-        return <VacationManagementPage />;
+        return <VacationManagementPage isActive={isActive} />;
       /* Removed 'reports' and 'users' pages from the dashboard: these pages are intentionally
          not rendered here so they are not accessible via direct URL anymore. */
       case "settings":
-        return <Settings />;
+        return <Settings isActive={isActive} />;
       default:
-        return <DashboardHome />;
+        return <DashboardHome isActive={isActive} />;
     }
   };
 
@@ -139,7 +181,7 @@ const Dashboard = () => {
             key={viewKey}
             className={viewKey === activeView ? 'block' : 'hidden'}
           >
-            {renderView(viewKey)}
+            {renderView(viewKey, viewKey === activeView)}
           </div>
         ))}
       </>
@@ -163,6 +205,7 @@ const Dashboard = () => {
 
   return (
     <SearchProvider>
+      <DashboardQuerySync />
       <DeleteClassCountdownProvider>
       <div className="flex h-screen bg-background">
       {/* Sidebar */}
@@ -171,7 +214,7 @@ const Dashboard = () => {
         onClose={() => setSidebarOpen(false)}
         activeView={activeView}
         onViewChange={handleViewChange}
-        onOpenProfileModal={() => setActiveView('profile')}
+        onOpenProfileModal={() => navigate('/dashboard/profile')}
       />
 
       {/* Main Content */}

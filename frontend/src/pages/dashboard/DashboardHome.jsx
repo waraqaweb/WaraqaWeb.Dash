@@ -326,7 +326,7 @@ const HijriDateCard = ({ variant = 'card', timeZone, locale }) => {
  * - One file containing Admin / Teacher / Guardian / Student dashboards
  */
 
-const DashboardHome = () => {
+const DashboardHome = ({ isActive = true }) => {
   const { user, isAdmin, isTeacher, isGuardian, isStudent } = useAuth();
   const [compactAdmin, setCompactAdmin] = React.useState(false);
 
@@ -459,6 +459,7 @@ const DashboardHome = () => {
   const [latestFeedback, setLatestFeedback] = useState(null);
 
   useEffect(() => {
+    if (!isActive) return;
     if (!promptsLoading) {
       if (firstClassPrompts && firstClassPrompts.length > 0) {
         setActiveFirstPrompt(firstClassPrompts[0]);
@@ -470,7 +471,7 @@ const DashboardHome = () => {
         try { window.history.pushState({ modal: 'monthly' }, ''); } catch(e){}
       }
     }
-  }, [promptsLoading, firstClassPrompts, monthlyPrompts]);
+  }, [isActive, promptsLoading, firstClassPrompts, monthlyPrompts]);
 
   // Welcome modal: show once for new users
   useEffect(() => {
@@ -492,6 +493,7 @@ const DashboardHome = () => {
 
   // Close modals when user navigates back (popstate)
   useEffect(() => {
+    if (!isActive) return () => {};
     const onPop = (e) => {
       // if modal was open and state no longer indicates it, close
       if (showFirstClassModal && !(e.state && e.state.modal === 'firstClass')) {
@@ -503,7 +505,7 @@ const DashboardHome = () => {
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, [showFirstClassModal, showMonthlyModal]);
+  }, [isActive, showFirstClassModal, showMonthlyModal]);
 
   const handleFeedbackSubmitted = React.useCallback((result) => {
     refresh();

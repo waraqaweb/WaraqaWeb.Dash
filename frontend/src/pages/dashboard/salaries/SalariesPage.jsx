@@ -20,6 +20,10 @@ const SalariesPage = () => {
   const [salaries, setSalaries] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const itemsPerPage = 20;
   const [selectedSalary, setSelectedSalary] = useState(null);
   const [showView, setShowView] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -28,16 +32,49 @@ const SalariesPage = () => {
   const location = useLocation();
 
   useEffect(() => {
-    fetchSalaries();
     fetchStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm || ''), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearch, globalFilter]);
+
+  useEffect(() => {
+    fetchSalaries();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch, globalFilter, currentPage]);
+
   const fetchSalaries = async () => {
     try {
       setLoading(true);
-      const res = await api.get("/invoices", { params: { type: "teacher_payment", limit: 200 } });
+      const params = {
+        type: 'teacher_payment',
+        page: currentPage,
+        limit: itemsPerPage,
+        search: (debouncedSearch || '').trim() || undefined,
+        sortBy: 'createdAt',
+        order: 'desc',
+      };
+
+      if (globalFilter && globalFilter !== 'all') {
+        params.status = globalFilter;
+      }
+
+      if ((debouncedSearch || '').trim()) {
+        params.smartSort = true;
+        delete params.sortBy;
+        delete params.order;
+      }
+
+      const res = await api.get('/invoices', { params });
       setSalaries(res.data.invoices || []);
+      setTotalPages(res.data.pagination?.pages || 1);
     } catch (err) {
       console.error("Error fetching salaries:", err);
     } finally {
@@ -77,16 +114,7 @@ const SalariesPage = () => {
     }
   };
 
-  const filteredSalaries = useMemo(() => {
-    const q = (searchTerm || '').toLowerCase();
-    return salaries.filter((s) => {
-      const teacherName = `${s.teacher?.firstName || ''} ${s.teacher?.lastName || ''}`.trim().toLowerCase();
-      const status = (s.status || "").toLowerCase();
-      const matchesSearch = !q || teacherName.includes(q) || status.includes(q) || String(s._id).includes(q);
-      const matchesFilter = !globalFilter || globalFilter === 'all' || s.status === globalFilter;
-      return matchesSearch && matchesFilter;
-    });
-  }, [salaries, searchTerm, globalFilter]);
+  const visibleSalaries = useMemo(() => salaries, [salaries]);
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
   const formatDate = (d) => d ? formatDateDDMMMYYYY(d) : '—';
@@ -158,7 +186,7 @@ const SalariesPage = () => {
                 <LoadingSpinner />
                 <p className="text-sm">Fetching salary records…</p>
               </div>
-            ) : filteredSalaries.length === 0 ? (
+            ) : visibleSalaries.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 py-16 text-center text-slate-500">
                 <div>
                   <p className="text-base font-medium text-slate-700">No salary records</p>
@@ -166,7 +194,7 @@ const SalariesPage = () => {
                 </div>
               </div>
             ) : (
-              filteredSalaries.map((salary) => {
+              visibleSalaries.map((salary) => {
                 const tone = getStatusTone(salary.status);
                 const billingStart = salary.billingPeriod?.startDate || salary.billingPeriod?.start;
                 const billingEnd = salary.billingPeriod?.endDate || salary.billingPeriod?.end;
@@ -221,6 +249,29 @@ const SalariesPage = () => {
                   </div>
                 );
               })
+            )}
+
+            {totalPages > 1 && (
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <PrimaryButton
+                  variant="subtle"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                >
+                  Previous
+                </PrimaryButton>
+                <div className="text-sm text-slate-500">
+                  Page <span className="font-medium text-slate-700">{currentPage}</span> of{' '}
+                  <span className="font-medium text-slate-700">{totalPages}</span>
+                </div>
+                <PrimaryButton
+                  variant="subtle"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                >
+                  Next
+                </PrimaryButton>
+              </div>
             )}
           </div>
         </div>

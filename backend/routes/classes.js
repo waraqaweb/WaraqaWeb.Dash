@@ -628,6 +628,7 @@ router.get("/", authenticateToken, async (req, res) => {
       student,
       status,
       subject,
+      search,
       date,
       dateFrom,
       dateTo,
@@ -659,6 +660,68 @@ router.get("/", authenticateToken, async (req, res) => {
       if (dateTo) filters.scheduledDate.$lte = new Date(dateTo);
     }
 
+    // Text search (server-side) so global search works across pagination.
+    // Search matches class fields + teacher/guardian names.
+    const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const normalizedSearch = typeof search === "string" ? search.trim() : "";
+    if (normalizedSearch) {
+      const regex = new RegExp(escapeRegExp(normalizedSearch), "i");
+
+      const [teacherMatches, guardianMatches] = await Promise.all([
+        User.find({
+          role: "teacher",
+          $or: [
+            { firstName: regex },
+            { lastName: regex },
+            { email: regex },
+            { phone: regex },
+          ],
+        })
+          .select("_id")
+          .lean(),
+        User.find({
+          role: "guardian",
+          $or: [
+            { firstName: regex },
+            { lastName: regex },
+            { email: regex },
+            { phone: regex },
+          ],
+        })
+          .select("_id")
+          .lean(),
+      ]);
+
+      const teacherIds = (teacherMatches || []).map((u) => u._id);
+      const guardianIds = (guardianMatches || []).map((u) => u._id);
+
+      const searchOr = [
+        { title: regex },
+        { subject: regex },
+        { description: regex },
+        { classCode: regex },
+        { meetingLink: regex },
+        { "student.studentName": regex },
+        { "student.guardianName": regex },
+      ];
+
+      if (teacherIds.length) {
+        searchOr.push({ teacher: { $in: teacherIds } });
+      }
+
+      if (guardianIds.length) {
+        searchOr.push({ "student.guardianId": { $in: guardianIds } });
+      }
+
+      // If other filters used $or (e.g., upcoming filter), combine safely.
+      if (filters.$or) {
+        filters.$and = [...(filters.$and || []), { $or: filters.$or }];
+        delete filters.$or;
+      }
+
+      filters.$and = [...(filters.$and || []), { $or: searchOr }];
+    }
+
   // upcoming / previous filtering based on end time
     if (filter === "upcoming") {
       filters.$or = [
@@ -674,6 +737,7 @@ router.get("/", authenticateToken, async (req, res) => {
       ];
     } else if (filter === "previous") {
       filters.$and = [
+        ...(filters.$and || []),
         {
           $expr: {
             $lt: [

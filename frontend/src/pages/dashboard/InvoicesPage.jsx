@@ -48,7 +48,7 @@ const getInvoicePaymentTimestamp = (invoice) => {
 
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-const InvoicesPage = () => {
+const InvoicesPage = ({ isActive = true }) => {
   const { isAdmin, isGuardian, socket } = useAuth();
   const { searchTerm, globalFilter } = useSearch();
   const location = useLocation();
@@ -130,37 +130,50 @@ const InvoicesPage = () => {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
+  const isGlobalSearching = useMemo(() => Boolean((debouncedSearch || '').trim()), [debouncedSearch]);
+
   useEffect(() => {
+    if (!isActive) return;
+    if (!isGlobalSearching) return;
+    if (activeTab !== 'all') setActiveTab('all');
+    if (currentPage !== 1) setCurrentPage(1);
+  }, [isActive, isGlobalSearching, activeTab, currentPage]);
+
+  // Sync current page from URL (Back/Forward).
+  useEffect(() => {
+    if (!isActive) return;
     try {
       const params = new URLSearchParams(location.search);
-      if (debouncedSearch) params.set('q', debouncedSearch); else params.delete('q');
-      params.set('page', String(currentPage));
-      const newSearch = params.toString();
-      const newUrl = `${location.pathname}${newSearch ? `?${newSearch}` : ''}`;
-      if (newUrl !== window.location.pathname + window.location.search) {
-        try {
-          const existingParams = new URLSearchParams(window.location.search);
-          const prevPage = Number(existingParams.get('page') || '1');
-          // If the page changed from the previous url, push a new history entry
-          if (prevPage !== Number(currentPage)) {
-            window.history.pushState({}, '', newUrl);
-          } else {
-            // otherwise replace the current state (search/sort changes, etc.)
-            window.history.replaceState({}, '', newUrl);
-          }
-        } catch (err) {
-          // fallback to replace
-          window.history.replaceState({}, '', newUrl);
-        }
-      }
+      const pageParam = Number(params.get('page') || '1');
+      const next = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+      if (next !== currentPage) setCurrentPage(next);
     } catch (err) {
-      console.warn('URL sync failed', err);
+      // ignore
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, location.search]);
 
+  // Persist current page in URL (so refresh keeps your place).
+  useEffect(() => {
+    if (!isActive) return;
+    try {
+      const params = new URLSearchParams(location.search);
+      const currentParam = Number(params.get('page') || '1');
+      if (currentParam === Number(currentPage || 1)) return;
+      params.set('page', String(currentPage || 1));
+      const next = params.toString();
+      navigate({ pathname: location.pathname, search: next ? `?${next}` : '' }, { replace: false });
+    } catch (err) {
+      // ignore
+    }
+  }, [isActive, currentPage, location.pathname, location.search, navigate]);
+
+  useEffect(() => {
+    if (!isActive) return;
     fetchInvoices();
     if (isAdmin()) fetchStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, showDeleted]);
+  }, [isActive, debouncedSearch, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, showDeleted]);
 
   const fetchInvoices = async () => {
     try {
@@ -175,32 +188,38 @@ const InvoicesPage = () => {
         params.deleted = true;
       }
 
-      // Active tab controls the primary status filter and desired ordering.
-      // - Unpaid tab: show oldest created invoices first (createdAt asc)
-      // - Paid tab: show latest paid invoices first (paidAt desc)
-      // - All tab (or none): show invoices by latest payment (paidAt desc, fallback createdAt)
-      if (activeTab && activeTab !== 'all') {
-        params.status = activeTab;
-        if (activeTab === 'unpaid') {
-          params.sortBy = 'createdAt';
-          params.order = 'asc';
-        } else {
-          params.sortBy = 'paidAt';
-          params.order = 'desc';
-        }
-      } else if (statusFilter !== 'all') {
-        params.status = statusFilter;
-        if (statusFilter === 'unpaid') {
-          params.sortBy = 'createdAt';
-          params.order = 'asc';
-        } else {
-          params.sortBy = 'paidAt';
-          params.order = 'desc';
-        }
+      // If searching, show results across all tabs (paid/unpaid) and let the backend
+      // apply smart ordering (unpaid first, newest first).
+      if (isGlobalSearching) {
+        params.smartSort = true;
       } else {
-        // Default for the 'all' tab: latest payment first
-        params.sortBy = 'paidAt';
-        params.order = 'desc';
+        // Active tab controls the primary status filter and desired ordering.
+        // - Unpaid tab: show oldest created invoices first (createdAt asc)
+        // - Paid tab: show latest paid invoices first (paidAt desc)
+        // - All tab (or none): show invoices by latest payment (paidAt desc, fallback createdAt)
+        if (activeTab && activeTab !== 'all') {
+          params.status = activeTab;
+          if (activeTab === 'unpaid') {
+            params.sortBy = 'createdAt';
+            params.order = 'asc';
+          } else {
+            params.sortBy = 'paidAt';
+            params.order = 'desc';
+          }
+        } else if (statusFilter !== 'all') {
+          params.status = statusFilter;
+          if (statusFilter === 'unpaid') {
+            params.sortBy = 'createdAt';
+            params.order = 'asc';
+          } else {
+            params.sortBy = 'paidAt';
+            params.order = 'desc';
+          }
+        } else {
+          // Default for the 'all' tab: latest payment first
+          params.sortBy = 'paidAt';
+          params.order = 'desc';
+        }
       }
 
       if (typeFilter !== 'all') params.type = typeFilter;

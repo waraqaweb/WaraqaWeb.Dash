@@ -9,10 +9,19 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+# Prevent concurrent deploys
+LOCK_DIR="/tmp/waraqa-deploy.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  echo "[deploy] ERROR: Another deploy appears to be running ($LOCK_DIR exists)."
+  exit 1
+fi
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
 # Force a stable Compose project name so volumes/networks remain consistent.
 # This prevents accidental "missing data" when running compose from a different folder.
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-waraqa}"
-COMPOSE=(docker compose -p "$COMPOSE_PROJECT_NAME")
+COMPOSE_BASE=(docker compose -p "$COMPOSE_PROJECT_NAME")
+COMPOSE_GHCR=(docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.ghcr.yml)
 
 MODE="${1:-auto}"  # auto | all | no-build | pull
 
@@ -22,16 +31,9 @@ export BUILDX_NO_DEFAULT_ATTESTATIONS=1
 export BUILDKIT_PROGRESS=plain
 
 PREV_FILE="${ROOT_DIR}/.previous_deploy_sha"
-OLD_SHA=""
-if [[ -f "$PREV_FILE" ]]; then
-  OLD_SHA="$(cat "$PREV_FILE" 2>/dev/null || true)"
-fi
 
-# Record current HEAD before updating (fallback if prev file missing)
-CURRENT_SHA="$(git rev-parse HEAD)"
-if [[ -z "$OLD_SHA" ]]; then
-  OLD_SHA="$CURRENT_SHA"
-fi
+# Record rollback point BEFORE updating code
+OLD_SHA="$(git rev-parse HEAD)"
 
 echo "[deploy] repo: $ROOT_DIR"
 echo "[deploy] mode: $MODE"
@@ -80,29 +82,97 @@ if printf "%s\n" "$CHANGED" | grep -qE '^(frontend/|deploy/frontend/)'; then SER
 # Trim whitespace
 SERVICES_TRIMMED="$(printf "%s" "$SERVICES" | tr -d ' ' || true)"
 
+compose() {
+  if [[ "$MODE" == "pull" ]]; then
+    "${COMPOSE_GHCR[@]}" "$@"
+  else
+    "${COMPOSE_BASE[@]}" "$@"
+  fi
+}
+
+# Validate compose config renders correctly (catches env/template mistakes)
+compose config -q
+
 if [[ "$MODE" == "all" ]]; then
   echo "[deploy] Rebuilding ALL services"
-  "${COMPOSE[@]}" up -d --build
+  compose up -d --build
 elif [[ "$MODE" == "pull" ]]; then
   echo "[deploy] Pulling prebuilt images (GHCR)"
-  "${COMPOSE[@]}" -f docker-compose.yml -f docker-compose.ghcr.yml pull
+  compose pull
   # Force-recreate so updated env (APP_VERSION/BUILD_TIME) and new image digests
   # are definitely applied even when tags stay the same (e.g. :main).
-  "${COMPOSE[@]}" -f docker-compose.yml -f docker-compose.ghcr.yml up -d --force-recreate --remove-orphans
+  compose up -d --force-recreate --remove-orphans
 elif [[ "$MODE" == "no-build" ]]; then
   echo "[deploy] No build; restarting containers"
-  "${COMPOSE[@]}" up -d
+  compose up -d
 elif [[ -n "$SERVICES_TRIMMED" ]]; then
   echo "[deploy] Rebuilding services:$SERVICES"
   if printf "%s\n" "$SERVICES" | grep -q "frontend"; then
     echo "[deploy] NOTE: frontend rebuilds can take several minutes on small droplets (Vite + npm ci)."
   fi
-  "${COMPOSE[@]}" up -d --build $SERVICES
+  compose up -d --build $SERVICES
 else
   echo "[deploy] No build needed; restarting containers"
-  "${COMPOSE[@]}" up -d
+  compose up -d
 fi
 
-"${COMPOSE[@]}" ps
+compose ps
+
+# Avoid "Login failed" right after deploy by waiting until backend is ready.
+echo "[deploy] Waiting for backend to be healthy (up to ~180s)..."
+healthy="0"
+for i in $(seq 1 90); do
+  if compose exec -T backend node -e "const http=require('http');const req=http.get('http://127.0.0.1:5000/api/health',r=>process.exit(r.statusCode===200?0:1));req.on('error',()=>process.exit(1));" >/dev/null 2>&1; then
+    healthy="1"
+    break
+  fi
+  sleep 2
+done
+
+if [[ "$healthy" != "1" ]]; then
+  echo "[deploy] ERROR: backend did not become healthy. Showing latest logs..."
+  compose logs --tail=200 backend || true
+  compose logs --tail=200 nginx || true
+  echo "[deploy] Rollback with: git reset --hard $OLD_SHA ; docker compose up -d --build"
+  exit 1
+fi
+
+# IMPORTANT: nginx can keep stale upstream IPs after backend/frontend containers are recreated.
+echo "[deploy] Reloading nginx to refresh upstream DNS..."
+compose exec -T nginx nginx -s reload >/dev/null 2>&1 || compose restart nginx
+
+echo "[deploy] Verifying nginx can reach backend + frontend..."
+if ! compose exec -T nginx sh -lc "wget -q -O- http://backend:5000/api/health >/dev/null" >/dev/null 2>&1; then
+  echo "[deploy] ERROR: nginx -> backend failed. Showing latest logs + nginx config..."
+  compose exec -T nginx nginx -T || true
+  compose logs --tail=200 nginx || true
+  compose logs --tail=200 backend || true
+  echo "[deploy] Rollback with: git reset --hard $OLD_SHA ; docker compose up -d --build"
+  exit 1
+fi
+
+if ! compose exec -T nginx sh -lc "wget -q --spider http://frontend:80/dashboard/ >/dev/null" >/dev/null 2>&1; then
+  echo "[deploy] ERROR: nginx -> frontend failed. Showing latest logs + nginx config..."
+  compose exec -T nginx nginx -T || true
+  compose logs --tail=200 nginx || true
+  compose logs --tail=200 frontend || true
+  echo "[deploy] Rollback with: git reset --hard $OLD_SHA ; docker compose up -d --build"
+  exit 1
+fi
+
+# Non-destructive checks for critical volumes (helps catch accidental volume/name mismatches)
+echo "[deploy] Checking mongo volume (should NOT be empty)..."
+compose exec -T mongo sh -lc 'du -sh /data/db || true; ls -lah /data/db | head -n 50 || true'
+
+echo "[deploy] Checking library storage mounts..."
+compose exec -T backend sh -lc '
+  echo "LIBRARY_LOCAL_ASSET_DIR=${LIBRARY_LOCAL_ASSET_DIR:-}";
+  test "${LIBRARY_LOCAL_ASSET_DIR:-}" = "/data/library-assets" || { echo "ERROR: LIBRARY_LOCAL_ASSET_DIR must be /data/library-assets"; exit 1; };
+  mkdir -p "${LIBRARY_LOCAL_ASSET_DIR}";
+  touch "${LIBRARY_LOCAL_ASSET_DIR}/.write_test";
+  rm -f "${LIBRARY_LOCAL_ASSET_DIR}/.write_test";
+  du -sh "/data/library-assets" || true;
+  du -sh "/data/library-uploads" || true;
+'
 
 echo "[deploy] done: $NEW_SHA"

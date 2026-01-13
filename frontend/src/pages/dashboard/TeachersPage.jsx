@@ -107,6 +107,17 @@
 					return () => clearTimeout(timer);
 				}, [searchTerm]);
 
+				// Global search should search across all status tabs and all pages.
+				useEffect(() => {
+					setCurrentPage(1);
+				}, [debouncedSearch]);
+
+				useEffect(() => {
+					if ((debouncedSearch || '').trim() && statusFilter !== 'all') {
+						setStatusFilter('all');
+					}
+				}, [debouncedSearch, statusFilter]);
+
 				useEffect(() => {
 					fetchTeachers();
 					// eslint-disable-next-line react-hooks/exhaustive-deps

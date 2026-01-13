@@ -25,7 +25,8 @@ lock_acquire() {
       echo "user=$(id -un 2>/dev/null || true)"
       echo "cwd=$PWD"
     } > "$meta_file" 2>/dev/null || true
-    trap 'rm -rf "$lock_dir"' EXIT
+    # Expand lock_dir now; the trap runs outside this function scope.
+    trap "rm -rf '$lock_dir'" EXIT
     return 0
   fi
 
@@ -46,7 +47,8 @@ lock_acquire() {
             echo "user=$(id -un 2>/dev/null || true)"
             echo "cwd=$PWD"
           } > "$meta_file" 2>/dev/null || true
-          trap 'rm -rf "$lock_dir"' EXIT
+          # Expand lock_dir now; the trap runs outside this function scope.
+          trap "rm -rf '$lock_dir'" EXIT
           return 0
         fi
       fi

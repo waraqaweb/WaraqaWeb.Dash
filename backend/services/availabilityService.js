@@ -298,22 +298,14 @@ async function checkUnavailabilityAndConflicts(teacherId, startDateTime, endDate
   const classConflictQuery = {
     teacher: teacherId,
     status: { $in: ['scheduled', 'in_progress'] },
-    $or: [
-      // Class starts before requested time and ends after start
-      {
-        scheduledDate: { $lte: startDateTime },
-        $expr: {
-          $gte: [
-            { $add: ['$scheduledDate', { $multiply: ['$duration', 60000] }] },
-            startDateTime
-          ]
-        }
-      },
-      // Class starts within requested time period
-      {
-        scheduledDate: { $gte: startDateTime, $lt: endDateTime }
-      }
-    ]
+    // Half-open interval overlap: existingStart < requestedEnd AND existingEnd > requestedStart
+    scheduledDate: { $lt: endDateTime },
+    $expr: {
+      $gt: [
+        { $add: ['$scheduledDate', { $multiply: ['$duration', 60000] }] },
+        startDateTime
+      ]
+    }
   };
 
   if (excludeClassId) {

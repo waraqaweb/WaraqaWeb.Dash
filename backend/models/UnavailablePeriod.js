@@ -120,18 +120,14 @@ unavailablePeriodSchema.statics.findActiveByTeacher = function(teacherId, dateRa
 
 // Static method to check if a specific time conflicts with unavailable periods
 unavailablePeriodSchema.statics.hasConflictForTeacher = function(teacherId, startDateTime, endDateTime) {
+  // Half-open interval overlap: unavailableStart < requestedEnd AND unavailableEnd > requestedStart
+  // This allows a class to start exactly at unavailableEnd, and to end exactly at unavailableStart.
   return this.findOne({
     teacherId,
     isActive: true,
     status: 'approved',
-    $or: [
-      // Period starts before requested time and ends after start
-      { startDateTime: { $lte: startDateTime }, endDateTime: { $gt: startDateTime } },
-      // Period starts before requested end and ends after end
-      { startDateTime: { $lt: endDateTime }, endDateTime: { $gte: endDateTime } },
-      // Period is completely within requested time
-      { startDateTime: { $gte: startDateTime }, endDateTime: { $lte: endDateTime } }
-    ]
+    startDateTime: { $lt: endDateTime },
+    endDateTime: { $gt: startDateTime }
   });
 };
 

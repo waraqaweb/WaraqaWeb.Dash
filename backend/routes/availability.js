@@ -486,20 +486,14 @@ router.post('/validate-class-time', authenticateToken, async (req, res) => {
       teacher: teacherId,
       status: { $in: ['scheduled', 'in_progress'] },
       _id: excludeClassId ? { $ne: excludeClassId } : undefined,
-      $or: [
-        {
-          scheduledDate: { $lte: startDate },
-          $expr: {
-            $gte: [
-              { $add: ['$scheduledDate', { $multiply: ['$duration', 60000] }] },
-              startDate
-            ]
-          }
-        },
-        {
-          scheduledDate: { $gte: startDate, $lt: endDate }
-        }
-      ]
+      // Half-open interval overlap: existingStart < requestedEnd AND existingEnd > requestedStart
+      scheduledDate: { $lt: endDate },
+      $expr: {
+        $gt: [
+          { $add: ['$scheduledDate', { $multiply: ['$duration', 60000] }] },
+          startDate
+        ]
+      }
     }).populate('student.studentId', 'firstName lastName');
     
     if (classConflicts.length > 0) {

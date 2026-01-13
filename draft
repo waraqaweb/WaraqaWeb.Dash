@@ -22,107 +22,33 @@ chmod +x deploy/scripts/deploy.sh
 
 ### Production deploy (DigitalOcean droplet) — safe-by-default (daily)
 
-### Copy/paste this whole block on the droplet.
+Do NOT paste long multi-line scripts into an SSH terminal — it’s easy for the paste to get corrupted (you’ll see weird output like `echo "Deploy complete."ploads...` where later lines got appended).
+
+Instead, use the repo’s deploy script (it already includes: lock, reset to `origin/main`, GHCR pull mode, backend health wait, nginx reload, and mount checks):
 
 cd /opt/waraqa
-set -euo pipefail
 
-export DOCKER_BUILDKIT=1
-export COMPOSE_DOCKER_CLI_BUILD=1
-export BUILDX_NO_DEFAULT_ATTESTATIONS=1
-export BUILDKIT_PROGRESS=plain
+chmod +x deploy/scripts/deploy.sh
 
-# Prevent concurrent deploys
+# Recommended (fast): pull prebuilt images from GHCR
+./deploy/scripts/deploy.sh pull
 
-LOCK_DIR="/tmp/waraqa-deploy.lock"
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  echo "ERROR: Another deploy appears to be running ($LOCK_DIR exists)."
-exit 1
-fi
-trap 'rm -rf "$LOCK_DIR"' EXIT
+# If you get "Permission denied" when running ./deploy/scripts/deploy.sh,
+# run it explicitly with bash (works even if the executable bit isn't set yet):
+#   bash deploy/scripts/deploy.sh pull
 
-# Rollback point
+# If you see: "Another deploy appears to be running" it means a deploy lock is active.
+# The script auto-clears stale locks (e.g., after an interrupted SSH session).
+# If the lock folder exists but has no pid/meta files, it's likely from an older script.
+# In that case, confirm no deploy is running, then remove it:
+#   rm -rf /tmp/waraqa-deploy.lock
+# If it still refuses, inspect the lock metadata:
+#   ls -lah /tmp/waraqa-deploy.lock
+#   cat /tmp/waraqa-deploy.lock/meta
 
-OLD_SHA="$(git rev-parse HEAD)"
+# Alternative (builds on droplet): rebuild changed services only
+./deploy/scripts/deploy.sh auto
 
-# Update code safely
+# Force rebuild everything (slow)
+./deploy/scripts/deploy.sh all
 
-git fetch origin
-git reset --hard origin/main
-NEW_SHA="$(git rev-parse HEAD)"
-echo "Deploying: $OLD_SHA -> $NEW_SHA"
-
-# Validate compose renders (catches missing env vars)
-
-docker compose config -q
-
-# Prefer GHCR pull deploy (fast + avoids building on droplet)
-
-echo "Pulling GHCR images..."
-docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
-
-echo "Recreating containers (apply new images + env)..."
-docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d --force-recreate --remove-orphans
-
-# Wait for backend
-
-echo "Waiting for backend to be healthy (up to ~180s)..."
-healthy="0"
-for i in $(seq 1 90); do
-if docker compose exec -T backend node -e "const http=require('http');const req=http.get('http://127.0.0.1:5000/api/health',r=>process.exit(r.statusCode===200?0:1));req.on('error',()=>process.exit(1));" >/dev/null 2>&1; then
-healthy="1"
-break
-fi
-sleep 2
-done
-
-if [ "$healthy" != "1" ]; then
-echo "Backend did not become healthy. Showing logs..."
-docker compose logs --tail=200 backend || true
-docker compose logs --tail=200 mongo || true
-docker compose logs --tail=200 nginx || true
-echo "Rollback with:"
-echo " git reset --hard $OLD_SHA"
-echo " docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d --force-recreate"
-exit 1
-fi
-
-# Reload nginx (important after recreating containers)
-
-echo "Reloading nginx to refresh upstream DNS..."
-docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 || docker compose restart nginx
-
-echo "Verifying nginx can reach backend + frontend..."
-if ! docker compose exec -T nginx sh -lc "wget -q -O- http://backend:5000/api/health >/dev/null" >/dev/null 2>&1; then
-echo "nginx -> backend failed. Showing nginx config + logs..."
-docker compose exec -T nginx nginx -T || true
-docker compose logs --tail=200 nginx || true
-docker compose logs --tail=200 backend || true
-exit 1
-fi
-
-if ! docker compose exec -T nginx sh -lc "wget -q --spider http://frontend:80/dashboard/ >/dev/null" >/dev/null 2>&1; then
-echo "nginx -> frontend failed. Showing logs..."
-docker compose logs --tail=200 nginx || true
-docker compose logs --tail=200 frontend || true
-exit 1
-fi
-
-# Non-destructive checks for critical mounts (helps catch volume/path mistakes)
-
-echo "Checking mongo volume..."
-docker compose exec -T mongo sh -lc 'du -sh /data/db || true; ls -lah /data/db | head -n 30 || true'
-
-echo "Checking library mounts..."
-docker compose exec -T backend sh -lc '
-echo "LIBRARY_LOCAL_ASSET_DIR=${LIBRARY_LOCAL_ASSET_DIR:-}";
-  test "${LIBRARY_LOCAL_ASSET_DIR:-}" = "/data/library-assets" || { echo "ERROR: LIBRARY_LOCAL_ASSET_DIR must be /data/library-assets"; exit 1; };
-mkdir -p "${LIBRARY_LOCAL_ASSET_DIR}";
-  touch "${LIBRARY_LOCAL_ASSET_DIR}/.write_test";
-rm -f "${LIBRARY_LOCAL_ASSET_DIR}/.write_test";
-du -sh "/data/library-assets" || true;
-du -sh "/data/library-uploads" || true;
-'
-
-docker compose ps
-echo "Deploy complete."

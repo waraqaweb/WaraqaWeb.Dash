@@ -9,13 +9,60 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-# Prevent concurrent deploys
-LOCK_DIR="/tmp/waraqa-deploy.lock"
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  echo "[deploy] ERROR: Another deploy appears to be running ($LOCK_DIR exists)."
+lock_acquire() {
+  # Prevent concurrent deploys (and auto-heal stale locks).
+  # Uses an atomic mkdir, then writes PID metadata.
+  local lock_dir="/tmp/waraqa-deploy.lock"
+  local pid_file="$lock_dir/pid"
+  local meta_file="$lock_dir/meta"
+
+  if mkdir "$lock_dir" 2>/dev/null; then
+    echo "$$" > "$pid_file" 2>/dev/null || true
+    {
+      echo "pid=$$"
+      echo "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "host=$(hostname)"
+      echo "user=$(id -un 2>/dev/null || true)"
+      echo "cwd=$PWD"
+    } > "$meta_file" 2>/dev/null || true
+    trap 'rm -rf "$lock_dir"' EXIT
+    return 0
+  fi
+
+  # Lock exists. If it's stale (PID not running), clear and retry once.
+  if [[ -f "$pid_file" ]]; then
+    local existing_pid
+    existing_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ "$existing_pid" =~ ^[0-9]+$ ]]; then
+      if ! kill -0 "$existing_pid" 2>/dev/null; then
+        echo "[deploy] WARNING: Found stale deploy lock (pid=$existing_pid). Removing it..."
+        rm -rf "$lock_dir" 2>/dev/null || true
+        if mkdir "$lock_dir" 2>/dev/null; then
+          echo "$$" > "$pid_file" 2>/dev/null || true
+          {
+            echo "pid=$$"
+            echo "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "host=$(hostname)"
+            echo "user=$(id -un 2>/dev/null || true)"
+            echo "cwd=$PWD"
+          } > "$meta_file" 2>/dev/null || true
+          trap 'rm -rf "$lock_dir"' EXIT
+          return 0
+        fi
+      fi
+    fi
+  fi
+
+  # Lock exists but has no PID metadata. This usually means the lock was created
+  # by an older version of this script (or manually) and may be stale.
+  echo "[deploy] ERROR: Another deploy appears to be running ($lock_dir exists)."
+  echo "[deploy] NOTE: Lock has no pid/meta files; it may be stale from an older deploy script." 
+  echo "[deploy] If you are sure no deploy is running, remove it: rm -rf $lock_dir"
+  echo "[deploy] To check for a running deploy: ps aux | grep -E 'deploy\.sh|docker compose' | grep -v grep"
   exit 1
-fi
-trap 'rm -rf "$LOCK_DIR"' EXIT
+}
+
+lock_acquire
 
 # Force a stable Compose project name so volumes/networks remain consistent.
 # This prevents accidental "missing data" when running compose from a different folder.

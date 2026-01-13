@@ -88,13 +88,19 @@ export const AuthProvider = ({ children }) => {
           globalSocket = null;
         }
 
-        // Derive socket URL from API base when possible to avoid port mismatches
-        // Prefer explicit REACT_APP_SOCKET_URL, then window.__API_BASE__ (strip /api), then fallback
-        const derivedApiBase = (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL)
-          ? process.env.REACT_APP_API_URL
-          : (typeof window !== 'undefined' && window.__API_BASE__)
-            ? window.__API_BASE__
-            : null;
+        // Derive socket URL from API base when possible to avoid port mismatches.
+        // Vite exposes CRA-prefixed env vars on `import.meta.env.REACT_APP_*`.
+        const viteEnv = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
+
+        const explicitApiBase =
+          (viteEnv && viteEnv.REACT_APP_API_URL) ||
+          (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL) ||
+          (typeof window !== 'undefined' && window.__API_BASE__) ||
+          null;
+
+        // Use the configured axios baseURL if present (this already falls back to `window.location.origin + /api`).
+        const axiosBase = api?.defaults?.baseURL;
+        const derivedApiBase = explicitApiBase || axiosBase || null;
 
         const isLocalHost = (typeof window !== 'undefined'
           && window.location
@@ -102,19 +108,51 @@ export const AuthProvider = ({ children }) => {
             || window.location.hostname === '127.0.0.1'
             || window.location.hostname === '::1'));
 
-        let socketUrl = process.env.REACT_APP_SOCKET_URL
-          || (derivedApiBase ? derivedApiBase.replace(/\/api\/?$/, '') : null)
-          || 'http://127.0.0.1:5000';
+        const explicitSocketUrl =
+          (viteEnv && viteEnv.REACT_APP_SOCKET_URL) ||
+          (typeof process !== 'undefined' && process.env && process.env.REACT_APP_SOCKET_URL) ||
+          (typeof window !== 'undefined' && window.__SOCKET_URL__) ||
+          null;
+
+        let socketUrl =
+          explicitSocketUrl ||
+          (derivedApiBase ? String(derivedApiBase).replace(/\/api\/?$/, '') : null);
+
+        // If still unknown, prefer same-origin in prod (nginx proxies `/socket.io/*` to backend).
+        // In local/dev, default to backend port 5000.
+        if (!socketUrl) {
+          const origin = (typeof window !== 'undefined' && window.location && window.location.origin)
+            ? window.location.origin
+            : null;
+          if (origin && !isLocalHost) socketUrl = origin;
+          else socketUrl = 'http://127.0.0.1:5000';
+        }
 
         if (isLocalHost && typeof socketUrl === 'string' && socketUrl.startsWith('http://localhost:')) {
           socketUrl = socketUrl.replace('http://localhost:', 'http://127.0.0.1:');
+        }
+
+        // Production safety:
+        // If the app is NOT running on localhost but the socket URL points to localhost/127.0.0.1
+        // (commonly baked into a Docker build by mistake), force same-origin instead.
+        if (!isLocalHost && typeof window !== 'undefined' && window.location?.origin) {
+          const looksLocal = typeof socketUrl === 'string' && /:\/\/(localhost|127\.0\.0\.1|::1)(:|\/|$)/i.test(socketUrl);
+          if (looksLocal) {
+            socketUrl = window.location.origin;
+          }
+
+          // Avoid mixed-content issues on HTTPS sites.
+          if (window.location.protocol === 'https:' && typeof socketUrl === 'string' && socketUrl.startsWith('http://')) {
+            socketUrl = window.location.origin;
+          }
         }
 
         // Configure reconnection and transport options for robustness
         const socketOpts = {
           auth: { token },
           forceNew: true,
-          timeout: 5000,
+          // Give slow proxies / first-connect DNS a bit more time.
+          timeout: 20000,
           transports: ['websocket', 'polling'],
           reconnection: true,
           reconnectionAttempts: Infinity,

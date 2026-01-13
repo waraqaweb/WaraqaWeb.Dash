@@ -95,11 +95,25 @@ if (process.env.TRUST_PROXY !== '0') {
 // Allowed frontend origins (dashboard)
 // In production, keep this strict (use FRONTEND_URL env var).
 // In local/dev, allow common localhost/127.0.0.1 ports used for running the dashboard.
+const normalizeOrigin = (value) => {
+  if (!value) return null;
+  const trimmed = String(value).trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  try {
+    // If the env accidentally includes a path (e.g. https://example.com/dashboard),
+    // CORS expects only the origin (scheme + host + optional port).
+    return new URL(trimmed).origin;
+  } catch (e) {
+    // If it's not a valid URL, keep it as-is (might be a bare origin string).
+    return trimmed;
+  }
+};
+
 const envFrontendOrigins = (process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(',')
   : []
 )
-  .map((origin) => origin.trim())
+  .map(normalizeOrigin)
   .filter(Boolean);
 
 const devFrontendOrigins = isProduction

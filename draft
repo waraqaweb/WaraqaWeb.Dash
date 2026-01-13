@@ -1,191 +1,154 @@
-1️⃣ What went wrong today (in simple words)
-
-Issue:
-
-The domain was opening with https://
-
-But the server only had HTTP (port 80) configured
-
-No SSL certificate existed yet
-
-Result:
-
-Browser → tries HTTPS (443)
-
-Server → nothing listening there
-
-Browser shows:
-❌ ERR_CONNECTION_REFUSED
-
-Important lesson:
-
-❗ Ping working ≠ Website working
-❗ DNS correct ≠ HTTPS ready
-
-2️⃣ How we diagnosed it (this is the method)
-
-We never guessed. We proved everything step by step.
-
-Step A — Network
-ping 165.227.187.206
-
-
-✔ Server reachable
-
-Step B — Firewall
-sudo ufw allow 80
-sudo ufw allow 443
-sudo ufw reload
-
-
-✔ Ports open
-
-Step C — Is Nginx running?
-sudo systemctl status nginx
-
-
-✔ Running
-
-Step D — Is Nginx listening?
-sudo ss -tulnp | grep nginx
-
-
-✔ Listening on :80
-
-Step E — What is Nginx actually serving?
-curl -I http://localhost
-curl -I http://test.waraqaweb.com
-curl -I http://165.227.187.206
-
-
-✔ All returned 200 OK
-✔ Same Next.js app
-
-➡️ Conclusion:
-The site worked on HTTP → problem was HTTPS only.
-
-3️⃣ Emergency checklist (when a site doesn’t load)
-
-Whenever this happens again, follow this in order:
-
-🔹 1. DNS
-ping yourdomain.com
-
-🔹 2. Server
-ssh root@SERVER_IP
-
-🔹 3. Nginx
-sudo systemctl status nginx
-sudo nginx -t
-
-🔹 4. Ports
-sudo ss -tulnp | grep -E '80|443'
-
-🔹 5. Firewall
-sudo ufw status
-
-🔹 6. HTTP vs HTTPS
-
-Try explicitly:
-
-http://domain.com
-https://domain.com
-
-
-👉 90% of issues are found by step 6.
-
-4️⃣ Deployment flow (Computer → GitHub → DigitalOcean)
-
-This is the clean workflow you should always use.
-
-A) On your computer (local)
+cd C:\waraqa
 git status
-git add .
-git commit -m "Describe the change"
+git add -A
+git commit -m "browsing + global search fixes"
 git push origin main
 
+---
 
-✔ Code is now safely on GitHub
+---
 
-B) On DigitalOcean server
-cd /opt/waraqa/app   # or your project folder
-git pull origin main
+---
 
-If using Docker:
-docker compose build
+cd /opt/waraqa
+chmod +x deploy/scripts/deploy.sh
+./deploy/scripts/deploy.sh pull
+
+---
+
+---
+
+---
+
+### Production deploy (DigitalOcean droplet) — safe-by-default
+
+### Copy/paste this whole block on the droplet.
+
+cd /opt/waraqa
+
+set -euo pipefail
+
+# IMPORTANT (Data safety):
+
+# - NEVER run: `docker compose down -v` or `docker system prune --volumes`
+
+# - MongoDB data is on a named volume mounted at /data/db
+
+# - Library files are on named volumes mounted at /data/library-assets + /data/library-uploads
+
+# Recommended (permissions): make library private unless user has approved access.
+
+# Ensure your droplet .env contains:
+
+# LIBRARY_REQUIRE_SHARE_ACCESS=true
+
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+export BUILDKIT_PROGRESS=plain
+
+# Prevent concurrent deploys
+
+LOCK_DIR="/tmp/waraqa-deploy.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  echo "ERROR: Another deploy appears to be running ($LOCK_DIR exists)."
+exit 1
+fi
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
+# Record rollback point BEFORE updating code
+
+OLD_SHA="$(git rev-parse HEAD)"
+
+# Update code safely (no merges)
+
+git fetch origin
+git reset --hard origin/main
+NEW_SHA="$(git rev-parse HEAD)"
+
+CHANGED="$(git diff --name-only "$OLD_SHA" "$NEW_SHA" || true)"
+echo "Deploying: $OLD_SHA -> $NEW_SHA"
+
+# Validate compose file renders correctly
+
+docker compose config -q
+
+SERVICES=""
+if printf "%s\n" "$CHANGED" | grep -qE '^(deploy/nginx/|docker-compose\.yml)'; then SERVICES="$SERVICES nginx"; fi
+if printf "%s\n" "$CHANGED" | grep -qE '^(backend/|deploy/backend/)'; then SERVICES="$SERVICES backend"; fi
+if printf "%s\n" "$CHANGED" | grep -qE '^(frontend/|deploy/frontend/)'; then SERVICES="$SERVICES frontend"; fi
+
+if [ -n "$(printf "%s" "$SERVICES" | tr -d ' ')" ]; then
+echo "Rebuilding services:$SERVICES"
+echo "Building images (this can take a while on small droplets, especially frontend)..."
+docker compose build $SERVICES
+docker compose up -d $SERVICES
+else
+echo "No build needed; restarting containers"
 docker compose up -d
+fi
 
-If NOT using Docker (Node.js):
-npm install
-npm run build
-pm2 restart all
+# Avoid "Login failed" right after deploy by waiting until backend is ready.
 
-5️⃣ Nginx setup (what goes where)
-📁 Config location
-/etc/nginx/sites-available/
+echo "Waiting for backend to be healthy (up to ~180s)..."
+healthy="0"
+for i in $(seq 1 90); do
+if docker compose exec -T backend node -e "const http=require('http');const req=http.get('http://127.0.0.1:5000/api/health',r=>process.exit(r.statusCode===200?0:1));req.on('error',()=>process.exit(1));" >/dev/null 2>&1; then
+healthy="1"
+break
+fi
+sleep 2
+done
 
-Example: test.waraqaweb.com
-server {
-    listen 80;
-    server_name test.waraqaweb.com;
+if [ "$healthy" != "1" ]; then
+echo "Backend did not become healthy. Showing latest logs..."
+docker compose logs --tail=200 backend || true
+docker compose logs --tail=200 nginx || true
+echo "Rollback with: git reset --hard $OLD_SHA ; docker compose up -d --build"
+exit 1
+fi
 
-    location / {
-        proxy_pass http://localhost:3000; # or docker container
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-    }
-}
+# Verify Mongo + library volumes are present inside containers (non-destructive)
 
+echo "Checking mongo volume (should NOT be empty)..."
+docker compose exec -T mongo sh -lc 'du -sh /data/db || true; ls -lah /data/db | head -n 50 || true'
 
-Enable it:
+echo "Checking library storage mounts..."
+docker compose exec -T backend sh -lc '
+echo "LIBRARY_LOCAL_ASSET_DIR=${LIBRARY_LOCAL_ASSET_DIR:-}";
+  test "${LIBRARY_LOCAL_ASSET_DIR:-}" = "/data/library-assets" || { echo "ERROR: LIBRARY_LOCAL_ASSET_DIR must be /data/library-assets"; exit 1; };
+mkdir -p "${LIBRARY_LOCAL_ASSET_DIR}";
+  touch "${LIBRARY_LOCAL_ASSET_DIR}/.write_test";
+rm -f "${LIBRARY_LOCAL_ASSET_DIR}/.write_test";
+du -sh "/data/library-assets" || true;
+du -sh "/data/library-uploads" || true;
+'
 
-ln -s /etc/nginx/sites-available/test.waraqaweb.com /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
+# IMPORTANT: nginx can keep stale upstream IPs after backend/frontend containers are recreated.
 
-6️⃣ SSL / HTTPS (always do this)
-Install Certbot
-sudo apt update
-sudo apt install certbot python3-certbot-nginx -y
+# Always reload/restart nginx after the deploy, and verify nginx can actually reach upstreams.
 
-Issue certificate
-sudo certbot --nginx -d test.waraqaweb.com
+echo "Reloading nginx to refresh upstream DNS..."
+docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 || docker compose restart nginx
 
+echo "Verifying nginx can reach backend + frontend..."
+if ! docker compose exec -T nginx sh -lc "wget -q -O- http://backend:5000/api/health >/dev/null" >/dev/null 2>&1; then
+echo "nginx -> backend failed. Showing latest logs + nginx config..."
+docker compose exec -T nginx nginx -T || true
+docker compose logs --tail=200 nginx || true
+docker compose logs --tail=200 backend || true
+echo "Rollback with: git reset --hard $OLD_SHA ; docker compose up -d --build"
+exit 1
+fi
 
-Choose:
-✔ Redirect HTTP → HTTPS
+if ! docker compose exec -T nginx sh -lc "wget -q --spider http://frontend:80/dashboard/" >/dev/null 2>&1; then
+echo "nginx -> frontend failed. Showing latest logs + nginx config..."
+docker compose exec -T nginx nginx -T || true
+docker compose logs --tail=200 nginx || true
+docker compose logs --tail=200 frontend || true
+echo "Rollback with: git reset --hard $OLD_SHA ; docker compose up -d --build"
+exit 1
+fi
 
-Auto-renew check
-sudo systemctl status certbot.timer
-
-7️⃣ Database config (clean & correct)
-Dashboard (MongoDB example)
-
-.env file:
-
-MONGO_URI=mongodb://127.0.0.1:27017/waraqa_dashboard
-NODE_ENV=production
-
-Website (separate DB recommended)
-MONGO_URI=mongodb://127.0.0.1:27017/waraqa_website
-
-
-👉 Rule:
-One database per app
-Never mix dashboard + marketing data
-
-8️⃣ Golden rules (print these mentally)
-
-Always test HTTP first
-
-Never assume HTTPS exists
-
-curl never lies — browsers do
-
-Nginx running ≠ site configured
-
-One app = one port = one config
-
-If frustrated → go back to checklist
+docker compose ps
+echo "Deploy complete."

@@ -857,6 +857,173 @@ router.get("/", authenticateToken, async (req, res) => {
 });
 
 /* -------------------------
+   GET /api/classes/series
+   - Admin-only scanner endpoint
+   - Returns recurring series (pattern docs) even if they have zero instances.
+   Query:
+     page, limit, teacher, guardian, student, search
+   Returns: { series: [...], pagination }
+   ------------------------- */
+router.get("/series", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 50,
+      teacher,
+      guardian,
+      student,
+      search,
+    } = req.query;
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const pageLimit = Math.min(500, Math.max(1, Number(limit) || 50));
+    const now = new Date();
+
+    const filters = {
+      status: 'pattern',
+    };
+
+    if (teacher && teacher !== 'all') filters.teacher = teacher;
+    if (guardian && guardian !== 'all') filters['student.guardianId'] = guardian;
+    if (student && student !== 'all') filters['student.studentId'] = student;
+
+    const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const normalizedSearch = typeof search === 'string' ? search.trim() : '';
+    if (normalizedSearch) {
+      const regex = new RegExp(escapeRegExp(normalizedSearch), 'i');
+
+      const [teacherMatches, guardianMatches] = await Promise.all([
+        User.find({
+          role: 'teacher',
+          $or: [{ firstName: regex }, { lastName: regex }, { email: regex }, { phone: regex }],
+        }).select('_id').lean(),
+        User.find({
+          role: 'guardian',
+          $or: [{ firstName: regex }, { lastName: regex }, { email: regex }, { phone: regex }],
+        }).select('_id').lean(),
+      ]);
+
+      const teacherIds = (teacherMatches || []).map((u) => u._id);
+      const guardianIds = (guardianMatches || []).map((u) => u._id);
+
+      const searchOr = [
+        { title: regex },
+        { subject: regex },
+        { description: regex },
+        { classCode: regex },
+        { meetingLink: regex },
+        { 'student.studentName': regex },
+      ];
+
+      if (teacherIds.length) searchOr.push({ teacher: { $in: teacherIds } });
+      if (guardianIds.length) searchOr.push({ 'student.guardianId': { $in: guardianIds } });
+
+      filters.$and = [...(filters.$and || []), { $or: searchOr }];
+    }
+
+    const total = await Class.countDocuments(filters);
+
+    const patterns = await Class.find(filters)
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .skip((pageNum - 1) * pageLimit)
+      .limit(pageLimit)
+      .populate('teacher', 'firstName lastName email')
+      .populate('student.guardianId', 'firstName lastName email')
+      .lean();
+
+    const patternIds = patterns.map((p) => p._id);
+    const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'];
+
+    const childCounts = patternIds.length
+      ? await Class.aggregate([
+          {
+            $match: {
+              parentRecurringClass: { $in: patternIds },
+              status: { $ne: 'pattern' },
+            },
+          },
+          {
+            $group: {
+              _id: '$parentRecurringClass',
+              totalInstances: { $sum: 1 },
+              futureActiveInstances: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $gte: ['$scheduledDate', now] },
+                        { $not: [{ $in: ['$status', cancelledStatuses] }] },
+                        { $ne: ['$hidden', true] },
+                      ],
+                    },
+                    1,
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ])
+      : [];
+
+    const countMap = new Map(childCounts.map((row) => [String(row._id), row]));
+    const series = patterns.map((p) => {
+      const c = countMap.get(String(p._id));
+      return {
+        ...p,
+        instanceCounts: {
+          total: c?.totalInstances || 0,
+          futureActive: c?.futureActiveInstances || 0,
+        },
+      };
+    });
+
+    return res.json({
+      series,
+      pagination: {
+        page: pageNum,
+        limit: pageLimit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / pageLimit)),
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/classes/series error:', err);
+    return res.status(500).json({ message: 'Failed to load class series' });
+  }
+});
+
+/* -------------------------
+   POST /api/classes/series/:id/recreate
+   - Admin-only
+   - Recreate missing instances for a recurring pattern
+   Returns: { patternId, createdCount }
+   ------------------------- */
+router.post("/series/:id/recreate", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  try {
+    const pattern = await Class.findById(req.params.id);
+    if (!pattern) return res.status(404).json({ message: 'Series not found' });
+    if (pattern.status !== 'pattern') return res.status(400).json({ message: 'Target class is not a series pattern' });
+
+    const perDayMap = buildPerDayMap(pattern.recurrenceDetails || []);
+    const created = await generateRecurringClasses(
+      pattern,
+      pattern.recurrence?.generationPeriodMonths || 2,
+      perDayMap,
+      { throwOnError: true }
+    );
+
+    return res.json({
+      patternId: pattern._id,
+      createdCount: Array.isArray(created) ? created.length : 0,
+    });
+  } catch (err) {
+    console.error('POST /api/classes/series/:id/recreate error:', err);
+    return res.status(500).json({ message: 'Failed to recreate series instances' });
+  }
+});
+
+/* -------------------------
    POST /api/classes/:id/reschedule-request
    Teacher or guardian submits a reschedule request
    ------------------------- */
@@ -1699,12 +1866,30 @@ router.post(
         if (!recurringAvailabilityCheck.ok) {
           const slotInfo = recurringAvailabilityCheck.slot || {};
           const dayName = typeof slotInfo.dayOfWeek === "number" ? DAY_LABELS[slotInfo.dayOfWeek] || "selected day" : "selected day";
+
+          let alternatives = [];
+          try {
+            if (teacher) {
+              const teacherId = teacher._id || teacher;
+              const preferredDays = typeof slotInfo.dayOfWeek === 'number' ? [slotInfo.dayOfWeek] : [];
+              alternatives = await availabilityService.getAlternativeTimeSlots(
+                teacherId,
+                recurrenceDuration,
+                preferredDays,
+                14
+              );
+            }
+          } catch (altErr) {
+            console.warn('Failed to compute alternative slots for recurring availability error', altErr?.message || altErr);
+          }
+
           return res.status(400).json({
             message: "Teacher not available for one or more recurring slots",
             availabilityError: {
               reason: recurringAvailabilityCheck.availability?.reason || "Teacher not available during this recurring slot",
               conflictType: recurringAvailabilityCheck.availability?.conflictType,
               conflictDetails: recurringAvailabilityCheck.availability?.conflictDetails,
+              alternatives: Array.isArray(alternatives) ? alternatives.slice(0, 5) : [],
               slot: slotInfo,
               dayName,
             },
@@ -2032,7 +2217,7 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
       return res.json({ message: "Class updated", classes: [enrichClassObj(updated, new Date())] });
     }
 
-    // Recurring pattern update: update pattern, delete future children, regenerate
+    // Recurring pattern update: validate, update pattern, replace future children safely, regenerate
     const patternId = classDoc.parentRecurringClass ? classDoc.parentRecurringClass : classDoc._id;
     const pattern = await Class.findById(patternId);
     if (!pattern || pattern.status !== "pattern") return res.status(400).json({ message: "Recurring pattern not found" });
@@ -2044,38 +2229,39 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
 
     const normalizedUpdateDetails = normalizeRecurrenceSlots(recurrenceDetails, timezone || pattern.timezone);
 
-    // Delete future children
     const now = new Date();
-    await Class.deleteMany({ parentRecurringClass: patternId, scheduledDate: { $gte: now } });
+    const patternBefore = pattern.toObject();
 
-    // Update pattern fields
-    if (title) pattern.title = title;
-    if (description) pattern.description = description;
-    if (subject) pattern.subject = subject;
-    if (teacher) pattern.teacher = teacher;
-    if (student) pattern.student = student;
-    if (typeof duration !== "undefined") pattern.duration = Number(duration);
-    pattern.timezone = timezone || pattern.timezone;
-    if (scheduledDate) {
-      // convert to UTC if tz util exists
-      pattern.scheduledDate = tzUtils.toUtc ? tzUtils.toUtc(scheduledDate, pattern.timezone || timezone || "UTC") : new Date(scheduledDate);
-    }
-    pattern.recurrence = { ...(pattern.recurrence || {}), ...(recurrence || {}) };
-    if (normalizedUpdateDetails.length) {
-      pattern.recurrenceDetails = normalizedUpdateDetails;
-      const derivedDays = Array.from(new Set(normalizedUpdateDetails.map((slot) => slot.dayOfWeek))).sort();
+    // Snapshot future children so we can roll back if regeneration fails.
+    const futureChildren = await Class.find({
+      parentRecurringClass: patternId,
+      scheduledDate: { $gte: now },
+      status: { $ne: 'pattern' },
+    })
+      .select('_id status hidden cancellation')
+      .lean();
+
+    // Build a proposed pattern in-memory and validate availability BEFORE touching children.
+    const proposedTimezone = timezone || pattern.timezone;
+    const proposedTeacher = teacher || pattern.teacher;
+    const proposedDuration = (typeof duration !== "undefined") ? Number(duration) : Number(pattern.duration || 60);
+
+    const proposedRecurrence = { ...(pattern.recurrence || {}), ...(recurrence || {}) };
+    const proposedRecurrenceDetails = normalizedUpdateDetails.length ? normalizedUpdateDetails : (pattern.recurrenceDetails || []);
+
+    if (Array.isArray(proposedRecurrenceDetails) && proposedRecurrenceDetails.length) {
+      const derivedDays = Array.from(new Set(proposedRecurrenceDetails.map((slot) => Number(slot.dayOfWeek))))
+        .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+        .sort((a, b) => a - b);
       if (derivedDays.length) {
-        pattern.recurrence.daysOfWeek = derivedDays;
+        proposedRecurrence.daysOfWeek = derivedDays;
       }
-      if (!pattern.recurrence.duration) {
-        pattern.recurrence.duration = normalizedUpdateDetails[0]?.duration || pattern.duration;
+      if (!proposedRecurrence.duration) {
+        proposedRecurrence.duration = proposedRecurrenceDetails[0]?.duration || proposedDuration;
       }
     }
-    pattern.recurrence.lastGenerated = new Date();
-    pattern.lastModifiedBy = req.user._id;
-    pattern.lastModifiedAt = new Date();
 
-    const recurringUpdateSlots = (pattern.recurrenceDetails || [])
+    const proposedSlots = (proposedRecurrenceDetails || [])
       .map((slot) => {
         const dayOfWeek = Number(slot?.dayOfWeek);
         const timeString = typeof slot?.time === "string" ? slot.time : "";
@@ -2087,39 +2273,154 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
         return {
           dayOfWeek,
           time: timeString,
-          duration: Number.isFinite(durationValue) && durationValue > 0 ? durationValue : Number(pattern.recurrence?.duration || pattern.duration || 60),
-          timezone: slot?.timezone || pattern.timezone || DEFAULT_TIMEZONE,
+          duration: Number.isFinite(durationValue) && durationValue > 0 ? durationValue : Number(proposedRecurrence?.duration || proposedDuration || 60),
+          timezone: slot?.timezone || proposedTimezone || DEFAULT_TIMEZONE,
         };
       })
       .filter(Boolean);
 
+    const proposedRecurrenceDuration = Number(proposedRecurrence?.duration || proposedDuration || 60);
+
     const recurringUpdateAvailability = await ensureRecurringSlotsWithinAvailability(
-      pattern.teacher?._id || pattern.teacher,
-      recurringUpdateSlots,
-      pattern.timezone || DEFAULT_TIMEZONE,
-      Number(pattern.recurrence?.duration || pattern.duration || 60)
+      proposedTeacher?._id || proposedTeacher,
+      proposedSlots,
+      proposedTimezone || DEFAULT_TIMEZONE,
+      proposedRecurrenceDuration
     );
 
     if (!recurringUpdateAvailability.ok) {
       const slotInfo = recurringUpdateAvailability.slot || {};
       const dayName = typeof slotInfo.dayOfWeek === "number" ? DAY_LABELS[slotInfo.dayOfWeek] || "selected day" : "selected day";
+
+      let alternatives = [];
+      try {
+        const teacherId = proposedTeacher?._id || proposedTeacher;
+        const duration = Number(proposedRecurrenceDuration || proposedDuration || 60);
+        const preferredDays = typeof slotInfo.dayOfWeek === 'number' ? [slotInfo.dayOfWeek] : [];
+        alternatives = await availabilityService.getAlternativeTimeSlots(
+          teacherId,
+          duration,
+          preferredDays,
+          14
+        );
+      } catch (altErr) {
+        console.warn('Failed to compute alternative slots for recurring update availability error', altErr?.message || altErr);
+      }
+
       return res.status(400).json({
         message: "Teacher not available for one or more recurring slots",
         availabilityError: {
           reason: recurringUpdateAvailability.availability?.reason || "Teacher not available during this recurring slot",
           conflictType: recurringUpdateAvailability.availability?.conflictType,
           conflictDetails: recurringUpdateAvailability.availability?.conflictDetails,
+          alternatives: Array.isArray(alternatives) ? alternatives.slice(0, 5) : [],
           slot: slotInfo,
           dayName,
         },
       });
     }
 
+    // Apply validated updates to the pattern.
+    if (title) pattern.title = title;
+    if (description) pattern.description = description;
+    if (subject) pattern.subject = subject;
+    if (teacher) pattern.teacher = teacher;
+    if (student) pattern.student = student;
+    if (typeof duration !== "undefined") pattern.duration = Number(duration);
+    pattern.timezone = proposedTimezone || pattern.timezone;
+    if (scheduledDate) {
+      pattern.scheduledDate = tzUtils.toUtc ? tzUtils.toUtc(scheduledDate, pattern.timezone || proposedTimezone || "UTC") : new Date(scheduledDate);
+    }
+    pattern.recurrence = proposedRecurrence;
+    if (normalizedUpdateDetails.length) {
+      pattern.recurrenceDetails = normalizedUpdateDetails;
+    }
+    pattern.recurrence.lastGenerated = new Date();
+    pattern.lastModifiedBy = req.user._id;
+    pattern.lastModifiedAt = new Date();
+
     await pattern.save();
 
+    // Soft-cancel future children rather than hard deleting.
+    // This makes the operation resilient to failures and allows recovery/auditing.
+    const cancelFilter = {
+      parentRecurringClass: patternId,
+      scheduledDate: { $gte: now },
+      status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'] },
+    };
+    await Class.updateMany(cancelFilter, {
+      $set: {
+        status: 'cancelled_by_admin',
+        'cancellation.reason': 'Series updated',
+        'cancellation.cancelledAt': now,
+        'cancellation.cancelledBy': req.user._id,
+        'cancellation.cancelledByRole': 'admin',
+      },
+    });
+
     // regenerate instances
-    const perDayMap = buildPerDayMap(pattern.recurrenceDetails || []);
-    const newInstances = await generateRecurringClasses(pattern, pattern.recurrence.generationPeriodMonths || 2, perDayMap);
+    let newInstances = [];
+    try {
+      const perDayMap = buildPerDayMap(pattern.recurrenceDetails || []);
+      newInstances = await generateRecurringClasses(
+        pattern,
+        pattern.recurrence.generationPeriodMonths || 2,
+        perDayMap,
+        { throwOnError: true }
+      );
+    } catch (genErr) {
+      // Rollback: restore cancelled children and revert the pattern.
+      try {
+        if (futureChildren.length > 0) {
+          await Class.bulkWrite(
+            futureChildren.map((child) => ({
+              updateOne: {
+                filter: { _id: child._id },
+                update: (() => {
+                  const update = {
+                    $set: {
+                      status: child.status,
+                      hidden: child.hidden,
+                    },
+                  };
+                  if (typeof child.cancellation === 'undefined') {
+                    update.$unset = { cancellation: 1 };
+                  } else {
+                    update.$set.cancellation = child.cancellation;
+                  }
+                  return update;
+                })(),
+              },
+            }))
+          );
+        }
+
+        await Class.findByIdAndUpdate(patternId, {
+          title: patternBefore.title,
+          description: patternBefore.description,
+          subject: patternBefore.subject,
+          teacher: patternBefore.teacher,
+          student: patternBefore.student,
+          scheduledDate: patternBefore.scheduledDate,
+          duration: patternBefore.duration,
+          timezone: patternBefore.timezone,
+          recurrence: patternBefore.recurrence,
+          recurrenceDetails: patternBefore.recurrenceDetails,
+          meetingLink: patternBefore.meetingLink,
+          materials: patternBefore.materials,
+          lastModifiedBy: req.user._id,
+          lastModifiedAt: new Date(),
+        });
+      } catch (rollbackErr) {
+        console.error('Failed to rollback recurring update after generation error:', rollbackErr);
+      }
+
+      console.error('Failed to regenerate recurring instances during update:', genErr);
+      return res.status(500).json({
+        message: 'Failed to update recurring series safely. No classes were deleted.',
+        error: genErr?.message || String(genErr),
+      });
+    }
 
     // 🔄 Update affected pending/unpaid invoices
     try {

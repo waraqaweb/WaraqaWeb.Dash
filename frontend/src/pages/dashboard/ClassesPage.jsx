@@ -29,6 +29,7 @@ import ClassesCalendarView from "../../components/dashboard/ClassesCalendarView"
 import { MEETING_TYPE_LABELS } from '../../constants/meetingConstants';
 import CancelClassModal from "../../components/dashboard/CancelClassModal";
 import { useDeleteClassCountdown } from "../../contexts/DeleteClassCountdownContext";
+import SeriesScannerModal from "../../components/dashboard/SeriesScannerModal";
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MEETING_LOOKBACK_DAYS = 60;
 const MEETING_LOOKAHEAD_DAYS = 90;
@@ -94,8 +95,9 @@ const formatMinutesAs12h = (totalMinutes, withPeriod = true) => {
   const minutes = normalized % 60;
   const period = hours24 >= 12 ? "PM" : "AM";
   const hours12 = hours24 % 12 || 12;
-  const minuteLabel = minutes === 0 ? "" : `:${String(minutes).padStart(2, "0")}`;
-  const base = `${hours12}${minuteLabel}`;
+  const hourLabel = String(hours12).padStart(2, "0");
+  const minuteLabel = String(minutes).padStart(2, "0");
+  const base = `${hourLabel}:${minuteLabel}`;
   return withPeriod ? `${base} ${period}` : base;
 };
 
@@ -103,17 +105,12 @@ const formatTimeRangeSmart = (startHHMM, endHHMM) => {
   const startMin = parseTimeToMinutes(startHHMM);
   const endMin = parseTimeToMinutes(endHHMM);
   if (startMin === null || endMin === null) {
-    return `${startHHMM || ""}${endHHMM ? `–${endHHMM}` : ""}`.trim();
+    return `${startHHMM || ""}${endHHMM ? ` to ${endHHMM}` : ""}`.trim();
   }
 
-  // End may be 24:00 (end of day)
-  const startPeriod = Math.floor((startMin % (24 * 60)) / 60) >= 12 ? "PM" : "AM";
-  const endPeriod = Math.floor((endMin % (24 * 60)) / 60) >= 12 ? "PM" : "AM";
-
-  // If same AM/PM, omit it on the start time.
-  const startLabel = formatMinutesAs12h(startMin, startPeriod !== endPeriod);
+  const startLabel = formatMinutesAs12h(startMin, true);
   const endLabel = formatMinutesAs12h(endMin, true);
-  return `${startLabel}–${endLabel}`;
+  return `${startLabel} to ${endLabel}`;
 };
 
 const compressDaysLabel = (dayNums = []) => {
@@ -173,34 +170,61 @@ const buildConciseShareMessageFromResults = ({
     headerLines.push(`Times shown in: ${timezoneFriendlyLabel}`);
   }
 
+  const formatSlotsByDay = (slots = []) => {
+    const byDay = new Map();
+
+    for (const slot of slots) {
+      const dayOfWeek = Number(slot?.dayOfWeek);
+      if (!Number.isFinite(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) continue;
+
+      const start = slot?.displayStart;
+      const end = slot?.displayEnd;
+      const startMin = parseTimeToMinutes(start);
+      const endMin = parseTimeToMinutes(end);
+
+      if (!byDay.has(dayOfWeek)) byDay.set(dayOfWeek, []);
+      byDay.get(dayOfWeek).push({
+        start,
+        end,
+        startMin: startMin ?? Number.POSITIVE_INFINITY,
+        endMin: endMin ?? Number.POSITIVE_INFINITY,
+      });
+    }
+
+    const lines = [];
+    for (let day = 0; day <= 6; day += 1) {
+      const ranges = byDay.get(day);
+      if (!Array.isArray(ranges) || ranges.length === 0) continue;
+
+      const sorted = ranges
+        .slice()
+        .sort((a, b) => (a.startMin - b.startMin) || (a.endMin - b.endMin) || String(a.start || '').localeCompare(String(b.start || '')));
+
+      // De-dupe identical ranges
+      const unique = [];
+      for (const r of sorted) {
+        const last = unique[unique.length - 1];
+        if (last && last.start === r.start && last.end === r.end) continue;
+        unique.push(r);
+      }
+
+      const dayLabel = DAY_NAMES_FULL[day] || 'Day';
+
+      lines.push(`${dayLabel}:`);
+      for (const r of unique) {
+        lines.push(`  ${formatTimeRangeSmart(r.start, r.end)}`);
+      }
+    }
+
+    return lines;
+  };
+
   const formatTeacherBlock = (teacherResult) => {
     const teacherName = teacherResult?.teacher?.name || 'Teacher';
     const slots = Array.isArray(teacherResult?.availableSlots) ? teacherResult.availableSlots : [];
     if (!slots.length) return [teacherName, 'No available time slots found.'];
 
-    const groups = new Map();
-    for (const slot of slots) {
-      const start = slot?.displayStart;
-      const end = slot?.displayEnd;
-      const key = `${start || ''}__${end || ''}`;
-      const dayOfWeek = Number(slot?.dayOfWeek);
-      if (!groups.has(key)) {
-        groups.set(key, { start, end, days: new Set(), sortKey: parseTimeToMinutes(start) ?? 0 });
-      }
-      if (Number.isFinite(dayOfWeek)) {
-        groups.get(key).days.add(dayOfWeek);
-      }
-    }
-
-    const groupList = Array.from(groups.values()).sort((a, b) => a.sortKey - b.sortKey);
-    const lines = [];
-    for (const g of groupList) {
-      const daysLabel = compressDaysLabel(Array.from(g.days));
-      const timeLabel = formatTimeRangeSmart(g.start, g.end);
-      if (daysLabel) lines.push(`${daysLabel}: ${timeLabel}`);
-      else lines.push(timeLabel);
-    }
-
+    const lines = formatSlotsByDay(slots);
     return [teacherName, ...lines];
   };
 
@@ -210,24 +234,7 @@ const buildConciseShareMessageFromResults = ({
     const slots = Array.isArray(teacherResult?.availableSlots) ? teacherResult.availableSlots : [];
     if (!slots.length) return [...headerLines, '', 'No available time slots found.'].join('\n');
 
-    const groups = new Map();
-    for (const slot of slots) {
-      const start = slot?.displayStart;
-      const end = slot?.displayEnd;
-      const key = `${start || ''}__${end || ''}`;
-      const dayOfWeek = Number(slot?.dayOfWeek);
-      if (!groups.has(key)) {
-        groups.set(key, { start, end, days: new Set(), sortKey: parseTimeToMinutes(start) ?? 0 });
-      }
-      if (Number.isFinite(dayOfWeek)) groups.get(key).days.add(dayOfWeek);
-    }
-
-    const groupList = Array.from(groups.values()).sort((a, b) => a.sortKey - b.sortKey);
-    const lines = groupList.map((g) => {
-      const daysLabel = compressDaysLabel(Array.from(g.days));
-      const timeLabel = formatTimeRangeSmart(g.start, g.end);
-      return daysLabel ? `${daysLabel}: ${timeLabel}` : timeLabel;
-    });
+    const lines = formatSlotsByDay(slots);
 
     return [...headerLines, '', ...lines].join('\n');
   }
@@ -326,6 +333,8 @@ const ClassesPage = ({ isActive = true }) => {
   const canViewMeetings = isAdminUser || isTeacherUser || isGuardianUser;
 
   const [classes, setClasses] = useState([]);
+  const [classesCorpus, setClassesCorpus] = useState([]);
+  const loadedClassPagesRef = useRef(new Set());
   const [meetings, setMeetings] = useState([]);
   const [meetingsLoading, setMeetingsLoading] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
@@ -352,8 +361,15 @@ const ClassesPage = ({ isActive = true }) => {
   const [totalPages, setTotalPages] = useState(1);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showSeriesScanner, setShowSeriesScanner] = useState(false);
+  const [seriesScannerLoading, setSeriesScannerLoading] = useState(false);
+  const [seriesScannerError, setSeriesScannerError] = useState("");
+  const [seriesScannerList, setSeriesScannerList] = useState([]);
+  const [seriesScannerSearch, setSeriesScannerSearch] = useState("");
+  const [seriesRecreatingId, setSeriesRecreatingId] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editClass, setEditClass] = useState(null);
+  const [editAvailabilityWarning, setEditAvailabilityWarning] = useState(null);
   
   const [editStudents, setEditStudents] = useState([]);
   const [editUpdateScope, setEditUpdateScope] = useState("single");
@@ -400,6 +416,87 @@ const ClassesPage = ({ isActive = true }) => {
   const handleCloseCreateModal = () => {
     setShowCreateModal(false);
     resetNewClassForm();
+  };
+
+  const fetchSeriesScannerList = useCallback(async () => {
+    if (!isAdminUser) return;
+    setSeriesScannerLoading(true);
+    setSeriesScannerError("");
+    try {
+      const res = await api.get('/classes/series', { params: { limit: 500 } });
+      setSeriesScannerList(res.data?.series || []);
+    } catch (err) {
+      console.error('Failed to load series scanner list:', err);
+      setSeriesScannerError(err?.response?.data?.message || 'Failed to load series');
+      setSeriesScannerList([]);
+    } finally {
+      setSeriesScannerLoading(false);
+    }
+  }, [isAdminUser]);
+
+  useEffect(() => {
+    if (!showSeriesScanner) return;
+    fetchSeriesScannerList();
+  }, [showSeriesScanner, fetchSeriesScannerList]);
+
+  const handleRecreateSeriesInstances = useCallback(async (pattern) => {
+    const patternId = pattern?._id;
+    if (!patternId) return;
+    setSeriesRecreatingId(patternId);
+    try {
+      await api.post(`/classes/series/${patternId}/recreate`);
+      await fetchSeriesScannerList();
+      await fetchClassesRef.current?.();
+    } catch (err) {
+      console.error('Failed to recreate series instances:', err);
+      alert(err?.response?.data?.message || 'Failed to recreate series instances');
+    } finally {
+      setSeriesRecreatingId(null);
+    }
+  }, [fetchSeriesScannerList]);
+
+  const formatAlternativeSlot = (alt) => {
+    const start = alt?.startDateTime || alt?.start || alt?.startTime;
+    const end = alt?.endDateTime || alt?.end || alt?.endTime;
+    const startLabel = start ? new Date(start).toLocaleString() : '';
+    const endLabel = end ? new Date(end).toLocaleString() : '';
+    if (!startLabel && !endLabel) return '';
+    return `${startLabel}${endLabel ? ` – ${endLabel}` : ''}`;
+  };
+
+  const buildAvailabilityWarningFromApi = (data = {}) => {
+    const ae = data?.availabilityError || {};
+    const reason = ae?.reason || '';
+
+    let details = '';
+    if (ae?.conflictType === 'existing_class' && ae?.conflictDetails) {
+      const cd = ae.conflictDetails;
+      const start = cd?.startTime ? new Date(cd.startTime).toLocaleString() : '';
+      const end = cd?.endTime ? new Date(cd.endTime).toLocaleString() : '';
+      details = `Conflicts with: ${cd?.studentName || 'a class'}${cd?.subject ? ` (${cd.subject})` : ''}${start && end ? `\nTime: ${start} – ${end}` : ''}`;
+    } else if (ae?.conflictType === 'no_availability' && ae?.conflictDetails) {
+      const cd = ae.conflictDetails;
+      const slotsForDay = Array.isArray(cd?.slotsForDay) ? cd.slotsForDay : [];
+      const slotLabel = slotsForDay.length
+        ? slotsForDay.map((s) => `${s.startTime}–${s.endTime}`).join(', ')
+        : 'none';
+      details = `Requested: ${cd?.requested?.startLocal || ''} – ${cd?.requested?.endLocal || ''} (${cd?.teacherTimezone || ''})\nAvailable windows: ${slotLabel}`;
+    }
+
+    const alternatives = Array.isArray(ae?.alternatives) ? ae.alternatives : [];
+    const nearest = alternatives.length ? formatAlternativeSlot(alternatives[0]) : '';
+    const suggested = alternatives
+      .slice(0, 5)
+      .map((alt) => formatAlternativeSlot(alt))
+      .filter(Boolean);
+
+    return {
+      title: data?.message || 'Teacher not available',
+      reason,
+      details,
+      nearest,
+      suggested,
+    };
   };
 
   const [newClass, setNewClass] = useState({
@@ -462,8 +559,57 @@ const ClassesPage = ({ isActive = true }) => {
   const normalizedSearchTerm = useMemo(() => (searchTerm || "").trim().toLowerCase(), [searchTerm]);
 
   const filteredClasses = useMemo(() => {
-    return classes;
-  }, [classes]);
+    const base = normalizedSearchTerm
+      ? ((classesCorpus && classesCorpus.length) ? classesCorpus : classes)
+      : classes;
+
+    if (!normalizedSearchTerm) return base;
+
+    const toText = (value) => (value == null ? '' : String(value)).toLowerCase();
+    const term = normalizedSearchTerm;
+
+    return (base || []).filter((classItem) => {
+      if (!classItem) return false;
+
+      const teacher = classItem.teacher;
+      const teacherName = teacher && typeof teacher === 'object'
+        ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim()
+        : '';
+      const teacherEmail = teacher && typeof teacher === 'object' ? (teacher.email || '') : '';
+
+      const student = classItem.student || {};
+      const studentName = student.studentName
+        || student.name
+        || student.fullName
+        || `${student.firstName || ''} ${student.lastName || ''}`.trim();
+      const guardian = student.guardianId;
+      const guardianName = guardian && typeof guardian === 'object'
+        ? `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim()
+        : '';
+      const guardianEmail = guardian && typeof guardian === 'object' ? (guardian.email || '') : '';
+
+      const subject = classItem.subject || classItem.title || '';
+      const meetingLink = classItem.meetingLink || '';
+
+      const haystack = [
+        classItem._id,
+        subject,
+        classItem.description,
+        classItem.status,
+        classItem.scheduledDate,
+        teacherName,
+        teacherEmail,
+        studentName,
+        guardianName,
+        guardianEmail,
+        meetingLink,
+      ]
+        .filter(Boolean)
+        .map(toText);
+
+      return haystack.some((value) => value.includes(term));
+    });
+  }, [classes, classesCorpus, normalizedSearchTerm]);
 
 
   const mapAvailabilityResponse = useCallback((raw = {}) => createAvailabilityState({
@@ -497,11 +643,13 @@ const ClassesPage = ({ isActive = true }) => {
   }, [createAvailabilityState, mapAvailabilityResponse, user?._id, user?.timezone]);
 
 
-  // When search/filters change, reset to the first page so server-side search works across all results.
+  // When filters change, reset to the first page.
   useEffect(() => {
     if (!isActive) return;
     setCurrentPage(1);
-  }, [isActive, searchTerm, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter]);
+    loadedClassPagesRef.current = new Set();
+    setClassesCorpus([]);
+  }, [isActive, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -519,7 +667,6 @@ const ClassesPage = ({ isActive = true }) => {
     }
   }, [
     isActive,
-    searchTerm,
     globalFilter,
     sortBy,
     sortOrder,
@@ -529,6 +676,130 @@ const ClassesPage = ({ isActive = true }) => {
     tabFilter,
     currentPage,
     isAdminUser,
+  ]);
+
+  // When searching, progressively prefetch more pages in the background so search can
+  // match across already-loaded content without blocking the initial page load.
+  useEffect(() => {
+    if (!isActive) return;
+    const isSearching = Boolean(normalizedSearchTerm);
+    if (!isSearching) return;
+    if (loading) return; // ensure initial page rendered first
+    if (!Number.isFinite(totalPages) || totalPages <= 1) return;
+
+    let cancelled = false;
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const buildParamsForPage = (page) => {
+      const params = {
+        page,
+        limit: 30,
+        filter: tabFilter,
+        sortBy: "scheduledDate",
+        order: "asc",
+      };
+
+      if (statusFilter !== "all") params.status = statusFilter;
+      if (teacherFilter !== "all") params.teacher = teacherFilter;
+      if (guardianFilter !== "all") params.guardian = guardianFilter;
+      if (globalFilter && globalFilter !== 'all') {
+        params.status = globalFilter;
+      }
+
+      return params;
+    };
+
+    const mergeClasses = (next) => {
+      if (!Array.isArray(next) || next.length === 0) return;
+      setClassesCorpus((prev) => {
+        const map = new Map();
+        (prev || []).forEach((c) => {
+          const id = c?._id ? String(c._id) : null;
+          if (id) map.set(id, c);
+        });
+        next.forEach((c) => {
+          const id = c?._id ? String(c._id) : null;
+          if (id) map.set(id, c);
+        });
+        const merged = Array.from(map.values());
+        // Keep a deterministic ordering for search results.
+        merged.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+        return merged;
+      });
+    };
+
+    const prefetch = async () => {
+      const maxPagesToPrefetch = 20;
+      let prefetchedCount = 0;
+
+      for (let page = 1; page <= totalPages; page += 1) {
+        if (cancelled) return;
+        if (prefetchedCount >= maxPagesToPrefetch) return;
+        if (loadedClassPagesRef.current.has(page)) continue;
+
+        const params = buildParamsForPage(page);
+        const cacheKey = makeCacheKey('classes:list', user?._id, {
+          page,
+          limit: 30,
+          filter: tabFilter,
+          status: statusFilter !== 'all' ? statusFilter : undefined,
+          teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
+          guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
+          global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+        });
+
+        const cached = readCache(cacheKey, { deps: ['classes'] });
+        if (cached.hit && cached.value?.classes) {
+          mergeClasses(cached.value.classes);
+          loadedClassPagesRef.current.add(page);
+          prefetchedCount += 1;
+          continue;
+        }
+
+        try {
+          const res = await api.get("/classes", { params });
+          const fetched = res.data.classes || [];
+          const apiTotalPages = Number(res.data?.pagination?.totalPages);
+          mergeClasses(fetched);
+          loadedClassPagesRef.current.add(page);
+          prefetchedCount += 1;
+
+          writeCache(
+            cacheKey,
+            {
+              classes: fetched,
+              totalPages: Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1,
+            },
+            { ttlMs: 5 * 60_000, deps: ['classes'] }
+          );
+        } catch (e) {
+          // ignore; we can still search within whatever is already loaded
+        }
+
+        await sleep(120);
+      }
+    };
+
+    const t = setTimeout(() => {
+      prefetch();
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [
+    guardianFilter,
+    globalFilter,
+    isActive,
+    loading,
+    normalizedSearchTerm,
+    statusFilter,
+    tabFilter,
+    teacherFilter,
+    totalPages,
+    user?._id,
   ]);
 
   // Listen for external refresh requests (e.g., after class report submit from route modal)
@@ -857,7 +1128,6 @@ const fetchClasses = useCallback(async () => {
         page: currentPage,
         limit: 30,
         filter: tabFilter,
-        search: (searchTerm || '').trim() || undefined,
         status: statusFilter !== 'all' ? statusFilter : undefined,
         teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
         guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
@@ -886,7 +1156,6 @@ const fetchClasses = useCallback(async () => {
       page: currentPage,
       limit: 30,
       filter: tabFilter, // "upcoming" or "previous"
-      search: searchTerm || undefined,
       sortBy: "scheduledDate",
       order: "asc",
     };
@@ -905,6 +1174,21 @@ const fetchClasses = useCallback(async () => {
 
     // Backend already sorts by scheduledDate, so no need to sort again
     setClasses(fetchedClasses);
+    loadedClassPagesRef.current.add(currentPage);
+    setClassesCorpus((prev) => {
+      const map = new Map();
+      (prev || []).forEach((c) => {
+        const id = c?._id ? String(c._id) : null;
+        if (id) map.set(id, c);
+      });
+      fetchedClasses.forEach((c) => {
+        const id = c?._id ? String(c._id) : null;
+        if (id) map.set(id, c);
+      });
+      const merged = Array.from(map.values());
+      merged.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+      return merged;
+    });
     const apiTotalPages = Number(res.data?.pagination?.totalPages);
     setTotalPages(Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1);
     setError("");
@@ -927,7 +1211,6 @@ const fetchClasses = useCallback(async () => {
   currentPage,
   globalFilter,
   guardianFilter,
-  searchTerm,
   statusFilter,
   tabFilter,
   teacherFilter,
@@ -1737,6 +2020,38 @@ Would you like to create another series anyway?`
               const tzLabel = availability?.timezone || editClass?.timezone || DEFAULT_TIMEZONE;
               const slotsByDay = availability?.slotsByDay || {};
 
+              const suggestStartWithinDaySlots = (daySlots = [], requestedStartMin, durationMinutes) => {
+                if (!Number.isFinite(requestedStartMin) || !Number.isFinite(durationMinutes) || durationMinutes <= 0) return '';
+                const toMin = (t) => {
+                  if (!t) return null;
+                  const [hh = '0', mm = '0'] = String(t).split(':');
+                  const h = parseInt(hh, 10);
+                  const m = parseInt(mm, 10);
+                  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+                  return h * 60 + m;
+                };
+                let bestStart = null;
+                let bestScore = Infinity;
+                (Array.isArray(daySlots) ? daySlots : []).forEach((av) => {
+                  const avStart = toMin(av.startTime || av.start || av.start_time || '');
+                  const avEnd = toMin(av.endTime || av.end || av.end_time || '');
+                  if (avStart === null || avEnd === null) return;
+                  const latestStart = avEnd - durationMinutes;
+                  if (latestStart < avStart) return;
+                  const candidate = Math.min(Math.max(requestedStartMin, avStart), latestStart);
+                  const score = Math.abs(candidate - requestedStartMin);
+                  if (score < bestScore) {
+                    bestScore = score;
+                    bestStart = candidate;
+                  }
+                });
+                if (bestStart === null) return '';
+                const bestEnd = bestStart + durationMinutes;
+                return `${minutesToTime(bestStart)}–${minutesToTime(bestEnd)}`;
+              };
+
+              let nearestLabel = '';
+
               const lines = conflicts.map(({ idx, reason }) => {
                 const slot = (editClass.recurrenceDetails || [])[idx] || {};
                 const day = Number.isFinite(Number(slot.dayOfWeek)) ? Number(slot.dayOfWeek) : null;
@@ -1754,6 +2069,11 @@ Would you like to create another series anyway?`
                   ? daySlots.map((av) => `${av.startTime || av.start || ''}–${av.endTime || av.end || ''}`).join(', ')
                   : 'none';
 
+                const suggested = reason === 'not_covered' ? suggestStartWithinDaySlots(daySlots, startMin, duration) : '';
+                if (!nearestLabel && suggested) {
+                  nearestLabel = `${dayName}: ${suggested}`;
+                }
+
                 if (reason === 'no_day_slots') {
                   return `• ${dayName}: no availability windows (timezone ${tzLabel})`;
                 }
@@ -1766,7 +2086,13 @@ Would you like to create another series anyway?`
                 return `• ${dayName}: not available`;
               });
 
-              alert(`Teacher not available for one or more recurring slots:\n${lines.join('\n')}`);
+              setEditAvailabilityWarning({
+                title: 'Teacher not available for one or more recurring slots',
+                reason: '',
+                details: lines.join('\n'),
+                nearest: nearestLabel,
+                suggested: [],
+              });
               return;
             }
           }
@@ -1782,10 +2108,16 @@ Would you like to create another series anyway?`
         setEditClass(null);
         setEditStudents([]);
         setEditUpdateScope("single");
+        setEditAvailabilityWarning(null);
         await fetchClasses();
         alert("Class updated successfully!");
       }
     } catch (err) {
+      const data = err?.response?.data || {};
+      if (data?.availabilityError) {
+        setEditAvailabilityWarning(buildAvailabilityWarningFromApi(data));
+        return;
+      }
       alert(err.response?.data?.message || "Failed to update class");
       console.error(err);
     }
@@ -2989,6 +3321,7 @@ Would you like to create another series anyway?`
           isTeacher={isTeacherUser}
           onCreate={() => navigate('/classes/create', { state: { background: location } })}
           onShare={() => handleOpenShareModal()}
+          onSeriesScanner={() => setShowSeriesScanner(true)}
         />
       )}
 
@@ -3261,6 +3594,26 @@ Would you like to create another series anyway?`
         onSaved={handleMeetingReportSaved}
       />
 
+      <SeriesScannerModal
+        isOpen={showSeriesScanner}
+        onClose={() => setShowSeriesScanner(false)}
+        series={seriesScannerList}
+        loading={seriesScannerLoading}
+        error={seriesScannerError}
+        searchText={seriesScannerSearch}
+        onChangeSearchText={setSeriesScannerSearch}
+        recreatingId={seriesRecreatingId}
+        onEdit={async (pattern) => {
+          setShowSeriesScanner(false);
+          await openEditFor(pattern);
+        }}
+        onDelete={(pattern) => {
+          setShowSeriesScanner(false);
+          handleOpenDeleteModal(pattern);
+        }}
+        onRecreate={handleRecreateSeriesInstances}
+      />
+
       <CreateClassModal
         isOpen={showCreateModal}
         onClose={handleCloseCreateModal}
@@ -3285,6 +3638,7 @@ Would you like to create another series anyway?`
           setShowEditModal(false);
           setEditClass(null);
           setEditStudents([]);
+          setEditAvailabilityWarning(null);
         }}
         editClass={editClass}
         setEditClass={setEditClass}
@@ -3297,6 +3651,8 @@ Would you like to create another series anyway?`
         removeRecurrenceSlot={removeEditRecurrenceSlot}
         updateRecurrenceSlot={updateEditRecurrenceSlot}
         handleUpdateClass={handleUpdateClass}
+        availabilityWarning={editAvailabilityWarning}
+        onDismissAvailabilityWarning={() => setEditAvailabilityWarning(null)}
       />
 
       <DuplicateClassModal

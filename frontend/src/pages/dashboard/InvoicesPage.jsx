@@ -56,6 +56,8 @@ const InvoicesPage = ({ isActive = true }) => {
   const navigate = useNavigate();
 
   const [invoices, setInvoices] = useState([]);
+  const [invoicesCorpus, setInvoicesCorpus] = useState([]);
+  const loadedInvoicePagesRef = React.useRef(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -133,13 +135,6 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const isGlobalSearching = useMemo(() => Boolean((debouncedSearch || '').trim()), [debouncedSearch]);
 
-  useEffect(() => {
-    if (!isActive) return;
-    if (!isGlobalSearching) return;
-    if (activeTab !== 'all') setActiveTab('all');
-    if (currentPage !== 1) setCurrentPage(1);
-  }, [isActive, isGlobalSearching, activeTab, currentPage]);
-
   // Sync current page from URL (Back/Forward).
   useEffect(() => {
     if (!isActive) return;
@@ -174,7 +169,157 @@ const InvoicesPage = ({ isActive = true }) => {
     fetchInvoices();
     if (isAdmin()) fetchStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, debouncedSearch, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, showDeleted]);
+  }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, showDeleted]);
+
+  // Reset local corpus when primary filters change (search should not reset).
+  useEffect(() => {
+    if (!isActive) return;
+    loadedInvoicePagesRef.current = new Set();
+    setInvoicesCorpus([]);
+  }, [isActive, statusFilter, typeFilter, segmentFilter, activeTab, showDeleted]);
+
+  // When searching, progressively prefetch more pages in the background so search can
+  // match across already-loaded content without blocking the initial page load.
+  useEffect(() => {
+    if (!isActive) return;
+    if (!isGlobalSearching) return;
+    if (loading) return; // ensure initial page rendered first
+    if (!Number.isFinite(totalPages) || totalPages <= 1) return;
+
+    let cancelled = false;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const buildParamsForPage = (page) => {
+      const params = {
+        page,
+        limit: itemsPerPage,
+      };
+
+      if (showDeleted && isAdmin()) {
+        params.deleted = true;
+      }
+
+      // Active tab controls ordering and (optionally) status.
+      if (activeTab && activeTab !== 'all') {
+        params.status = activeTab;
+        if (activeTab === 'unpaid') {
+          params.sortBy = 'createdAt';
+          params.order = 'asc';
+        } else {
+          params.sortBy = 'paidAt';
+          params.order = 'desc';
+        }
+      } else if (statusFilter !== 'all') {
+        params.status = statusFilter;
+        if (statusFilter === 'unpaid') {
+          params.sortBy = 'createdAt';
+          params.order = 'asc';
+        } else {
+          params.sortBy = 'paidAt';
+          params.order = 'desc';
+        }
+      } else {
+        params.sortBy = 'paidAt';
+        params.order = 'desc';
+      }
+
+      if (typeFilter !== 'all') params.type = typeFilter;
+      if (segmentFilter !== 'all') params.segment = segmentFilter;
+      return params;
+    };
+
+    const mergeInvoices = (next) => {
+      if (!Array.isArray(next) || next.length === 0) return;
+      setInvoicesCorpus((prev) => {
+        const map = new Map();
+        (prev || []).forEach((inv) => {
+          const id = inv?._id ? String(inv._id) : null;
+          if (id) map.set(id, inv);
+        });
+        next.forEach((inv) => {
+          const id = inv?._id ? String(inv._id) : null;
+          if (id) map.set(id, inv);
+        });
+        return Array.from(map.values());
+      });
+    };
+
+    const prefetch = async () => {
+      const maxPagesToPrefetch = 25;
+      let prefetchedCount = 0;
+
+      for (let page = 1; page <= totalPages; page += 1) {
+        if (cancelled) return;
+        if (prefetchedCount >= maxPagesToPrefetch) return;
+        if (loadedInvoicePagesRef.current.has(page)) continue;
+
+        const cacheKey = makeCacheKey(
+          'invoices:list',
+          user?._id,
+          {
+            page,
+            limit: itemsPerPage,
+            showDeleted: Boolean(showDeleted && isAdmin()),
+            activeTab,
+            statusFilter,
+            typeFilter,
+            segmentFilter,
+          }
+        );
+
+        const cached = readCache(cacheKey, { deps: ['invoices'] });
+        if (cached.hit && cached.value?.invoices) {
+          mergeInvoices(cached.value.invoices);
+          loadedInvoicePagesRef.current.add(page);
+          prefetchedCount += 1;
+          continue;
+        }
+
+        try {
+          const params = buildParamsForPage(page);
+          const { data } = await api.get('/invoices', { params });
+          const invoiceList = data.invoices || [];
+          mergeInvoices(invoiceList);
+          loadedInvoicePagesRef.current.add(page);
+          prefetchedCount += 1;
+
+          writeCache(
+            cacheKey,
+            {
+              invoices: invoiceList,
+              totalPages: data.pagination?.pages || 1,
+              guardianStudentsMap: {},
+            },
+            { ttlMs: 5 * 60_000, deps: ['invoices'] }
+          );
+        } catch (e) {
+          // ignore; we can still search within whatever is already loaded
+        }
+
+        await sleep(120);
+      }
+    };
+
+    const t = setTimeout(() => {
+      prefetch();
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [
+    activeTab,
+    isActive,
+    isGlobalSearching,
+    loading,
+    segmentFilter,
+    showDeleted,
+    statusFilter,
+    totalPages,
+    typeFilter,
+    user?._id,
+  ]);
 
   const fetchInvoices = async () => {
     try {
@@ -184,7 +329,6 @@ const InvoicesPage = ({ isActive = true }) => {
         {
           page: currentPage,
           limit: itemsPerPage,
-          search: (debouncedSearch || '').trim() || undefined,
           showDeleted: Boolean(showDeleted && isAdmin()),
           activeTab,
           statusFilter,
@@ -210,45 +354,38 @@ const InvoicesPage = ({ isActive = true }) => {
       const params = {
         page: currentPage,
         limit: itemsPerPage,
-        search: debouncedSearch
       };
 
       if (showDeleted && isAdmin()) {
         params.deleted = true;
       }
 
-      // If searching, show results across all tabs (paid/unpaid) and let the backend
-      // apply smart ordering (unpaid first, newest first).
-      if (isGlobalSearching) {
-        params.smartSort = true;
-      } else {
-        // Active tab controls the primary status filter and desired ordering.
-        // - Unpaid tab: show oldest created invoices first (createdAt asc)
-        // - Paid tab: show latest paid invoices first (paidAt desc)
-        // - All tab (or none): show invoices by latest payment (paidAt desc, fallback createdAt)
-        if (activeTab && activeTab !== 'all') {
-          params.status = activeTab;
-          if (activeTab === 'unpaid') {
-            params.sortBy = 'createdAt';
-            params.order = 'asc';
-          } else {
-            params.sortBy = 'paidAt';
-            params.order = 'desc';
-          }
-        } else if (statusFilter !== 'all') {
-          params.status = statusFilter;
-          if (statusFilter === 'unpaid') {
-            params.sortBy = 'createdAt';
-            params.order = 'asc';
-          } else {
-            params.sortBy = 'paidAt';
-            params.order = 'desc';
-          }
+      // Active tab controls the primary status filter and desired ordering.
+      // - Unpaid tab: show oldest created invoices first (createdAt asc)
+      // - Paid tab: show latest paid invoices first (paidAt desc)
+      // - All tab (or none): show invoices by latest payment (paidAt desc, fallback createdAt)
+      if (activeTab && activeTab !== 'all') {
+        params.status = activeTab;
+        if (activeTab === 'unpaid') {
+          params.sortBy = 'createdAt';
+          params.order = 'asc';
         } else {
-          // Default for the 'all' tab: latest payment first
           params.sortBy = 'paidAt';
           params.order = 'desc';
         }
+      } else if (statusFilter !== 'all') {
+        params.status = statusFilter;
+        if (statusFilter === 'unpaid') {
+          params.sortBy = 'createdAt';
+          params.order = 'asc';
+        } else {
+          params.sortBy = 'paidAt';
+          params.order = 'desc';
+        }
+      } else {
+        // Default for the 'all' tab: latest payment first
+        params.sortBy = 'paidAt';
+        params.order = 'desc';
       }
 
       if (typeFilter !== 'all') params.type = typeFilter;
@@ -257,6 +394,19 @@ const InvoicesPage = ({ isActive = true }) => {
       const { data } = await api.get('/invoices', { params });
       const invoiceList = data.invoices || [];
       setInvoices(invoiceList);
+      loadedInvoicePagesRef.current.add(currentPage);
+      setInvoicesCorpus((prev) => {
+        const map = new Map();
+        (prev || []).forEach((inv) => {
+          const id = inv?._id ? String(inv._id) : null;
+          if (id) map.set(id, inv);
+        });
+        invoiceList.forEach((inv) => {
+          const id = inv?._id ? String(inv._id) : null;
+          if (id) map.set(id, inv);
+        });
+        return Array.from(map.values());
+      });
       setTotalPages(data.pagination?.pages || 1);
 
       const guardianIds = [...new Set(invoiceList.map(inv => inv.guardian?._id).filter(Boolean))];
@@ -1062,10 +1212,12 @@ const InvoicesPage = ({ isActive = true }) => {
   // ordering and avoid re-sorting here. We still apply client-side search and
   // type filtering for quick UI responsiveness.
   const filteredInvoices = useMemo(() => {
-    let result = invoices || [];
+    let result = (isGlobalSearching
+      ? ((invoicesCorpus && invoicesCorpus.length) ? invoicesCorpus : invoices)
+      : invoices) || [];
 
-    if (searchTerm.trim()) {
-      const globalTerm = searchTerm.toLowerCase();
+    if ((debouncedSearch || '').trim()) {
+      const globalTerm = debouncedSearch.toLowerCase();
       result = result.filter((inv) => {
         const guardianName = `${inv.guardian?.firstName || ''} ${inv.guardian?.lastName || ''}`.toLowerCase();
         const guardianStudentNames = guardianStudentsMap[inv.guardian?._id] || [];
@@ -1108,7 +1260,7 @@ const InvoicesPage = ({ isActive = true }) => {
     }
 
     return result;
-  }, [invoices, searchTerm, activeTab, statusFilter, typeFilter, guardianStudentsMap]);
+  }, [invoices, invoicesCorpus, debouncedSearch, isGlobalSearching, activeTab, statusFilter, typeFilter, guardianStudentsMap]);
 
   // Ensure consistent ordering client-side as a fallback in case backend doesn't apply requested sort.
   const displayedInvoices = useMemo(() => {

@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import DashboardLayout from '../../components/layout/DashboardLayout';
 import FolderTree from '../../components/library/FolderTree';
 import LibraryToolbar from '../../components/library/LibraryToolbar';
 import LibraryBreadcrumbs from '../../components/library/LibraryBreadcrumbs';
@@ -284,7 +283,7 @@ const LibraryDashboardContent = () => {
   const pendingAccess = shareRequests?.filter((request) => request.status === 'pending') || [];
 
   return (
-    <DashboardLayout activeView="library" provideSearchContext={false}>
+    <div className="h-full w-full">
       <div className="grid gap-3 p-3 lg:grid-cols-[300px_1fr]">
         <div className="flex flex-col gap-4">
           <FolderTree tree={tree} activeFolder={activeFolder} onSelect={handleFolderClick} />
@@ -349,6 +348,7 @@ const LibraryDashboardContent = () => {
             folders={folders}
             items={items}
             view={view}
+            isRoot={activeFolderId === 'root' || !activeFolderId}
             onOpenItem={setViewerItem}
             onOpenFolder={handleFolderClick}
             isAdmin={canManageLibrary}
@@ -418,7 +418,7 @@ const LibraryDashboardContent = () => {
 
       {viewerItem && <DocumentViewer item={viewerItem} onClose={() => setViewerItem(null)} />}
       {whiteboardOpen && <WhiteboardModal open onClose={() => setWhiteboardOpen(false)} />}
-    </DashboardLayout>
+    </div>
   );
 };
 

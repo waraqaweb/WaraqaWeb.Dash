@@ -85,6 +85,7 @@ export default function CreateClassModal({
     generationPeriodMonths: 3
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [availabilityWarning, setAvailabilityWarning] = useState(null);
   
   // Use local state if no external state is provided (standalone mode)
   // NOTE: Never rely on Function#toString() for behavior; prod builds can minify it.
@@ -98,6 +99,64 @@ export default function CreateClassModal({
     if (currentNewClass?.title) return;
     currentSetNewClass((prev) => ({ ...prev, title: 'One on one' }));
   }, [isOpen, currentNewClass?.title, currentSetNewClass]);
+
+  // Clear availability warning when key scheduling inputs change.
+  useEffect(() => {
+    if (!availabilityWarning) return;
+    setAvailabilityWarning(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    currentNewClass?.teacher,
+    currentNewClass?.timezone,
+    currentNewClass?.duration,
+    currentNewClass?.scheduledDate,
+    currentNewClass?.isRecurring,
+    JSON.stringify(currentNewClass?.recurrenceDetails || [])
+  ]);
+
+  const formatAlternativeSlot = (alt) => {
+    const start = alt?.startDateTime || alt?.start || alt?.startTime;
+    const end = alt?.endDateTime || alt?.end || alt?.endTime;
+    const startLabel = start ? new Date(start).toLocaleString() : '';
+    const endLabel = end ? new Date(end).toLocaleString() : '';
+    if (!startLabel && !endLabel) return '';
+    return `${startLabel}${endLabel ? ` – ${endLabel}` : ''}`;
+  };
+
+  const buildAvailabilityWarningFromApi = (data = {}) => {
+    const ae = data?.availabilityError || {};
+    const reason = ae?.reason || '';
+
+    let details = '';
+    if (ae?.conflictType === 'existing_class' && ae?.conflictDetails) {
+      const cd = ae.conflictDetails;
+      const start = cd?.startTime ? new Date(cd.startTime).toLocaleString() : '';
+      const end = cd?.endTime ? new Date(cd.endTime).toLocaleString() : '';
+      details = `Conflicts with: ${cd?.studentName || 'a class'}${cd?.subject ? ` (${cd.subject})` : ''}${start && end ? `\nTime: ${start} – ${end}` : ''}`;
+    } else if (ae?.conflictType === 'no_availability' && ae?.conflictDetails) {
+      const cd = ae.conflictDetails;
+      const slotsForDay = Array.isArray(cd?.slotsForDay) ? cd.slotsForDay : [];
+      const slotLabel = slotsForDay.length
+        ? slotsForDay.map((s) => `${s.startTime}–${s.endTime}`).join(', ')
+        : 'none';
+      details = `Requested: ${cd?.requested?.startLocal || ''} – ${cd?.requested?.endLocal || ''} (${cd?.teacherTimezone || ''})\nAvailable windows: ${slotLabel}`;
+    }
+
+    const alternatives = Array.isArray(ae?.alternatives) ? ae.alternatives : [];
+    const nearest = alternatives.length ? formatAlternativeSlot(alternatives[0]) : '';
+    const suggested = alternatives
+      .slice(0, 5)
+      .map((alt) => formatAlternativeSlot(alt))
+      .filter(Boolean);
+
+    return {
+      title: data?.message || 'Teacher not available',
+      reason,
+      details,
+      nearest,
+      suggested,
+    };
+  };
   
   // Filter students based on selected guardian - only show students of selected guardian
   const selectedGuardianId = currentNewClass.student?.guardianId
@@ -297,6 +356,36 @@ export default function CreateClassModal({
               const tzLabel = availability?.timezone || currentNewClass?.timezone || adminTimezone || DEFAULT_TIMEZONE;
               const slotsByDay = availability?.slotsByDay || {};
 
+              const suggestStartWithinDaySlots = (daySlots = [], requestedStartMin, durationMinutes) => {
+                if (!Number.isFinite(requestedStartMin) || !Number.isFinite(durationMinutes) || durationMinutes <= 0) return '';
+                const toMin = (t) => {
+                  if (!t) return null;
+                  const [hh = '0', mm = '0'] = String(t).split(':');
+                  const h = parseInt(hh, 10);
+                  const m = parseInt(mm, 10);
+                  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+                  return h * 60 + m;
+                };
+                let bestStart = null;
+                let bestScore = Infinity;
+                (Array.isArray(daySlots) ? daySlots : []).forEach((av) => {
+                  const avStart = toMin(av.startTime || av.start || av.start_time || '');
+                  const avEnd = toMin(av.endTime || av.end || av.end_time || '');
+                  if (avStart === null || avEnd === null) return;
+                  const latestStart = avEnd - durationMinutes;
+                  if (latestStart < avStart) return;
+                  const candidate = Math.min(Math.max(requestedStartMin, avStart), latestStart);
+                  const score = Math.abs(candidate - requestedStartMin);
+                  if (score < bestScore) {
+                    bestScore = score;
+                    bestStart = candidate;
+                  }
+                });
+                if (bestStart === null) return '';
+                const bestEnd = bestStart + durationMinutes;
+                return `${minutesToTime(bestStart)}–${minutesToTime(bestEnd)}`;
+              };
+
               const lines = conflicts.map(({ idx, reason }) => {
                 const slot = (currentNewClass.recurrenceDetails || [])[idx] || {};
                 const day = Number.isFinite(Number(slot.dayOfWeek)) ? Number(slot.dayOfWeek) : null;
@@ -314,11 +403,14 @@ export default function CreateClassModal({
                   ? daySlots.map((av) => `${av.startTime || av.start || ''}–${av.endTime || av.end || ''}`).join(', ')
                   : 'none';
 
+                const suggested = reason === 'not_covered' ? suggestStartWithinDaySlots(daySlots, startMin, duration) : '';
+                const suggestedLabel = suggested ? ` Nearest: ${suggested}` : '';
+
                 if (reason === 'no_day_slots') {
                   return `• ${dayName}: no availability windows (timezone ${tzLabel})`;
                 }
                 if (reason === 'not_covered') {
-                  return `• ${dayName}: requested ${reqRange} (${duration} min) is not fully covered. Available: ${daySlotsLabel} (timezone ${tzLabel})`;
+                  return `• ${dayName}: requested ${reqRange} (${duration} min) is not fully covered. Available: ${daySlotsLabel} (timezone ${tzLabel}).${suggestedLabel}`;
                 }
                 if (reason === 'invalid_time') {
                   return `• ${dayName}: invalid time/duration`;
@@ -326,7 +418,13 @@ export default function CreateClassModal({
                 return `• ${dayName}: not available`;
               });
 
-              alert(`Teacher not available for one or more recurring slots:\n${lines.join('\n')}`);
+              setAvailabilityWarning({
+                title: 'Teacher not available for one or more recurring slots',
+                reason: '',
+                details: lines.join('\n'),
+                nearest: '',
+                suggested: [],
+              });
               return;
             }
           }
@@ -345,39 +443,7 @@ export default function CreateClassModal({
       const data = error?.response?.data || {};
 
       if (data?.availabilityError) {
-        const ae = data.availabilityError;
-        const reason = ae?.reason ? `\nReason: ${ae.reason}` : '';
-
-        let details = '';
-        if (ae?.conflictType === 'existing_class' && ae?.conflictDetails) {
-          const cd = ae.conflictDetails;
-          const start = cd?.startTime ? new Date(cd.startTime).toLocaleString() : '';
-          const end = cd?.endTime ? new Date(cd.endTime).toLocaleString() : '';
-          details = `\nConflicts with: ${cd?.studentName || 'a class'}${cd?.subject ? ` (${cd.subject})` : ''}${start && end ? `\nTime: ${start} – ${end}` : ''}`;
-        } else if (ae?.conflictType === 'no_availability' && ae?.conflictDetails) {
-          const cd = ae.conflictDetails;
-          const slotsForDay = Array.isArray(cd?.slotsForDay) ? cd.slotsForDay : [];
-          const slotLabel = slotsForDay.length
-            ? slotsForDay.map((s) => `${s.startTime}–${s.endTime}`).join(', ')
-            : 'none';
-          details = `\nRequested: ${cd?.requested?.startLocal || ''} – ${cd?.requested?.endLocal || ''} (${cd?.teacherTimezone || ''})\nAvailable windows: ${slotLabel}`;
-        }
-
-        const alternatives = Array.isArray(ae?.alternatives) ? ae.alternatives : [];
-        const alternativesText = alternatives.length
-          ? `\n\nSuggested slots:\n${alternatives
-              .slice(0, 5)
-              .map((alt) => {
-                const start = alt?.startDateTime || alt?.start || alt?.startTime;
-                const end = alt?.endDateTime || alt?.end || alt?.endTime;
-                const startLabel = start ? new Date(start).toLocaleString() : '';
-                const endLabel = end ? new Date(end).toLocaleString() : '';
-                return `- ${startLabel}${endLabel ? ` – ${endLabel}` : ''}`;
-              })
-              .join('\n')}`
-          : '';
-
-        alert(`${data?.message || 'Teacher not available'}${reason}${details}${alternativesText}`);
+        setAvailabilityWarning(buildAvailabilityWarningFromApi(data));
         return;
       }
 
@@ -502,6 +568,51 @@ export default function CreateClassModal({
                 Single Class
               </button>
             </div>
+
+            {/* Availability Warning */}
+            {availabilityWarning && (
+              <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-yellow-900">
+                      {availabilityWarning.title || 'Teacher not available'}
+                    </div>
+                    {availabilityWarning.reason && (
+                      <div className="mt-1 text-xs text-yellow-900 whitespace-pre-wrap">
+                        {availabilityWarning.reason}
+                      </div>
+                    )}
+                    {availabilityWarning.details && (
+                      <div className="mt-2 text-xs text-yellow-800 whitespace-pre-wrap">
+                        {availabilityWarning.details}
+                      </div>
+                    )}
+                    {availabilityWarning.nearest && (
+                      <div className="mt-2 text-xs text-yellow-900">
+                        <span className="font-medium">Nearest available slot:</span>{' '}
+                        {availabilityWarning.nearest}
+                      </div>
+                    )}
+                    {Array.isArray(availabilityWarning.suggested) && availabilityWarning.suggested.length > 0 && (
+                      <div className="mt-2 text-xs text-yellow-900">
+                        <div className="font-medium">Other suggested slots:</div>
+                        <div className="mt-1 whitespace-pre-wrap">
+                          {availabilityWarning.suggested.map((s) => `• ${s}`).join('\n')}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAvailabilityWarning(null)}
+                    className="text-yellow-700 hover:text-yellow-900"
+                    aria-label="Dismiss availability warning"
+                  >
+                    <XCircle className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+            )}
            
             {/* Participants */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -702,7 +813,7 @@ export default function CreateClassModal({
                       className="flex items-center space-x-2 px-3 py-2 text-sm text-[#2C736C] border border-[#2C736C] rounded-md hover:bg-[#2C736C] hover:text-white transition-colors"
                     >
                       <Plus className="h-4 w-4" />
-                      <span>Add Another Time Slot</span>
+                      <span>Add Slot</span>
                     </button>
                   </div>
                 </div>

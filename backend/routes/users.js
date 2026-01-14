@@ -491,6 +491,9 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
     const originalUser = await User.findById(req.params.id).select('-password');
     if (!originalUser) return res.status(404).json({ message: 'User not found' });
 
+    // Capture teacher meeting link before mutation so we can propagate changes to upcoming classes.
+    const previousTeacherMeetLink = (originalUser.teacherInfo?.googleMeetLink || '').trim();
+
     // If the stored document already has an invalid gender value (possible from earlier writes), clear it
     try {
       const allowedGenders = ['male', 'female'];
@@ -817,6 +820,48 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
     const changedFields = diffFields(originalUser.toObject ? originalUser.toObject() : {}, updatedUser.toObject ? updatedUser.toObject() : {});
 
     res.json({ message: 'User updated successfully', user: updatedUser });
+
+    // If teacher updated their Google Meet link, propagate to upcoming classes and recurring patterns.
+    try {
+      if (updatedUser.role === 'teacher') {
+        const newTeacherMeetLink = (updatedUser.teacherInfo?.googleMeetLink || '').trim();
+        if (newTeacherMeetLink && newTeacherMeetLink !== previousTeacherMeetLink) {
+          const Class = require('../models/Class');
+          const now = new Date();
+          const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'];
+
+          // Only overwrite classes that are still using the old link (or have none).
+          // This preserves any per-class custom meeting links.
+          const overwriteFilter = {
+            teacher: updatedUser._id,
+            scheduledDate: { $gte: now },
+            status: { $nin: cancelledStatuses },
+            $or: [
+              { meetingLink: null },
+              { meetingLink: '' },
+              ...(previousTeacherMeetLink ? [{ meetingLink: previousTeacherMeetLink }] : []),
+            ],
+          };
+
+          const patternFilter = {
+            teacher: updatedUser._id,
+            status: 'pattern',
+            $or: [
+              { meetingLink: null },
+              { meetingLink: '' },
+              ...(previousTeacherMeetLink ? [{ meetingLink: previousTeacherMeetLink }] : []),
+            ],
+          };
+
+          await Promise.all([
+            Class.updateMany(overwriteFilter, { $set: { meetingLink: newTeacherMeetLink } }),
+            Class.updateMany(patternFilter, { $set: { meetingLink: newTeacherMeetLink } }),
+          ]);
+        }
+      }
+    } catch (linkPropErr) {
+      console.error('Failed to propagate teacher meeting link to upcoming classes:', linkPropErr);
+    }
 
     // Notification handling
     try {

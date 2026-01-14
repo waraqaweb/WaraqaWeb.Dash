@@ -16,11 +16,12 @@ const classificationLabel = (entity) => {
   return null;
 };
 
-const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete }) => {
+const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete, size = 'default' }) => {
   const isSample = Boolean(item?.__isSample);
   const fallbackPreview = item?.previewAsset?.url || 'https://placehold.co/320x420?text=Preview';
   const identifier = itemId(item);
   const [previewUrl, setPreviewUrl] = useState(fallbackPreview);
+  const isCompact = size === 'compact';
 
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +57,7 @@ const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete }) => {
   }, [identifier, item?.previewAsset?.url, fallbackPreview]);
   return (
     <article className="group relative flex flex-col overflow-hidden rounded-2xl border border-border/50 bg-card/70 shadow-sm transition-shadow hover:shadow-md">
-      <div className="relative h-44 w-full overflow-hidden">
+      <div className={`relative w-full overflow-hidden ${isCompact ? 'h-36' : 'h-44'}`}>
         <img
           src={previewUrl}
           alt={item.displayName}
@@ -94,13 +95,13 @@ const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete }) => {
           </div>
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-2 p-3">
+      <div className={`flex flex-1 flex-col gap-2 ${isCompact ? 'p-2.5' : 'p-3'}`}>
         <div>
-          <h3 dir="auto" className="text-base font-semibold text-foreground line-clamp-2">
+          <h3 dir="auto" className={`${isCompact ? 'text-sm' : 'text-base'} font-semibold text-foreground line-clamp-2`}>
             {item.displayName}
           </h3>
           {item?.description ? (
-            <p dir="auto" className="mt-1 text-sm text-muted-foreground line-clamp-2">
+            <p dir="auto" className={`mt-1 ${isCompact ? 'text-xs' : 'text-sm'} text-muted-foreground line-clamp-2`}>
               {item.description}
             </p>
           ) : null}
@@ -120,14 +121,14 @@ const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete }) => {
           <button
             type="button"
             onClick={() => onOpen(item)}
-            className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:brightness-95"
+            className={`flex-1 rounded-lg bg-primary px-3 ${isCompact ? 'py-1.5 text-xs' : 'py-2 text-sm'} font-semibold text-primary-foreground shadow-sm hover:brightness-95`}
           >
             <Eye className="mr-2 inline h-4 w-4" />
             Open
           </button>
           <button
             type="button"
-            className={`rounded-lg border border-border px-3 py-2 text-sm ${
+            className={`rounded-lg border border-border px-3 ${isCompact ? 'py-1.5 text-xs' : 'py-2 text-sm'} ${
               item.allowDownload ? 'text-foreground hover:bg-muted' : 'text-muted-foreground cursor-not-allowed'
             }`}
             disabled={!item.allowDownload}
@@ -140,15 +141,17 @@ const LibraryCard = ({ item, onOpen, isAdmin = false, onRename, onDelete }) => {
   );
 };
 
-const FolderCard = ({ folder, onOpen, isAdmin = false, onRename, onDelete }) => {
+const FolderCard = ({ folder, onOpen, isAdmin = false, onRename, onDelete, size = 'default' }) => {
   const isSample = Boolean(folder?.__isSample);
+  const isLarge = size === 'large';
+  const isCompact = size === 'compact';
 
   return (
     <article
       className="group relative flex flex-col overflow-hidden rounded-2xl border border-border/50 bg-card/70 shadow-sm transition-shadow hover:shadow-md"
     >
-      <div className="relative flex h-32 w-full items-center justify-center bg-muted/40">
-        <Folder className="h-10 w-10 text-muted-foreground" />
+      <div className={`relative flex w-full items-center justify-center bg-muted/40 ${isLarge ? 'h-40' : isCompact ? 'h-24' : 'h-32'}`}>
+        <Folder className={`${isLarge ? 'h-14 w-14' : isCompact ? 'h-8 w-8' : 'h-10 w-10'} text-muted-foreground`} />
         {folder?.isSecret && (
           <div className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-xs text-white">
             <Lock className="h-3 w-3" />
@@ -182,13 +185,13 @@ const FolderCard = ({ folder, onOpen, isAdmin = false, onRename, onDelete }) => 
           </div>
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-2 p-3">
+      <div className={`flex flex-1 flex-col gap-2 ${isLarge ? 'p-4' : isCompact ? 'p-2.5' : 'p-3'}`}>
         <div>
-          <h3 dir="auto" className="text-base font-semibold text-foreground line-clamp-2">
+          <h3 dir="auto" className={`${isLarge ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'} font-semibold text-foreground line-clamp-2`}>
             {folder?.displayName || 'Untitled folder'}
           </h3>
           {folder?.description ? (
-            <p dir="auto" className="mt-1 text-sm text-muted-foreground line-clamp-2">
+            <p dir="auto" className={`mt-1 ${isLarge ? 'text-sm' : isCompact ? 'text-xs' : 'text-sm'} text-muted-foreground line-clamp-2`}>
               {folder.description}
             </p>
           ) : null}
@@ -206,7 +209,7 @@ const FolderCard = ({ folder, onOpen, isAdmin = false, onRename, onDelete }) => 
           <button
             type="button"
             onClick={() => onOpen?.(folder)}
-            className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:brightness-95"
+            className={`flex-1 rounded-lg bg-primary px-3 ${isLarge ? 'py-2.5 text-sm' : isCompact ? 'py-1.5 text-xs' : 'py-2 text-sm'} font-semibold text-primary-foreground shadow-sm hover:brightness-95`}
           >
             Open
           </button>
@@ -220,6 +223,7 @@ const LibraryGrid = ({
   folders = [],
   items = [],
   view,
+  isRoot = false,
   onOpenItem,
   onOpenFolder,
   isAdmin = false,
@@ -369,6 +373,7 @@ const LibraryGrid = ({
           isAdmin={isAdmin}
           onRename={onRenameFolder}
           onDelete={onDeleteFolder}
+          size={isRoot ? 'default' : 'compact'}
         />
       ))}
 
@@ -380,6 +385,7 @@ const LibraryGrid = ({
           isAdmin={isAdmin}
           onRename={onRenameItem}
           onDelete={onDeleteItem}
+          size={isRoot ? 'default' : 'compact'}
         />
       ))}
     </div>

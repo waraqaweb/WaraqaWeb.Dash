@@ -6,8 +6,9 @@ const tzUtils = require('../utils/timezone');
  * - Accepts a Mongoose doc or plain object pattern
  * - Generates class instances for the rolling window and returns saved instances
  */
-async function generateRecurringClasses(recurringPattern, periodMonths = 2, perDayMapParam) {
+async function generateRecurringClasses(recurringPattern, periodMonths = 2, perDayMapParam, options = {}) {
   const generated = [];
+  const { throwOnError = false } = options || {};
   try {
     const pattern = recurringPattern.toObject ? recurringPattern.toObject() : recurringPattern;
 
@@ -114,9 +115,10 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
           // Avoid duplicates when the rolling generation job runs repeatedly.
           // (No unique index exists in the schema for recurring instances.)
           const alreadyExists = await Class.exists({
-            parentRecurringClass: pattern._id,
+            parentRecurringClass: recurringPattern._id,
             scheduledDate: instanceDate,
-            status: { $ne: 'pattern' },
+            status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'] },
+            hidden: { $ne: true },
           });
           if (alreadyExists) continue;
 
@@ -139,6 +141,9 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
     return generated;
   } catch (err) {
     console.error('generateRecurringClasses error:', err);
+    if (throwOnError) {
+      throw err;
+    }
     return generated;
   }
 }

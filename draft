@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Blank screen issue fixed"
+git commit -m "updates 14 Jan"
 git push origin main
 
 ---
@@ -22,29 +22,12 @@ chmod +x deploy/scripts/deploy.sh
 
 ### Production deploy (DigitalOcean droplet) — safe-by-default (daily)
 
-Do NOT paste long multi-line scripts into an SSH terminal — it’s easy for the paste to get corrupted (you’ll see weird output like `echo "Deploy complete."ploads...` where later lines got appended).
-
-Instead, use the repo’s deploy script (it already includes: lock, reset to `origin/main`, GHCR pull mode, backend health wait, nginx reload, and mount checks):
-
 cd /opt/waraqa
 
 chmod +x deploy/scripts/deploy.sh
 
 # Recommended (fast): pull prebuilt images from GHCR
 ./deploy/scripts/deploy.sh pull
-
-# If you get "Permission denied" when running ./deploy/scripts/deploy.sh,
-# run it explicitly with bash (works even if the executable bit isn't set yet):
-#   bash deploy/scripts/deploy.sh pull
-
-# If you see: "Another deploy appears to be running" it means a deploy lock is active.
-# The script auto-clears stale locks (e.g., after an interrupted SSH session).
-# If the lock folder exists but has no pid/meta files, it's likely from an older script.
-# In that case, confirm no deploy is running, then remove it:
-#   rm -rf /tmp/waraqa-deploy.lock
-# If it still refuses, inspect the lock metadata:
-#   ls -lah /tmp/waraqa-deploy.lock
-#   cat /tmp/waraqa-deploy.lock/meta
 
 # Alternative (builds on droplet): rebuild changed services only
 ./deploy/scripts/deploy.sh auto

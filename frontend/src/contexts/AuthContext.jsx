@@ -9,6 +9,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import api from '../api/axios';
 import { io } from 'socket.io-client';
 import { bumpDomainVersion } from '../utils/sessionCache';
+import { __entitySearchCacheUserScopeKey } from '../services/entitySearch';
 
 // Create the authentication context
 const AuthContext = createContext();
@@ -84,6 +85,7 @@ export const AuthProvider = ({ children }) => {
         const apiError = error?.response?.data?.error || error?.authErrorCode;
         if (status === 401 && (apiError === 'INVALID_TOKEN' || apiError === 'TOKEN_EXPIRED')) {
           try { localStorage.removeItem('token'); } catch (e) {}
+          try { window.sessionStorage?.removeItem(__entitySearchCacheUserScopeKey); } catch (e) {}
           setToken(null);
           setUser(null);
         }
@@ -238,6 +240,20 @@ export const AuthProvider = ({ children }) => {
       delete api.defaults.headers.common['Authorization'];
     }
   }, [token]);
+
+  // Provide a stable per-user scope for cached search results.
+  useEffect(() => {
+    try {
+      if (typeof window === 'undefined') return;
+      if (user?._id) {
+        window.sessionStorage?.setItem(__entitySearchCacheUserScopeKey, String(user._id));
+      } else {
+        window.sessionStorage?.removeItem(__entitySearchCacheUserScopeKey);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [user?._id]);
 
   // Check if user is authenticated on app load
   useEffect(() => {
@@ -459,6 +475,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('token');
       localStorage.removeItem('originalAdminToken');
       localStorage.removeItem('originalAdminUser');
+      try { window.sessionStorage?.removeItem(__entitySearchCacheUserScopeKey); } catch (e) {}
       setUser(null);
       setToken(null);
       

@@ -4,11 +4,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import { XCircle, Trash2, Plus, Clock } from "lucide-react";
 import moment from "moment-timezone";
 import { formatTzToUtc } from "../../utils/time";
-import { subjects } from "../../constants/reportTopicsConfig";
+import { subjects as fallbackSubjects } from "../../constants/reportTopicsConfig";
+import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 import TimezoneSelector from "../ui/TimezoneSelector";
 import DSTWarningBanner from "../ui/DSTWarningBanner";
 import { checkDSTWarning, convertClassTimeForUser, DEFAULT_TIMEZONE } from "../../utils/timezoneUtils";
-import SearchSelect from "../ui/SearchSelect";
+import SearchSelect from '../ui/SearchSelect';
 import {
   searchTeachers,
   getTeacherById,
@@ -40,6 +41,26 @@ export default function EditClassModal({
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const catalog = await getSubjectsCatalogCached();
+        if (cancelled) return;
+        if (Array.isArray(catalog?.subjects) && catalog.subjects.length > 0) {
+          setSubjectOptions(catalog.subjects);
+        }
+      } catch (e) {
+        // ignore; fallbackSubjects already loaded
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [dstWarning, setDstWarning] = useState(null);
   const fetchTeacherOptions = useCallback((term = '') => searchTeachers(term), []);
   const fetchTeacherById = useCallback((id) => getTeacherById(id), []);
@@ -345,24 +366,28 @@ export default function EditClassModal({
                     Scheduled Date & Time *
                   </label>
                   <input
-  type="datetime-local"
-  required
-  value={
-    editClass.scheduledDate
-        ? moment
-          .utc(editClass.scheduledDate)
-          .tz(editClass.timezone || user?.timezone || DEFAULT_TIMEZONE)
-          .format("YYYY-MM-DDTHH:mm")
-      : ""
-  }
-  onChange={(e) => {
-      const utcDate = formatTzToUtc(
-      e.target.value,
-      editClass.timezone || user?.timezone || DEFAULT_TIMEZONE
-    );
-    setEditClass((prev) => ({ ...prev, scheduledDate: utcDate }));
-  }}
-/>
+                    type="datetime-local"
+                    required
+                    value={
+                      editClass.scheduledDate
+                        ? moment
+                            .utc(editClass.scheduledDate)
+                            .tz(editClass.timezone || user?.timezone || DEFAULT_TIMEZONE)
+                            .format('YYYY-MM-DDTHH:mm')
+                        : ''
+                    }
+                    onChange={(e) => {
+                      const utcDate = formatTzToUtc(
+                        e.target.value,
+                        editClass.timezone || user?.timezone || DEFAULT_TIMEZONE
+                      );
+                      setEditClass((prev) => ({
+                        ...prev,
+                        scheduledDate: utcDate ? utcDate.toISOString() : '',
+                      }));
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                  />
 
                 </div>
 
@@ -510,21 +535,21 @@ export default function EditClassModal({
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Subject *
                 </label>
-                <select
+                <SearchSelect
+                  value={editClass.subject || ''}
+                  onChange={(opt) => setEditClass((prev) => ({ ...prev, subject: opt?.label || '' }))}
+                  fetchOptions={async (term = '') => {
+                    const q = String(term || '').toLowerCase();
+                    return (subjectOptions || [])
+                      .filter((s) => !q || String(s).toLowerCase().includes(q))
+                      .slice(0, 200)
+                      .map((s) => ({ id: s, label: s }));
+                  }}
+                  fetchById={async (id) => (id ? { id, label: id } : null)}
+                  placeholder="Select or type a subject"
                   required
-                  value={editClass.subject || ""}
-                  onChange={(e) =>
-                    setEditClass((prev) => ({ ...prev, subject: e.target.value }))
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                >
-                  <option value="">Select Subject</option>
-                  {subjects.map((subject) => (
-                    <option key={subject} value={subject}>
-                      {subject}
-                    </option>
-                  ))}
-                </select>
+                  allowCustom
+                />
               </div>
             </div>
 

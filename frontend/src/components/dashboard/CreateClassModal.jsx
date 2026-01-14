@@ -4,7 +4,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { XCircle, Trash2, Plus } from "lucide-react";
 import TimezoneSelector from '../ui/TimezoneSelector';
 import { DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
-import { subjects } from "../../constants/reportTopicsConfig";
+import { subjects as fallbackSubjects } from "../../constants/reportTopicsConfig";
+import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 import axios from '../../api/axios';
 import SearchSelect from '../ui/SearchSelect';
 import {
@@ -86,6 +87,26 @@ export default function CreateClassModal({
   });
   const [isLoading, setIsLoading] = useState(false);
   const [availabilityWarning, setAvailabilityWarning] = useState(null);
+  const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const catalog = await getSubjectsCatalogCached();
+        if (cancelled) return;
+        if (Array.isArray(catalog?.subjects) && catalog.subjects.length > 0) {
+          setSubjectOptions(catalog.subjects);
+        }
+      } catch (e) {
+        // ignore; fallbackSubjects already loaded
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   
   // Use local state if no external state is provided (standalone mode)
   // NOTE: Never rely on Function#toString() for behavior; prod builds can minify it.
@@ -252,15 +273,14 @@ export default function CreateClassModal({
       handleCreateClass?.();
     }
   };
-  
 
   // Push history state when modal opens so Back (popstate) will close it
   useEffect(() => {
     if (!isOpen) return;
+    if (pushedRef.current) return;
     try {
-      // mark that we pushed a state
-      window.history.pushState({ modal: 'create-class' }, '');
       pushedRef.current = true;
+      window.history.pushState({ modal: 'create-class' }, '');
     } catch (e) {
       // ignore
     }
@@ -842,21 +862,23 @@ export default function CreateClassModal({
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Subject *
                 </label>
-                <select
-                  required
-                  value={currentNewClass.subject}
-                  onChange={(e) =>
-                    currentSetNewClass((prev) => ({ ...prev, subject: e.target.value }))
+                <SearchSelect
+                  value={currentNewClass.subject || ''}
+                  onChange={(opt) =>
+                    currentSetNewClass((prev) => ({ ...prev, subject: opt?.label || '' }))
                   }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                >
-                  <option value="">Select Subject</option>
-                  {subjects.map((subject) => (
-                    <option key={subject} value={subject}>
-                      {subject}
-                    </option>
-                  ))}
-                </select>
+                  fetchOptions={async (term = '') => {
+                    const q = String(term || '').toLowerCase();
+                    return (subjectOptions || [])
+                      .filter((s) => !q || String(s).toLowerCase().includes(q))
+                      .slice(0, 200)
+                      .map((s) => ({ id: s, label: s }));
+                  }}
+                  fetchById={async (id) => (id ? { id, label: id } : null)}
+                  placeholder="Select or type a subject"
+                  required
+                  allowCustom
+                />
               </div>
             </div>
 

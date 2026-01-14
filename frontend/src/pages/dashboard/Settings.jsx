@@ -1,10 +1,36 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import FloatingTimezone from '../../components/ui/FloatingTimezone';
 import api from '../../api/axios';
 import ConfirmModal from '../../components/ui/ConfirmModal';
 import Toast from '../../components/ui/Toast';
 import { fetchLibraryStorageUsage } from '../../api/library';
+import { getSubjectsCatalogCached, saveSubjectsCatalog } from '../../services/subjectsCatalog';
+
+const parseLinesOrComma = (text) => {
+  if (!text) return [];
+  const raw = String(text)
+    .split(/\r?\n/)
+    .flatMap((line) => line.split(','))
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return Array.from(new Set(raw));
+};
+
+const joinLines = (items) => (Array.isArray(items) ? items.filter(Boolean).join('\n') : '');
+
+const removeItemFromTextList = (text, itemToRemove) => {
+  const next = parseLinesOrComma(text).filter((x) => x !== itemToRemove);
+  return joinLines(next);
+};
+
+const addItemsToTextList = (text, itemsToAdd) => {
+  const current = parseLinesOrComma(text);
+  const incoming = parseLinesOrComma(itemsToAdd);
+  return joinLines(Array.from(new Set([...(current || []), ...(incoming || [])])));
+};
+
+const SECTION_ORDER = ['general', 'branding', 'library', 'subjectsCatalog'];
 
 const formatBytes = (bytes = 0) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -22,6 +48,7 @@ const Settings = () => {
 
   // Compact/condensed layout toggle (defaults to condensed for dense Google-like UI)
   const [condensed, setCondensed] = useState(true);
+  const [activeSection, setActiveSection] = useState('general');
   const [firstClassWindowHours, setFirstClassWindowHours] = useState(24);
   const [savingWindow, setSavingWindow] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -61,6 +88,17 @@ const Settings = () => {
   const [libraryUsage, setLibraryUsage] = useState(null);
   const [libraryUsageError, setLibraryUsageError] = useState(null);
 
+  // Subjects/Courses/Levels catalog (admin)
+  const [subjectsCatalogLoading, setSubjectsCatalogLoading] = useState(false);
+  const [subjectsCatalogSaving, setSubjectsCatalogSaving] = useState(false);
+  const [catalogSubjectsText, setCatalogSubjectsText] = useState('');
+  const [catalogLevelsText, setCatalogLevelsText] = useState('');
+  const [catalogTopicsBySubjectText, setCatalogTopicsBySubjectText] = useState({});
+  const [subjectsCatalogStep, setSubjectsCatalogStep] = useState(1);
+  const [topicsActiveSubject, setTopicsActiveSubject] = useState('');
+  const [quickAddSubjects, setQuickAddSubjects] = useState('');
+  const [quickAddLevels, setQuickAddLevels] = useState('');
+
   useEffect(() => {
     if (user?.role !== 'admin') return;
     (async () => {
@@ -72,6 +110,112 @@ const Settings = () => {
       }
     })();
   }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setSubjectsCatalogLoading(true);
+        const catalog = await getSubjectsCatalogCached({ ttlMs: 0 });
+        if (cancelled) return;
+
+        const subjects = Array.isArray(catalog?.subjects) ? catalog.subjects : [];
+        const levels = Array.isArray(catalog?.levels) ? catalog.levels : [];
+        const topicsBySubject = catalog?.topicsBySubject && typeof catalog.topicsBySubject === 'object'
+          ? catalog.topicsBySubject
+          : {};
+
+        setCatalogSubjectsText(joinLines(subjects));
+        setCatalogLevelsText(joinLines(levels));
+
+        const topicsText = {};
+        for (const s of subjects) {
+          const list = Array.isArray(topicsBySubject?.[s]) ? topicsBySubject[s] : [];
+          topicsText[s] = joinLines(list);
+        }
+        setCatalogTopicsBySubjectText(topicsText);
+
+        // Choose a default subject for the topics step.
+        setTopicsActiveSubject((prev) => {
+          if (prev && subjects.includes(prev)) return prev;
+          return subjects[0] || '';
+        });
+      } catch (e) {
+        if (!cancelled) {
+          setCatalogSubjectsText('');
+          setCatalogLevelsText('');
+          setCatalogTopicsBySubjectText({});
+          setTopicsActiveSubject('');
+        }
+      } finally {
+        if (!cancelled) setSubjectsCatalogLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.role]);
+
+  useEffect(() => {
+    // Ensure active section is valid for role.
+    if (user?.role === 'admin') return;
+    setActiveSection('general');
+  }, [user?.role]);
+
+  const adminSections = useMemo(() => {
+    if (user?.role !== 'admin') return [{ key: 'general', label: 'General' }];
+    return [
+      { key: 'general', label: 'General' },
+      { key: 'branding', label: 'Branding' },
+      { key: 'library', label: 'Library' },
+      { key: 'subjectsCatalog', label: 'Subjects Catalog' },
+    ];
+  }, [user?.role]);
+
+  const subjectsList = useMemo(() => parseLinesOrComma(catalogSubjectsText), [catalogSubjectsText]);
+  const levelsList = useMemo(() => parseLinesOrComma(catalogLevelsText), [catalogLevelsText]);
+
+  const ensureTopicsMapSync = useCallback((nextSubjects) => {
+    setCatalogTopicsBySubjectText((prev) => {
+      const nextMap = { ...(prev || {}) };
+      for (const s of nextSubjects) {
+        if (typeof nextMap[s] !== 'string') nextMap[s] = '';
+      }
+      for (const key of Object.keys(nextMap)) {
+        if (!nextSubjects.includes(key)) delete nextMap[key];
+      }
+      return nextMap;
+    });
+  }, []);
+
+  const saveCatalog = useCallback(async () => {
+    const subjects = parseLinesOrComma(catalogSubjectsText);
+    const levels = parseLinesOrComma(catalogLevelsText);
+    const topicsBySubject = {};
+    for (const s of subjects) {
+      topicsBySubject[s] = parseLinesOrComma(catalogTopicsBySubjectText?.[s] || '');
+    }
+
+    const saved = await saveSubjectsCatalog({
+      version: 1,
+      subjects,
+      levels,
+      topicsBySubject,
+    });
+
+    // Normalize UI back to saved values (ensures dedupe/trim consistency).
+    setCatalogSubjectsText(joinLines(saved?.subjects || subjects));
+    setCatalogLevelsText(joinLines(saved?.levels || levels));
+    ensureTopicsMapSync(saved?.subjects || subjects);
+    setTopicsActiveSubject((prev) => {
+      const list = saved?.subjects || subjects;
+      if (prev && list.includes(prev)) return prev;
+      return list[0] || '';
+    });
+  }, [catalogSubjectsText, catalogLevelsText, catalogTopicsBySubjectText, ensureTopicsMapSync]);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,12 +287,33 @@ const Settings = () => {
           </div>
         </div>
 
-      <div className="space-y-4">
+      <div className="flex flex-col lg:flex-row gap-4">
+        <div className="lg:w-64 flex-shrink-0">
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sections</div>
+            </div>
+            <div className="p-2">
+              {adminSections.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => setActiveSection(s.key)}
+                  className={`w-full text-left px-3 py-2 rounded text-sm border ${activeSection === s.key ? 'bg-muted border-border' : 'bg-card border-transparent hover:bg-muted'}`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-4">
         {/* Timezone converter moved to floating widget to keep page body cleaner. */}
         {/* Floating widget component will be rendered separately (fixed position). */}
         
         {/* Feedback card */}
-        {user?.role === 'admin' && (
+        {user?.role === 'admin' && activeSection === 'general' && (
           <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
             <div>
               <div className="font-medium mb-2">Feedback Settings</div>
@@ -164,7 +329,7 @@ const Settings = () => {
         )}
 
         {/* Branding card */}
-        {user?.role === 'admin' && (
+        {user?.role === 'admin' && activeSection === 'branding' && (
           <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
             <div className="flex items-start justify-between">
               <div className="font-medium">Branding</div>
@@ -220,7 +385,7 @@ const Settings = () => {
         )}
 
         {/* Library storage card */}
-        {user?.role === 'admin' && (
+        {user?.role === 'admin' && activeSection === 'library' && (
           <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
             <div className="flex items-start justify-between">
               <div>
@@ -293,44 +458,352 @@ const Settings = () => {
           </div>
         )}
 
-        {/* Maintenance card */}
-        {user?.role === 'admin' && (
+        {/* Subjects / Courses / Levels catalog */}
+        {user?.role === 'admin' && activeSection === 'subjectsCatalog' && (
           <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start justify-between">
               <div>
-                <div className="font-medium">Maintenance</div>
+                <div className="font-medium">Subjects Catalog</div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  Manual tools for low-usage operations.
+                  Used for class subject dropdowns, library folder subjects/levels, and class report lesson topics.
                 </div>
               </div>
-              <button
-                disabled={generatingRecurring}
-                onClick={async () => {
-                  setGeneratingRecurring(true);
-                  try {
-                    const res = await api.post('/classes/maintenance/generate-recurring');
-                    const count = res.data?.count;
-                    setToast({
-                      type: 'success',
-                      message: `Recurring generation complete${typeof count === 'number' ? ` (${count} classes created)` : ''}`,
-                    });
-                  } catch (err) {
-                    setToast({
-                      type: 'error',
-                      message: err?.response?.data?.message || err?.message || 'Failed to generate recurring classes',
-                    });
-                  } finally {
-                    setGeneratingRecurring(false);
-                  }
-                }}
-                className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${generatingRecurring ? 'opacity-70' : ''}`}
-                title="Generate upcoming recurring class instances now"
-              >
-                {generatingRecurring ? 'Generating…' : 'Generate Recurring Classes Now'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={subjectsCatalogSaving || subjectsCatalogLoading}
+                  onClick={async () => {
+                    try {
+                      setSubjectsCatalogSaving(true);
+                      await saveCatalog();
+                      setToast({ type: 'success', message: 'Subjects catalog saved' });
+                    } catch (e) {
+                      console.error(e);
+                      setToast({ type: 'error', message: e?.response?.data?.message || e?.message || 'Save failed' });
+                    } finally {
+                      setSubjectsCatalogSaving(false);
+                    }
+                  }}
+                  className="text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded disabled:opacity-70"
+                >
+                  {subjectsCatalogSaving ? 'Saving' : 'Save'}
+                </button>
+              </div>
             </div>
+
+            {subjectsCatalogLoading ? (
+              <div className="mt-3 text-sm text-muted-foreground">Loading…</div>
+            ) : (
+              <div className="mt-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  {[
+                    { step: 1, label: 'Subjects' },
+                    { step: 2, label: 'Levels' },
+                    { step: 3, label: 'Topics' },
+                  ].map((s) => (
+                    <button
+                      key={s.step}
+                      type="button"
+                      onClick={() => setSubjectsCatalogStep(s.step)}
+                      className={`text-xs px-2 py-1 border rounded ${subjectsCatalogStep === s.step ? 'bg-muted border-border' : 'bg-card border-border hover:bg-muted'}`}
+                    >
+                      {s.step}. {s.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Step 1: Subjects */}
+                {subjectsCatalogStep === 1 && (
+                  <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="text-sm">
+                      <div className="font-medium">Subjects / courses</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Add subjects using comma-separated entry or one per line. They will be trimmed + deduplicated on save.
+                      </div>
+
+                      <div className="mt-3 flex gap-2">
+                        <input
+                          value={quickAddSubjects}
+                          onChange={(e) => setQuickAddSubjects(e.target.value)}
+                          className="flex-1 px-3 py-2 border rounded text-sm"
+                          placeholder="Type a subject (comma-separated supported)…"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextText = addItemsToTextList(catalogSubjectsText, quickAddSubjects);
+                            setCatalogSubjectsText(nextText);
+                            const nextSubjects = parseLinesOrComma(nextText);
+                            ensureTopicsMapSync(nextSubjects);
+                            setTopicsActiveSubject((prev) => (prev && nextSubjects.includes(prev) ? prev : nextSubjects[0] || ''));
+                            setQuickAddSubjects('');
+                          }}
+                          className="text-xs px-3 py-2 border rounded bg-card hover:bg-muted"
+                        >
+                          Add
+                        </button>
+                      </div>
+
+                      <div className="mt-3">
+                        <textarea
+                          rows={8}
+                          value={catalogSubjectsText}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setCatalogSubjectsText(next);
+                            const nextSubjects = parseLinesOrComma(next);
+                            ensureTopicsMapSync(nextSubjects);
+                            setTopicsActiveSubject((prev) => (prev && nextSubjects.includes(prev) ? prev : nextSubjects[0] || ''));
+                          }}
+                          className="w-full px-3 py-2 border rounded text-sm"
+                          placeholder="Foundation\nTajweed Basics\nBasic Arabic"
+                        />
+                        <div className="mt-2 text-xs text-muted-foreground">Total: {subjectsList.length}</div>
+                      </div>
+                    </div>
+
+                    <div className="text-sm">
+                      <div className="font-medium">Current subjects</div>
+                      <div className="text-xs text-muted-foreground mt-1">Click a subject to remove it.</div>
+                      {subjectsList.length === 0 ? (
+                        <div className="mt-3 text-sm text-muted-foreground">No subjects yet.</div>
+                      ) : (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {subjectsList.map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => {
+                                const nextText = removeItemFromTextList(catalogSubjectsText, s);
+                                setCatalogSubjectsText(nextText);
+                                const nextSubjects = parseLinesOrComma(nextText);
+                                ensureTopicsMapSync(nextSubjects);
+                                setTopicsActiveSubject((prev) => (prev && nextSubjects.includes(prev) ? prev : nextSubjects[0] || ''));
+                              }}
+                              className="px-2 py-1 rounded border text-xs bg-card hover:bg-muted"
+                              title="Remove"
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 2: Levels */}
+                {subjectsCatalogStep === 2 && (
+                  <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="text-sm">
+                      <div className="font-medium">Levels</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Used in the Library and anywhere else levels are needed. Comma-separated or one per line.
+                      </div>
+
+                      <div className="mt-3 flex gap-2">
+                        <input
+                          value={quickAddLevels}
+                          onChange={(e) => setQuickAddLevels(e.target.value)}
+                          className="flex-1 px-3 py-2 border rounded text-sm"
+                          placeholder="Type a level (comma-separated supported)…"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextText = addItemsToTextList(catalogLevelsText, quickAddLevels);
+                            setCatalogLevelsText(nextText);
+                            setQuickAddLevels('');
+                          }}
+                          className="text-xs px-3 py-2 border rounded bg-card hover:bg-muted"
+                        >
+                          Add
+                        </button>
+                      </div>
+
+                      <div className="mt-3">
+                        <textarea
+                          rows={8}
+                          value={catalogLevelsText}
+                          onChange={(e) => setCatalogLevelsText(e.target.value)}
+                          className="w-full px-3 py-2 border rounded text-sm"
+                          placeholder="Beginner\nIntermediate\nAdvanced"
+                        />
+                        <div className="mt-2 text-xs text-muted-foreground">Total: {levelsList.length}</div>
+                      </div>
+                    </div>
+
+                    <div className="text-sm">
+                      <div className="font-medium">Current levels</div>
+                      <div className="text-xs text-muted-foreground mt-1">Click a level to remove it.</div>
+                      {levelsList.length === 0 ? (
+                        <div className="mt-3 text-sm text-muted-foreground">No levels yet.</div>
+                      ) : (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {levelsList.map((lvl) => (
+                            <button
+                              key={lvl}
+                              type="button"
+                              onClick={() => setCatalogLevelsText(removeItemFromTextList(catalogLevelsText, lvl))}
+                              className="px-2 py-1 rounded border text-xs bg-card hover:bg-muted"
+                              title="Remove"
+                            >
+                              {lvl}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 3: Topics */}
+                {subjectsCatalogStep === 3 && (
+                  <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div className="text-sm lg:col-span-1">
+                      <div className="font-medium">Choose a subject</div>
+                      <div className="text-xs text-muted-foreground mt-1">Pick a subject to edit its lesson topics.</div>
+
+                      {subjectsList.length === 0 ? (
+                        <div className="mt-3 text-sm text-muted-foreground">Add subjects first.</div>
+                      ) : (
+                        <select
+                          value={topicsActiveSubject}
+                          onChange={(e) => setTopicsActiveSubject(e.target.value)}
+                          className="mt-3 w-full px-3 py-2 border rounded text-sm bg-background"
+                        >
+                          {subjectsList.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      )}
+
+                      {topicsActiveSubject ? (
+                        <div className="mt-3 text-xs text-muted-foreground">
+                          Topics for <span className="font-medium text-foreground">{topicsActiveSubject}</span>: {parseLinesOrComma(catalogTopicsBySubjectText?.[topicsActiveSubject] || '').length}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="text-sm lg:col-span-2">
+                      <div className="font-medium">Lesson topics</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Enter topics comma-separated or one per line. If empty, teachers can type a custom topic.
+                      </div>
+
+                      {!topicsActiveSubject ? (
+                        <div className="mt-3 text-sm text-muted-foreground">Select a subject to edit topics.</div>
+                      ) : (
+                        <>
+                          <div className="mt-3">
+                            <textarea
+                              rows={10}
+                              value={catalogTopicsBySubjectText?.[topicsActiveSubject] || ''}
+                              onChange={(e) =>
+                                setCatalogTopicsBySubjectText((prev) => ({
+                                  ...(prev || {}),
+                                  [topicsActiveSubject]: e.target.value,
+                                }))
+                              }
+                              className="w-full px-3 py-2 border rounded text-sm"
+                              placeholder="Topic 1\nTopic 2"
+                            />
+                          </div>
+
+                          <div className="mt-3">
+                            <div className="text-xs font-medium text-muted-foreground">Preview (click to remove)</div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {parseLinesOrComma(catalogTopicsBySubjectText?.[topicsActiveSubject] || '').length === 0 ? (
+                                <div className="text-sm text-muted-foreground">No topics yet.</div>
+                              ) : (
+                                parseLinesOrComma(catalogTopicsBySubjectText?.[topicsActiveSubject] || '').map((t) => (
+                                  <button
+                                    key={t}
+                                    type="button"
+                                    onClick={() =>
+                                      setCatalogTopicsBySubjectText((prev) => ({
+                                        ...(prev || {}),
+                                        [topicsActiveSubject]: removeItemFromTextList(prev?.[topicsActiveSubject] || '', t),
+                                      }))
+                                    }
+                                    className="px-2 py-1 rounded border text-xs bg-card hover:bg-muted"
+                                    title="Remove"
+                                  >
+                                    {t}
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-4 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setSubjectsCatalogStep((s) => Math.max(1, s - 1))}
+                    className="text-xs px-3 py-2 border rounded bg-card hover:bg-muted"
+                    disabled={subjectsCatalogStep === 1}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubjectsCatalogStep((s) => Math.min(3, s + 1))}
+                    className="text-xs px-3 py-2 border rounded bg-card hover:bg-muted"
+                    disabled={subjectsCatalogStep === 3}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
+
+          {/* Maintenance card */}
+          {user?.role === 'admin' && activeSection === 'general' && (
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-medium">Maintenance</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Manual tools for low-usage operations.
+                  </div>
+                </div>
+                <button
+                  disabled={generatingRecurring}
+                  onClick={async () => {
+                    setGeneratingRecurring(true);
+                    try {
+                      const res = await api.post('/classes/maintenance/generate-recurring');
+                      const count = res.data?.count;
+                      setToast({
+                        type: 'success',
+                        message: `Recurring generation complete${typeof count === 'number' ? ` (${count} classes created)` : ''}`,
+                      });
+                    } catch (err) {
+                      setToast({
+                        type: 'error',
+                        message: err?.response?.data?.message || err?.message || 'Failed to generate recurring classes',
+                      });
+                    } finally {
+                      setGeneratingRecurring(false);
+                    }
+                  }}
+                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${generatingRecurring ? 'opacity-70' : ''}`}
+                  title="Generate upcoming recurring class instances now"
+                >
+                  {generatingRecurring ? 'Generating…' : 'Generate Recurring Classes Now'}
+                </button>
+              </div>
+            </div>
+          )}
+
+        </div>
       </div>
       <ConfirmModal
         open={confirmOpen}

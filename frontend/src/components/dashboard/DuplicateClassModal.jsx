@@ -4,8 +4,10 @@ import api from "../../api/axios";
 import { DEFAULT_TIMEZONE } from "../../utils/timezoneUtils";
 import TimezoneSelector from "../ui/TimezoneSelector";
 import LoadingSpinner from "../ui/LoadingSpinner";
-import { subjects } from "../../constants/reportTopicsConfig";
+import { subjects as fallbackSubjects } from "../../constants/reportTopicsConfig";
+import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 import { formatDateDDMMMYYYY } from "../../utils/date";
+import SearchSelect from "../ui/SearchSelect";
 
 const CLASS_TYPE_OPTIONS = ["One on one", "Group classes", "Public lecture"];
 
@@ -67,6 +69,26 @@ const DuplicateClassModal = ({
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const catalog = await getSubjectsCatalogCached();
+        if (cancelled) return;
+        if (Array.isArray(catalog?.subjects) && catalog.subjects.length > 0) {
+          setSubjectOptions(catalog.subjects);
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOpen) {
@@ -358,19 +380,21 @@ const DuplicateClassModal = ({
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Subject *</label>
-                <select
-                  value={form.subject}
-                  onChange={handleFieldChange("subject")}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                <SearchSelect
+                  value={form.subject || ""}
+                  onChange={(opt) => setForm((prev) => ({ ...prev, subject: opt?.label || "" }))}
+                  fetchOptions={async (term = "") => {
+                    const q = String(term || "").toLowerCase();
+                    return (subjectOptions || [])
+                      .filter((s) => !q || String(s).toLowerCase().includes(q))
+                      .slice(0, 200)
+                      .map((s) => ({ id: s, label: s }));
+                  }}
+                  fetchById={async (id) => (id ? { id, label: id } : null)}
+                  placeholder="Select or type a subject"
                   required
-                >
-                  <option value="">Select Subject</option>
-                  {subjects.map((subject) => (
-                    <option key={subject} value={subject}>
-                      {subject}
-                    </option>
-                  ))}
-                </select>
+                  allowCustom
+                />
               </div>
             </div>
 

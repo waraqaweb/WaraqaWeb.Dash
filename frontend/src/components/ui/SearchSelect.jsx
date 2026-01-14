@@ -65,6 +65,7 @@ const SearchSelect = ({
   required = false,
   disabled = false,
   noResultsText = "No matches found",
+  allowCustom = false,
 }) => {
   const [inputValue, setInputValue] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -236,6 +237,12 @@ const SearchSelect = ({
       if (isOpen && activeIndex >= 0 && options[activeIndex]) {
         event.preventDefault();
         handleOptionSelect(options[activeIndex]);
+      } else if (allowCustom) {
+        const trimmed = (inputValue || '').trim();
+        if (trimmed) {
+          event.preventDefault();
+          handleOptionSelect({ id: trimmed, label: trimmed, custom: true });
+        }
       }
     } else if (event.key === "Escape") {
       setIsOpen(false);

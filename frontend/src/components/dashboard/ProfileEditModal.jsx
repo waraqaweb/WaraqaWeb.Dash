@@ -4,7 +4,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import TimezoneSelector from '../ui/TimezoneSelector';
 import QualificationsEditor from '../ui/QualificationsEditor';
 import TeacherAvailabilityConfig from './TeacherAvailabilityConfig';
-import { subjects } from '../../constants/reportTopicsConfig';
+import { subjects as fallbackSubjects } from '../../constants/reportTopicsConfig';
+import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 import Cropper from 'react-easy-crop';
 import imageCompression from 'browser-image-compression';
 import SpokenLanguagesSelect from '../ui/SpokenLanguagesSelect';
@@ -13,6 +14,25 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
   const { user: viewer } = useAuth();
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const catalog = await getSubjectsCatalogCached();
+        if (cancelled) return;
+        if (Array.isArray(catalog?.subjects) && catalog.subjects.length > 0) {
+          setSubjectOptions(catalog.subjects);
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   
   // Avatar cropping state
   // uploadFile holds the selected File (or null). isUploading is a boolean upload-in-progress flag.
@@ -354,9 +374,11 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
     const [filtered, setFiltered] = useState([]);
 
     useEffect(() => {
-      const f = input.trim().length > 0 ? subjects.filter(s => s.toLowerCase().includes(input.toLowerCase()) && !value.includes(s)) : [];
+      const f = input.trim().length > 0
+        ? subjectOptions.filter(s => s.toLowerCase().includes(input.toLowerCase()) && !value.includes(s))
+        : [];
       setFiltered(f.slice(0, 30));
-    }, [input, value]);
+    }, [input, value, subjectOptions]);
 
     const add = (s) => { onChange([...(value||[]), s]); setInput(''); };
     const remove = (s) => { onChange((value||[]).filter(x => x !== s)); };

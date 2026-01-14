@@ -6,6 +6,7 @@ import topicsMap, { subjects, surahs } from "../../constants/reportTopicsConfig"
 import Toast from "../../components/ui/Toast";
 import { saveDraft, loadDraft, clearDraft } from "../../utils/localStorageUtils";
 import ReportSubmissionStatus from "../../components/dashboard/ReportSubmissionStatus";
+import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 
 const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => {
   const derivedClassId = reportClass?._id || reportClassId;
@@ -18,6 +19,30 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const hasInitializedState = useRef(false);
   const [loading, setLoading] = useState(false);
   const [showToast, setShowToast] = useState({ show: false, type: "", message: "" });
+
+  const [catalogSubjects, setCatalogSubjects] = useState(Array.isArray(subjects) ? subjects : []);
+  const [catalogTopicsBySubject, setCatalogTopicsBySubject] = useState({});
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const catalog = await getSubjectsCatalogCached();
+        if (cancelled) return;
+        if (Array.isArray(catalog?.subjects) && catalog.subjects.length > 0) {
+          setCatalogSubjects(catalog.subjects);
+        }
+        if (catalog?.topicsBySubject && typeof catalog.topicsBySubject === 'object') {
+          setCatalogTopicsBySubject(catalog.topicsBySubject);
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const defaultReportState = (baseClass) => ({
     attendance: baseClass?.classReport?.attendance || "attended",
     countAbsentForBilling:
@@ -354,15 +379,18 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   };
 
   // ✅ Prepare options
-  const subjectOptions = subjects.map((s) => ({ value: s, label: s }));
+  const subjectOptions = (catalogSubjects || []).map((s) => ({ value: s, label: s }));
   const surahOptions = surahs.map((s) => ({ value: s, label: s }));
-  const topicOptions = topicsMap[classReport.subject]
-    ? topicsMap[classReport.subject].map((t) => ({ value: t, label: t }))
-    : [];
+  const topicsForSubject = Array.isArray(catalogTopicsBySubject?.[classReport.subject])
+    ? catalogTopicsBySubject[classReport.subject]
+    : (topicsMap[classReport.subject] || []);
+  const topicOptions = (topicsForSubject || []).map((t) => ({ value: t, label: t }));
 
   // ✅ Subject groups for scenarios
   const quranWithRecitation = ["Tajweed Basics", "Tajweed Inter.", "Qari Prog.", "Short Surahs"];
   const quranSurahOnly = ["Khatmah Prog.", "Hafez Prog.", "Ijazah Prog."];
+
+  const hasTopicOptions = Array.isArray(topicOptions) && topicOptions.length > 0;
 
   const isAttended = classReport.attendance === "attended";
   const isAbsent = classReport.attendance === "missed_by_student";
@@ -681,21 +709,37 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                   ) : (
                     <>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Lesson Topic</label>
-                      <Select
-                        options={[...topicOptions, { value: "custom", label: "➕ Custom Topic" }]}
-                        value={
-                          topicOptions.find((t) => t.value === classReport.lessonTopic) ||
-                          (classReport.lessonTopic && !topicOptions.find((t) => t.value === classReport.lessonTopic)
-                            ? { value: classReport.lessonTopic, label: classReport.lessonTopic }
-                            : null)
-                        }
-                        onChange={(selected) =>
-                          setClassReport({ ...classReport, lessonTopic: selected?.value || "" })
-                        }
-                        placeholder="Search or select topic..."
-                        isClearable
-                        isSearchable
-                      />
+                      {!hasTopicOptions ? (
+                        <input
+                          type="text"
+                          value={classReport.customLessonTopic || classReport.lessonTopic || ""}
+                          onChange={(e) =>
+                            setClassReport({
+                              ...classReport,
+                              lessonTopic: e.target.value,
+                              customLessonTopic: e.target.value,
+                            })
+                          }
+                          className="w-full border rounded-lg p-2"
+                          placeholder="Enter lesson topic..."
+                        />
+                      ) : (
+                        <Select
+                          options={[...topicOptions, { value: "custom", label: "➕ Custom Topic" }]}
+                          value={
+                            topicOptions.find((t) => t.value === classReport.lessonTopic) ||
+                            (classReport.lessonTopic && !topicOptions.find((t) => t.value === classReport.lessonTopic)
+                              ? { value: classReport.lessonTopic, label: classReport.lessonTopic }
+                              : null)
+                          }
+                          onChange={(selected) =>
+                            setClassReport({ ...classReport, lessonTopic: selected?.value || "" })
+                          }
+                          placeholder="Search or select topic..."
+                          isClearable
+                          isSearchable
+                        />
+                      )}
                     </>
                   )}
                 </div>

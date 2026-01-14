@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import flattenFolders from './folderUtils';
-import { subjects } from '../../../constants/reportTopicsConfig';
+import { subjects as fallbackSubjects } from '../../../constants/reportTopicsConfig';
+import { getSubjectsCatalogCached } from '../../../services/subjectsCatalog';
 
-const LEVEL_OPTIONS = ['Beginner', 'Intermediate', 'Advanced', 'Special'];
+const FALLBACK_LEVEL_OPTIONS = ['Beginner', 'Intermediate', 'Advanced', 'Special'];
 
 const DEFAULT_FORM = {
   parentFolder: 'root',
@@ -20,6 +21,8 @@ const FolderModal = ({ open, onClose, onSubmit, folders, defaultParent }) => {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [error, setError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
+  const [levelOptions, setLevelOptions] = useState(FALLBACK_LEVEL_OPTIONS);
 
   const { options: folderOptions } = useMemo(() => flattenFolders(folders), [folders]);
 
@@ -31,6 +34,28 @@ const FolderModal = ({ open, onClose, onSubmit, folders, defaultParent }) => {
     }));
     setError(null);
   }, [open, defaultParent]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const catalog = await getSubjectsCatalogCached();
+        if (cancelled) return;
+        if (Array.isArray(catalog?.subjects) && catalog.subjects.length > 0) {
+          setSubjectOptions(catalog.subjects);
+        }
+        if (Array.isArray(catalog?.levels) && catalog.levels.length > 0) {
+          setLevelOptions(catalog.levels);
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const handleChange = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -132,7 +157,7 @@ const FolderModal = ({ open, onClose, onSubmit, folders, defaultParent }) => {
                 className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
               >
                 <option value="">Choose a subject</option>
-                {(subjects || []).map((subject) => (
+                {(subjectOptions || []).map((subject) => (
                   <option key={subject} value={subject}>
                     {subject}
                   </option>
@@ -147,7 +172,7 @@ const FolderModal = ({ open, onClose, onSubmit, folders, defaultParent }) => {
                 className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
               >
                 <option value="">Choose a level</option>
-                {LEVEL_OPTIONS.map((level) => (
+                {(levelOptions || []).map((level) => (
                   <option key={level} value={level}>
                     {level}
                   </option>

@@ -35,3 +35,731 @@ chmod +x deploy/scripts/deploy.sh
 # Force rebuild everything (slow)
 ./deploy/scripts/deploy.sh all
 
+
+
+
+
+
+
+Courses
+Quran
+-Quran Recitation
+--Foundation Level
+---Arabic alphabet
+---Arabic alphabet (Fathah)
+---Arabic alphabet (Kasrah)
+---Arabic alphabet (Dammah)
+---Medd letters (ا - و - ي )
+---Revision
+---Arabic alphabet (Tanween)
+---Arabic alphabet (Sukoon)
+---Lam Qamaryyah (Voiced)
+---Stoppage with Sukoon on the word
+---Shaddah with different Diacritics
+---Shaddah + Diacritics + Medd
+---Similar letters pronunciation and writting
+---Revision
+---Final test
+
+
+--Pre-reading Level
+---Lam Qamaryyah (Voiced)
+---Lam Shamsyyah (Silent)
+---Stoppage on Tanween and circled Taa
+---Revision
+---Shaddah  with Tanween
+---Stoppage on Qalqalah or Ghunnah
+---Double Sakin letters
+---Divide the word into syllables
+---Revision
+---Final test (Page    الفتوحات الربانية)
+
+
+--Tajweed Basics
+---An introduction to Tajweed rules
+---Rules of Noon and Meem Mushaddad
+---Qalqalah
+---The heavy and light letters
+---Laam in the exalted name of Allah
+---Ruling of RAA letter being heavy or light
+---Revision
+---Noon Sakinah and Tanween intro
+---Izhar Halqi
+---Iqlaab
+---Idghaam
+---Ikhfaa Haqiqi
+---Revision
+---Rules of Meem Saakinah
+---Ikhfaa Shafawi
+---Idghaam Mutamathelayn Sagheer
+---Izhaar Shafawi
+---Revision
+---Final test
+
+--Tajweed Intermediate
+---Meddd Tabe'e
+---Meddd Leen
+---Medd Badal
+---Medd Wajib Mutassil
+---Medd Jae'z Munfasil
+---Revision
+---Meddd Aridh Lissukoon
+---Meddd Leen
+---Medd Laazim Kalemee
+---Medd Laazim Harfee
+---Medd Silah
+---Medd Ewad
+---Medd Tamkeen
+---Revision
+---Final test
+
+--Qari Level
+---An introduction to Qiraat
+---Articulation points
+---Al-Jawf – Interior/Chest Area
+---Al-Halq – The Throat
+---Al-Lisaan – The Tongue
+---Al-Shafataan – Lips
+---Al-Khaysoom – Nasal Passage
+---Revision
+---Sifat al-Huruf
+---Permenant Qulities with opposites
+---Al-Jahr and Al-Hams
+---Asheddah, Attawasut and Arrakhawa
+---Istifaal and Iste'elaa
+---Al-infetaah and Al-Itbaaq
+---Al-Izlaaq and Al-Ismaat
+---Revision
+---Permenant Qulities without opposites
+---Alqaqala
+---As-Safeer
+---Al-Leen
+---Al-Inhiraf
+---At-Takreer
+---At-Tafasshy
+---Istitaalah
+---Revision
+---Noon Sakinah and Tanween
+---Rules of Meem Saakin
+---Medd and Qasr
+---Al-Waqf and Ibtidaa'
+---Isti'adhah and Basmallah
+---Hamzat al-Wasl and Laam types
+---Revision
+---Final test
+
+--Khatmah Program
+---	1	الفَاتِحَة	al-Fatihah
+---	2	البَقَرَة	al-Baqarah
+---	3	آل عِمرَان	Al-Imran
+---	4	النِّسَاء	an-Nisa'
+---	5	المَائدة	al-Ma'idah
+---	6	الأنعَام	al-An`am
+---	7	الأعرَاف	al-A`raf
+---	8	الأنفَال	al-Anfal
+---	9	التوبَة	at-Taubah
+---	10	يُونس	Yunus
+---	11	هُود	Hud
+---	12	يُوسُف	Yusuf
+---	13	الرَّعْد	ar-Ra`d
+---	14	إبراهِيم	Ibrahim
+---	15	الحِجْر	al-Hijr
+---	16	النَّحْل	an-Nahl
+---	17	الإسْرَاء	Al-Isra
+---	18	الكهْف	al-Kahf
+---	19	مَريَم	Maryam
+---	20	طه	Ta Ha
+---	21	الأنبيَاء	al-Anbiya'
+---	22	الحَج	al-Hajj
+---	23	المُؤمنون	al-Mu'minun
+---	24	النُّور	an-Nur
+---	25	الفُرْقان	al-Furqan
+---	26	الشُّعَرَاء	ash-Shu`ara'
+---	27	النَّمْل	an-Naml
+---	28	القَصَص	al-Qasas
+---	29	العَنكبوت	al-`Ankabut
+---	30	الرُّوم	ar-Rum
+---	31	لقمَان	Luqman
+---	32	السَّجدَة	as-Sajdah
+---	33	الأحزَاب	al-Ahzab
+---	34	سَبَأ	Saba'
+---	35	فَاطِر	Fatir
+---	36	يس	Ya Sin
+---	37	الصَّافات	as-Saffat
+---	38	ص	Sad
+---	39	الزُّمَر	az-Zumar
+---	40	غَافِر	Ghafir
+---	41	فُصِّلَتْ	Fussilat
+---	42	الشُّورَى	ash-Shura
+---	43	الزُّخْرُف	az-Zukhruf
+---	44	الدُّخان	ad-Dukhan
+---	45	الجاثِية	al-Jathiyah
+---	46	الأحقاف	al-Ahqaf
+---	47	مُحَمّد	Muhammad
+---	48	الفَتْح	al-Fath
+---	49	الحُجُرات	al-Hujurat
+---	50	ق	Qaf
+---	51	الذَّاريَات	ad-Dhariyat
+---	52	الطُّور	at-Tur
+---	53	النَّجْم	an-Najm
+---	54	القَمَر	al-Qamar
+---	55	الرَّحمن	ar-Rahman
+---	56	الواقِعَة	al-Waqi`ah
+---	57	الحَديد	al-Hadid
+---	58	المُجادَلة	al-Mujadilah
+---	59	الحَشْر	al-Hashr
+---	60	المُمتَحَنة	al-Mumtahanah
+---	61	الصَّف	as-Saff
+---	62	الجُّمُعة	al-Jumu`ah
+---	63	المُنافِقُون	al-Munafiqun
+---	64	التَّغابُن	at-Taghabun
+---	65	الطَّلاق	at-Talaq,
+---	66	التَّحْريم	at-Tahrim
+---	67	المُلْك	al-Mulk
+---	68	القَلـََم	al-Qalam
+---	69	الحَاقّـَة	al-Haqqah
+---	70	المَعارِج	al-Ma`arij
+---	71	نُوح	Nuh
+---	72	الجِنّ	al-Jinn
+---	73	المُزَّمّـِل	al-Muzammil
+---	74	المُدَّثــِّر	al-Mudathir
+---	75	القِيامَة	al-Qiyamah
+---	76	الإنسان	al-Insane
+---	77	المُرسَلات	al-Mursalat
+---	78	النـَّبأ	an-Naba'
+---	79	النـّازِعات	an-Nazi`at
+---	80	عَبَس	`Abasa
+---	81	التـَّكْوير	at-Takwir
+---	82	الإنفِطار	al-Infitar
+---	83	المُطـَفِّفين	Al-Mutaffifeen
+---	84	الإنشِقاق	al-Inshiqaq
+---	85	البُروج	al-Buruj
+---	86	الطّارق	at-Tariq
+---	87	الأعلی	al-A`la
+---	88	الغاشِيَة	al-Ghashiya
+---	89	الفَجْر	al-Fajr
+---	90	البَـلـَد	al-Balad
+---	91	الشــَّمْس	ash-Shams
+---	92	اللـَّيل	al-Layl
+---	93	الضُّحی	ad-Duha
+---	94	الشَّرْح	ash-Sharh
+---	95	التـِّين	at-Tin
+---	96	العَلـَق	al-`Alaq
+---	97	القـَدر	al-qadr
+---	98	البَيِّنَة	al-Bayyinah
+---	99	الزلزَلة	Az-Zalzala
+---	100	العَادِيات	al-`Adiyat
+---	101	القارِعَة	al-Qari`ah
+---	102	التَكاثـُر	at-Takathur
+---	103	العَصْر	al-`Asr
+---	104	الهُمَزَة	al-Humazah
+---	105	الفِيل	al-Fil
+---	106	قـُرَيْش	al-Quraish
+---	107	المَاعُون	al-Ma`un
+---	108	الكَوْثَر	al-Kauthar
+---	109	الكَافِرُون	al-Kafirun
+---	110	النـَّصر	an-Nasr
+---	111	المَسَد	Al-Masad
+---	112	الإخْلَاص	al-Ikhlas
+---	113	الفَلَق	al-Falaq
+---	114	النَّاس	an-Nas
+
+-Quran Memorization
+--Short Surahs
+---	86	الطّارق	at-Tariq
+---	87	الأعلی	al-A`la
+---	88	الغاشِيَة	al-Ghashiya
+---	89	الفَجْر	al-Fajr
+---	90	البَـلـَد	al-Balad
+---	91	الشــَّمْس	ash-Shams
+---	92	اللـَّيل	al-Layl
+---	93	الضُّحی	ad-Duha
+---	94	الشَّرْح	ash-Sharh
+---	95	التـِّين	at-Tin
+---	96	العَلـَق	al-`Alaq
+---	97	القـَدر	al-qadr
+---	98	البَيِّنَة	al-Bayyinah
+---	99	الزلزَلة	Az-Zalzala
+---	100	العَادِيات	al-`Adiyat
+---	101	القارِعَة	al-Qari`ah
+---	102	التَكاثـُر	at-Takathur
+---	103	العَصْر	al-`Asr
+---	104	الهُمَزَة	al-Humazah
+---	105	الفِيل	al-Fil
+---	106	قـُرَيْش	al-Quraish
+---	107	المَاعُون	al-Ma`un
+---	108	الكَوْثَر	al-Kauthar
+---	109	الكَافِرُون	al-Kafirun
+---	110	النـَّصر	an-Nasr
+---	111	المَسَد	Al-Masad
+---	112	الإخْلَاص	al-Ikhlas
+---	113	الفَلَق	al-Falaq
+---	114	النَّاس	an-Nas
+
+
+--One Juz
+  ---	1	الفَاتِحَة	al-Fatihah
+---	2	البَقَرَة	al-Baqarah
+---	3	آل عِمرَان	Al-Imran
+---	4	النِّسَاء	an-Nisa'
+---	5	المَائدة	al-Ma'idah
+---	6	الأنعَام	al-An`am
+---	7	الأعرَاف	al-A`raf
+---	8	الأنفَال	al-Anfal
+---	9	التوبَة	at-Taubah
+---	10	يُونس	Yunus
+---	11	هُود	Hud
+---	12	يُوسُف	Yusuf
+---	13	الرَّعْد	ar-Ra`d
+---	14	إبراهِيم	Ibrahim
+---	15	الحِجْر	al-Hijr
+---	16	النَّحْل	an-Nahl
+---	17	الإسْرَاء	Al-Isra
+---	18	الكهْف	al-Kahf
+---	19	مَريَم	Maryam
+---	20	طه	Ta Ha
+---	21	الأنبيَاء	al-Anbiya'
+---	22	الحَج	al-Hajj
+---	23	المُؤمنون	al-Mu'minun
+---	24	النُّور	an-Nur
+---	25	الفُرْقان	al-Furqan
+---	26	الشُّعَرَاء	ash-Shu`ara'
+---	27	النَّمْل	an-Naml
+---	28	القَصَص	al-Qasas
+---	29	العَنكبوت	al-`Ankabut
+---	30	الرُّوم	ar-Rum
+---	31	لقمَان	Luqman
+---	32	السَّجدَة	as-Sajdah
+---	33	الأحزَاب	al-Ahzab
+---	34	سَبَأ	Saba'
+---	35	فَاطِر	Fatir
+---	36	يس	Ya Sin
+---	37	الصَّافات	as-Saffat
+---	38	ص	Sad
+---	39	الزُّمَر	az-Zumar
+---	40	غَافِر	Ghafir
+---	41	فُصِّلَتْ	Fussilat
+---	42	الشُّورَى	ash-Shura
+---	43	الزُّخْرُف	az-Zukhruf
+---	44	الدُّخان	ad-Dukhan
+---	45	الجاثِية	al-Jathiyah
+---	46	الأحقاف	al-Ahqaf
+---	47	مُحَمّد	Muhammad
+---	48	الفَتْح	al-Fath
+---	49	الحُجُرات	al-Hujurat
+---	50	ق	Qaf
+---	51	الذَّاريَات	ad-Dhariyat
+---	52	الطُّور	at-Tur
+---	53	النَّجْم	an-Najm
+---	54	القَمَر	al-Qamar
+---	55	الرَّحمن	ar-Rahman
+---	56	الواقِعَة	al-Waqi`ah
+---	57	الحَديد	al-Hadid
+---	58	المُجادَلة	al-Mujadilah
+---	59	الحَشْر	al-Hashr
+---	60	المُمتَحَنة	al-Mumtahanah
+---	61	الصَّف	as-Saff
+---	62	الجُّمُعة	al-Jumu`ah
+---	63	المُنافِقُون	al-Munafiqun
+---	64	التَّغابُن	at-Taghabun
+---	65	الطَّلاق	at-Talaq,
+---	66	التَّحْريم	at-Tahrim
+---	67	المُلْك	al-Mulk
+---	68	القَلـََم	al-Qalam
+---	69	الحَاقّـَة	al-Haqqah
+---	70	المَعارِج	al-Ma`arij
+---	71	نُوح	Nuh
+---	72	الجِنّ	al-Jinn
+---	73	المُزَّمّـِل	al-Muzammil
+---	74	المُدَّثــِّر	al-Mudathir
+---	75	القِيامَة	al-Qiyamah
+---	76	الإنسان	al-Insane
+---	77	المُرسَلات	al-Mursalat
+---	78	النـَّبأ	an-Naba'
+---	79	النـّازِعات	an-Nazi`at
+---	80	عَبَس	`Abasa
+---	81	التـَّكْوير	at-Takwir
+---	82	الإنفِطار	al-Infitar
+---	83	المُطـَفِّفين	Al-Mutaffifeen
+---	84	الإنشِقاق	al-Inshiqaq
+---	85	البُروج	al-Buruj
+---	86	الطّارق	at-Tariq
+---	87	الأعلی	al-A`la
+---	88	الغاشِيَة	al-Ghashiya
+---	89	الفَجْر	al-Fajr
+---	90	البَـلـَد	al-Balad
+---	91	الشــَّمْس	ash-Shams
+---	92	اللـَّيل	al-Layl
+---	93	الضُّحی	ad-Duha
+---	94	الشَّرْح	ash-Sharh
+---	95	التـِّين	at-Tin
+---	96	العَلـَق	al-`Alaq
+---	97	القـَدر	al-qadr
+---	98	البَيِّنَة	al-Bayyinah
+---	99	الزلزَلة	Az-Zalzala
+---	100	العَادِيات	al-`Adiyat
+---	101	القارِعَة	al-Qari`ah
+---	102	التَكاثـُر	at-Takathur
+---	103	العَصْر	al-`Asr
+---	104	الهُمَزَة	al-Humazah
+---	105	الفِيل	al-Fil
+---	106	قـُرَيْش	al-Quraish
+---	107	المَاعُون	al-Ma`un
+---	108	الكَوْثَر	al-Kauthar
+---	109	الكَافِرُون	al-Kafirun
+---	110	النـَّصر	an-Nasr
+---	111	المَسَد	Al-Masad
+---	112	الإخْلَاص	al-Ikhlas
+---	113	الفَلَق	al-Falaq
+---	114	النَّاس	an-Nas
+
+--Hafez Program
+---	1	الفَاتِحَة	al-Fatihah
+---	2	البَقَرَة	al-Baqarah
+---	3	آل عِمرَان	Al-Imran
+---	4	النِّسَاء	an-Nisa'
+---	5	المَائدة	al-Ma'idah
+---	6	الأنعَام	al-An`am
+---	7	الأعرَاف	al-A`raf
+---	8	الأنفَال	al-Anfal
+---	9	التوبَة	at-Taubah
+---	10	يُونس	Yunus
+---	11	هُود	Hud
+---	12	يُوسُف	Yusuf
+---	13	الرَّعْد	ar-Ra`d
+---	14	إبراهِيم	Ibrahim
+---	15	الحِجْر	al-Hijr
+---	16	النَّحْل	an-Nahl
+---	17	الإسْرَاء	Al-Isra
+---	18	الكهْف	al-Kahf
+---	19	مَريَم	Maryam
+---	20	طه	Ta Ha
+---	21	الأنبيَاء	al-Anbiya'
+---	22	الحَج	al-Hajj
+---	23	المُؤمنون	al-Mu'minun
+---	24	النُّور	an-Nur
+---	25	الفُرْقان	al-Furqan
+---	26	الشُّعَرَاء	ash-Shu`ara'
+---	27	النَّمْل	an-Naml
+---	28	القَصَص	al-Qasas
+---	29	العَنكبوت	al-`Ankabut
+---	30	الرُّوم	ar-Rum
+---	31	لقمَان	Luqman
+---	32	السَّجدَة	as-Sajdah
+---	33	الأحزَاب	al-Ahzab
+---	34	سَبَأ	Saba'
+---	35	فَاطِر	Fatir
+---	36	يس	Ya Sin
+---	37	الصَّافات	as-Saffat
+---	38	ص	Sad
+---	39	الزُّمَر	az-Zumar
+---	40	غَافِر	Ghafir
+---	41	فُصِّلَتْ	Fussilat
+---	42	الشُّورَى	ash-Shura
+---	43	الزُّخْرُف	az-Zukhruf
+---	44	الدُّخان	ad-Dukhan
+---	45	الجاثِية	al-Jathiyah
+---	46	الأحقاف	al-Ahqaf
+---	47	مُحَمّد	Muhammad
+---	48	الفَتْح	al-Fath
+---	49	الحُجُرات	al-Hujurat
+---	50	ق	Qaf
+---	51	الذَّاريَات	ad-Dhariyat
+---	52	الطُّور	at-Tur
+---	53	النَّجْم	an-Najm
+---	54	القَمَر	al-Qamar
+---	55	الرَّحمن	ar-Rahman
+---	56	الواقِعَة	al-Waqi`ah
+---	57	الحَديد	al-Hadid
+---	58	المُجادَلة	al-Mujadilah
+---	59	الحَشْر	al-Hashr
+---	60	المُمتَحَنة	al-Mumtahanah
+---	61	الصَّف	as-Saff
+---	62	الجُّمُعة	al-Jumu`ah
+---	63	المُنافِقُون	al-Munafiqun
+---	64	التَّغابُن	at-Taghabun
+---	65	الطَّلاق	at-Talaq,
+---	66	التَّحْريم	at-Tahrim
+---	67	المُلْك	al-Mulk
+---	68	القَلـََم	al-Qalam
+---	69	الحَاقّـَة	al-Haqqah
+---	70	المَعارِج	al-Ma`arij
+---	71	نُوح	Nuh
+---	72	الجِنّ	al-Jinn
+---	73	المُزَّمّـِل	al-Muzammil
+---	74	المُدَّثــِّر	al-Mudathir
+---	75	القِيامَة	al-Qiyamah
+---	76	الإنسان	al-Insane
+---	77	المُرسَلات	al-Mursalat
+---	78	النـَّبأ	an-Naba'
+---	79	النـّازِعات	an-Nazi`at
+---	80	عَبَس	`Abasa
+---	81	التـَّكْوير	at-Takwir
+---	82	الإنفِطار	al-Infitar
+---	83	المُطـَفِّفين	Al-Mutaffifeen
+---	84	الإنشِقاق	al-Inshiqaq
+---	85	البُروج	al-Buruj
+---	86	الطّارق	at-Tariq
+---	87	الأعلی	al-A`la
+---	88	الغاشِيَة	al-Ghashiya
+---	89	الفَجْر	al-Fajr
+---	90	البَـلـَد	al-Balad
+---	91	الشــَّمْس	ash-Shams
+---	92	اللـَّيل	al-Layl
+---	93	الضُّحی	ad-Duha
+---	94	الشَّرْح	ash-Sharh
+---	95	التـِّين	at-Tin
+---	96	العَلـَق	al-`Alaq
+---	97	القـَدر	al-qadr
+---	98	البَيِّنَة	al-Bayyinah
+---	99	الزلزَلة	Az-Zalzala
+---	100	العَادِيات	al-`Adiyat
+---	101	القارِعَة	al-Qari`ah
+---	102	التَكاثـُر	at-Takathur
+---	103	العَصْر	al-`Asr
+---	104	الهُمَزَة	al-Humazah
+---	105	الفِيل	al-Fil
+---	106	قـُرَيْش	al-Quraish
+---	107	المَاعُون	al-Ma`un
+---	108	الكَوْثَر	al-Kauthar
+---	109	الكَافِرُون	al-Kafirun
+---	110	النـَّصر	an-Nasr
+---	111	المَسَد	Al-Masad
+---	112	الإخْلَاص	al-Ikhlas
+---	113	الفَلَق	al-Falaq
+---	114	النَّاس	an-Nas
+
+
+--Ijazah Program
+  ---	1	الفَاتِحَة	al-Fatihah
+---	2	البَقَرَة	al-Baqarah
+---	3	آل عِمرَان	Al-Imran
+---	4	النِّسَاء	an-Nisa'
+---	5	المَائدة	al-Ma'idah
+---	6	الأنعَام	al-An`am
+---	7	الأعرَاف	al-A`raf
+---	8	الأنفَال	al-Anfal
+---	9	التوبَة	at-Taubah
+---	10	يُونس	Yunus
+---	11	هُود	Hud
+---	12	يُوسُف	Yusuf
+---	13	الرَّعْد	ar-Ra`d
+---	14	إبراهِيم	Ibrahim
+---	15	الحِجْر	al-Hijr
+---	16	النَّحْل	an-Nahl
+---	17	الإسْرَاء	Al-Isra
+---	18	الكهْف	al-Kahf
+---	19	مَريَم	Maryam
+---	20	طه	Ta Ha
+---	21	الأنبيَاء	al-Anbiya'
+---	22	الحَج	al-Hajj
+---	23	المُؤمنون	al-Mu'minun
+---	24	النُّور	an-Nur
+---	25	الفُرْقان	al-Furqan
+---	26	الشُّعَرَاء	ash-Shu`ara'
+---	27	النَّمْل	an-Naml
+---	28	القَصَص	al-Qasas
+---	29	العَنكبوت	al-`Ankabut
+---	30	الرُّوم	ar-Rum
+---	31	لقمَان	Luqman
+---	32	السَّجدَة	as-Sajdah
+---	33	الأحزَاب	al-Ahzab
+---	34	سَبَأ	Saba'
+---	35	فَاطِر	Fatir
+---	36	يس	Ya Sin
+---	37	الصَّافات	as-Saffat
+---	38	ص	Sad
+---	39	الزُّمَر	az-Zumar
+---	40	غَافِر	Ghafir
+---	41	فُصِّلَتْ	Fussilat
+---	42	الشُّورَى	ash-Shura
+---	43	الزُّخْرُف	az-Zukhruf
+---	44	الدُّخان	ad-Dukhan
+---	45	الجاثِية	al-Jathiyah
+---	46	الأحقاف	al-Ahqaf
+---	47	مُحَمّد	Muhammad
+---	48	الفَتْح	al-Fath
+---	49	الحُجُرات	al-Hujurat
+---	50	ق	Qaf
+---	51	الذَّاريَات	ad-Dhariyat
+---	52	الطُّور	at-Tur
+---	53	النَّجْم	an-Najm
+---	54	القَمَر	al-Qamar
+---	55	الرَّحمن	ar-Rahman
+---	56	الواقِعَة	al-Waqi`ah
+---	57	الحَديد	al-Hadid
+---	58	المُجادَلة	al-Mujadilah
+---	59	الحَشْر	al-Hashr
+---	60	المُمتَحَنة	al-Mumtahanah
+---	61	الصَّف	as-Saff
+---	62	الجُّمُعة	al-Jumu`ah
+---	63	المُنافِقُون	al-Munafiqun
+---	64	التَّغابُن	at-Taghabun
+---	65	الطَّلاق	at-Talaq,
+---	66	التَّحْريم	at-Tahrim
+---	67	المُلْك	al-Mulk
+---	68	القَلـََم	al-Qalam
+---	69	الحَاقّـَة	al-Haqqah
+---	70	المَعارِج	al-Ma`arij
+---	71	نُوح	Nuh
+---	72	الجِنّ	al-Jinn
+---	73	المُزَّمّـِل	al-Muzammil
+---	74	المُدَّثــِّر	al-Mudathir
+---	75	القِيامَة	al-Qiyamah
+---	76	الإنسان	al-Insane
+---	77	المُرسَلات	al-Mursalat
+---	78	النـَّبأ	an-Naba'
+---	79	النـّازِعات	an-Nazi`at
+---	80	عَبَس	`Abasa
+---	81	التـَّكْوير	at-Takwir
+---	82	الإنفِطار	al-Infitar
+---	83	المُطـَفِّفين	Al-Mutaffifeen
+---	84	الإنشِقاق	al-Inshiqaq
+---	85	البُروج	al-Buruj
+---	86	الطّارق	at-Tariq
+---	87	الأعلی	al-A`la
+---	88	الغاشِيَة	al-Ghashiya
+---	89	الفَجْر	al-Fajr
+---	90	البَـلـَد	al-Balad
+---	91	الشــَّمْس	ash-Shams
+---	92	اللـَّيل	al-Layl
+---	93	الضُّحی	ad-Duha
+---	94	الشَّرْح	ash-Sharh
+---	95	التـِّين	at-Tin
+---	96	العَلـَق	al-`Alaq
+---	97	القـَدر	al-qadr
+---	98	البَيِّنَة	al-Bayyinah
+---	99	الزلزَلة	Az-Zalzala
+---	100	العَادِيات	al-`Adiyat
+---	101	القارِعَة	al-Qari`ah
+---	102	التَكاثـُر	at-Takathur
+---	103	العَصْر	al-`Asr
+---	104	الهُمَزَة	al-Humazah
+---	105	الفِيل	al-Fil
+---	106	قـُرَيْش	al-Quraish
+---	107	المَاعُون	al-Ma`un
+---	108	الكَوْثَر	al-Kauthar
+---	109	الكَافِرُون	al-Kafirun
+---	110	النـَّصر	an-Nasr
+---	111	المَسَد	Al-Masad
+---	112	الإخْلَاص	al-Ikhlas
+---	113	الفَلَق	al-Falaq
+---	114	النَّاس	an-Nas
+
+Arabic Language
+--Arabic Basics
+---	التحية والتعارف Greeting and acquaintance
+---	 الاسرة Family
+---	 الســكن Housing
+---	Revision
+---	الطعام والشراب Food and drink
+---	الصلاة Prayer
+---	الدراسة Study
+---	Revision
+---	العمل Work
+---	التسوق Shopping
+---	الجو Wheather
+---	Revision
+---	الناس والأماكن People and places
+---	الهوايات Hobbies
+---	السفر Travelling
+---	Revision
+---	الحج والعمرة Hajj and Umrah
+---	الصحة Health
+---	العطلة Holiday
+---	Revision
+---	Knooz Book level   المستوى الثاني الوحدة الأولى
+---	مدينتي جميلة My city is beautiful
+---	غذائي مفيد My food is useful 
+---	جسمي سليم My body is health
+---	Revision
+---	Final test
+
+--Intermediate Arabic
+---	عالم الحيوان Animal world
+---	التسلية Having fun
+---	الوقت Time
+---	أنواع الملابس Clothes
+---	Revision
+---	Al-Arabi-bin-Yadik  level 2 (A)
+---	الحياة في المدينة Life in the city
+---	العلم والتعلم Knowlede and learning
+---	المهن Professions
+---	اللغة العربية Arabic language
+---	الجوائز Prizes
+---	Revision
+---	Al-Arabi-bin-Yadik  level 2 (B)
+---	العالم قرية صغيرة World is a smail village
+---	النظافة Cleanliness
+---	الإسلام Islam
+---	الشباب Youth
+---	Revision
+---	Final test
+
+--Upper Intermediate Arabic
+---	المعجزة الخالدة The eternal miracle
+---	يوم في حياة ناشئ A day in a junior's life
+---	أقلياتنا في العالم Our minorities around the world
+---	السنة النبوية Prophetic Sunnah
+---	Revision
+---	الأطفال والقراءة Children and reading
+---	هجرة العقول Brain drain
+---	طاب نومكم طاب يومكم Good sleeping good day
+---	نوادر وطرائف Anecdotes and Jokes
+---	Al-Arabi-bin-Yadik  level  3 (B)
+---	Revision
+---	المساوات الحقة Real equity
+---	الرفق بالحيوان Animal welfare
+---	الأمثال العربية Arabic proverbs
+---	الخلافات الزوجية ’arital disputes
+---	Revision
+---	العلاقة بين الآباء والأبناء Parents and children relations
+---	الماء أصل الحياة وسرها Water as a secret of life
+---	وصية أب Father's commandment
+---	من يوميات وليد From Walid's diary
+---	Revision
+---	Final test
+
+--Classical Arabic
+---(This will be a cutom list of topics teacher will enter manually per class)
+
+Islamic Studies
+-Established Facts of Religion
+Level 1
+---	How to Perform Wudhu
+---	The Five Daily Prayers
+---	Truthfulness
+---	Kindness to Parents
+---	Love for Your Brother What You Love for Yourself
+---	Harming and reciprocating harm are not allowed
+---	Allah protects the true believers
+---	Surat al-Ikhlas
+---	Dhikr and Du'aa
+---	General Manners
+level 2
+---	The Pillars of Iman
+---	The Pillars of Islam
+---	As-Sunan (recommended actions)
+---	Actions are by intentions
+---	Lying, Gossiping and Backbiting
+---	The people of the "Cave"
+---	Prophet Ayyub's story
+---	Mariam, daughter of 'Imran
+---	The advent of Islam (story)
+---	How does paradise look like?
+level 3
+---	The rightly guided Caliphs
+---	Brief history of schools of Fiqh (1)
+---	Brief history of schools of Fiqh (2)
+---	Ihsan in Islam "Perfection or Benevolence"
+---	Methodology of collecting Quran
+---	Explanation of Surat al-Fatihah
+---	Hadith criticism criteria
+---	Biography of non-Arab Muslim scholars
+---	Biography of Imam al-Bukhari
+---	Islamic branches of knowledge
+
+-Introduction to Classical Books
+---(This will be a cutom list of topics teacher will enter manually per class)
+-Advanced Islamic Studies
+---(This will be a cutom list of topics teacher will enter manually per class)

@@ -91,6 +91,9 @@ const Settings = () => {
   // Subjects/Courses/Levels catalog (admin)
   const [subjectsCatalogLoading, setSubjectsCatalogLoading] = useState(false);
   const [subjectsCatalogSaving, setSubjectsCatalogSaving] = useState(false);
+  const [subjectsCatalogError, setSubjectsCatalogError] = useState(null);
+  const [subjectsCatalogRaw, setSubjectsCatalogRaw] = useState(null);
+  const [subjectsCatalogTree, setSubjectsCatalogTree] = useState([]);
   const [catalogSubjectsText, setCatalogSubjectsText] = useState('');
   const [catalogLevelsText, setCatalogLevelsText] = useState('');
   const [catalogTopicsBySubjectText, setCatalogTopicsBySubjectText] = useState({});
@@ -118,8 +121,12 @@ const Settings = () => {
     (async () => {
       try {
         setSubjectsCatalogLoading(true);
+        setSubjectsCatalogError(null);
         const catalog = await getSubjectsCatalogCached({ ttlMs: 0 });
         if (cancelled) return;
+
+        setSubjectsCatalogRaw(catalog?.raw || null);
+        setSubjectsCatalogTree(Array.isArray(catalog?.tree) ? catalog.tree : []);
 
         const subjects = Array.isArray(catalog?.subjects) ? catalog.subjects : [];
         const levels = Array.isArray(catalog?.levels) ? catalog.levels : [];
@@ -144,6 +151,9 @@ const Settings = () => {
         });
       } catch (e) {
         if (!cancelled) {
+          setSubjectsCatalogError(e?.response?.data?.message || e?.message || 'Failed to load subjects catalog');
+          setSubjectsCatalogRaw(null);
+          setSubjectsCatalogTree([]);
           setCatalogSubjectsText('');
           setCatalogLevelsText('');
           setCatalogTopicsBySubjectText({});
@@ -192,6 +202,11 @@ const Settings = () => {
   }, []);
 
   const saveCatalog = useCallback(async () => {
+    // Prevent overwriting a hierarchical v2 catalog with the legacy v1 editor.
+    if (subjectsCatalogRaw?.version === 2) {
+      throw new Error('This catalog is version 2 (hierarchical). Editing from this screen is disabled to avoid overwriting it.');
+    }
+
     const subjects = parseLinesOrComma(catalogSubjectsText);
     const levels = parseLinesOrComma(catalogLevelsText);
     const topicsBySubject = {};
@@ -216,6 +231,21 @@ const Settings = () => {
       return list[0] || '';
     });
   }, [catalogSubjectsText, catalogLevelsText, catalogTopicsBySubjectText, ensureTopicsMapSync]);
+
+  const isV2SubjectsCatalog = subjectsCatalogRaw?.version === 2;
+
+  const subjectsCatalogCounts = useMemo(() => {
+    const tree = Array.isArray(subjectsCatalogTree) ? subjectsCatalogTree : [];
+    const subjectCount = tree.length;
+    const courseCount = tree.reduce((sum, s) => sum + (Array.isArray(s?.courses) ? s.courses.length : 0), 0);
+    const levelCount = tree.reduce(
+      (sum, s) =>
+        sum +
+        (Array.isArray(s?.courses) ? s.courses.reduce((ss, c) => ss + (Array.isArray(c?.levels) ? c.levels.length : 0), 0) : 0),
+      0
+    );
+    return { subjectCount, courseCount, levelCount };
+  }, [subjectsCatalogTree]);
 
   useEffect(() => {
     let cancelled = false;
@@ -471,7 +501,7 @@ const Settings = () => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={subjectsCatalogSaving || subjectsCatalogLoading}
+                  disabled={subjectsCatalogSaving || subjectsCatalogLoading || isV2SubjectsCatalog}
                   onClick={async () => {
                     try {
                       setSubjectsCatalogSaving(true);
@@ -485,6 +515,7 @@ const Settings = () => {
                     }
                   }}
                   className="text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded disabled:opacity-70"
+                  title={isV2SubjectsCatalog ? 'Disabled: v2 catalog is managed via outline seed script' : 'Save'}
                 >
                   {subjectsCatalogSaving ? 'Saving' : 'Save'}
                 </button>
@@ -495,22 +526,78 @@ const Settings = () => {
               <div className="mt-3 text-sm text-muted-foreground">Loading…</div>
             ) : (
               <div className="mt-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  {[
-                    { step: 1, label: 'Subjects' },
-                    { step: 2, label: 'Levels' },
-                    { step: 3, label: 'Topics' },
-                  ].map((s) => (
-                    <button
-                      key={s.step}
-                      type="button"
-                      onClick={() => setSubjectsCatalogStep(s.step)}
-                      className={`text-xs px-2 py-1 border rounded ${subjectsCatalogStep === s.step ? 'bg-muted border-border' : 'bg-card border-border hover:bg-muted'}`}
-                    >
-                      {s.step}. {s.label}
-                    </button>
-                  ))}
-                </div>
+                {subjectsCatalogError ? (
+                  <div className="mb-3 text-sm text-red-600">{subjectsCatalogError}</div>
+                ) : null}
+
+                {isV2SubjectsCatalog ? (
+                  <div className="text-sm">
+                    <div className="text-xs text-muted-foreground">
+                      This catalog is <span className="font-medium text-foreground">version 2 (hierarchical)</span>. Editing is disabled here to avoid overwriting it.
+                      Update by editing <span className="font-medium text-foreground">/opt/waraqa/draft</span> on the droplet and re-running the seed script.
+                    </div>
+
+                    <div className="mt-3 text-xs text-muted-foreground">
+                      Subjects: <span className="font-medium text-foreground">{subjectsCatalogCounts.subjectCount}</span> · Courses: <span className="font-medium text-foreground">{subjectsCatalogCounts.courseCount}</span> · Levels: <span className="font-medium text-foreground">{subjectsCatalogCounts.levelCount}</span>
+                    </div>
+
+                    {subjectsCatalogTree.length === 0 ? (
+                      <div className="mt-3 text-sm text-muted-foreground">No catalog tree found.</div>
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        {subjectsCatalogTree.map((subject) => (
+                          <div key={subject?.name || JSON.stringify(subject)} className="border border-border rounded p-3 bg-card">
+                            <div className="font-medium">{subject?.name || 'Untitled subject'}</div>
+
+                            {Array.isArray(subject?.courses) && subject.courses.length > 0 ? (
+                              <div className="mt-2 space-y-2">
+                                {subject.courses.map((course) => (
+                                  <div key={`${subject?.name || 'subject'}::${course?.name || 'course'}`} className="pl-3 border-l border-border">
+                                    <div className="text-sm font-medium">{course?.name || 'Untitled course'}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                      Levels: {Array.isArray(course?.levels) ? course.levels.length : 0}
+                                    </div>
+
+                                    {Array.isArray(course?.levels) && course.levels.length > 0 ? (
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {course.levels.map((lvl) => (
+                                          <span key={`${course?.name || 'course'}::${lvl?.name || 'level'}`} className="px-2 py-1 rounded border text-xs bg-card">
+                                            {lvl?.name || 'Untitled level'}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="mt-2 text-sm text-muted-foreground">No levels.</div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="mt-2 text-sm text-muted-foreground">No courses.</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {[
+                        { step: 1, label: 'Subjects' },
+                        { step: 2, label: 'Levels' },
+                        { step: 3, label: 'Topics' },
+                      ].map((s) => (
+                        <button
+                          key={s.step}
+                          type="button"
+                          onClick={() => setSubjectsCatalogStep(s.step)}
+                          className={`text-xs px-2 py-1 border rounded ${subjectsCatalogStep === s.step ? 'bg-muted border-border' : 'bg-card border-border hover:bg-muted'}`}
+                        >
+                          {s.step}. {s.label}
+                        </button>
+                      ))}
+                    </div>
 
                 {/* Step 1: Subjects */}
                 {subjectsCatalogStep === 1 && (
@@ -759,6 +846,8 @@ const Settings = () => {
                     Next
                   </button>
                 </div>
+                  </>
+                )}
               </div>
             )}
           </div>

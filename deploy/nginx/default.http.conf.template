@@ -1,21 +1,15 @@
 ## Upstream notes
-# Docker assigns containers new IPs when they are recreated.
-# Avoid stale upstream IPs by using Docker DNS (127.0.0.11) with variables.
-
-# Use Docker embedded DNS for service discovery.
-# Use `upstream ... resolve` to re-resolve service names without relying on
-# variable-based `proxy_pass`, which can be flaky under load/restarts.
-resolver 127.0.0.11 valid=10s ipv6=off;
-resolver_timeout 5s;
+# Prefer startup-time DNS resolution for Docker service names.
+# This avoids nginx runtime DNS lookups (which can intermittently fail in some Docker setups
+# with errors like "unexpected DNS response" / "wrong ident"), at the cost of requiring an
+# nginx reload/restart if the upstream container IPs change.
 
 upstream backend_upstream {
-  zone backend_upstream 64k;
-  server backend:5000 resolve;
+  server backend:5000;
 }
 
 upstream frontend_upstream {
-  zone frontend_upstream 64k;
-  server frontend:80 resolve;
+  server frontend:80;
 }
 
 # HTTP-only mode (used when certs are not yet installed)

@@ -2,14 +2,26 @@
 # Docker assigns containers new IPs when they are recreated.
 # Avoid stale upstream IPs by using Docker DNS (127.0.0.11) with variables.
 
+# Use Docker embedded DNS for service discovery.
+# Use `upstream ... resolve` to re-resolve service names without relying on
+# variable-based `proxy_pass`, which can be flaky under load/restarts.
+resolver 127.0.0.11 valid=10s ipv6=off;
+resolver_timeout 5s;
+
+upstream backend_upstream {
+  zone backend_upstream 64k;
+  server backend:5000 resolve;
+}
+
+upstream frontend_upstream {
+  zone frontend_upstream 64k;
+  server frontend:80 resolve;
+}
+
 # HTTP-only mode (used when certs are not yet installed)
 server {
   listen 80;
   server_name ${SERVER_NAMES};
-
-  resolver 127.0.0.11 valid=10s ipv6=off;
-  set $backend_upstream http://backend:5000;
-  set $frontend_upstream http://frontend:80;
 
   # Allow larger uploads (library assets, videos, PDFs, etc.)
   client_max_body_size 250m;
@@ -27,7 +39,7 @@ server {
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
     proxy_buffering off;
-    proxy_pass $backend_upstream;
+    proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -35,7 +47,7 @@ server {
   }
 
   location ^~ /api/ {
-    proxy_pass $backend_upstream;
+    proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -44,7 +56,7 @@ server {
 
   # Socket.io (websockets)
   location ^~ /socket.io/ {
-    proxy_pass $backend_upstream;
+    proxy_pass http://backend_upstream;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -56,7 +68,7 @@ server {
 
   # Everything else -> dashboard container
   location / {
-    proxy_pass $frontend_upstream;
+    proxy_pass http://frontend_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

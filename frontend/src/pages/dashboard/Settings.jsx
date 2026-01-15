@@ -201,12 +201,70 @@ const Settings = () => {
     });
   }, []);
 
-  const saveCatalog = useCallback(async () => {
-    // Prevent overwriting a hierarchical v2 catalog with the legacy v1 editor.
-    if (subjectsCatalogRaw?.version === 2) {
-      throw new Error('This catalog is version 2 (hierarchical). Editing from this screen is disabled to avoid overwriting it.');
+  const normalizeCatalogName = useCallback((v) => {
+    const s = String(v ?? '').trim();
+    return s;
+  }, []);
+
+  const sanitizeUniqueNames = useCallback((list) => {
+    const seen = new Set();
+    const result = [];
+
+    for (const item of Array.isArray(list) ? list : []) {
+      const name = normalizeCatalogName(item);
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(name);
     }
 
+    return result;
+  }, [normalizeCatalogName]);
+
+  const sanitizeV2SubjectsTree = useCallback((tree) => {
+    const nextSubjects = [];
+    const subjectNamesSeen = new Set();
+
+    for (const subject of Array.isArray(tree) ? tree : []) {
+      const subjectName = normalizeCatalogName(subject?.name);
+      if (!subjectName) continue;
+      const subjectKey = subjectName.toLowerCase();
+      if (subjectNamesSeen.has(subjectKey)) continue;
+      subjectNamesSeen.add(subjectKey);
+
+      const courses = [];
+      const courseNamesSeen = new Set();
+      for (const course of Array.isArray(subject?.courses) ? subject.courses : []) {
+        const courseName = normalizeCatalogName(course?.name);
+        if (!courseName) continue;
+        const courseKey = courseName.toLowerCase();
+        if (courseNamesSeen.has(courseKey)) continue;
+        courseNamesSeen.add(courseKey);
+
+        const levels = [];
+        const levelNamesSeen = new Set();
+        for (const level of Array.isArray(course?.levels) ? course.levels : []) {
+          const levelName = normalizeCatalogName(level?.name);
+          if (!levelName) continue;
+          const levelKey = levelName.toLowerCase();
+          if (levelNamesSeen.has(levelKey)) continue;
+          levelNamesSeen.add(levelKey);
+
+          const topics = sanitizeUniqueNames(level?.topics);
+          levels.push({ name: levelName, topics });
+        }
+
+        courses.push({ name: courseName, levels });
+      }
+
+      nextSubjects.push({ name: subjectName, courses });
+    }
+
+    return nextSubjects;
+  }, [normalizeCatalogName, sanitizeUniqueNames]);
+
+  const saveCatalogV1 = useCallback(async () => {
     const subjects = parseLinesOrComma(catalogSubjectsText);
     const levels = parseLinesOrComma(catalogLevelsText);
     const topicsBySubject = {};
@@ -231,6 +289,18 @@ const Settings = () => {
       return list[0] || '';
     });
   }, [catalogSubjectsText, catalogLevelsText, catalogTopicsBySubjectText, ensureTopicsMapSync]);
+
+  const saveCatalogV2 = useCallback(async () => {
+    const subjects = sanitizeV2SubjectsTree(subjectsCatalogTree);
+
+    const saved = await saveSubjectsCatalog({
+      version: 2,
+      subjects,
+    });
+
+    setSubjectsCatalogRaw(saved?.raw || { version: 2, subjects });
+    setSubjectsCatalogTree(Array.isArray(saved?.tree) ? saved.tree : subjects);
+  }, [sanitizeV2SubjectsTree, subjectsCatalogTree]);
 
   const isV2SubjectsCatalog = subjectsCatalogRaw?.version === 2;
 
@@ -501,11 +571,15 @@ const Settings = () => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={subjectsCatalogSaving || subjectsCatalogLoading || isV2SubjectsCatalog}
+                  disabled={subjectsCatalogSaving || subjectsCatalogLoading}
                   onClick={async () => {
                     try {
                       setSubjectsCatalogSaving(true);
-                      await saveCatalog();
+                      if (isV2SubjectsCatalog) {
+                        await saveCatalogV2();
+                      } else {
+                        await saveCatalogV1();
+                      }
                       setToast({ type: 'success', message: 'Subjects catalog saved' });
                     } catch (e) {
                       console.error(e);
@@ -515,7 +589,7 @@ const Settings = () => {
                     }
                   }}
                   className="text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded disabled:opacity-70"
-                  title={isV2SubjectsCatalog ? 'Disabled: v2 catalog is managed via outline seed script' : 'Save'}
+                  title="Save"
                 >
                   {subjectsCatalogSaving ? 'Saving' : 'Save'}
                 </button>
@@ -533,47 +607,239 @@ const Settings = () => {
                 {isV2SubjectsCatalog ? (
                   <div className="text-sm">
                     <div className="text-xs text-muted-foreground">
-                      This catalog is <span className="font-medium text-foreground">version 2 (hierarchical)</span>. Editing is disabled here to avoid overwriting it.
-                      Update by editing <span className="font-medium text-foreground">/opt/waraqa/draft</span> on the droplet and re-running the seed script.
+                      This catalog is <span className="font-medium text-foreground">version 2 (hierarchical)</span>. You can manage it manually here.
+                      (The draft/seed script is optional after first import.)
                     </div>
 
-                    <div className="mt-3 text-xs text-muted-foreground">
-                      Subjects: <span className="font-medium text-foreground">{subjectsCatalogCounts.subjectCount}</span> · Courses: <span className="font-medium text-foreground">{subjectsCatalogCounts.courseCount}</span> · Levels: <span className="font-medium text-foreground">{subjectsCatalogCounts.levelCount}</span>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Subjects: <span className="font-medium text-foreground">{subjectsCatalogCounts.subjectCount}</span> · Courses:{' '}
+                        <span className="font-medium text-foreground">{subjectsCatalogCounts.courseCount}</span> · Levels:{' '}
+                        <span className="font-medium text-foreground">{subjectsCatalogCounts.levelCount}</span>
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSubjectsCatalogTree((prev) => ([...(Array.isArray(prev) ? prev : []), { name: '', courses: [] }]));
+                        }}
+                        className="text-xs px-3 py-1 border rounded bg-card hover:bg-muted"
+                      >
+                        Add subject
+                      </button>
                     </div>
 
                     {subjectsCatalogTree.length === 0 ? (
-                      <div className="mt-3 text-sm text-muted-foreground">No catalog tree found.</div>
+                      <div className="mt-3 text-sm text-muted-foreground">No catalog yet. Click “Add subject”.</div>
                     ) : (
-                      <div className="mt-4 space-y-3">
-                        {subjectsCatalogTree.map((subject) => (
-                          <div key={subject?.name || JSON.stringify(subject)} className="border border-border rounded p-3 bg-card">
-                            <div className="font-medium">{subject?.name || 'Untitled subject'}</div>
+                      <div className="mt-4 space-y-4">
+                        {subjectsCatalogTree.map((subject, subjectIndex) => (
+                          <div key={`subject-${subjectIndex}`} className="border border-border rounded p-3 bg-card">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex-1">
+                                <div className="text-xs text-muted-foreground mb-1">Subject</div>
+                                <input
+                                  value={subject?.name ?? ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    setSubjectsCatalogTree((prev) => {
+                                      const next = [...(Array.isArray(prev) ? prev : [])];
+                                      const current = next[subjectIndex] || { name: '', courses: [] };
+                                      next[subjectIndex] = { ...current, name: value, courses: Array.isArray(current?.courses) ? current.courses : [] };
+                                      return next;
+                                    });
+                                  }}
+                                  className="w-full px-3 py-2 border rounded text-sm"
+                                  placeholder="e.g. Quran"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSubjectsCatalogTree((prev) => (Array.isArray(prev) ? prev.filter((_, i) => i !== subjectIndex) : []));
+                                }}
+                                className="text-xs px-3 py-2 border rounded bg-card hover:bg-muted"
+                                title="Remove subject"
+                              >
+                                Remove
+                              </button>
+                            </div>
 
-                            {Array.isArray(subject?.courses) && subject.courses.length > 0 ? (
-                              <div className="mt-2 space-y-2">
-                                {subject.courses.map((course) => (
-                                  <div key={`${subject?.name || 'subject'}::${course?.name || 'course'}`} className="pl-3 border-l border-border">
-                                    <div className="text-sm font-medium">{course?.name || 'Untitled course'}</div>
-                                    <div className="mt-1 text-xs text-muted-foreground">
-                                      Levels: {Array.isArray(course?.levels) ? course.levels.length : 0}
+                            <div className="mt-3 flex items-center justify-between">
+                              <div className="text-xs text-muted-foreground">Courses</div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSubjectsCatalogTree((prev) => {
+                                    const next = [...(Array.isArray(prev) ? prev : [])];
+                                    const current = next[subjectIndex] || { name: '', courses: [] };
+                                    const courses = Array.isArray(current?.courses) ? [...current.courses] : [];
+                                    courses.push({ name: '', levels: [] });
+                                    next[subjectIndex] = { ...current, courses };
+                                    return next;
+                                  });
+                                }}
+                                className="text-xs px-3 py-1 border rounded bg-card hover:bg-muted"
+                              >
+                                Add course
+                              </button>
+                            </div>
+
+                            {(Array.isArray(subject?.courses) ? subject.courses : []).length === 0 ? (
+                              <div className="mt-2 text-sm text-muted-foreground">No courses.</div>
+                            ) : (
+                              <div className="mt-3 space-y-4">
+                                {(Array.isArray(subject?.courses) ? subject.courses : []).map((course, courseIndex) => (
+                                  <div key={`course-${subjectIndex}-${courseIndex}`} className="pl-3 border-l border-border">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="flex-1">
+                                        <div className="text-xs text-muted-foreground mb-1">Course</div>
+                                        <input
+                                          value={course?.name ?? ''}
+                                          onChange={(e) => {
+                                            const value = e.target.value;
+                                            setSubjectsCatalogTree((prev) => {
+                                              const next = [...(Array.isArray(prev) ? prev : [])];
+                                              const s = next[subjectIndex] || { name: '', courses: [] };
+                                              const courses = Array.isArray(s?.courses) ? [...s.courses] : [];
+                                              const c = courses[courseIndex] || { name: '', levels: [] };
+                                              courses[courseIndex] = { ...c, name: value, levels: Array.isArray(c?.levels) ? c.levels : [] };
+                                              next[subjectIndex] = { ...s, courses };
+                                              return next;
+                                            });
+                                          }}
+                                          className="w-full px-3 py-2 border rounded text-sm"
+                                          placeholder="e.g. Quran Recitation"
+                                        />
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSubjectsCatalogTree((prev) => {
+                                            const next = [...(Array.isArray(prev) ? prev : [])];
+                                            const s = next[subjectIndex] || { name: '', courses: [] };
+                                            const courses = Array.isArray(s?.courses) ? s.courses.filter((_, i) => i !== courseIndex) : [];
+                                            next[subjectIndex] = { ...s, courses };
+                                            return next;
+                                          });
+                                        }}
+                                        className="text-xs px-3 py-2 border rounded bg-card hover:bg-muted"
+                                        title="Remove course"
+                                      >
+                                        Remove
+                                      </button>
                                     </div>
 
-                                    {Array.isArray(course?.levels) && course.levels.length > 0 ? (
-                                      <div className="mt-2 flex flex-wrap gap-2">
-                                        {course.levels.map((lvl) => (
-                                          <span key={`${course?.name || 'course'}::${lvl?.name || 'level'}`} className="px-2 py-1 rounded border text-xs bg-card">
-                                            {lvl?.name || 'Untitled level'}
-                                          </span>
+                                    <div className="mt-3 flex items-center justify-between">
+                                      <div className="text-xs text-muted-foreground">Levels</div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSubjectsCatalogTree((prev) => {
+                                            const next = [...(Array.isArray(prev) ? prev : [])];
+                                            const s = next[subjectIndex] || { name: '', courses: [] };
+                                            const courses = Array.isArray(s?.courses) ? [...s.courses] : [];
+                                            const c = courses[courseIndex] || { name: '', levels: [] };
+                                            const levels = Array.isArray(c?.levels) ? [...c.levels] : [];
+                                            levels.push({ name: '', topics: [] });
+                                            courses[courseIndex] = { ...c, levels };
+                                            next[subjectIndex] = { ...s, courses };
+                                            return next;
+                                          });
+                                        }}
+                                        className="text-xs px-3 py-1 border rounded bg-card hover:bg-muted"
+                                      >
+                                        Add level
+                                      </button>
+                                    </div>
+
+                                    {(Array.isArray(course?.levels) ? course.levels : []).length === 0 ? (
+                                      <div className="mt-2 text-sm text-muted-foreground">No levels.</div>
+                                    ) : (
+                                      <div className="mt-3 space-y-3">
+                                        {(Array.isArray(course?.levels) ? course.levels : []).map((level, levelIndex) => (
+                                          <div key={`level-${subjectIndex}-${courseIndex}-${levelIndex}`} className="border border-border rounded p-3 bg-card">
+                                            <div className="flex items-center justify-between gap-2">
+                                              <div className="flex-1">
+                                                <div className="text-xs text-muted-foreground mb-1">Level</div>
+                                                <input
+                                                  value={level?.name ?? ''}
+                                                  onChange={(e) => {
+                                                    const value = e.target.value;
+                                                    setSubjectsCatalogTree((prev) => {
+                                                      const next = [...(Array.isArray(prev) ? prev : [])];
+                                                      const s = next[subjectIndex] || { name: '', courses: [] };
+                                                      const courses = Array.isArray(s?.courses) ? [...s.courses] : [];
+                                                      const c = courses[courseIndex] || { name: '', levels: [] };
+                                                      const levels = Array.isArray(c?.levels) ? [...c.levels] : [];
+                                                      const lvl = levels[levelIndex] || { name: '', topics: [] };
+                                                      levels[levelIndex] = { ...lvl, name: value, topics: Array.isArray(lvl?.topics) ? lvl.topics : [] };
+                                                      courses[courseIndex] = { ...c, levels };
+                                                      next[subjectIndex] = { ...s, courses };
+                                                      return next;
+                                                    });
+                                                  }}
+                                                  className="w-full px-3 py-2 border rounded text-sm"
+                                                  placeholder="e.g. Foundation Level"
+                                                />
+                                              </div>
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setSubjectsCatalogTree((prev) => {
+                                                    const next = [...(Array.isArray(prev) ? prev : [])];
+                                                    const s = next[subjectIndex] || { name: '', courses: [] };
+                                                    const courses = Array.isArray(s?.courses) ? [...s.courses] : [];
+                                                    const c = courses[courseIndex] || { name: '', levels: [] };
+                                                    const levels = Array.isArray(c?.levels)
+                                                      ? c.levels.filter((_, i) => i !== levelIndex)
+                                                      : [];
+                                                    courses[courseIndex] = { ...c, levels };
+                                                    next[subjectIndex] = { ...s, courses };
+                                                    return next;
+                                                  });
+                                                }}
+                                                className="text-xs px-3 py-2 border rounded bg-card hover:bg-muted"
+                                                title="Remove level"
+                                              >
+                                                Remove
+                                              </button>
+                                            </div>
+
+                                            <div className="mt-3">
+                                              <div className="text-xs text-muted-foreground mb-1">Topics (one per line)</div>
+                                              <textarea
+                                                rows={5}
+                                                value={joinLines(Array.isArray(level?.topics) ? level.topics : [])}
+                                                onChange={(e) => {
+                                                  const topics = parseLinesOrComma(e.target.value);
+                                                  setSubjectsCatalogTree((prev) => {
+                                                    const next = [...(Array.isArray(prev) ? prev : [])];
+                                                    const s = next[subjectIndex] || { name: '', courses: [] };
+                                                    const courses = Array.isArray(s?.courses) ? [...s.courses] : [];
+                                                    const c = courses[courseIndex] || { name: '', levels: [] };
+                                                    const levels = Array.isArray(c?.levels) ? [...c.levels] : [];
+                                                    const lvl = levels[levelIndex] || { name: '', topics: [] };
+                                                    levels[levelIndex] = { ...lvl, topics };
+                                                    courses[courseIndex] = { ...c, levels };
+                                                    next[subjectIndex] = { ...s, courses };
+                                                    return next;
+                                                  });
+                                                }}
+                                                className="w-full px-3 py-2 border rounded text-sm"
+                                                placeholder="Topic 1\nTopic 2\nTopic 3"
+                                              />
+                                              <div className="mt-1 text-xs text-muted-foreground">
+                                                Total: {(Array.isArray(level?.topics) ? level.topics : []).filter(Boolean).length}
+                                              </div>
+                                            </div>
+                                          </div>
                                         ))}
                                       </div>
-                                    ) : (
-                                      <div className="mt-2 text-sm text-muted-foreground">No levels.</div>
                                     )}
                                   </div>
                                 ))}
                               </div>
-                            ) : (
-                              <div className="mt-2 text-sm text-muted-foreground">No courses.</div>
                             )}
                           </div>
                         ))}

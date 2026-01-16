@@ -90,7 +90,8 @@ const makeStudentKey = (student = {}) => {
   return `${guardianId}|hash:${Buffer.from(JSON.stringify(student)).toString('base64').slice(0, 24)}`;
 };
 
-const dedupeStudents = (students = []) => {
+const dedupeStudents = (students = [], options = {}) => {
+  const prefer = String(options.prefer || 'standalone').toLowerCase();
   const byKey = new Map();
   const extras = [];
   students.forEach((student) => {
@@ -102,10 +103,19 @@ const dedupeStudents = (students = []) => {
     }
 
     const existing = byKey.get(key);
-    // Default preference for admin lists: prefer standalone over embedded when we know they're the same student.
-    if (existing && existing._source === 'embedded' && student._source === 'standalone') {
-      byKey.set(key, student);
-      return;
+    // Prefer one source over the other when we believe these are the same logical student.
+    // Default behavior remains "standalone" for admin lists.
+    if (prefer === 'standalone') {
+      if (existing && existing._source === 'embedded' && student._source === 'standalone') {
+        byKey.set(key, student);
+        return;
+      }
+    }
+    if (prefer === 'embedded') {
+      if (existing && existing._source === 'standalone' && student._source === 'embedded') {
+        byKey.set(key, student);
+        return;
+      }
     }
 
     // If we somehow have multiple distinct embedded students sharing the same linkage key
@@ -1425,7 +1435,10 @@ router.get('/teacher/:teacherId/students', authenticateToken, async (req, res) =
     // Normalize standalone
     const normStandalone = standalone.map(s => ({ ...s, guardianId: s.guardian, _source: 'standalone' }));
 
-    let students = dedupeStudents([...embedded, ...normStandalone]);
+    // For teachers, prefer embedded records when duplicates exist.
+    // Embedded students generally have the guardian-managed fields (subjects/timezone) that teachers expect,
+    // while standalone students can have default values like timezone=UTC.
+    let students = dedupeStudents([...embedded, ...normStandalone], { prefer: 'embedded' });
     const totalHours = students.reduce((sum, s) => sum + (Number(s.hoursRemaining) || 0), 0);
 
     // Enrich with guardian timezone and guardianName when possible

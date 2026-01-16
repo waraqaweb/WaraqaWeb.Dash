@@ -17,11 +17,15 @@ upstream frontend_upstream {
 # To keep real users smooth while still throttling bots:
 # - Only rate-limit *anonymous* API calls (no Authorization header).
 # - Never rate-limit /api/auth/* at nginx (backend has dedicated auth/login limiters).
-map $http_authorization $anon_api_key {
-  default "";
+# Key rate limiting by:
+# - anonymous users: public IP
+# - authenticated users: Authorization header (unique per token)
+# This prevents "one user throttles everyone" behind NAT or reverse proxies.
+map $http_authorization $api_rate_key {
+  default $http_authorization;
   ""      $binary_remote_addr;
 }
-limit_req_zone $anon_api_key zone=anon_api_per_ip:10m rate=20r/s;
+limit_req_zone $api_rate_key zone=api_per_key:10m rate=20r/s;
 limit_req_status 429;
 limit_conn_zone $binary_remote_addr zone=conn_per_ip:10m;
 
@@ -75,6 +79,7 @@ server {
   location ^~ /api/auth/ {
     proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
+    proxy_set_header Authorization $http_authorization;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
@@ -88,6 +93,7 @@ server {
     proxy_buffering off;
     proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
+    proxy_set_header Authorization $http_authorization;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
@@ -97,6 +103,7 @@ server {
   location = /api/health {
     proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
+    proxy_set_header Authorization $http_authorization;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
@@ -105,17 +112,19 @@ server {
   location = /api/version {
     proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
+    proxy_set_header Authorization $http_authorization;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
   }
 
   location ^~ /api/ {
-    # Only affects anonymous requests. Authenticated requests have an empty key and
-    # are effectively not rate-limited at nginx.
-    limit_req zone=anon_api_per_ip burst=40 nodelay;
+    # Per-key throttling: anonymous users by IP, authenticated users by token.
+    # Burst allows dashboard to load normally without tripping 429.
+    limit_req zone=api_per_key burst=80 nodelay;
     proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
+    proxy_set_header Authorization $http_authorization;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
@@ -128,6 +137,7 @@ server {
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
     proxy_set_header Host $host;
+    proxy_set_header Authorization $http_authorization;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;

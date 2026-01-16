@@ -10,6 +10,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -159,27 +160,77 @@ app.use(cors({
 })); // Enable CORS for frontend communication
 
 // Rate limiting to prevent abuse
+// IMPORTANT: keep the dashboard usable under normal load.
+// - Anonymous requests: per-IP limit (protects against scanners)
+// - Authenticated requests: per-token limit with a higher cap (avoids "one IP throttles everyone")
 const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
-const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || (isProduction ? 2000 : 5000));
+const rateLimitMaxAnon = Number(process.env.RATE_LIMIT_MAX_ANON || process.env.RATE_LIMIT_MAX || (isProduction ? 2000 : 5000));
+const rateLimitMaxAuth = Number(process.env.RATE_LIMIT_MAX_AUTH || (isProduction ? 20000 : 50000));
 
-const limiter = rateLimit({
+const hashRateLimitKey = (value) => {
+  try {
+    return crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 32);
+  } catch (e) {
+    return String(value).slice(0, 64);
+  }
+};
+
+const shouldSkipGlobalLimits = (req) => {
+  const p = req.path || '';
+  // Auth endpoints have their own specific limiters.
+  if (p.startsWith('/api/auth')) return true;
+  // Health/version should never be rate-limited.
+  return p === '/api/health' || p === '/api/version';
+};
+
+const getBearerToken = (req) => {
+  const auth = String(req.headers.authorization || '');
+  if (!auth) return null;
+  if (!auth.toLowerCase().startsWith('bearer ')) return null;
+  const token = auth.slice(7).trim();
+  return token || null;
+};
+
+const anonLimiter = rateLimit({
   windowMs: rateLimitWindowMs,
-  max: rateLimitMax,
+  max: rateLimitMaxAnon,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    const p = req.path || '';
-    // Auth endpoints have their own specific limiters.
-    if (p.startsWith('/api/auth')) return true;
-    // Health/version should never be rate-limited.
-    return p === '/api/health' || p === '/api/version';
+    if (shouldSkipGlobalLimits(req)) return true;
+    // Only limit anonymous requests here.
+    return Boolean(getBearerToken(req));
+  },
+  keyGenerator: (req) => req.ip,
+  message: {
+    error: 'Too many requests, please slow down.',
+    retryAfter: Math.ceil(rateLimitWindowMs / 1000)
+  }
+});
+
+const authLimiter = rateLimit({
+  windowMs: rateLimitWindowMs,
+  max: rateLimitMaxAuth,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => {
+    if (shouldSkipGlobalLimits(req)) return true;
+    // Only limit authenticated requests here.
+    return !getBearerToken(req);
+  },
+  keyGenerator: (req) => {
+    const token = getBearerToken(req);
+    if (!token) return req.ip;
+    return `bearer:${hashRateLimitKey(token)}`;
   },
   message: {
     error: 'Too many requests, please slow down.',
     retryAfter: Math.ceil(rateLimitWindowMs / 1000)
   }
 });
-app.use(limiter);
+
+app.use(anonLimiter);
+app.use(authLimiter);
 
 // Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));

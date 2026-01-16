@@ -16,7 +16,7 @@ const { authenticateToken, requireRole } = require("../middleware/auth");
 const Class = require("../models/Class");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
-require("../models/Student");
+const Student = require("../models/Student");
 const InvoiceModel = require("../models/Invoice");
 const InvoiceService = require('../services/invoiceService');
 const systemVacationService = require("../services/systemVacationService");
@@ -178,6 +178,50 @@ function enrichClassObj(obj, now = new Date()) {
   c.isOngoing = scheduledDate && endTime && scheduledDate.getTime() <= now.getTime() && endTime.getTime() > now.getTime();
   c.isOld = endTime && endTime.getTime() <= now.getTime();
   return c;
+}
+
+function isUnknownStudentName(name) {
+  const s = String(name || '').trim().toLowerCase();
+  return !s || s === 'unknown student';
+}
+
+async function hydrateUnknownStudentNames(classes = []) {
+  const unknown = (classes || []).filter((c) => isUnknownStudentName(c?.student?.studentName));
+  if (!unknown.length) return classes;
+
+  const ids = Array.from(
+    new Set(
+      unknown
+        .map((c) => c?.student?.studentId)
+        .filter((v) => v && mongoose.Types.ObjectId.isValid(v))
+        .map((v) => String(v))
+    )
+  );
+  if (!ids.length) return classes;
+
+  let rows = [];
+  try {
+    rows = await Student.find({ _id: { $in: ids } })
+      .select('firstName lastName')
+      .lean();
+  } catch (e) {
+    return classes;
+  }
+
+  const nameById = new Map();
+  (rows || []).forEach((s) => {
+    const fullName = `${s.firstName || ''} ${s.lastName || ''}`.trim();
+    if (fullName) nameById.set(String(s._id), fullName);
+  });
+
+  (classes || []).forEach((c) => {
+    if (!c?.student) return;
+    if (!isUnknownStudentName(c.student.studentName)) return;
+    const fullName = nameById.get(String(c.student.studentId));
+    if (fullName) c.student.studentName = fullName;
+  });
+
+  return classes;
 }
 
 function normalizePendingReschedule(pending) {
@@ -817,6 +861,8 @@ router.get("/", authenticateToken, async (req, res) => {
       .skip(skip)
       .limit(limitNum)
       .lean();
+
+    await hydrateUnknownStudentNames(rawClasses);
 
     // Avoid N+1 queries for recurring patterns on list endpoints.
     // The details are available from GET /api/classes/:id when needed.
@@ -1639,6 +1685,8 @@ router.get("/:id", authenticateToken, async (req, res) => {
       }
     }
 
+    await hydrateUnknownStudentNames([classDoc]);
+
     const policy = await buildChangePolicy(classDoc, req.user);
 
     // Add timezone conversion info
@@ -1724,11 +1772,28 @@ router.post(
         console.log("Student found:", sExists.firstName, sExists.lastName);
       }
 
+      // If the studentId is a standalone Student record (not an embedded guardian subdoc), resolve name from Student collection.
+      let standaloneStudent = null;
+      if (!sExists) {
+        try {
+          standaloneStudent = await Student.findById(student.studentId).select('firstName lastName guardian').lean();
+        } catch (e) {
+          // ignore
+        }
+      }
+
       // Prepare student object with name for class creation
+      const providedStudentName = (student && typeof student.studentName === 'string') ? student.studentName.trim() : '';
+      const resolvedStudentName =
+        providedStudentName ||
+        (sExists ? `${sExists.firstName} ${sExists.lastName}`.trim() : '') ||
+        (standaloneStudent ? `${standaloneStudent.firstName} ${standaloneStudent.lastName}`.trim() : '') ||
+        'Unknown Student';
+
       const studentForClass = {
         guardianId: student.guardianId,
         studentId: student.studentId,
-        studentName: sExists ? `${sExists.firstName} ${sExists.lastName}` : 'Unknown Student'
+        studentName: resolvedStudentName
       };
       console.log("Student object for class:", studentForClass);
 

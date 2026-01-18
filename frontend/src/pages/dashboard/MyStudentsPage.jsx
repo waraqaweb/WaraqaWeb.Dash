@@ -486,21 +486,37 @@ const fetchStudents = async () => {
             console.warn('Failed to fetch past classes for guardian to compute hours', err?.message || err);
           }
         } else {
-          // For teachers/admins, fetch past classes per student and sum durations
-          await Promise.all((fetchedArr || []).map(async (st) => {
+          // For teachers/admins, batch past classes by studentIds to avoid 1 request per student.
+          const ids = (fetchedArr || []).map((st) => String(st._id)).filter(Boolean);
+          const chunkSize = 50;
+          const chunks = [];
+          for (let i = 0; i < ids.length; i += chunkSize) {
+            chunks.push(ids.slice(i, i + chunkSize));
+          }
+
+          for (const chunk of chunks) {
+            if (!chunk.length) continue;
             try {
-              const res = await api.get('/classes', { params: { filter: 'past', student: st._id, limit: 1000 } });
+              const res = await api.get('/classes', {
+                params: {
+                  filter: 'past',
+                  studentIds: chunk.join(','),
+                  limit: 1000,
+                }
+              });
               const classesArr = res.data.classes || [];
-              const minutes = classesArr.reduce((sum, c) => {
-                if (!countableStatuses.includes(c.status)) return sum;
-                return sum + (Number(c.duration) || 0);
-              }, 0);
-              map[String(st._id)] = minutes;
+              classesArr.forEach((c) => {
+                if (!countableStatuses.includes(c.status)) return;
+                const sid = String(c?.student?.studentId || c?.student?._id || '');
+                if (!sid) return;
+                map[sid] = (map[sid] || 0) + (Number(c.duration) || 0);
+              });
             } catch (err) {
-              console.warn('Failed to fetch past classes for student', st._id, err?.message || err);
-              map[String(st._id)] = 0;
+              console.warn('Failed to fetch past classes batch for students', err?.message || err);
+              // Ensure these students don't get stuck without a value
+              chunk.forEach((sid) => { map[String(sid)] = map[String(sid)] || 0; });
             }
-          }));
+          }
         }
       }
       // Ensure all students have at least 0 minutes

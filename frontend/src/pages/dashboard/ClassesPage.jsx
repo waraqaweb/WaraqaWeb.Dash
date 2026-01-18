@@ -642,9 +642,13 @@ const ClassesPage = ({ isActive = true }) => {
 
   useEffect(() => {
     if (!isActive || !isAdminUser) return;
-    if (!teachers.length) fetchTeachers({ force: false });
-    if (!guardians.length) fetchGuardians({ force: false });
-  }, [fetchGuardians, fetchTeachers, guardians.length, isActive, isAdminUser, teachers.length]);
+    if (!teachers.length && fetchTeachersRef.current) {
+      fetchTeachersRef.current({ force: false });
+    }
+    if (!guardians.length && fetchGuardiansRef.current) {
+      fetchGuardiansRef.current({ force: false });
+    }
+  }, [guardians.length, isActive, isAdminUser, teachers.length]);
 
   // Server-side search is used now; no background prefetch needed.
 

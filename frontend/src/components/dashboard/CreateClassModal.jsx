@@ -244,19 +244,21 @@ export default function CreateClassModal({
   const handleStudentSelect = (option) => {
     const studentId = option?.id || '';
     const guardianId = option?.guardianId || currentNewClass.student?.guardianId || '';
+    const studentName = option?.label || '';
 
     currentSetNewClass((prev) => ({
       ...prev,
       student: {
         guardianId,
         studentId,
+        studentName,
       },
     }));
 
     if (!isStandalone) {
-      handleStudentChange?.(studentId);
+      handleStudentChange?.(studentId, { guardianId, studentName });
       if (guardianId && guardianId !== currentNewClass.student?.guardianId) {
-        handleGuardianChange?.(guardianId);
+        handleGuardianChange?.(guardianId, { preserveStudent: true });
       }
     }
   };

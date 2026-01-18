@@ -114,16 +114,18 @@ export default function EditClassModal({
   const handleStudentSelect = (option) => {
     const studentId = option?.id || '';
     const guardianId = option?.guardianId || editClass?.student?.guardianId || '';
+    const studentName = option?.label || '';
     setEditClass((prev) => ({
       ...prev,
       student: {
         guardianId,
         studentId,
+        studentName,
       },
     }));
-    handleStudentChange?.(studentId, { isEdit: true });
+    handleStudentChange?.(studentId, { isEdit: true, guardianId, studentName });
     if (guardianId && guardianId !== editClass?.student?.guardianId) {
-      handleGuardianChange?.(guardianId, { isEdit: true });
+      handleGuardianChange?.(guardianId, { isEdit: true, preserveStudent: true });
     }
   };
 

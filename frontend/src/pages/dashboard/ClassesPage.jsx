@@ -285,6 +285,7 @@ const ClassesPage = ({ isActive = true }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { searchTerm, globalFilter } = useSearch();
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm || "");
   const getInitialTab = () => {
 
     try {
@@ -561,60 +562,19 @@ const ClassesPage = ({ isActive = true }) => {
     return { id, label, haystack };
   }, []);
 
-  const normalizedSearchTerm = useMemo(() => (searchTerm || "").trim().toLowerCase(), [searchTerm]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm || "");
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
-  const filteredClasses = useMemo(() => {
-    const base = normalizedSearchTerm
-      ? ((classesCorpus && classesCorpus.length) ? classesCorpus : classes)
-      : classes;
+  const normalizedSearchTerm = useMemo(
+    () => (debouncedSearchTerm || "").trim().toLowerCase(),
+    [debouncedSearchTerm]
+  );
 
-    if (!normalizedSearchTerm) return base;
-
-    const toText = (value) => (value == null ? '' : String(value)).toLowerCase();
-    const term = normalizedSearchTerm;
-
-    return (base || []).filter((classItem) => {
-      if (!classItem) return false;
-
-      const teacher = classItem.teacher;
-      const teacherName = teacher && typeof teacher === 'object'
-        ? `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim()
-        : '';
-      const teacherEmail = teacher && typeof teacher === 'object' ? (teacher.email || '') : '';
-
-      const student = classItem.student || {};
-      const studentName = student.studentName
-        || student.name
-        || student.fullName
-        || `${student.firstName || ''} ${student.lastName || ''}`.trim();
-      const guardian = student.guardianId;
-      const guardianName = guardian && typeof guardian === 'object'
-        ? `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim()
-        : '';
-      const guardianEmail = guardian && typeof guardian === 'object' ? (guardian.email || '') : '';
-
-      const subject = classItem.subject || classItem.title || '';
-      const meetingLink = classItem.meetingLink || '';
-
-      const haystack = [
-        classItem._id,
-        subject,
-        classItem.description,
-        classItem.status,
-        classItem.scheduledDate,
-        teacherName,
-        teacherEmail,
-        studentName,
-        guardianName,
-        guardianEmail,
-        meetingLink,
-      ]
-        .filter(Boolean)
-        .map(toText);
-
-      return haystack.some((value) => value.includes(term));
-    });
-  }, [classes, classesCorpus, normalizedSearchTerm]);
+  const filteredClasses = useMemo(() => classes || [], [classes]);
 
 
   const mapAvailabilityResponse = useCallback((raw = {}) => createAvailabilityState({
@@ -654,7 +614,7 @@ const ClassesPage = ({ isActive = true }) => {
     setCurrentPage(1);
     loadedClassPagesRef.current = new Set();
     setClassesCorpus([]);
-  }, [isActive, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter]);
+  }, [isActive, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter, normalizedSearchTerm]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -683,129 +643,7 @@ const ClassesPage = ({ isActive = true }) => {
     isAdminUser,
   ]);
 
-  // When searching, progressively prefetch more pages in the background so search can
-  // match across already-loaded content without blocking the initial page load.
-  useEffect(() => {
-    if (!isActive) return;
-    const isSearching = Boolean(normalizedSearchTerm);
-    if (!isSearching) return;
-    if (loading) return; // ensure initial page rendered first
-    if (!Number.isFinite(totalPages) || totalPages <= 1) return;
-
-    let cancelled = false;
-
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-    const buildParamsForPage = (page) => {
-      const params = {
-        page,
-        limit: 30,
-        filter: tabFilter,
-        sortBy: "scheduledDate",
-        order: "asc",
-      };
-
-      if (statusFilter !== "all") params.status = statusFilter;
-      if (teacherFilter !== "all") params.teacher = teacherFilter;
-      if (guardianFilter !== "all") params.guardian = guardianFilter;
-      if (globalFilter && globalFilter !== 'all') {
-        params.status = globalFilter;
-      }
-
-      return params;
-    };
-
-    const mergeClasses = (next) => {
-      if (!Array.isArray(next) || next.length === 0) return;
-      setClassesCorpus((prev) => {
-        const map = new Map();
-        (prev || []).forEach((c) => {
-          const id = c?._id ? String(c._id) : null;
-          if (id) map.set(id, c);
-        });
-        next.forEach((c) => {
-          const id = c?._id ? String(c._id) : null;
-          if (id) map.set(id, c);
-        });
-        const merged = Array.from(map.values());
-        // Keep a deterministic ordering for search results.
-        merged.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
-        return merged;
-      });
-    };
-
-    const prefetch = async () => {
-      const maxPagesToPrefetch = 20;
-      let prefetchedCount = 0;
-
-      for (let page = 1; page <= totalPages; page += 1) {
-        if (cancelled) return;
-        if (prefetchedCount >= maxPagesToPrefetch) return;
-        if (loadedClassPagesRef.current.has(page)) continue;
-
-        const params = buildParamsForPage(page);
-        const cacheKey = makeCacheKey('classes:list', user?._id, {
-          page,
-          limit: 30,
-          filter: tabFilter,
-          status: statusFilter !== 'all' ? statusFilter : undefined,
-          teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
-          guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
-          global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
-        });
-
-        const cached = readCache(cacheKey, { deps: ['classes'] });
-        if (cached.hit && cached.value?.classes) {
-          mergeClasses(cached.value.classes);
-          loadedClassPagesRef.current.add(page);
-          prefetchedCount += 1;
-          continue;
-        }
-
-        try {
-          const res = await api.get("/classes", { params });
-          const fetched = res.data.classes || [];
-          const apiTotalPages = Number(res.data?.pagination?.totalPages);
-          mergeClasses(fetched);
-          loadedClassPagesRef.current.add(page);
-          prefetchedCount += 1;
-
-          writeCache(
-            cacheKey,
-            {
-              classes: fetched,
-              totalPages: Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1,
-            },
-            { ttlMs: 5 * 60_000, deps: ['classes'] }
-          );
-        } catch (e) {
-          // ignore; we can still search within whatever is already loaded
-        }
-
-        await sleep(120);
-      }
-    };
-
-    const t = setTimeout(() => {
-      prefetch();
-    }, 0);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [
-    guardianFilter,
-    globalFilter,
-    isActive,
-    loading,
-    normalizedSearchTerm,
-    statusFilter,
-    tabFilter,
-    teacherFilter,
-    totalPages,
-    user?._id,
-  ]);
+  // Server-side search is used now; no background prefetch needed.
 
   // Listen for external refresh requests (e.g., after class report submit from route modal)
   // Use a ref to avoid referencing fetchClasses before it's initialized (TDZ)
@@ -1137,6 +975,7 @@ const fetchClasses = useCallback(async () => {
         teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
         guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
         global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+        search: normalizedSearchTerm || undefined,
       }
     );
 
@@ -1172,6 +1011,10 @@ const fetchClasses = useCallback(async () => {
     // Apply global filter
     if (globalFilter && globalFilter !== 'all') {
       params.status = globalFilter;
+    }
+
+    if (normalizedSearchTerm) {
+      params.search = normalizedSearchTerm;
     }
 
     const res = await api.get("/classes", { params });
@@ -1216,6 +1059,7 @@ const fetchClasses = useCallback(async () => {
   currentPage,
   globalFilter,
   guardianFilter,
+  normalizedSearchTerm,
   statusFilter,
   tabFilter,
   teacherFilter,
@@ -1607,15 +1451,20 @@ fetchClassesRef.current = fetchClasses;
   };
 
   const handleGuardianChange = async (guardianId, options = {}) => {
-    if (options.isEdit) {
-      setEditClass(prev => ({
+    const { isEdit, preserveStudent } = options;
+    if (isEdit) {
+      setEditClass((prev) => ({
         ...prev,
-        student: { guardianId, studentId: "", studentName: "" }
+        student: preserveStudent && prev?.student?.studentId
+          ? { ...prev.student, guardianId }
+          : { guardianId, studentId: "", studentName: "" }
       }));
     } else {
-      setNewClass(prev => ({
+      setNewClass((prev) => ({
         ...prev,
-        student: { guardianId, studentId: "", studentName: "" }
+        student: preserveStudent && prev?.student?.studentId
+          ? { ...prev.student, guardianId }
+          : { guardianId, studentId: "", studentName: "" }
       }));
     }
 
@@ -1627,16 +1476,22 @@ fetchClassesRef.current = fetchClasses;
   };
 
   const handleStudentChange = (studentId, options = {}) => {
-    const student = students.find(s => s._id === studentId);
+    const student = students.find((s) => s._id === studentId);
     const updated = {
       studentId,
-      studentName: student ? `${student.firstName} ${student.lastName}` : ""
+      studentName: options.studentName || (student ? `${student.firstName} ${student.lastName}` : "")
     };
 
     if (options.isEdit) {
-      setEditClass(prev => ({ ...prev, student: { ...prev.student, ...updated } }));
+      setEditClass((prev) => ({
+        ...prev,
+        student: { ...prev.student, ...updated, ...(options.guardianId ? { guardianId: options.guardianId } : {}) }
+      }));
     } else {
-      setNewClass(prev => ({ ...prev, student: { ...prev.student, ...updated } }));
+      setNewClass((prev) => ({
+        ...prev,
+        student: { ...prev.student, ...updated, ...(options.guardianId ? { guardianId: options.guardianId } : {}) }
+      }));
     }
   };
 

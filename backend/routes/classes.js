@@ -858,6 +858,27 @@ router.get("/", authenticateToken, async (req, res) => {
       : { $ne: "pattern" };
 
     const rawClasses = await Class.find(filters)
+      .select([
+        'title',
+        'description',
+        'subject',
+        'status',
+        'scheduledDate',
+        'duration',
+        'timezone',
+        'meetingLink',
+        'parentRecurringClass',
+        'student.guardianId',
+        'student.studentId',
+        'student.studentName',
+        'pendingReschedule',
+        'cancellation',
+        'classReport.submittedAt',
+        'classReport.classScore',
+        'reportSubmission.status',
+        'createdAt',
+        'updatedAt'
+      ].join(' '))
       .populate("teacher", "firstName lastName email phone profilePicture")
       .populate("student.guardianId", "firstName lastName email phone")
       .sort(sortObj)

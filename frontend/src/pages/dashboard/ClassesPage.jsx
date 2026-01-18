@@ -385,6 +385,8 @@ const ClassesPage = ({ isActive = true }) => {
   const { start: startDeleteCountdown } = useDeleteClassCountdown();
   // Ref to avoid temporal-dead-zone errors when effects reference fetchClasses
   const fetchClassesRef = useRef(null);
+  const fetchClassesKeyRef = useRef("");
+  const fetchClassesInFlightRef = useRef(false);
   const fetchTeachersRef = useRef(null);
   const fetchGuardiansRef = useRef(null);
   const adminTimezoneRef = useRef(adminTimezone);
@@ -986,6 +988,24 @@ const fetchClasses = useCallback(async () => {
       }
     );
 
+    const requestSignature = JSON.stringify({
+      page: currentPage,
+      limit: 30,
+      filter: tabFilter,
+      status: statusFilter !== 'all' ? statusFilter : undefined,
+      teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
+      guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
+      global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+      search: normalizedSearchTerm || undefined,
+    });
+
+    if (fetchClassesInFlightRef.current && fetchClassesKeyRef.current === requestSignature) {
+      return;
+    }
+
+    fetchClassesKeyRef.current = requestSignature;
+    fetchClassesInFlightRef.current = true;
+
     const cached = readCache(cacheKey, { deps: ['classes'] });
     if (cached.hit && cached.value) {
       const cachedClasses = cached.value.classes || [];
@@ -1061,6 +1081,7 @@ const fetchClasses = useCallback(async () => {
     setError("Failed to fetch classes");
   } finally {
     setLoading(false);
+    fetchClassesInFlightRef.current = false;
   }
 }, [
   currentPage,

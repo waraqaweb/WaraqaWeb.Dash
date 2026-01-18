@@ -2783,7 +2783,39 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
   try {
     const scope = req.query.scope || req.query.deleteType || "single";
     const classDoc = await Class.findById(req.params.id);
-    if (!classDoc) return res.status(404).json({ message: "Class not found" });
+    if (!classDoc) {
+      // Idempotent delete: if the class is already gone, try best-effort series delete
+      // for future/past/all scopes using the provided id as a parentRecurringClass.
+      if (scope === "future" || scope === "past" || scope === "all") {
+        const parentId = req.params.id;
+        const now = new Date();
+        const dateFilter = scope === "past"
+          ? { $lt: now }
+          : (scope === "future" ? { $gte: now } : undefined);
+
+        const filter = dateFilter
+          ? { parentRecurringClass: parentId, scheduledDate: dateFilter }
+          : { parentRecurringClass: parentId };
+
+        const toDelete = await Class.find(filter).lean();
+        const ids = toDelete.map((d) => d._id);
+        const result = await Class.deleteMany(filter);
+        try {
+          const io = req.app.get("io");
+          if (io && ids.length) io.emit("class:deleted", { ids, parentId, scope });
+        } catch (e) {}
+
+        return res.json({
+          message: result.deletedCount
+            ? `Deleted ${result.deletedCount} class(es)`
+            : "Class already deleted",
+          count: result.deletedCount || 0,
+          deletedIds: ids,
+        });
+      }
+
+      return res.json({ message: "Class already deleted" });
+    }
     const teacherId = classDoc.teacher;
     const guardianId = classDoc.student?.guardianId;
     const studentId = classDoc.student?.studentId;

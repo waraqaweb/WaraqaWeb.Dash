@@ -105,6 +105,17 @@ export const DeleteClassCountdownProvider = ({ children }) => {
       }
       reset();
     } catch (err) {
+      if (err?.response?.status === 404) {
+        // Idempotent delete: treat "not found" as already deleted.
+        try {
+          window.dispatchEvent(new Event(REFRESH_EVENT));
+        } catch {
+          // ignore
+        }
+        reset();
+        executingRef.current = false;
+        return;
+      }
       console.error('Delete class failed after countdown', err);
       const msg = err?.response?.data?.message || 'Failed to delete class';
       setError(msg);

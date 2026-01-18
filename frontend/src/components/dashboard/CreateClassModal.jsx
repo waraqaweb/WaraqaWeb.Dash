@@ -305,9 +305,7 @@ export default function CreateClassModal({
   
   // Log filtered students whenever guardian selection changes
   useEffect(() => {
-    try {
-      console.log('[CreateClassModal] guardian selection updated', { selectedGuardianId });
-    } catch(_) {}
+    // No console logging here (was noisy in production builds).
   }, [selectedGuardianId]);
   
   const handleLocalCreateClass = async () => {
@@ -454,7 +452,13 @@ export default function CreateClassModal({
             }
           }
         } catch (availErr) {
-          console.error('Availability check failed (create), will attempt server submit:', availErr);
+          try {
+            if (!(import.meta?.env?.PROD)) {
+              console.error('Availability check failed (create), will attempt server submit:', availErr);
+            }
+          } catch (e) {
+            // ignore
+          }
         }
       }
 
@@ -462,7 +466,13 @@ export default function CreateClassModal({
       alert(currentNewClass?.isRecurring ? 'Recurring classes created successfully!' : 'Class created successfully!');
       handleClose();
     } catch (error) {
-      console.error('Error creating class:', error);
+      try {
+        if (!(import.meta?.env?.PROD)) {
+          console.error('Error creating class:', error);
+        }
+      } catch (e) {
+        // ignore
+      }
 
       const status = error?.response?.status;
       const data = error?.response?.data || {};
@@ -484,7 +494,13 @@ export default function CreateClassModal({
             handleClose();
             return;
           } catch (overrideErr) {
-            console.error('Override creation failed:', overrideErr);
+            try {
+              if (!(import.meta?.env?.PROD)) {
+                console.error('Override creation failed:', overrideErr);
+              }
+            } catch (e) {
+              // ignore
+            }
             alert(overrideErr?.response?.data?.message || 'Error creating class. Please try again.');
             return;
           }

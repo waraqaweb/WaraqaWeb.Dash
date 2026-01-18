@@ -118,15 +118,31 @@ instance.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Log concise, useful info for other errors
-    console.error('API Error:', {
-      status: error.response?.status,
-      message: error.response?.data?.message || error.message,
-      detail: error.response?.data?.error || null,
-      endpoint: error.config?.url,
-      method: error.config?.method,
-      hasToken: !!error.config?.headers?.Authorization,
-    });
+    // Log concise, human-readable info for other errors.
+    // NOTE: Logging plain objects often shows up as just "Object" in production/minified builds.
+    const status = error.response?.status;
+    const method = String(error.config?.method || '').toUpperCase();
+    const endpoint = String(error.config?.url || '');
+    const responseData = error.response?.data;
+    const message = (responseData && typeof responseData === 'object' && responseData.message)
+      ? responseData.message
+      : (typeof responseData === 'string' ? responseData : error.message);
+
+    const hasToken = !!error.config?.headers?.Authorization;
+    const extra = {
+      status,
+      endpoint,
+      method,
+      hasToken,
+      data: responseData,
+    };
+
+    // Expected user-actionable errors (400/409/422) shouldn't spam the console as errors.
+    if (status === 400 || status === 409 || status === 422) {
+      console.warn(`[API ${status}] ${method} ${endpoint}: ${message}`, extra);
+    } else {
+      console.error(`[API ${status || 'ERR'}] ${method} ${endpoint}: ${message}`, extra);
+    }
 
     // Mark auth errors so higher-level code (AuthContext) can decide what to do
     if (error.response?.status === 401) {

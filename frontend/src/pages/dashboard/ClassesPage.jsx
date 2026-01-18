@@ -458,10 +458,11 @@ const ClassesPage = ({ isActive = true }) => {
   const formatAlternativeSlot = (alt) => {
     const start = alt?.startDateTime || alt?.start || alt?.startTime;
     const end = alt?.endDateTime || alt?.end || alt?.endTime;
-    const startLabel = start ? new Date(start).toLocaleString() : '';
-    const endLabel = end ? new Date(end).toLocaleString() : '';
+    const startLabel = alt?.startLocal || (start ? new Date(start).toLocaleString() : '');
+    const endLabel = alt?.endLocal || (end ? new Date(end).toLocaleString() : '');
     if (!startLabel && !endLabel) return '';
-    return `${startLabel}${endLabel ? ` – ${endLabel}` : ''}`;
+    const tz = alt?.timezone ? ` (${alt.timezone})` : '';
+    return `${startLabel}${endLabel ? ` – ${endLabel}` : ''}${tz}`;
   };
 
   const buildAvailabilityWarningFromApi = (data = {}) => {
@@ -471,22 +472,26 @@ const ClassesPage = ({ isActive = true }) => {
     let details = '';
     if (ae?.conflictType === 'existing_class' && ae?.conflictDetails) {
       const cd = ae.conflictDetails;
-      const start = cd?.startTime ? new Date(cd.startTime).toLocaleString() : '';
-      const end = cd?.endTime ? new Date(cd.endTime).toLocaleString() : '';
-      details = `Conflicts with: ${cd?.studentName || 'a class'}${cd?.subject ? ` (${cd.subject})` : ''}${start && end ? `\nTime: ${start} – ${end}` : ''}`;
+      const tz = cd?.timezone || '';
+      const start = cd?.startLocal || (cd?.startTime ? new Date(cd.startTime).toLocaleString() : '');
+      const end = cd?.endLocal || (cd?.endTime ? new Date(cd.endTime).toLocaleString() : '');
+      const who = cd?.studentName || 'another class';
+      const what = cd?.subject ? ` (${cd.subject})` : '';
+      const when = start && end ? `${start} – ${end}${tz ? ` (${tz})` : ''}` : '';
+      details = `${who}${what}${when ? ` • ${when}` : ''}`;
     } else if (ae?.conflictType === 'no_availability' && ae?.conflictDetails) {
       const cd = ae.conflictDetails;
       const slotsForDay = Array.isArray(cd?.slotsForDay) ? cd.slotsForDay : [];
       const slotLabel = slotsForDay.length
         ? slotsForDay.map((s) => `${s.startTime}–${s.endTime}`).join(', ')
         : 'none';
-      details = `Requested: ${cd?.requested?.startLocal || ''} – ${cd?.requested?.endLocal || ''} (${cd?.teacherTimezone || ''})\nAvailable windows: ${slotLabel}`;
+      details = `Requested: ${cd?.requested?.startLocal || ''} – ${cd?.requested?.endLocal || ''} (${cd?.teacherTimezone || ''})\nWindows: ${slotLabel}`;
     }
 
     const alternatives = Array.isArray(ae?.alternatives) ? ae.alternatives : [];
     const nearest = alternatives.length ? formatAlternativeSlot(alternatives[0]) : '';
     const suggested = alternatives
-      .slice(0, 5)
+      .slice(0, 3)
       .map((alt) => formatAlternativeSlot(alt))
       .filter(Boolean);
 

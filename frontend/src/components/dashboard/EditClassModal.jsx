@@ -258,7 +258,7 @@ export default function EditClassModal({
                     <div className="mt-2 text-xs text-yellow-900">
                       <div className="font-medium">Other suggested slots:</div>
                       <div className="mt-1 whitespace-pre-wrap">
-                        {availabilityWarning.suggested.map((s) => `• ${s}`).join('\n')}
+                        {availabilityWarning.suggested.slice(0, 3).map((s) => `• ${s}`).join('\n')}
                       </div>
                     </div>
                   )}

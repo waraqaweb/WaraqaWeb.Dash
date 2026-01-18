@@ -8,6 +8,7 @@
 const AvailabilitySlot = require('../models/AvailabilitySlot');
 const UnavailablePeriod = require('../models/UnavailablePeriod');
 const Class = require('../models/Class');
+const Student = require('../models/Student');
 const User = require('../models/User');
 const tzUtils = require('../utils/timezoneUtils');
 const moment = require('moment-timezone');
@@ -207,15 +208,16 @@ async function validateTeacherAvailability(teacherId, startDateTime, endDateTime
         });
       }
     }
+    const teacherTimezone = teacher?.timezone || 'UTC';
+
     if (availabilityStatus === 'default_24_7') {
       // Still check for unavailable periods and existing classes
-      return await checkUnavailabilityAndConflicts(teacherId, startDateTime, endDateTime, excludeClassId);
+      return await checkUnavailabilityAndConflicts(teacherId, startDateTime, endDateTime, excludeClassId, teacherTimezone);
     }
 
     // NOTE: Availability slots are stored as dayOfWeek + HH:MM strings.
     // In practice, the UI provides these in the teacher/slot timezone (not UTC).
     // So we must evaluate the requested UTC time window in the slot timezone.
-    const teacherTimezone = teacher?.timezone || 'UTC';
     const slots = await AvailabilitySlot.findActiveByTeacher(teacherId);
 
     const startLocalTeacher = moment(startDateTime).tz(teacherTimezone);
@@ -282,7 +284,7 @@ async function validateTeacherAvailability(teacherId, startDateTime, endDateTime
     }
 
     // Check for unavailable periods and existing class conflicts
-    return await checkUnavailabilityAndConflicts(teacherId, startDateTime, endDateTime, excludeClassId);
+    return await checkUnavailabilityAndConflicts(teacherId, startDateTime, endDateTime, excludeClassId, teacherTimezone);
 
   } catch (error) {
     console.error('Error validating teacher availability:', error);
@@ -303,7 +305,21 @@ async function validateTeacherAvailability(teacherId, startDateTime, endDateTime
  * @param {string} excludeClassId - Optional class ID to exclude
  * @returns {Object} Validation result
  */
-async function checkUnavailabilityAndConflicts(teacherId, startDateTime, endDateTime, excludeClassId = null) {
+function normalizeExclude(exclude) {
+  if (!exclude) return { excludeClassId: null, excludeParentRecurringClassId: null };
+  if (typeof exclude === 'string') {
+    return { excludeClassId: exclude, excludeParentRecurringClassId: null };
+  }
+  if (typeof exclude === 'object') {
+    return {
+      excludeClassId: exclude.excludeClassId || exclude.classId || null,
+      excludeParentRecurringClassId: exclude.excludeParentRecurringClassId || exclude.parentRecurringClassId || null,
+    };
+  }
+  return { excludeClassId: null, excludeParentRecurringClassId: null };
+}
+
+async function checkUnavailabilityAndConflicts(teacherId, startDateTime, endDateTime, exclude = null, displayTimezone = null) {
   // Check for unavailable periods
   const unavailableConflict = await UnavailablePeriod.hasConflictForTeacher(
     teacherId,
@@ -339,8 +355,16 @@ async function checkUnavailabilityAndConflicts(teacherId, startDateTime, endDate
     }
   };
 
+  const { excludeClassId, excludeParentRecurringClassId } = normalizeExclude(exclude);
   if (excludeClassId) {
     classConflictQuery._id = { $ne: excludeClassId };
+  }
+  if (excludeParentRecurringClassId) {
+    classConflictQuery.$and = [
+      ...(classConflictQuery.$and || []),
+      { _id: { $ne: excludeParentRecurringClassId } },
+      { parentRecurringClass: { $ne: excludeParentRecurringClassId } },
+    ];
   }
 
   const classConflicts = await Class.findOne(classConflictQuery)
@@ -348,16 +372,47 @@ async function checkUnavailabilityAndConflicts(teacherId, startDateTime, endDate
 
   if (classConflicts) {
     const conflictEndTime = new Date(classConflicts.scheduledDate.getTime() + classConflicts.duration * 60000);
+    let resolvedStudentName = classConflicts.student?.studentName || '';
+    if (!resolvedStudentName || String(resolvedStudentName).trim().toLowerCase() === 'unknown student') {
+      const studentId = classConflicts.student?.studentId;
+      if (studentId) {
+        try {
+          const row = await Student.findById(studentId).select('firstName lastName').lean();
+          const fullName = row ? `${row.firstName || ''} ${row.lastName || ''}`.trim() : '';
+          if (fullName) resolvedStudentName = fullName;
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    // Use a single timezone for display (teacher timezone by default).
+    let tz = displayTimezone;
+    if (!tz) {
+      try {
+        const teacher = await User.findById(teacherId).select('timezone').lean();
+        tz = teacher?.timezone || 'UTC';
+      } catch (e) {
+        tz = 'UTC';
+      }
+    }
+
+    const startLocal = moment(classConflicts.scheduledDate).tz(tz).format('YYYY-MM-DD HH:mm');
+    const endLocal = moment(conflictEndTime).tz(tz).format('YYYY-MM-DD HH:mm');
+
     return {
       isAvailable: false,
-      reason: `Teacher has existing class with ${classConflicts.student.studentName} from ${classConflicts.scheduledDate.toLocaleTimeString()} to ${conflictEndTime.toLocaleTimeString()}`,
+      reason: 'Teacher already has another class during this time.',
       conflictType: 'existing_class',
       conflictDetails: {
         classId: classConflicts._id,
-        studentName: classConflicts.student.studentName,
+        studentName: resolvedStudentName || classConflicts.student?.studentName || 'Unknown Student',
         startTime: classConflicts.scheduledDate,
         endTime: conflictEndTime,
-        subject: classConflicts.subject
+        subject: classConflicts.subject,
+        timezone: tz,
+        startLocal,
+        endLocal,
       }
     };
   }
@@ -376,27 +431,76 @@ async function checkUnavailabilityAndConflicts(teacherId, startDateTime, endDate
  * @param {number} lookAheadDays - How many days to look ahead for alternatives
  * @returns {Array} Array of alternative time slots
  */
-async function getAlternativeTimeSlots(teacherId, duration, preferredDays = [], lookAheadDays = 14) {
+async function getAlternativeTimeSlots(teacherId, duration, preferredDays = [], lookAheadDays = 14, options = {}) {
   try {
     const teacher = await User.findById(teacherId);
     if (!teacher || teacher.role !== 'teacher') {
       return [];
     }
 
+    const teacherTimezone = teacher?.timezone || 'UTC';
+    const anchorStartUtc = options?.anchorStartUtc ? new Date(options.anchorStartUtc) : null;
+    const windowHours = Number(options?.windowHours || 0);
+    const exclude = options?.exclude || null;
+    const preferredTz = options?.timezone || teacherTimezone;
+
+    // If an anchor time is provided, generate suggestions near it (±windowHours and adjacent days).
+    if (anchorStartUtc && Number.isFinite(anchorStartUtc.getTime()) && windowHours > 0) {
+      const anchorLocal = moment(anchorStartUtc).tz(preferredTz);
+      const candidates = [];
+
+      const minuteStep = 30;
+      const maxOffsetMinutes = Math.round(windowHours * 60);
+      const dayOffsets = [0, -1, 1];
+
+      for (const dayOffset of dayOffsets) {
+        for (let offset = -maxOffsetMinutes; offset <= maxOffsetMinutes; offset += minuteStep) {
+          const startLocal = anchorLocal.clone().add(dayOffset, 'days').add(offset, 'minutes');
+          const endLocal = startLocal.clone().add(Number(duration || 60), 'minutes');
+
+          // Avoid cross-midnight proposals in the local timezone (availability windows are day-based).
+          if (startLocal.format('YYYY-MM-DD') !== endLocal.format('YYYY-MM-DD')) {
+            continue;
+          }
+
+          const startUtc = startLocal.toDate();
+          const endUtc = endLocal.toDate();
+
+          const validation = await validateTeacherAvailability(teacherId, startUtc, endUtc, exclude);
+          if (validation.isAvailable) {
+            candidates.push({
+              startDateTime: startUtc,
+              endDateTime: endUtc,
+              timezone: preferredTz,
+              startLocal: startLocal.format('YYYY-MM-DD HH:mm'),
+              endLocal: endLocal.format('YYYY-MM-DD HH:mm'),
+              sortKey: Math.abs(dayOffset) * 1440 + Math.abs(offset)
+            });
+          }
+
+          if (candidates.length >= 10) break;
+        }
+        if (candidates.length >= 10) break;
+      }
+
+      candidates.sort((a, b) => a.sortKey - b.sortKey);
+      return candidates.slice(0, 10).map(({ sortKey, ...rest }) => rest);
+    }
+
     // If teacher uses default 24/7 availability, generate some common time slots
     const availabilityStatus = teacher.teacherInfo?.availabilityStatus || 'default_24_7';
     if (availabilityStatus === 'default_24_7') {
-      return generateDefaultAlternatives(teacherId, duration, preferredDays, lookAheadDays);
+      return generateDefaultAlternatives(teacherId, duration, preferredDays, lookAheadDays, exclude, teacherTimezone);
     }
 
     // Get teacher's availability slots
     const availabilitySlots = await AvailabilitySlot.findActiveByTeacher(teacherId);
     const alternatives = [];
 
-    const now = new Date();
+    const nowLocal = moment().tz(teacherTimezone).startOf('day');
     for (let i = 0; i < lookAheadDays; i++) {
-      const checkDate = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
-      const dayOfWeek = checkDate.getUTCDay();
+      const dayLocalTeacher = nowLocal.clone().add(i, 'days');
+      const dayOfWeek = dayLocalTeacher.day();
 
       // Skip if not in preferred days and preferred days are specified
       if (preferredDays.length > 0 && !preferredDays.includes(dayOfWeek)) {
@@ -404,36 +508,46 @@ async function getAlternativeTimeSlots(teacherId, duration, preferredDays = [], 
       }
 
       // Find slots for this day
-      const daySlots = availabilitySlots.filter(slot => slot.dayOfWeek === dayOfWeek);
+      const daySlots = availabilitySlots.filter(slot => Number(slot.dayOfWeek) === Number(dayOfWeek));
 
       for (const slot of daySlots) {
         // Generate potential start times within this slot
         const slotDuration = slot.durationMinutes;
         if (slotDuration >= duration) {
-          const [startHour, startMin] = slot.startTime.split(':').map(Number);
-          const [endHour, endMin] = slot.endTime.split(':').map(Number);
+          const slotTimezone = slot?.timezone || teacherTimezone;
+          const [startHour, startMin] = String(slot.startTime || '00:00').split(':').map(Number);
+          const [endHour, endMin] = String(slot.endTime || '00:00').split(':').map(Number);
 
           // Try different start times within the slot
           for (let hour = startHour; hour <= endHour; hour++) {
             for (let minute = 0; minute < 60; minute += 30) { // 30-minute intervals
               if (hour === endHour && minute >= endMin) break;
 
-              const proposedStart = new Date(checkDate);
-              proposedStart.setUTCHours(hour, minute, 0, 0);
-              const proposedEnd = new Date(proposedStart.getTime() + duration * 60000);
+              const proposedStartLocal = dayLocalTeacher.clone().tz(slotTimezone).hour(hour).minute(minute).second(0).millisecond(0);
+              const proposedEndLocal = proposedStartLocal.clone().add(duration, 'minutes');
+
+              // avoid crossing midnight in slot timezone
+              if (proposedStartLocal.format('YYYY-MM-DD') !== proposedEndLocal.format('YYYY-MM-DD')) {
+                continue;
+              }
+
+              const proposedStart = proposedStartLocal.toDate();
+              const proposedEnd = proposedEndLocal.toDate();
 
               // Check if this fits within the slot
-              const proposedEndTime = `${String(proposedEnd.getUTCHours()).padStart(2, '0')}:${String(proposedEnd.getUTCMinutes()).padStart(2, '0')}`;
-              if (proposedEndTime <= slot.endTime) {
+              const startTimeLocal = proposedStartLocal.format('HH:mm');
+              const endTimeLocal = proposedEndLocal.format('HH:mm');
+              if (canFitInSlot(slot.startTime, slot.endTime, startTimeLocal, endTimeLocal)) {
                 // Validate this time slot
-                const validation = await validateTeacherAvailability(teacherId, proposedStart, proposedEnd);
+                const validation = await validateTeacherAvailability(teacherId, proposedStart, proposedEnd, exclude);
                 if (validation.isAvailable) {
                   alternatives.push({
                     startDateTime: proposedStart,
                     endDateTime: proposedEnd,
                     dayName: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek],
-                    timeDisplay: `${proposedStart.toLocaleTimeString()} - ${proposedEnd.toLocaleTimeString()}`,
-                    timezone: slot.timezone
+                    timezone: slotTimezone,
+                    startLocal: proposedStartLocal.format('YYYY-MM-DD HH:mm'),
+                    endLocal: proposedEndLocal.format('YYYY-MM-DD HH:mm'),
                   });
                 }
               }
@@ -454,32 +568,39 @@ async function getAlternativeTimeSlots(teacherId, duration, preferredDays = [], 
 /**
  * Generate default alternatives for teachers with 24/7 availability
  */
-async function generateDefaultAlternatives(teacherId, duration, preferredDays, lookAheadDays) {
+async function generateDefaultAlternatives(teacherId, duration, preferredDays, lookAheadDays, exclude = null, teacherTimezone = 'UTC') {
   const alternatives = [];
   const commonHours = [9, 10, 11, 14, 15, 16, 17, 19, 20]; // Common teaching hours
 
-  const now = new Date();
+  const nowLocal = moment().tz(teacherTimezone).startOf('day');
   for (let i = 0; i < lookAheadDays; i++) {
-    const checkDate = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
-    const dayOfWeek = checkDate.getUTCDay();
+    const dayLocal = nowLocal.clone().add(i, 'days');
+    const dayOfWeek = dayLocal.day();
 
     if (preferredDays.length > 0 && !preferredDays.includes(dayOfWeek)) {
       continue;
     }
 
     for (const hour of commonHours) {
-      const proposedStart = new Date(checkDate);
-      proposedStart.setUTCHours(hour, 0, 0, 0);
-      const proposedEnd = new Date(proposedStart.getTime() + duration * 60000);
+      const proposedStartLocal = dayLocal.clone().hour(hour).minute(0).second(0).millisecond(0);
+      const proposedEndLocal = proposedStartLocal.clone().add(duration, 'minutes');
 
-      const validation = await checkUnavailabilityAndConflicts(teacherId, proposedStart, proposedEnd);
+      if (proposedStartLocal.format('YYYY-MM-DD') !== proposedEndLocal.format('YYYY-MM-DD')) {
+        continue;
+      }
+
+      const proposedStart = proposedStartLocal.toDate();
+      const proposedEnd = proposedEndLocal.toDate();
+
+      const validation = await checkUnavailabilityAndConflicts(teacherId, proposedStart, proposedEnd, exclude, teacherTimezone);
       if (validation.isAvailable) {
         alternatives.push({
           startDateTime: proposedStart,
           endDateTime: proposedEnd,
           dayName: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek],
-          timeDisplay: `${proposedStart.toLocaleTimeString()} - ${proposedEnd.toLocaleTimeString()}`,
-          timezone: 'UTC'
+          timezone: teacherTimezone,
+          startLocal: proposedStartLocal.format('YYYY-MM-DD HH:mm'),
+          endLocal: proposedEndLocal.format('YYYY-MM-DD HH:mm'),
         });
       }
 

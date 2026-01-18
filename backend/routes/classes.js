@@ -2350,7 +2350,8 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
       proposedTeacher?._id || proposedTeacher,
       proposedSlots,
       proposedTimezone || DEFAULT_TIMEZONE,
-      proposedRecurrenceDuration
+      proposedRecurrenceDuration,
+      { excludeParentRecurringClassId: patternId }
     );
 
     if (!recurringUpdateAvailability.ok) {
@@ -2362,11 +2363,47 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
         const teacherId = proposedTeacher?._id || proposedTeacher;
         const duration = Number(proposedRecurrenceDuration || proposedDuration || 60);
         const preferredDays = typeof slotInfo.dayOfWeek === 'number' ? [slotInfo.dayOfWeek] : [];
+
+        // Anchor suggestions near the edited slot time (avoid irrelevant 11:00/13:00 suggestions).
+        let anchorStartUtc = null;
+        try {
+          const nowForAnchor = new Date();
+          const baseUtc = new Date(Date.UTC(nowForAnchor.getUTCFullYear(), nowForAnchor.getUTCMonth(), nowForAnchor.getUTCDate()));
+          const dayOfWeek = Number(slotInfo?.dayOfWeek);
+          const timeString = typeof slotInfo?.time === 'string' ? slotInfo.time.trim() : '';
+          const slotTimezone = slotInfo?.timezone || proposedTimezone || DEFAULT_TIMEZONE;
+          if (Number.isInteger(dayOfWeek) && /^\d{2}:\d{2}$/.test(timeString)) {
+            const [hour, minute] = timeString.split(':').map((v) => Number.parseInt(v, 10));
+            const dayOffset = (dayOfWeek - baseUtc.getUTCDay() + 7) % 7;
+            const targetDate = new Date(baseUtc.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+            anchorStartUtc = tzUtils.buildUtcFromParts
+              ? tzUtils.buildUtcFromParts(
+                  {
+                    year: targetDate.getUTCFullYear(),
+                    month: targetDate.getUTCMonth(),
+                    day: targetDate.getUTCDate(),
+                    hour,
+                    minute,
+                  },
+                  slotTimezone
+                )
+              : new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate(), hour, minute));
+          }
+        } catch (e) {
+          // ignore
+        }
+
         alternatives = await availabilityService.getAlternativeTimeSlots(
           teacherId,
           duration,
           preferredDays,
-          14
+          14,
+          {
+            anchorStartUtc,
+            windowHours: 2,
+            exclude: { excludeParentRecurringClassId: patternId },
+            timezone: slotInfo?.timezone || proposedTimezone || DEFAULT_TIMEZONE,
+          }
         );
       } catch (altErr) {
         console.warn('Failed to compute alternative slots for recurring update availability error', altErr?.message || altErr);

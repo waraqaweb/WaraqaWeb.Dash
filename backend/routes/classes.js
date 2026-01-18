@@ -776,31 +776,34 @@ router.get("/", authenticateToken, async (req, res) => {
       filters.$and = [...(filters.$and || []), { $or: searchOr }];
     }
 
-  // upcoming / previous filtering based on end time
+    // upcoming / previous filtering
+    // IMPORTANT: avoid $expr end-time calculations here because they force collection scans
+    // and can lead to >60s timeouts on large datasets.
+    // We approximate "ongoing" by including a safety window equal to the max class duration.
+    const MAX_CLASS_DURATION_MINUTES = 180;
+    const cutoff = new Date(now.getTime() - MAX_CLASS_DURATION_MINUTES * 60000);
+
     if (filter === "upcoming") {
-      filters.$or = [
-        { scheduledDate: { $gte: now } },
-        {
-          $expr: {
-            $gte: [
-              { $add: ["$scheduledDate", { $multiply: [{ $ifNull: ["$duration", 0] }, 60000] }] },
-              now,
-            ],
-          },
-        },
-      ];
+      // Include classes starting from (now - maxDuration) so ongoing classes still show.
+      if (!filters.scheduledDate || typeof filters.scheduledDate !== 'object') {
+        filters.scheduledDate = { $gte: cutoff };
+      } else {
+        const existingGte = filters.scheduledDate.$gte ? new Date(filters.scheduledDate.$gte) : null;
+        filters.scheduledDate.$gte = existingGte && existingGte > cutoff ? existingGte : cutoff;
+      }
     } else if (filter === "previous") {
-      filters.$and = [
-        ...(filters.$and || []),
-        {
-          $expr: {
-            $lt: [
-              { $add: ["$scheduledDate", { $multiply: [{ $ifNull: ["$duration", 0] }, 60000] }] },
-              now,
-            ],
-          },
-        },
-      ];
+      // Classes that must have ended before now have scheduledDate < (now - maxDuration).
+      if (!filters.scheduledDate || typeof filters.scheduledDate !== 'object') {
+        filters.scheduledDate = { $lt: cutoff };
+      } else {
+        // Keep existing bounds but enforce an upper bound.
+        const existingLt = filters.scheduledDate.$lt ? new Date(filters.scheduledDate.$lt) : null;
+        const existingLte = filters.scheduledDate.$lte ? new Date(filters.scheduledDate.$lte) : null;
+        const existingUpper = existingLt || existingLte;
+        // Prefer strict $lt for consistency.
+        filters.scheduledDate.$lt = existingUpper && existingUpper < cutoff ? existingUpper : cutoff;
+        if (filters.scheduledDate.$lte) delete filters.scheduledDate.$lte;
+      }
     }
 
     // Filter out classes that are hidden due to system vacation or individual teacher vacation

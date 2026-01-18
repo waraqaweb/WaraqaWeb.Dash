@@ -654,6 +654,8 @@ classSchema.index({ teacher: 1, scheduledDate: 1 });
 classSchema.index({ "student.guardianId": 1, scheduledDate: 1 });
 classSchema.index({ "student.studentId": 1, scheduledDate: 1 });
 classSchema.index({ status: 1, scheduledDate: 1 });
+classSchema.index({ hidden: 1, scheduledDate: 1 });
+classSchema.index({ hidden: 1, status: 1, scheduledDate: 1 });
 classSchema.index({ scheduledDate: 1 });
 classSchema.index({ createdAt: 1 });
 classSchema.index({ parentRecurringClass: 1 });

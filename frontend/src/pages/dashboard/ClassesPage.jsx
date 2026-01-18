@@ -336,6 +336,7 @@ const ClassesPage = ({ isActive = true }) => {
   const [classes, setClasses] = useState([]);
   const [classesCorpus, setClassesCorpus] = useState([]);
   const loadedClassPagesRef = useRef(new Set());
+  const classesRef = useRef([]);
   const [meetings, setMeetings] = useState([]);
   const [meetingsLoading, setMeetingsLoading] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
@@ -387,6 +388,8 @@ const ClassesPage = ({ isActive = true }) => {
   const fetchClassesRef = useRef(null);
   const fetchClassesKeyRef = useRef("");
   const fetchClassesInFlightRef = useRef(false);
+  const fetchClassesAbortRef = useRef(null);
+  const fetchClassesRequestIdRef = useRef(0);
   const fetchTeachersRef = useRef(null);
   const fetchGuardiansRef = useRef(null);
   const adminTimezoneRef = useRef(adminTimezone);
@@ -639,6 +642,7 @@ const ClassesPage = ({ isActive = true }) => {
     guardianFilter,
     tabFilter,
     currentPage,
+    normalizedSearchTerm,
     isAdminUser,
   ]);
 
@@ -970,6 +974,10 @@ const ClassesPage = ({ isActive = true }) => {
     return false;
   };
 
+  useEffect(() => {
+    classesRef.current = classes || [];
+  }, [classes]);
+
 // Fetch classes with filter
 const fetchClasses = useCallback(async () => {
   try {
@@ -1006,6 +1014,20 @@ const fetchClasses = useCallback(async () => {
     fetchClassesKeyRef.current = requestSignature;
     fetchClassesInFlightRef.current = true;
 
+    const requestId = fetchClassesRequestIdRef.current + 1;
+    fetchClassesRequestIdRef.current = requestId;
+
+    if (fetchClassesAbortRef.current) {
+      try {
+        fetchClassesAbortRef.current.abort();
+      } catch (e) {
+        // ignore abort errors
+      }
+    }
+
+    const controller = new AbortController();
+    fetchClassesAbortRef.current = controller;
+
     const cached = readCache(cacheKey, { deps: ['classes'] });
     if (cached.hit && cached.value) {
       const cachedClasses = cached.value.classes || [];
@@ -1017,10 +1039,12 @@ const fetchClasses = useCallback(async () => {
 
       // Background revalidate if cache is getting old (keeps data fresh without blocking UI)
       if (cached.ageMs < 60_000) {
+        fetchClassesInFlightRef.current = false;
         return;
       }
     } else {
-      setLoading(true);
+      const hasExisting = (classesRef.current || []).length > 0;
+      setLoading(!hasExisting);
     }
 
     const params = {
@@ -1044,7 +1068,10 @@ const fetchClasses = useCallback(async () => {
       params.search = normalizedSearchTerm;
     }
 
-    const res = await api.get("/classes", { params });
+    const res = await api.get("/classes", { params, signal: controller.signal });
+    if (requestId !== fetchClassesRequestIdRef.current) {
+      return;
+    }
     const fetchedClasses = res.data.classes || [];
 
     // Backend already sorts by scheduledDate, so no need to sort again
@@ -1077,8 +1104,11 @@ const fetchClasses = useCallback(async () => {
       { ttlMs: 5 * 60_000, deps: ['classes'] }
     );
   } catch (err) {
-    console.error("Fetch classes error:", err);
-    setError("Failed to fetch classes");
+    const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+    if (!isCanceled) {
+      console.error("Fetch classes error:", err);
+      setError("Failed to fetch classes");
+    }
   } finally {
     setLoading(false);
     fetchClassesInFlightRef.current = false;

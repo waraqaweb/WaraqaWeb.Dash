@@ -808,7 +808,8 @@ router.get("/", authenticateToken, async (req, res) => {
 
     // Filter out classes that are hidden due to system vacation or individual teacher vacation
     if (!req.user || req.user.role !== 'admin') {
-      filters.hidden = { $ne: true };
+      // Prefer an index-friendly filter while still including legacy docs without `hidden`.
+      filters.hidden = { $in: [false, null] };
     }
     if (req.user && req.user.role === 'teacher') {
       // always restrict to the logged-in teacher
@@ -852,39 +853,56 @@ router.get("/", authenticateToken, async (req, res) => {
     const sortOrder = filter === "upcoming" ? 1 : -1;
     const sortObj = { scheduledDate: sortOrder };
 
-    // Always exclude recurring pattern docs
-    filters.status = filters.status && filters.status !== "all" 
-      ? filters.status 
-      : { $ne: "pattern" };
+    // Always exclude recurring pattern docs. Use a status allowlist to keep queries index-friendly.
+    const STATUS_ALLOW_LIST = [
+      "scheduled",
+      "in_progress",
+      "completed",
+      "attended",
+      "missed_by_student",
+      "cancelled_by_teacher",
+      "cancelled_by_guardian",
+      "cancelled_by_admin",
+      "no_show_both",
+      "absent",
+      "cancelled",
+    ];
 
-    const rawClasses = await Class.find(filters)
-      .select([
-        'title',
-        'description',
-        'subject',
-        'status',
-        'scheduledDate',
-        'duration',
-        'timezone',
-        'meetingLink',
-        'parentRecurringClass',
-        'student.guardianId',
-        'student.studentId',
-        'student.studentName',
-        'pendingReschedule',
-        'cancellation',
-        'classReport.submittedAt',
-        'classReport.classScore',
-        'reportSubmission.status',
-        'createdAt',
-        'updatedAt'
-      ].join(' '))
-      .populate("teacher", "firstName lastName email phone profilePicture")
-      .populate("student.guardianId", "firstName lastName email phone")
-      .sort(sortObj)
-      .skip(skip)
-      .limit(limitNum)
-      .lean();
+    filters.status = filters.status && filters.status !== "all"
+      ? filters.status
+      : { $in: STATUS_ALLOW_LIST };
+
+    const [rawClasses, totalClasses] = await Promise.all([
+      Class.find(filters)
+        .select([
+          'title',
+          'description',
+          'subject',
+          'status',
+          'scheduledDate',
+          'duration',
+          'timezone',
+          'meetingLink',
+          'parentRecurringClass',
+          'student.guardianId',
+          'student.studentId',
+          'student.studentName',
+          'pendingReschedule',
+          'cancellation',
+          'classReport.submittedAt',
+          'classReport.classScore',
+          'reportSubmission.status',
+          'createdAt',
+          'updatedAt'
+        ].join(' '))
+        .populate("teacher", "firstName lastName email phone profilePicture")
+        .populate("student.guardianId", "firstName lastName email phone")
+        .sort(sortObj)
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Class.countDocuments(filters),
+    ]);
 
     await hydrateUnknownStudentNames(rawClasses);
 
@@ -898,7 +916,6 @@ router.get("/", authenticateToken, async (req, res) => {
       };
     });
 
-    const totalClasses = await Class.countDocuments(filters);
     const totalPages = Math.ceil(totalClasses / limitNum);
 
     // Get user's timezone for conversion

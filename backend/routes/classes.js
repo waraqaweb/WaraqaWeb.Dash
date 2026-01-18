@@ -2443,13 +2443,20 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
 
     await pattern.save();
 
-    // Soft-cancel future children rather than hard deleting.
-    // This makes the operation resilient to failures and allows recovery/auditing.
+    // Replace future instances.
+    // Historically we "soft-cancelled" children and regenerated new ones, which left
+    // cancelled duplicates visible in the UI. We still soft-cancel first for rollback safety,
+    // but we delete the replaced children after successful regeneration.
     const cancelFilter = {
       parentRecurringClass: patternId,
       scheduledDate: { $gte: now },
-      status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'] },
+      status: 'scheduled',
     };
+
+    const replacedChildIds = (futureChildren || [])
+      .filter((child) => child?.status === 'scheduled')
+      .map((child) => child._id);
+
     await Class.updateMany(cancelFilter, {
       $set: {
         status: 'cancelled_by_admin',
@@ -2524,6 +2531,24 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
       });
     }
 
+    // Delete replaced children now that regeneration succeeded.
+    // This prevents cancelled duplicates from remaining visible and prevents invoice rebuilds
+    // from accidentally including the replaced (cancelled) rows.
+    try {
+      if (replacedChildIds.length > 0) {
+        await Class.deleteMany({
+          _id: { $in: replacedChildIds },
+          parentRecurringClass: patternId,
+          scheduledDate: { $gte: now },
+          status: 'cancelled_by_admin',
+          'cancellation.reason': 'Series updated',
+        });
+      }
+    } catch (cleanupErr) {
+      // Non-fatal: the update succeeded, but duplicates may remain until cleanup.
+      console.warn('Failed to delete replaced recurring children after regeneration:', cleanupErr?.message || cleanupErr);
+    }
+
     // 🔄 Update affected pending/unpaid invoices
     try {
       const studentId = pattern.student?.studentId || pattern.student?._id || pattern.student;
@@ -2553,7 +2578,7 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
               'student.guardianId': guardianId,
               'student.studentId': studentId,
               scheduledDate: { $gte: billingStart, $lte: billingEnd },
-              status: { $ne: 'cancelled' }
+              status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'] }
             })
               .select('_id subject scheduledDate duration student teacher status')
               .lean();

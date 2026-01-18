@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "speed up class fetching 1"
+git commit -m "speed up class fetching 2"
 git push origin main
 
 ---

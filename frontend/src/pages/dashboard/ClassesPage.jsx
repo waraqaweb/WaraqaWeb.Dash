@@ -623,10 +623,7 @@ const ClassesPage = ({ isActive = true }) => {
       fetchClassesRef.current();
     }
 
-    if (isAdminUser) {
-      if (fetchTeachersRef.current) fetchTeachersRef.current();
-      if (fetchGuardiansRef.current) fetchGuardiansRef.current();
-    } else {
+    if (!isAdminUser) {
       setTeachers([]);
       setGuardians([]);
     }
@@ -642,6 +639,12 @@ const ClassesPage = ({ isActive = true }) => {
     currentPage,
     isAdminUser,
   ]);
+
+  useEffect(() => {
+    if (!isActive || !isAdminUser) return;
+    if (!teachers.length) fetchTeachers({ force: false });
+    if (!guardians.length) fetchGuardians({ force: false });
+  }, [fetchGuardians, fetchTeachers, guardians.length, isActive, isAdminUser, teachers.length]);
 
   // Server-side search is used now; no background prefetch needed.
 
@@ -1402,37 +1405,63 @@ fetchClassesRef.current = fetchClasses;
     }));
   };
 
-  const fetchTeachers = useCallback(async () => {
+  const fetchTeachers = useCallback(async ({ force = false } = {}) => {
     if (!isAdminUser) {
       setTeachers([]);
       return;
     }
 
+    if (!force && teachers.length > 0) return;
+
+    const cacheKey = makeCacheKey('classes:teachers', user?._id, { role: 'teacher' });
+    const cached = readCache(cacheKey, { deps: ['users', 'teachers'] });
+    if (!force && cached.hit && Array.isArray(cached.value)) {
+      setTeachers(cached.value);
+      return;
+    }
+
     try {
-      const res = await api.get("/users?role=teacher");
-      setTeachers(res.data?.users || []);
+      const res = await api.get("/users", {
+        params: { role: 'teacher', limit: 200, sortBy: 'firstName', order: 'asc' }
+      });
+      const list = res.data?.users || [];
+      setTeachers(list);
+      writeCache(cacheKey, list, { ttlMs: 10 * 60_000, deps: ['users', 'teachers'] });
     } catch (err) {
       console.error("Fetch teachers error:", err);
       setTeachers([]);
     }
-  }, [isAdminUser]);
+  }, [isAdminUser, teachers.length, user?._id]);
 
   fetchTeachersRef.current = fetchTeachers;
 
-  const fetchGuardians = useCallback(async () => {
+  const fetchGuardians = useCallback(async ({ force = false } = {}) => {
     if (!isAdminUser) {
       setGuardians([]);
       return;
     }
 
+    if (!force && guardians.length > 0) return;
+
+    const cacheKey = makeCacheKey('classes:guardians', user?._id, { role: 'guardian' });
+    const cached = readCache(cacheKey, { deps: ['users', 'guardians'] });
+    if (!force && cached.hit && Array.isArray(cached.value)) {
+      setGuardians(cached.value);
+      return;
+    }
+
     try {
-      const res = await api.get("/users?role=guardian");
-      setGuardians(res.data?.users || []);
+      const res = await api.get("/users", {
+        params: { role: 'guardian', limit: 200, sortBy: 'firstName', order: 'asc' }
+      });
+      const list = res.data?.users || [];
+      setGuardians(list);
+      writeCache(cacheKey, list, { ttlMs: 10 * 60_000, deps: ['users', 'guardians'] });
     } catch (err) {
       console.error("Fetch guardians error:", err);
       setGuardians([]);
     }
-  }, [isAdminUser]);
+  }, [guardians.length, isAdminUser, user?._id]);
 
   fetchGuardiansRef.current = fetchGuardians;
 

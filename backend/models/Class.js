@@ -730,15 +730,17 @@ classSchema.pre('save', function(next) {
       wasReportSubmitted: originalState.wasReportSubmitted || false
     };
     
-    console.log(`🔍 [Class Pre-Save] ID ${this._id}:`, {
-      isNew: this.isNew,
-      statusModified: this.isModified('status'),
-      newStatus: this.status,
-      originalStatus: originalState.status,
-      capturedPrevStatus: this.$locals.prevSnapshot.status,
-      reportWasSubmitted: originalState.wasReportSubmitted,
-      currentHasSubmittedAt: !!this.classReport?.submittedAt
-    });
+    if (process.env.DEBUG_CLASS_SAVE === '1') {
+      console.log(`🔍 [Class Pre-Save] ID ${this._id}:`, {
+        isNew: this.isNew,
+        statusModified: this.isModified('status'),
+        newStatus: this.status,
+        originalStatus: originalState.status,
+        capturedPrevStatus: this.$locals.prevSnapshot.status,
+        reportWasSubmitted: originalState.wasReportSubmitted,
+        currentHasSubmittedAt: !!this.classReport?.submittedAt
+      });
+    }
   } catch (e) {
     console.warn('[Class Pre-Save] Error:', e.message);
     // Safe fallback

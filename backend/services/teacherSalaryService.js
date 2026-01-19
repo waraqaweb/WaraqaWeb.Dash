@@ -1008,6 +1008,15 @@ class TeacherSalaryService {
         query.year = filters.year;
       }
 
+      if (filters.month) {
+        query.month = filters.month;
+      }
+
+      if (filters.search) {
+        const regex = new RegExp(filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        query.invoiceNumber = regex;
+      }
+
       const allowedStatuses = TEACHER_VISIBLE_STATUSES;
       if (filters.status && allowedStatuses.includes(filters.status)) {
         query.status = filters.status;

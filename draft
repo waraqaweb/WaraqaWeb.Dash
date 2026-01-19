@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "speed up class fetching 3"
+git commit -m "Mainly to teacher invoice view and fetching"
 git push origin main
 
 ---

@@ -32,6 +32,10 @@ async function getUserStats() {
   return safeRun(async () => {
     const totalAgg = await User.aggregate([{ $count: 'total' }]);
     const byRoleAgg = await User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]);
+    const activeByRoleAgg = await User.aggregate([
+      { $match: { isActive: true } },
+      { $group: { _id: '$role', count: { $sum: 1 } } }
+    ]);
     const now = new Date();
     const monthStart = startOfMonth(now);
     const monthEnd = endOfMonth(now);
@@ -45,18 +49,33 @@ async function getUserStats() {
       acc[r._id] = r.count || 0; return acc;
     }, {});
 
+    const activeByRole = (Array.isArray(activeByRoleAgg) ? activeByRoleAgg : []).reduce((acc, r) => {
+      acc[r._id] = r.count || 0; return acc;
+    }, {});
+
     // also include new students this month
     const newStudentsAgg = await Student.aggregate([
       { $match: { createdAt: { $gte: monthStart, $lt: monthEnd } } },
       { $count: 'count' }
     ]);
 
+    // total/active students from standalone Student collection
+    const totalStudentsAgg = await Student.aggregate([{ $count: 'count' }]);
+    const activeStudentsAgg = await Student.aggregate([{ $match: { isActive: true } }, { $count: 'count' }]);
+
     return {
       total: totalAgg[0]?.total || 0,
       byRole,
+      activeByRole,
       newUsersThisMonth: newUsersAgg[0]?.count || 0,
       newStudentsThisMonth: newStudentsAgg[0]?.count || 0,
-      activeUsersCount: activeAgg[0]?.count || 0
+      activeUsersCount: activeAgg[0]?.count || 0,
+      totalTeachers: byRole.teacher || 0,
+      totalGuardians: byRole.guardian || 0,
+      totalStudents: totalStudentsAgg[0]?.count || 0,
+      activeTeachersTotal: activeByRole.teacher || 0,
+      activeGuardiansTotal: activeByRole.guardian || 0,
+      activeStudentsTotal: activeStudentsAgg[0]?.count || 0
     };
   }, { total: 0, byRole: {}, newUsersThisMonth: 0, activeUsersCount: 0 });
 }
@@ -80,9 +99,14 @@ async function getClassStats() {
     ]);
     const scheduledHoursUntilMonthEnd = (scheduledHoursAgg[0]?.totalMinutes || 0) / 60;
 
-    // completed hours this month (sum durations for completed/attended/missed statuses)
+    // completed hours this month (sum durations for reports submitted this month)
     const completedAgg = await Class.aggregate([
-      { $match: { scheduledDate: { $gte: monthStart, $lt: monthEnd }, status: { $in: ['attended','completed','missed_by_student','absent'] } } },
+      {
+        $match: {
+          'classReport.submittedAt': { $gte: monthStart, $lt: monthEnd },
+          status: { $in: ['attended','completed','missed_by_student','absent'] }
+        }
+      },
       { $group: { _id: null, totalMinutes: { $sum: '$duration' } } }
     ]);
     const completedHoursThisMonth = (completedAgg[0]?.totalMinutes || 0) / 60;
@@ -170,9 +194,23 @@ async function getInvoiceStats() {
 async function getTeacherStats() {
   return safeRun(async () => {
     const now = new Date();
+    const last30Start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const prev30Start = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+    const prev30End = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     // teachers on vacation
     const onVacation = await User.find({ role: 'teacher', vacationStartDate: { $lte: now }, vacationEndDate: { $gte: now } }).select('firstName lastName vacationStartDate vacationEndDate').lean();
     const teachersOnVacationCount = Array.isArray(onVacation) ? onVacation.length : 0;
+
+    const totalTeachersAgg = await User.aggregate([
+      { $match: { role: 'teacher' } },
+      { $count: 'count' }
+    ]);
+    const activeTeachersAgg = await User.aggregate([
+      { $match: { role: 'teacher', isActive: true } },
+      { $count: 'count' }
+    ]);
+    const activeTeachersLast30 = await Class.distinct('teacher', { scheduledDate: { $gte: last30Start, $lt: now } });
+    const activeTeachersPrev30 = await Class.distinct('teacher', { scheduledDate: { $gte: prev30Start, $lt: prev30End } });
 
     // monthly teacher earnings aggregated across teacher_payment invoices
     const currentYear = now.getFullYear();
@@ -183,12 +221,36 @@ async function getTeacherStats() {
     ]);
     const monthlyTeacherEarnings = earningsAgg[0]?.total || 0;
 
-    return { teachersOnVacationCount, teachersOnVacationList: onVacation, monthlyTeacherEarnings };
+    return {
+      teachersOnVacationCount,
+      teachersOnVacationList: onVacation,
+      monthlyTeacherEarnings,
+      totalTeachers: totalTeachersAgg[0]?.count || 0,
+      activeTeachersTotal: activeTeachersAgg[0]?.count || 0,
+      activeTeachersLast30: Array.isArray(activeTeachersLast30) ? activeTeachersLast30.length : 0,
+      activeTeachersPrev30: Array.isArray(activeTeachersPrev30) ? activeTeachersPrev30.length : 0
+    };
   }, { teachersOnVacationCount:0, teachersOnVacationList:[], monthlyTeacherEarnings:0 });
 }
 
 async function getGuardianStats({ lowHoursThreshold = 2, topLimit = 5 } = {}) {
   return safeRun(async () => {
+    const now = new Date();
+    const last30Start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const prev30Start = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+    const prev30End = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const totalGuardiansAgg = await User.aggregate([
+      { $match: { role: 'guardian' } },
+      { $count: 'count' }
+    ]);
+    const activeGuardiansAgg = await User.aggregate([
+      { $match: { role: 'guardian', isActive: true } },
+      { $count: 'count' }
+    ]);
+    const activeGuardiansLast30 = await Class.distinct('student.guardianId', { scheduledDate: { $gte: last30Start, $lt: now } });
+    const activeGuardiansPrev30 = await Class.distinct('student.guardianId', { scheduledDate: { $gte: prev30Start, $lt: prev30End } });
+
     // top owing guardians
     const topOwing = await Invoice.aggregate([
       { $match: { status: { $ne: 'paid' } } },
@@ -204,8 +266,191 @@ async function getGuardianStats({ lowHoursThreshold = 2, topLimit = 5 } = {}) {
     // guardians low on hours
     const lowHourGuardians = await User.find({ role: 'guardian', 'guardianInfo.totalHours': { $lt: lowHoursThreshold } }).select('firstName lastName guardianInfo.totalHours').limit(10).lean();
 
-    return { topOwingGuardians: Array.isArray(topOwing) ? topOwing : [], guardiansLowHours: Array.isArray(lowHourGuardians) ? lowHourGuardians : [] };
+    return {
+      topOwingGuardians: Array.isArray(topOwing) ? topOwing : [],
+      guardiansLowHours: Array.isArray(lowHourGuardians) ? lowHourGuardians : [],
+      totalGuardians: totalGuardiansAgg[0]?.count || 0,
+      activeGuardiansTotal: activeGuardiansAgg[0]?.count || 0,
+      activeGuardiansLast30: Array.isArray(activeGuardiansLast30) ? activeGuardiansLast30.length : 0,
+      activeGuardiansPrev30: Array.isArray(activeGuardiansPrev30) ? activeGuardiansPrev30.length : 0
+    };
   }, { topOwingGuardians: [], guardiansLowHours: [] });
+}
+
+async function getStudentStats() {
+  return safeRun(async () => {
+    const now = new Date();
+    const last30Start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const inactiveCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    const totalStudentsAgg = await Student.aggregate([{ $count: 'count' }]);
+    const activeStudentsAgg = await Student.aggregate([{ $match: { isActive: true } }, { $count: 'count' }]);
+
+    const inactiveStudents = await Student.find({
+      isActive: false,
+      updatedAt: { $gte: last30Start, $lte: inactiveCutoff },
+      $or: [
+        { currentTeachers: { $exists: false } },
+        { currentTeachers: { $size: 0 } }
+      ]
+    })
+      .select('firstName lastName guardian updatedAt')
+      .lean();
+
+    const ids = (inactiveStudents || []).map((s) => s?._id).filter(Boolean);
+    let lastClassById = new Map();
+    if (ids.length) {
+      const classAgg = await Class.aggregate([
+        { $match: { 'student.studentId': { $in: ids }, status: { $ne: 'pattern' } } },
+        {
+          $group: {
+            _id: '$student.studentId',
+            lastClassAt: { $max: '$scheduledDate' },
+            classCount: { $sum: 1 },
+            studentName: { $first: '$student.studentName' },
+            guardianId: { $first: '$student.guardianId' }
+          }
+        }
+      ]);
+      lastClassById = new Map((classAgg || []).map((row) => [String(row._id), row]));
+    }
+
+    const inactiveAfterActivity = (inactiveStudents || [])
+      .map((student) => {
+        const row = lastClassById.get(String(student._id));
+        if (!row || !row.lastClassAt) return null;
+        if (row.lastClassAt > student.updatedAt) return null;
+        const fullName = `${student.firstName || ''} ${student.lastName || ''}`.trim();
+        return {
+          studentId: student._id,
+          studentName: fullName || row.studentName || 'Student',
+          guardianId: row.guardianId || student.guardian || null,
+          inactiveAt: student.updatedAt,
+          lastClassAt: row.lastClassAt,
+          classCount: row.classCount || 0
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.inactiveAt) - new Date(a.inactiveAt))
+      .slice(0, 20);
+
+    const newStudentsFirstClasses = await Class.aggregate([
+      {
+        $match: {
+          createdAt: { $exists: true },
+          teacher: { $exists: true },
+          'student.studentId': { $exists: true },
+          status: { $ne: 'pattern' },
+          hidden: { $ne: true }
+        }
+      },
+      {
+        $group: {
+          _id: { teacher: '$teacher', student: '$student.studentId' },
+          firstCreatedAt: { $min: '$createdAt' },
+          firstScheduledAt: { $min: '$scheduledDate' },
+          studentName: { $first: '$student.studentName' }
+        }
+      },
+      { $match: { firstCreatedAt: { $gte: last30Start } } },
+      { $sort: { firstCreatedAt: -1 } },
+      { $limit: 30 },
+      { $lookup: { from: 'users', localField: '_id.teacher', foreignField: '_id', as: 'teacher' } },
+      { $unwind: { path: '$teacher', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'students', localField: '_id.student', foreignField: '_id', as: 'student' } },
+      { $unwind: { path: '$student', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          teacherId: '$_id.teacher',
+          studentId: '$_id.student',
+          firstCreatedAt: 1,
+          firstScheduledAt: 1,
+          studentName: 1,
+          teacherName: {
+            $trim: {
+              input: {
+                $concat: [
+                  { $ifNull: ['$teacher.firstName', ''] },
+                  ' ',
+                  { $ifNull: ['$teacher.lastName', ''] }
+                ]
+              }
+            }
+          },
+          studentProfileName: {
+            $trim: {
+              input: {
+                $concat: [
+                  { $ifNull: ['$student.firstName', ''] },
+                  ' ',
+                  { $ifNull: ['$student.lastName', ''] }
+                ]
+              }
+            }
+          }
+        }
+      }
+    ]);
+
+    const pairKeys = (Array.isArray(newStudentsFirstClasses) ? newStudentsFirstClasses : [])
+      .map((row) => ({ teacher: row.teacherId, student: row.studentId }))
+      .filter((p) => p.teacher && p.student);
+
+    let firstAttendedByPair = new Map();
+    if (pairKeys.length) {
+      const orPairs = pairKeys.map((p) => ({ teacher: p.teacher, 'student.studentId': p.student }));
+      const attendedAgg = await Class.aggregate([
+        {
+          $match: {
+            status: { $in: ['attended', 'completed'] },
+            $or: orPairs
+          }
+        },
+        {
+          $group: {
+            _id: { teacher: '$teacher', student: '$student.studentId' },
+            firstAttendedAt: { $min: '$scheduledDate' }
+          }
+        }
+      ]);
+      firstAttendedByPair = new Map(
+        (attendedAgg || []).map((row) => [`${String(row._id.teacher)}:${String(row._id.student)}`, row.firstAttendedAt])
+      );
+    }
+
+    const newStudentsLast30Days = (Array.isArray(newStudentsFirstClasses) ? newStudentsFirstClasses : [])
+      .map((row) => {
+        const studentLabel = row.studentProfileName || row.studentName || 'Student';
+        const teacherLabel = row.teacherName || 'Teacher';
+        const key = `${String(row.teacherId)}:${String(row.studentId)}`;
+        const firstAttendedAt = firstAttendedByPair.get(key) || null;
+        return {
+          studentId: row.studentId,
+          studentName: studentLabel,
+          teacherId: row.teacherId,
+          teacherName: teacherLabel,
+          firstCreatedAt: row.firstCreatedAt,
+          firstScheduledAt: row.firstScheduledAt || null,
+          firstAttendedAt
+        };
+      });
+
+    return {
+      totalStudents: totalStudentsAgg[0]?.count || 0,
+      activeStudentsTotal: activeStudentsAgg[0]?.count || 0,
+      inactiveStudentsAfterActivity: inactiveAfterActivity,
+      inactiveStudentsAfterActivityCount: inactiveAfterActivity.length,
+      newStudentsLast30Days,
+      newStudentsLast30DaysCount: newStudentsLast30Days.length
+    };
+  }, {
+    totalStudents: 0,
+    activeStudentsTotal: 0,
+    inactiveStudentsAfterActivity: [],
+    inactiveStudentsAfterActivityCount: 0,
+    newStudentsLast30Days: [],
+    newStudentsLast30DaysCount: 0
+  });
 }
 
 async function getGrowthStats() {
@@ -246,5 +491,6 @@ module.exports = {
   getInvoiceStats,
   getTeacherStats,
   getGuardianStats,
-  getGrowthStats
+  getGrowthStats,
+  getStudentStats
 };

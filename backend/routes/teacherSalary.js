@@ -244,7 +244,7 @@ router.get('/admin/invoices', authenticateToken, requireAdmin, async (req, res) 
 
     const [invoices, total] = await Promise.all([
       TeacherInvoice.find(query)
-        .populate('teacher', 'firstName lastName email')
+        .populate('teacher', 'firstName lastName email teacherInfo')
         .sort({ year: -1, month: -1, createdAt: -1 })
         .limit(parseInt(limit))
         .skip(skip)
@@ -370,7 +370,8 @@ router.post('/admin/invoices/:id/unpublish', authenticateToken, requireAdmin, as
  */
 router.post('/admin/invoices/:id/mark-paid', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { paymentMethod, transactionId, paidAt, note } = req.body;
+    const { paymentMethod, transactionId, paidAt, note, notes } = req.body;
+    const resolvedNote = note || notes || null;
 
     if (!paymentMethod) {
       return res.status(400).json({ error: 'Payment method is required' });
@@ -378,7 +379,7 @@ router.post('/admin/invoices/:id/mark-paid', authenticateToken, requireAdmin, as
 
     const invoice = await TeacherSalaryService.markInvoiceAsPaid(
       req.params.id,
-      { paymentMethod, transactionId, paidAt: paidAt || new Date(), note },
+      { paymentMethod, transactionId, paidAt: paidAt || new Date(), note: resolvedNote },
       req.user._id
     );
 
@@ -593,19 +594,21 @@ router.post('/admin/invoices/:id/overrides', authenticateToken, requireAdmin, as
  */
 router.post('/admin/invoices/:id/extras', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { category, amountUSD, reason } = req.body;
+    const { category, amountUSD, reason, description } = req.body;
+    const resolvedReason = reason || description;
+    const resolvedCategory = category || 'other';
 
-    if (!category || amountUSD === undefined || !reason) {
-      return res.status(400).json({ error: 'Category, amountUSD, and reason are required' });
+    if (amountUSD === undefined || !resolvedReason) {
+      return res.status(400).json({ error: 'amountUSD and reason are required' });
     }
 
-    if (reason.length < 5 || reason.length > 200) {
+    if (resolvedReason.length < 5 || resolvedReason.length > 200) {
       return res.status(400).json({ error: 'Reason must be between 5 and 200 characters' });
     }
 
     const invoice = await TeacherSalaryService.addExtra(
       req.params.id,
-      { category, amountUSD, reason },
+      { category: resolvedCategory, amountUSD, reason: resolvedReason },
       req.user._id
     );
 
@@ -1045,10 +1048,17 @@ router.post('/admin/zero-monthly-hours', authenticateToken, requireAdmin, async 
  */
 router.get('/teacher/invoices', authenticateToken, requireTeacher, async (req, res) => {
   try {
-    const { year, status, page = 1, limit = 20 } = req.query;
+    const { year, month, status, search, page = 1, limit = 20 } = req.query;
     const visibleStatuses = TeacherSalaryService.getTeacherVisibleStatuses();
 
-    const normalizedYear = year ? parseInt(year, 10) : undefined;
+    let normalizedYear = year ? parseInt(year, 10) : undefined;
+    let normalizedMonth = month ? parseInt(month, 10) : undefined;
+    const rawMonth = month ? String(month) : '';
+    if (rawMonth && rawMonth.includes('-')) {
+      const [y, m] = rawMonth.split('-').map(v => parseInt(v, 10));
+      if (Number.isFinite(y)) normalizedYear = y;
+      if (Number.isFinite(m)) normalizedMonth = m;
+    }
     const normalizedStatus = status && visibleStatuses.includes(status) ? status : undefined;
     const parsedLimit = parseInt(limit, 10);
     const paginationLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20;
@@ -1058,7 +1068,9 @@ router.get('/teacher/invoices', authenticateToken, requireTeacher, async (req, r
 
     const filters = {
       year: normalizedYear,
+      month: normalizedMonth,
       status: normalizedStatus,
+      search: search && String(search).trim() ? String(search).trim() : undefined,
       limit: paginationLimit,
       skip: paginationSkip
     };
@@ -1071,6 +1083,8 @@ router.get('/teacher/invoices', authenticateToken, requireTeacher, async (req, r
       teacher: req.user._id,
       deleted: false,
       ...(normalizedYear && { year: normalizedYear }),
+      ...(normalizedMonth && { month: normalizedMonth }),
+      ...(filters.search && { invoiceNumber: new RegExp(filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }),
       status: statusCriteria
     });
 

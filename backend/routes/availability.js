@@ -13,6 +13,8 @@ const UnavailablePeriod = require('../models/UnavailablePeriod');
 const User = require('../models/User');
 const Class = require('../models/Class');
 const availabilityService = require('../services/availabilityService');
+const moment = require('moment-timezone');
+const tzUtils = require('../utils/timezoneUtils');
 
 // Helper function to convert time string to minutes
 function timeToMinutes(timeStr) {
@@ -356,6 +358,214 @@ router.post('/unavailable', authenticateToken, async (req, res) => {
 /* ===========================
    TEACHER SEARCH ROUTES
    =========================== */
+
+// POST /api/availability/search-slots - Search available teachers by specific time slots (admin only)
+router.post('/search-slots', authenticateToken, requireRole('admin'), async (req, res) => {
+  try {
+    const { slots = [], timezone = null, teacherId = null } = req.body || {};
+
+    if (!Array.isArray(slots) || slots.length === 0) {
+      return res.status(400).json({ message: 'At least one slot is required' });
+    }
+
+    const resolvedTz = timezone && tzUtils.isValidTimezone(timezone) ? timezone : (req.user?.timezone || tzUtils.DEFAULT_TIMEZONE);
+    const normalizedSlots = slots
+      .map((slot) => {
+        const dayOfWeek = Number(slot?.dayOfWeek);
+        const startTime = String(slot?.startTime || '').trim();
+        const durationMinutes = Number(slot?.durationMinutes || slot?.duration || 60);
+
+        if (!Number.isFinite(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) return null;
+        if (!/^\d{1,2}:\d{2}$/.test(startTime)) return null;
+        if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) return null;
+
+        return { dayOfWeek, startTime, durationMinutes };
+      })
+      .filter(Boolean)
+      .slice(0, 20);
+
+    if (normalizedSlots.length === 0) {
+      return res.status(400).json({ message: 'No valid slots provided' });
+    }
+
+    const teacherQuery = { role: 'teacher', isActive: true };
+    if (teacherId) teacherQuery._id = teacherId;
+    const teachers = await User.find(teacherQuery).select('firstName lastName timezone').lean();
+    const teacherIds = teachers.map((t) => t._id).filter(Boolean);
+
+    const patternRows = await Class.find({
+      teacher: { $in: teacherIds },
+      status: 'pattern',
+      isRecurring: true,
+      hidden: { $ne: true }
+    })
+      .select('teacher duration recurrenceDetails timezone scheduledDate')
+      .lean();
+
+    const teacherPatterns = new Map();
+    (patternRows || []).forEach((pattern) => {
+      const teacherKey = String(pattern.teacher);
+      const list = teacherPatterns.get(teacherKey) || [];
+      const baseTz = pattern.timezone || tzUtils.DEFAULT_TIMEZONE;
+      const baseDuration = Number(pattern.duration || 0) || 60;
+      const details = Array.isArray(pattern.recurrenceDetails) ? pattern.recurrenceDetails : [];
+
+      if (details.length > 0) {
+        details.forEach((detail) => {
+          const dayOfWeek = Number(detail.dayOfWeek);
+          const startTime = String(detail.time || '').trim();
+          if (!Number.isFinite(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) return;
+          if (!/^\d{2}:\d{2}$/.test(startTime)) return;
+          list.push({
+            dayOfWeek,
+            startTime,
+            durationMinutes: Number(detail.duration || baseDuration) || baseDuration,
+            timezone: detail.timezone || baseTz
+          });
+        });
+      } else if (pattern.scheduledDate) {
+        const scheduled = moment(pattern.scheduledDate).tz(baseTz);
+        list.push({
+          dayOfWeek: scheduled.day(),
+          startTime: scheduled.format('HH:mm'),
+          durationMinutes: baseDuration,
+          timezone: baseTz
+        });
+      }
+
+      teacherPatterns.set(teacherKey, list);
+    });
+
+    const buildNextStartUtc = (dayOfWeek, startTime) => {
+      const [hourStr, minStr] = startTime.split(':');
+      const hour = Number(hourStr);
+      const minute = Number(minStr);
+      if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+
+      const nowTz = moment.tz(resolvedTz);
+      let startLocal = moment.tz(resolvedTz).day(dayOfWeek).hour(hour).minute(minute).second(0).millisecond(0);
+      if (startLocal.isBefore(nowTz)) {
+        startLocal = startLocal.add(7, 'days');
+      }
+
+      const startUtc = tzUtils.convertToUTC(startLocal.format('YYYY-MM-DD HH:mm'), resolvedTz);
+      return startUtc;
+    };
+
+    const slotResults = [];
+
+    const hasPatternConflict = (teacherIdValue, startUtc, endUtc) => {
+      const patterns = teacherPatterns.get(String(teacherIdValue)) || [];
+      if (!patterns.length) return false;
+
+      for (const p of patterns) {
+        const tz = p.timezone || tzUtils.DEFAULT_TIMEZONE;
+        const startLocal = moment(startUtc).tz(tz);
+        const endLocal = moment(endUtc).tz(tz);
+
+        if (startLocal.format('YYYY-MM-DD') !== endLocal.format('YYYY-MM-DD')) {
+          continue;
+        }
+
+        const dayOfWeek = startLocal.day();
+        if (Number(p.dayOfWeek) !== Number(dayOfWeek)) {
+          continue;
+        }
+
+        const [pHour, pMin] = String(p.startTime || '00:00').split(':').map(Number);
+        const pStartMin = (pHour * 60) + (pMin || 0);
+        const pEndMin = pStartMin + Number(p.durationMinutes || 0);
+
+        const reqStartMin = startLocal.hours() * 60 + startLocal.minutes();
+        const reqEndMin = endLocal.hours() * 60 + endLocal.minutes();
+
+        if (pEndMin <= pStartMin || reqEndMin <= reqStartMin) continue;
+        if (reqStartMin < pEndMin && reqEndMin > pStartMin) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    for (const slot of normalizedSlots) {
+      const startUtc = buildNextStartUtc(slot.dayOfWeek, slot.startTime);
+      if (!startUtc || Number.isNaN(startUtc.getTime())) continue;
+      const endUtc = new Date(startUtc.getTime() + slot.durationMinutes * 60000);
+
+      const availableTeachers = [];
+      const unavailableTeachers = [];
+
+      for (const teacher of teachers) {
+        if (hasPatternConflict(teacher._id, startUtc, endUtc)) {
+          const alternatives = await availabilityService.getAlternativeTimeSlots(
+            teacher._id,
+            slot.durationMinutes,
+            [slot.dayOfWeek],
+            14,
+            { anchorStartUtc: startUtc, windowHours: 4, timezone: resolvedTz }
+          );
+
+          unavailableTeachers.push({
+            id: teacher._id,
+            name: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher',
+            timezone: teacher.timezone || tzUtils.DEFAULT_TIMEZONE,
+            reason: 'Recurring class conflict',
+            alternatives: Array.isArray(alternatives) ? alternatives.slice(0, 3) : []
+          });
+          continue;
+        }
+
+        const availability = await availabilityService.validateTeacherAvailability(teacher._id, startUtc, endUtc, null);
+
+        if (availability?.isAvailable) {
+          availableTeachers.push({
+            id: teacher._id,
+            name: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher',
+            timezone: teacher.timezone || tzUtils.DEFAULT_TIMEZONE
+          });
+        } else {
+          const alternatives = await availabilityService.getAlternativeTimeSlots(
+            teacher._id,
+            slot.durationMinutes,
+            [slot.dayOfWeek],
+            14,
+            { anchorStartUtc: startUtc, windowHours: 4, timezone: resolvedTz }
+          );
+
+          unavailableTeachers.push({
+            id: teacher._id,
+            name: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher',
+            timezone: teacher.timezone || tzUtils.DEFAULT_TIMEZONE,
+            reason: availability?.reason || 'Not available',
+            alternatives: Array.isArray(alternatives) ? alternatives.slice(0, 3) : []
+          });
+        }
+      }
+
+      slotResults.push({
+        slot: {
+          dayOfWeek: slot.dayOfWeek,
+          startTime: slot.startTime,
+          durationMinutes: slot.durationMinutes,
+          startUtc,
+          endUtc,
+          timezone: resolvedTz
+        },
+        availableTeachers,
+        unavailableTeachers
+      });
+    }
+
+    return res.json({
+      searchTimezone: resolvedTz,
+      results: slotResults
+    });
+  } catch (error) {
+    console.error('Error searching teachers by slots:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
 
 // POST /api/availability/search-teachers - Search for available teachers (now powered by service)
 router.post('/search-teachers', authenticateToken, async (req, res) => {

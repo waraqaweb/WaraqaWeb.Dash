@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../api/axios';
 import UserSearch from '../../components/ui/UserSearch';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 // Admin vacation management page: view, create, assign substitutes
 const VacationAdminPage = () => {
@@ -11,6 +12,11 @@ const VacationAdminPage = () => {
   const [vacations, setVacations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const vacationsRef = useRef([]);
+  const fetchVacationsInFlightRef = useRef(false);
+  const fetchVacationsKeyRef = useRef('');
+  const fetchVacationsAbortRef = useRef(null);
+  const fetchVacationsRequestIdRef = useRef(0);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ 
     user: null,
@@ -25,22 +31,69 @@ const VacationAdminPage = () => {
   const [substitutesOptions, setSubstitutesOptions] = useState({ students: [], teachers: [] });
   const [loadingOptions, setLoadingOptions] = useState(false);
 
+  useEffect(() => {
+    vacationsRef.current = vacations || [];
+  }, [vacations]);
+
   const fetchVacations = useCallback(async () => {
-    setLoading(true);
+    const requestSignature = JSON.stringify({ scope: 'admin' });
+    if (fetchVacationsInFlightRef.current && fetchVacationsKeyRef.current === requestSignature) {
+      return;
+    }
+
+    fetchVacationsKeyRef.current = requestSignature;
+    fetchVacationsInFlightRef.current = true;
+
+    const requestId = fetchVacationsRequestIdRef.current + 1;
+    fetchVacationsRequestIdRef.current = requestId;
+
+    if (fetchVacationsAbortRef.current) {
+      try {
+        fetchVacationsAbortRef.current.abort();
+      } catch (e) {
+        // ignore abort errors
+      }
+    }
+
+    const controller = new AbortController();
+    fetchVacationsAbortRef.current = controller;
+
+    const hasExisting = (vacationsRef.current || []).length > 0;
+    setLoading(!hasExisting);
     try {
-      const res = await api.get('/vacations');
+      const cacheKey = makeCacheKey('vacations:admin', 'admin', { scope: 'all' });
+      const cached = readCache(cacheKey, { deps: ['vacations'] });
+      if (cached.hit && cached.value) {
+        setVacations(cached.value.vacations || []);
+        setError('');
+        setLoading(false);
+        if (cached.ageMs < 60_000) {
+          fetchVacationsInFlightRef.current = false;
+          return;
+        }
+      }
+
+      const res = await api.get('/vacations', { signal: controller.signal });
+      if (requestId !== fetchVacationsRequestIdRef.current) {
+        return;
+      }
       setVacations(res.data.vacations);
       setError('');
+      writeCache(cacheKey, { vacations: res.data.vacations || [] }, { ttlMs: 5 * 60_000, deps: ['vacations'] });
     } catch (err) {
-      console.error('Fetch vacations error:', err);
-      if (err.response?.status === 401) {
-        setError('You are not authorized to view vacations');
-        navigate('/login');
-      } else {
-        setError(err.response?.data?.message || 'Failed to load vacations');
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error('Fetch vacations error:', err);
+        if (err.response?.status === 401) {
+          setError('You are not authorized to view vacations');
+          navigate('/login');
+        } else {
+          setError(err.response?.data?.message || 'Failed to load vacations');
+        }
       }
     } finally {
       setLoading(false);
+      fetchVacationsInFlightRef.current = false;
     }
   }, [navigate]);
 

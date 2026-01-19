@@ -10,7 +10,7 @@
  * - Statistics and filtering
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
@@ -25,6 +25,7 @@ import AddExtraDialog from '../../components/teacherSalary/AddExtraDialog';
 import SalarySettingsModal from '../../components/teacherSalary/SalarySettingsModal';
 import GenerateInvoicesModal from '../../components/teacherSalary/GenerateInvoicesModal';
 import ZeroMonthlyHoursModal from '../../components/teacherSalary/ZeroMonthlyHoursModal';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import {
   TEACHER_SALARY_VIEW_KEY,
   createDefaultTeacherSalaryFilters
@@ -98,9 +99,22 @@ const TeacherSalaries = () => {
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [showZeroModal, setShowZeroModal] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
+  const fetchInvoicesKeyRef = useRef('');
+  const fetchInvoicesInFlightRef = useRef(false);
+  const fetchInvoicesAbortRef = useRef(null);
+  const fetchInvoicesRequestIdRef = useRef(0);
 
   const defaultFilters = useMemo(() => createDefaultTeacherSalaryFilters(), []);
   const salaryFilters = viewFilters[TEACHER_SALARY_VIEW_KEY] || defaultFilters;
+  const activeStatusTab = salaryFilters?.status === 'paid' ? 'paid' : 'unpaid';
+
+  const handleStatusTabChange = (status) => {
+    setFiltersForView(TEACHER_SALARY_VIEW_KEY, {
+      ...salaryFilters,
+      status
+    });
+    setPage(1);
+  };
 
   useEffect(() => {
     if (!viewFilters[TEACHER_SALARY_VIEW_KEY]) {
@@ -111,7 +125,36 @@ const TeacherSalaries = () => {
   // Fetch invoices
   const fetchInvoices = useCallback(async () => {
     try {
-      setLoading(true);
+      const requestSignature = JSON.stringify({
+        page,
+        limit,
+        sortBy,
+        sortOrder,
+        searchTerm,
+        salaryFilters
+      });
+
+      if (fetchInvoicesInFlightRef.current && fetchInvoicesKeyRef.current === requestSignature) {
+        return;
+      }
+
+      fetchInvoicesKeyRef.current = requestSignature;
+      fetchInvoicesInFlightRef.current = true;
+
+      const requestId = fetchInvoicesRequestIdRef.current + 1;
+      fetchInvoicesRequestIdRef.current = requestId;
+
+      if (fetchInvoicesAbortRef.current) {
+        try {
+          fetchInvoicesAbortRef.current.abort();
+        } catch (e) {
+          // ignore abort errors
+        }
+      }
+
+      const controller = new AbortController();
+      fetchInvoicesAbortRef.current = controller;
+
       setError(null);
 
       const params = {
@@ -138,7 +181,29 @@ const TeacherSalaries = () => {
         if (params[key] === '' || params[key] === undefined || params[key] === null) delete params[key];
       });
 
-      const response = await api.get('/teacher-salary/admin/invoices', { params });
+      const cacheKey = makeCacheKey('teacher-salary:admin-invoices', 'admin', params);
+      const cached = readCache(cacheKey, { deps: ['teacher-salary'] });
+      if (cached.hit && cached.value) {
+        const cachedPayload = cached.value;
+        setInvoices(cachedPayload.invoices || []);
+        setTotalPages(cachedPayload.pagination?.totalPages || cachedPayload.pagination?.pages || 1);
+        setTotalInvoices(cachedPayload.pagination?.total || 0);
+        setPage(cachedPayload.pagination?.page || 1);
+        setSummary(cachedPayload.summary || null);
+        setLoading(false);
+
+        if (cached.ageMs < 60_000) {
+          fetchInvoicesInFlightRef.current = false;
+          return;
+        }
+      } else {
+        setLoading(true);
+      }
+
+      const response = await api.get('/teacher-salary/admin/invoices', { params, signal: controller.signal });
+      if (requestId !== fetchInvoicesRequestIdRef.current) {
+        return;
+      }
 
       setInvoices(response.data.invoices || []);
       // Backend sometimes returns `pagination.pages` instead of `pagination.totalPages`.
@@ -146,12 +211,18 @@ const TeacherSalaries = () => {
       setTotalInvoices(response.data.pagination?.total || 0);
       setPage(response.data.pagination?.page || 1);
       setSummary(response.data.summary || null);
+
+      writeCache(cacheKey, response.data, { ttlMs: 5 * 60_000, deps: ['teacher-salary'] });
     } catch (err) {
-      console.error('Error fetching invoices:', err);
-      setError(err.response?.data?.message || 'Failed to load invoices');
-      setSummary(null);
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error('Error fetching invoices:', err);
+        setError(err.response?.data?.message || 'Failed to load invoices');
+        setSummary(null);
+      }
     } finally {
       setLoading(false);
+      fetchInvoicesInFlightRef.current = false;
     }
   }, [page, limit, sortBy, sortOrder, salaryFilters, searchTerm]);
 
@@ -421,6 +492,22 @@ const TeacherSalaries = () => {
 
         {/* Invoices List */}
         <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-black/5">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleStatusTabChange('unpaid')}
+              className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${activeStatusTab === 'unpaid' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+            >
+              Unpaid
+            </button>
+            <button
+              type="button"
+              onClick={() => handleStatusTabChange('paid')}
+              className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${activeStatusTab === 'paid' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+            >
+              Paid
+            </button>
+          </div>
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <LoadingSpinner />

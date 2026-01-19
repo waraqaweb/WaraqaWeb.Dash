@@ -7,6 +7,7 @@
  */
 
 const Class = require('../models/Class');
+const Setting = require('../models/Setting');
 const ReportSubmissionService = require('../services/reportSubmissionService');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
@@ -88,10 +89,43 @@ async function runJob() {
   
   // Step 2: Mark expired classes as unreported
   const result = await markUnreportedClasses();
+
+  // Step 3: Cleanup old unreported classes (older than 30 days)
+  await cleanupOldUnreportedClasses();
   
   console.log('[MarkUnreportedJob] ========== Job Complete ==========\n');
   
   return result;
+}
+
+/**
+ * Delete unreported classes older than 30 days (cleanup)
+ */
+async function cleanupOldUnreportedClasses() {
+  console.log('[MarkUnreportedJob] Cleaning old unreported classes...');
+  try {
+    let days = 30;
+    try {
+      const setting = await Setting.findOne({ key: 'unreportedClassCleanupDays' }).lean();
+      const value = Number(setting?.value);
+      if (Number.isFinite(value) && value > 0) days = value;
+    } catch (e) {
+      // fallback to default
+    }
+    const cutoff = dayjs().subtract(days, 'day').toDate();
+    const filter = {
+      scheduledDate: { $lt: cutoff },
+      'classReport.submittedAt': { $exists: false },
+      'reportSubmission.status': 'unreported',
+      status: { $ne: 'pattern' }
+    };
+    const result = await Class.deleteMany(filter);
+    console.log(`[MarkUnreportedJob] ✅ Deleted ${result.deletedCount || 0} unreported class(es) older than ${days} days`);
+    return { success: true, deleted: result.deletedCount || 0, days };
+  } catch (err) {
+    console.error('[MarkUnreportedJob] ❌ Error cleaning old unreported classes:', err.message);
+    return { success: false, error: err.message };
+  }
 }
 
 // If run directly
@@ -123,4 +157,5 @@ module.exports = {
   runJob,
   markUnreportedClasses,
   initializeRecentlyEndedClasses,
+  cleanupOldUnreportedClasses,
 };

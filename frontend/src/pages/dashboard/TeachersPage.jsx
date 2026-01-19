@@ -9,7 +9,7 @@
 			 * - Falls back to `_computedMonthlyHours` only when `monthlyHours` is null/undefined
 			 */
 
-			import React, { useState, useEffect, useMemo } from 'react';
+			import React, { useState, useEffect, useMemo, useRef } from 'react';
 			import { useAuth } from '../../contexts/AuthContext';
 			import { useSearch } from '../../contexts/SearchContext';
 			import { useNavigate } from 'react-router-dom';
@@ -58,6 +58,11 @@
 
 			const [teachers, setTeachers] = useState([]);
 			const [loading, setLoading] = useState(true);
+			const teachersRef = useRef([]);
+			const fetchTeachersInFlightRef = useRef(false);
+			const fetchTeachersKeyRef = useRef('');
+			const fetchTeachersAbortRef = useRef(null);
+			const fetchTeachersRequestIdRef = useRef(0);
 			const [error, setError] = useState('');
 			const [debouncedSearch, setDebouncedSearch] = useState(searchTerm || '');
 			const [sortBy] = useState('firstName');
@@ -124,8 +129,42 @@
 					// eslint-disable-next-line react-hooks/exhaustive-deps
 				}, [debouncedSearch, sortBy, sortOrder, statusFilter, currentPage]);
 
+				useEffect(() => {
+					teachersRef.current = teachers || [];
+				}, [teachers]);
+
 				const fetchTeachers = async () => {
 					try {
+						const requestSignature = JSON.stringify({
+							page: currentPage,
+							limit: itemsPerPage,
+							search: (debouncedSearch || '').trim() || undefined,
+							sortBy,
+							order: sortOrder,
+							statusFilter,
+						});
+
+						if (fetchTeachersInFlightRef.current && fetchTeachersKeyRef.current === requestSignature) {
+							return;
+						}
+
+						fetchTeachersKeyRef.current = requestSignature;
+						fetchTeachersInFlightRef.current = true;
+
+						const requestId = fetchTeachersRequestIdRef.current + 1;
+						fetchTeachersRequestIdRef.current = requestId;
+
+						if (fetchTeachersAbortRef.current) {
+							try {
+								fetchTeachersAbortRef.current.abort();
+							} catch (e) {
+								// ignore abort errors
+							}
+						}
+
+						const controller = new AbortController();
+						fetchTeachersAbortRef.current = controller;
+
 						const cacheKey = makeCacheKey('teachers:list', 'admin', {
 							page: currentPage,
 							limit: itemsPerPage,
@@ -144,11 +183,13 @@
 							setLoading(false);
 
 							if (cached.ageMs < 60_000) {
+								fetchTeachersInFlightRef.current = false;
 								return;
 							}
 						}
 
-						setLoading(true);
+						const hasExisting = (teachersRef.current || []).length > 0;
+						setLoading(!hasExisting);
 						const params = {
 							role: 'teacher',
 							page: currentPage,
@@ -162,7 +203,10 @@
 							params.isActive = statusFilter === 'active';
 						}
 
-						const response = await api.get('/users', { params });
+						const response = await api.get('/users', { params, signal: controller.signal });
+						if (requestId !== fetchTeachersRequestIdRef.current) {
+							return;
+						}
 						const fetched = response.data.users || [];
 						setTeachers(fetched);
 						const nextTotalPages = (response.data.pagination && response.data.pagination.pages) || 1;
@@ -181,10 +225,14 @@
 							{ ttlMs: 5 * 60_000, deps: ['users', 'classes'] }
 						);
 					} catch (err) {
-						setError('Failed to fetch teachers');
-						console.error('Fetch teachers error:', err);
+						const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+						if (!isCanceled) {
+							setError('Failed to fetch teachers');
+							console.error('Fetch teachers error:', err);
+						}
 					} finally {
 						setLoading(false);
+						fetchTeachersInFlightRef.current = false;
 					}
 				};
 

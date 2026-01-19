@@ -5,6 +5,7 @@ import api from '../../api/axios';
 import ConfirmModal from '../../components/ui/ConfirmModal';
 import Toast from '../../components/ui/Toast';
 import { fetchLibraryStorageUsage } from '../../api/library';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { getSubjectsCatalogCached, saveSubjectsCatalog } from '../../services/subjectsCatalog';
 
 const parseLinesOrComma = (text) => {
@@ -52,14 +53,27 @@ const Settings = () => {
   const [firstClassWindowHours, setFirstClassWindowHours] = useState(24);
   const [savingWindow, setSavingWindow] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [unreportedCleanupDays, setUnreportedCleanupDays] = useState(30);
+  const [savingCleanupDays, setSavingCleanupDays] = useState(false);
+  const [teacherReportWindowHours, setTeacherReportWindowHours] = useState(72);
+  const [adminExtensionHours, setAdminExtensionHours] = useState(24);
+  const [savingReportWindow, setSavingReportWindow] = useState(false);
 
   useEffect(() => {
+    if (user?.role !== 'admin') return;
     // fetch admin setting
     const fetchSetting = async () => {
       try {
+        const cacheKey = makeCacheKey('settings:firstClassWindowHours', user?._id || 'admin', { key: 'firstClassWindowHours' });
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          setFirstClassWindowHours(Number(cached.value.value || cached.value) || 24);
+          if (cached.ageMs < 60_000) return;
+        }
         const res = await api.get('/settings/firstClassWindowHours');
         if (res.data && res.data.setting) {
           setFirstClassWindowHours(Number(res.data.setting.value) || 24);
+          writeCache(cacheKey, res.data.setting, { ttlMs: 5 * 60_000, deps: ['settings'] });
         }
       } catch (err) {
         // Setting doesn't exist yet - use default value
@@ -69,7 +83,76 @@ const Settings = () => {
       }
     };
     fetchSetting();
-  }, []);
+  }, [user?._id, user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    // fetch cleanup days setting
+    const fetchCleanupSetting = async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:unreportedCleanupDays', user?._id || 'admin', { key: 'unreportedClassCleanupDays' });
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          setUnreportedCleanupDays(Number(cached.value.value || cached.value) || 30);
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/unreportedClassCleanupDays');
+        if (res.data && res.data.setting) {
+          setUnreportedCleanupDays(Number(res.data.setting.value) || 30);
+          writeCache(cacheKey, res.data.setting, { ttlMs: 5 * 60_000, deps: ['settings'] });
+        }
+      } catch (err) {
+        if (err.response?.status === 404) {
+          setUnreportedCleanupDays(30);
+        }
+      }
+    };
+    fetchCleanupSetting();
+  }, [user?._id, user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchReportWindowSettings = async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:teacherReportWindowHours', user?._id || 'admin', { key: 'teacher_report_window_hours' });
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          setTeacherReportWindowHours(Number(cached.value.value || cached.value) || 72);
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/teacher_report_window_hours');
+        if (res.data?.setting) {
+          setTeacherReportWindowHours(Number(res.data.setting.value) || 72);
+          writeCache(cacheKey, res.data.setting, { ttlMs: 5 * 60_000, deps: ['settings'] });
+        }
+      } catch (err) {
+        if (err.response?.status === 404) setTeacherReportWindowHours(72);
+      }
+    };
+    fetchReportWindowSettings();
+  }, [user?._id, user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchAdminExtensionSettings = async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:adminExtensionHours', user?._id || 'admin', { key: 'admin_extension_hours' });
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          setAdminExtensionHours(Number(cached.value.value || cached.value) || 24);
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/admin_extension_hours');
+        if (res.data?.setting) {
+          setAdminExtensionHours(Number(res.data.setting.value) || 24);
+          writeCache(cacheKey, res.data.setting, { ttlMs: 5 * 60_000, deps: ['settings'] });
+        }
+      } catch (err) {
+        if (err.response?.status === 404) setAdminExtensionHours(24);
+      }
+    };
+    fetchAdminExtensionSettings();
+  }, [user?._id, user?.role]);
 
   // Branding (logo/title/slogan) - admin only
   const [branding, setBranding] = useState({ logo: null, title: 'Waraqa', slogan: '' });
@@ -106,8 +189,17 @@ const Settings = () => {
     if (user?.role !== 'admin') return;
     (async () => {
       try {
+        const cacheKey = makeCacheKey('settings:branding', user?._id || 'admin', { key: 'branding' });
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          if (cached.value?.branding) setBranding(cached.value.branding);
+          if (cached.ageMs < 60_000) return;
+        }
         const res = await api.get('/settings/branding');
-        if (res.data?.branding) setBranding(res.data.branding);
+        if (res.data?.branding) {
+          setBranding(res.data.branding);
+          writeCache(cacheKey, res.data, { ttlMs: 5 * 60_000, deps: ['settings'] });
+        }
       } catch (e) {
         // ignore
       }
@@ -423,16 +515,93 @@ const Settings = () => {
         
         {/* Feedback card */}
         {user?.role === 'admin' && activeSection === 'general' && (
-          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
-            <div>
-              <div className="font-medium mb-2">Feedback Settings</div>
-              <div className="flex items-center space-x-3">
-                <input type="number" min={1} value={firstClassWindowHours} onChange={(e)=>setFirstClassWindowHours(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
-                <div className="text-sm text-muted">Controls how long after class end the first-class modal can appear.</div>
+          <div className="space-y-3">
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+              <div>
+                <div className="font-medium mb-2">Feedback Settings</div>
+                <div className="flex items-center space-x-3">
+                  <input type="number" min={1} value={firstClassWindowHours} onChange={(e)=>setFirstClassWindowHours(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
+                  <div className="text-sm text-muted">Controls how long after class end the first-class modal can appear.</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={()=>setConfirmOpen(true)} className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingWindow ? 'opacity-70' : ''}`}>Save</button>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={()=>setConfirmOpen(true)} className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingWindow ? 'opacity-70' : ''}`}>Save</button>
+
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+              <div>
+                <div className="font-medium mb-2">Class Cleanup</div>
+                <div className="flex items-center space-x-3">
+                  <input type="number" min={1} value={unreportedCleanupDays} onChange={(e)=>setUnreportedCleanupDays(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
+                  <div className="text-sm text-muted">Delete unreported classes after this many days.</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={savingCleanupDays}
+                  onClick={async ()=>{
+                    try {
+                      setSavingCleanupDays(true);
+                      const res = await api.put('/settings/unreportedClassCleanupDays', { value: unreportedCleanupDays });
+                      if (res.data?.success) {
+                        const cacheKey = makeCacheKey('settings:unreportedCleanupDays', user?._id || 'admin', { key: 'unreportedClassCleanupDays' });
+                        writeCache(cacheKey, res.data.setting || { value: unreportedCleanupDays }, { ttlMs: 5 * 60_000, deps: ['settings'] });
+                        setToast({ type: 'success', message: 'Cleanup settings saved' });
+                      }
+                    } catch (err) {
+                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save cleanup settings' });
+                    } finally {
+                      setSavingCleanupDays(false);
+                    }
+                  }}
+                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingCleanupDays ? 'opacity-70' : ''}`}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+              <div>
+                <div className="font-medium mb-2">Report Submission Window</div>
+                <div className="flex items-center space-x-3">
+                  <input type="number" min={1} value={teacherReportWindowHours} onChange={(e)=>setTeacherReportWindowHours(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
+                  <div className="text-xs text-muted-foreground mt-1">Hours teachers have to submit a class report.</div>
+                </div>
+                <div className="mt-3 flex items-center space-x-3">
+                  <input type="number" min={1} value={adminExtensionHours} onChange={(e)=>setAdminExtensionHours(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
+                  <div className="text-xs text-muted-foreground mt-1">Default extension hours when admins reopen reporting.</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={savingReportWindow}
+                  onClick={async ()=>{
+                    try {
+                      setSavingReportWindow(true);
+                      const [teacherRes, adminRes] = await Promise.all([
+                        api.put('/settings/teacher_report_window_hours', { value: teacherReportWindowHours }),
+                        api.put('/settings/admin_extension_hours', { value: adminExtensionHours })
+                      ]);
+                      if (teacherRes.data?.success || adminRes.data?.success) {
+                        const teacherKey = makeCacheKey('settings:teacherReportWindowHours', user?._id || 'admin', { key: 'teacher_report_window_hours' });
+                        writeCache(teacherKey, teacherRes.data?.setting || { value: teacherReportWindowHours }, { ttlMs: 5 * 60_000, deps: ['settings'] });
+                        const adminKey = makeCacheKey('settings:adminExtensionHours', user?._id || 'admin', { key: 'admin_extension_hours' });
+                        writeCache(adminKey, adminRes.data?.setting || { value: adminExtensionHours }, { ttlMs: 5 * 60_000, deps: ['settings'] });
+                        setToast({ type: 'success', message: 'Report settings saved' });
+                      }
+                    } catch (err) {
+                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save report settings' });
+                    } finally {
+                      setSavingReportWindow(false);
+                    }
+                  }}
+                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingReportWindow ? 'opacity-70' : ''}`}
+                >
+                  Save
+                </button>
+              </div>
             </div>
           </div>
         )}

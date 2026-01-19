@@ -15,6 +15,7 @@ const Invoice = require('../models/Invoice');
 const Student = require('../models/Student');
 const Vacation = require('../models/Vacation');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { decodeToken } = require('../utils/jwt');
 
 const resolveQueryResult = async (queryLike, fallbackValue = []) => {
   try {
@@ -115,8 +116,21 @@ router.get('/stats', authenticateToken, async (req, res) => {
   try {
     // Record that this user accessed the dashboard today (idempotent - one record per user/day)
     try {
-      if (req.user && req.user._id) {
-        await UserActivity.recordVisit(req.user._id);
+      const authHeader = req.headers["authorization"];
+      const token = authHeader && authHeader.split(" ")[1];
+      const decoded = token ? decodeToken(token) : null;
+      const isImpersonatedSession = Boolean(decoded?.impersonatedBy || decoded?.isImpersonated);
+      const isAdminSession = String(req.user?.role || decoded?.role || '').toLowerCase() === 'admin';
+      const deviceId = req.headers['x-device-id'] || null;
+      if (req.user && req.user._id && !isImpersonatedSession && !isAdminSession) {
+        await UserActivity.recordVisit(req.user._id, {
+          deviceId,
+          auth: {
+            isImpersonated: Boolean(decoded?.isImpersonated),
+            impersonatedBy: decoded?.impersonatedBy || null,
+            isAdmin: isAdminSession
+          }
+        });
       }
     } catch (e) {
       console.warn('Failed to record user dashboard visit', e && e.message);
@@ -134,13 +148,34 @@ router.get('/stats', authenticateToken, async (req, res) => {
       // UTC midnight today
       const today = new Date();
       const utcMidnight = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-      dailyUniqueDashboardUsers = await UserActivity.countDocuments({ date: utcMidnight });
-
+      // Unique users by deviceId (fallback to user id). Exclude impersonated sessions.
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 29); // include today and 29 previous days = 30-day window
       const start30 = new Date(Date.UTC(thirtyDaysAgo.getUTCFullYear(), thirtyDaysAgo.getUTCMonth(), thirtyDaysAgo.getUTCDate()));
-      const uniq = await UserActivity.distinct('user', { date: { $gte: start30 } });
-      uniqueUsersLast30Days = Array.isArray(uniq) ? uniq.length : 0;
+
+      const activityMatch = { date: { $gte: start30 } };
+      const authMatch = {
+        $and: [
+          { $or: [ { 'auth.isImpersonated': { $ne: true } }, { 'auth.isImpersonated': { $exists: false } } ] },
+          { $or: [ { 'auth.isAdmin': { $ne: true } }, { 'auth.isAdmin': { $exists: false } } ] }
+        ]
+      };
+
+      const dailyAgg = await UserActivity.aggregate([
+        { $match: { date: utcMidnight } },
+        { $match: authMatch },
+        { $group: { _id: { $ifNull: ['$deviceId', '$user'] } } },
+        { $count: 'count' }
+      ]);
+      dailyUniqueDashboardUsers = dailyAgg?.[0]?.count || 0;
+
+      const monthlyAgg = await UserActivity.aggregate([
+        { $match: activityMatch },
+        { $match: authMatch },
+        { $group: { _id: { $ifNull: ['$deviceId', '$user'] } } },
+        { $count: 'count' }
+      ]);
+      uniqueUsersLast30Days = monthlyAgg?.[0]?.count || 0;
 
       // Current active users tracked by socket connections map on io
       const io = req.app.get('io');
@@ -184,6 +219,20 @@ router.get('/stats', authenticateToken, async (req, res) => {
           flatStats.upcomingClasses = (payload.summary.classes?.scheduledNext7 ?? payload.summary.classes?.scheduledNext7Days) ?? 0;
           flatStats.upcomingClasses30 = payload.summary.classes?.upcomingNext30 ?? 0;
           flatStats.expectedClasses = payload.summary.classes?.expectedNext30 ?? 0;
+          flatStats.totalTeachers = payload.summary.teachers?.totalTeachers ?? payload.summary.users?.totalTeachers ?? 0;
+          flatStats.activeTeachersTotal = payload.summary.teachers?.activeTeachersTotal ?? payload.summary.users?.activeTeachersTotal ?? 0;
+          flatStats.activeTeachersLast30 = payload.summary.teachers?.activeTeachersLast30 ?? 0;
+          flatStats.activeTeachersPrev30 = payload.summary.teachers?.activeTeachersPrev30 ?? 0;
+          flatStats.totalGuardians = payload.summary.guardians?.totalGuardians ?? payload.summary.users?.totalGuardians ?? 0;
+          flatStats.activeGuardiansTotal = payload.summary.guardians?.activeGuardiansTotal ?? payload.summary.users?.activeGuardiansTotal ?? 0;
+          flatStats.activeGuardiansLast30 = payload.summary.guardians?.activeGuardiansLast30 ?? 0;
+          flatStats.activeGuardiansPrev30 = payload.summary.guardians?.activeGuardiansPrev30 ?? 0;
+          flatStats.totalStudents = payload.summary.students?.totalStudents ?? payload.summary.users?.totalStudents ?? 0;
+          flatStats.activeStudentsTotal = payload.summary.students?.activeStudentsTotal ?? payload.summary.users?.activeStudentsTotal ?? 0;
+          flatStats.inactiveStudentsAfterActivity = payload.summary.students?.inactiveStudentsAfterActivity ?? [];
+          flatStats.inactiveStudentsAfterActivityCount = payload.summary.students?.inactiveStudentsAfterActivityCount ?? 0;
+          flatStats.newStudentsLast30Days = payload.summary.students?.newStudentsLast30Days ?? [];
+          flatStats.newStudentsLast30DaysCount = payload.summary.students?.newStudentsLast30DaysCount ?? 0;
           // expose new hour-based and active-by-schedule metrics
           flatStats.scheduledHoursUntilMonthEnd = payload.summary.classes?.scheduledHoursUntilMonthEnd ?? payload.summary.classes?.scheduledHoursRemaining ?? 0;
           flatStats.completedHoursThisMonth = payload.summary.classes?.completedHoursThisMonth ?? payload.summary.classes?.completedHours ?? 0;
@@ -228,15 +277,16 @@ router.get('/stats', authenticateToken, async (req, res) => {
         let payload = null;
   if (process.env.NODE_ENV === 'test' || typeof global.describe === 'function') {
           const dashboardService = require('../services/dashboardService');
-          const [users, classes, revenue, teachers, guardians, growth] = await Promise.all([
+          const [users, classes, revenue, teachers, guardians, growth, students] = await Promise.all([
             dashboardService.getUserStats(),
             dashboardService.getClassStats(),
             dashboardService.getInvoiceStats(),
             dashboardService.getTeacherStats(),
             dashboardService.getGuardianStats(),
-            dashboardService.getGrowthStats()
+            dashboardService.getGrowthStats(),
+            dashboardService.getStudentStats()
           ]);
-          payload = { summary: { users: users || {}, classes: classes || {}, revenue: revenue || {}, teachers: teachers || {}, guardians: guardians || {}, growth: growth || {} }, timestamps: { computedAt: new Date(), expiresAt: new Date(Date.now() + 1000 * 60) } };
+          payload = { summary: { users: users || {}, classes: classes || {}, revenue: revenue || {}, teachers: teachers || {}, guardians: guardians || {}, growth: growth || {}, students: students || {} }, timestamps: { computedAt: new Date(), expiresAt: new Date(Date.now() + 1000 * 60) } };
         } else {
           payload = await runWithTimeout(recomputeDashboardStats(), 5000);
           if (!payload) {
@@ -259,6 +309,20 @@ router.get('/stats', authenticateToken, async (req, res) => {
   flatStats.upcomingClasses = (payload.summary.classes?.scheduledNext7 ?? payload.summary.classes?.scheduledNext7Days) ?? 0;
   flatStats.upcomingClasses30 = payload.summary.classes?.upcomingNext30 ?? 0;
   flatStats.expectedClasses = payload.summary.classes?.expectedNext30 ?? 0;
+  flatStats.totalTeachers = payload.summary.teachers?.totalTeachers ?? payload.summary.users?.totalTeachers ?? 0;
+  flatStats.activeTeachersTotal = payload.summary.teachers?.activeTeachersTotal ?? payload.summary.users?.activeTeachersTotal ?? 0;
+  flatStats.activeTeachersLast30 = payload.summary.teachers?.activeTeachersLast30 ?? 0;
+  flatStats.activeTeachersPrev30 = payload.summary.teachers?.activeTeachersPrev30 ?? 0;
+  flatStats.totalGuardians = payload.summary.guardians?.totalGuardians ?? payload.summary.users?.totalGuardians ?? 0;
+  flatStats.activeGuardiansTotal = payload.summary.guardians?.activeGuardiansTotal ?? payload.summary.users?.activeGuardiansTotal ?? 0;
+  flatStats.activeGuardiansLast30 = payload.summary.guardians?.activeGuardiansLast30 ?? 0;
+  flatStats.activeGuardiansPrev30 = payload.summary.guardians?.activeGuardiansPrev30 ?? 0;
+  flatStats.totalStudents = payload.summary.students?.totalStudents ?? payload.summary.users?.totalStudents ?? 0;
+  flatStats.activeStudentsTotal = payload.summary.students?.activeStudentsTotal ?? payload.summary.users?.activeStudentsTotal ?? 0;
+  flatStats.inactiveStudentsAfterActivity = payload.summary.students?.inactiveStudentsAfterActivity ?? [];
+  flatStats.inactiveStudentsAfterActivityCount = payload.summary.students?.inactiveStudentsAfterActivityCount ?? 0;
+  flatStats.newStudentsLast30Days = payload.summary.students?.newStudentsLast30Days ?? [];
+  flatStats.newStudentsLast30DaysCount = payload.summary.students?.newStudentsLast30DaysCount ?? 0;
   // expose new hour-based and active-by-schedule metrics
   flatStats.scheduledHoursUntilMonthEnd = payload.summary.classes?.scheduledHoursUntilMonthEnd ?? payload.summary.classes?.scheduledHoursRemaining ?? 0;
   flatStats.completedHoursThisMonth = payload.summary.classes?.completedHoursThisMonth ?? payload.summary.classes?.completedHours ?? 0;

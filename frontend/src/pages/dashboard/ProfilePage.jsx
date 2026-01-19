@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import api from "../../api/axios";
 import { useAuth } from "../../contexts/AuthContext";
@@ -9,12 +9,22 @@ import MonthlyFeedbackModal from '../../components/feedback/MonthlyFeedbackModal
 import Tabs from '../../components/ui/Tabs';
 // QualificationsEditor is used in the edit modal; not needed in the profile view
 import { formatTimeInTimezone } from '../../utils/timezoneUtils';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 export default function ProfilePage() {
   const { user } = useAuth();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [allUsers, setAllUsers] = useState([]);
+  const profileRef = useRef(null);
+  const fetchProfileInFlightRef = useRef(false);
+  const fetchProfileKeyRef = useRef('');
+  const fetchProfileAbortRef = useRef(null);
+  const fetchProfileRequestIdRef = useRef(0);
+  const fetchAllUsersInFlightRef = useRef(false);
+  const fetchAllUsersKeyRef = useRef('');
+  const fetchAllUsersAbortRef = useRef(null);
+  const fetchAllUsersRequestIdRef = useRef(0);
   
   const [isAdmin, setIsAdmin] = useState(false);
   // use global search context (shared top-level search bar)
@@ -22,37 +32,122 @@ export default function ProfilePage() {
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [infoModalUser, setInfoModalUser] = useState(null);
 
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
   const fetchProfile = useCallback(async () => {
     console.log('fetchProfile called - refreshing user data');
-    setLoading(true);
+    const requestSignature = JSON.stringify({ userId: user?._id });
+    if (fetchProfileInFlightRef.current && fetchProfileKeyRef.current === requestSignature) {
+      return;
+    }
+
+    fetchProfileKeyRef.current = requestSignature;
+    fetchProfileInFlightRef.current = true;
+
+    const requestId = fetchProfileRequestIdRef.current + 1;
+    fetchProfileRequestIdRef.current = requestId;
+
+    if (fetchProfileAbortRef.current) {
+      try {
+        fetchProfileAbortRef.current.abort();
+      } catch (e) {
+        // ignore abort errors
+      }
+    }
+
+    const controller = new AbortController();
+    fetchProfileAbortRef.current = controller;
+
+    const hasExisting = Boolean(profileRef.current);
+    setLoading(!hasExisting);
     try {
+      const cacheKey = makeCacheKey('profile:me', user?._id || 'anon', { userId: user?._id || null });
+      const cached = readCache(cacheKey, { deps: ['users'] });
+      if (cached.hit && cached.value) {
+        setProfile(cached.value.user || cached.value);
+        setLoading(false);
+        if (cached.ageMs < 60_000) {
+          fetchProfileInFlightRef.current = false;
+          return;
+        }
+      }
       // backend exposes current user at /api/auth/me
-      const res = await api.get('/auth/me');
+      const res = await api.get('/auth/me', { signal: controller.signal });
+      if (requestId !== fetchProfileRequestIdRef.current) {
+        return;
+      }
       console.log('fetchProfile response:', res.data.user);
       setProfile(res.data.user);
+      writeCache(cacheKey, res.data.user, { ttlMs: 5 * 60_000, deps: ['users'] });
     } catch (err) {
-      console.error('Error fetching profile', err);
-      setProfile(null);
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error('Error fetching profile', err);
+        setProfile(null);
+      }
     } finally {
       setLoading(false);
+      fetchProfileInFlightRef.current = false;
     }
-  }, []);
+  }, [user?._id]);
 
   // Fetch all users for admin view
   const fetchAllUsers = useCallback(async () => {
     try {
-      const res = await api.get('/users');
-      setAllUsers(res.data.users || res.data || []);
+      const requestSignature = JSON.stringify({ scope: 'all-users' });
+      if (fetchAllUsersInFlightRef.current && fetchAllUsersKeyRef.current === requestSignature) {
+        return;
+      }
+
+      fetchAllUsersKeyRef.current = requestSignature;
+      fetchAllUsersInFlightRef.current = true;
+
+      const requestId = fetchAllUsersRequestIdRef.current + 1;
+      fetchAllUsersRequestIdRef.current = requestId;
+
+      if (fetchAllUsersAbortRef.current) {
+        try {
+          fetchAllUsersAbortRef.current.abort();
+        } catch (e) {
+          // ignore abort errors
+        }
+      }
+
+      const controller = new AbortController();
+      fetchAllUsersAbortRef.current = controller;
+
+      const cacheKey = makeCacheKey('users:all', user?._id || 'admin', { scope: 'admin' });
+      const cached = readCache(cacheKey, { deps: ['users'] });
+      if (cached.hit && cached.value) {
+        setAllUsers(cached.value.users || cached.value || []);
+        if (cached.ageMs < 60_000) {
+          fetchAllUsersInFlightRef.current = false;
+          return;
+        }
+      }
+
+      const res = await api.get('/users', { signal: controller.signal });
+      if (requestId !== fetchAllUsersRequestIdRef.current) {
+        return;
+      }
+      const list = res.data.users || res.data || [];
+      setAllUsers(list);
+      writeCache(cacheKey, { users: list }, { ttlMs: 5 * 60_000, deps: ['users'] });
     } catch (err) {
       try {
-        const res2 = await api.get('/users/admin/all');
-        setAllUsers(res2.data.users || res2.data || []);
+        const res2 = await api.get('/users/admin/all', { signal: fetchAllUsersAbortRef.current?.signal });
+        const list = res2.data.users || res2.data || [];
+        setAllUsers(list);
       } catch (e) {
         console.error('Failed to fetch users for admin', e);
         setAllUsers([]);
       }
+    } finally {
+      fetchAllUsersInFlightRef.current = false;
     }
-  }, []);
+  }, [user?._id]);
 
   useEffect(() => {
     if (!user) return;

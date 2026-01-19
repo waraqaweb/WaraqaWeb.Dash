@@ -1,5 +1,5 @@
 // frontend/src/components/dashboard/DashboardHome.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import api from '../../api/axios';
 import { useAuth } from "../../contexts/AuthContext";
@@ -17,6 +17,7 @@ import {
   Clock,
   AlertCircle,
   CheckCircle,
+  RefreshCcw,
 } from "lucide-react";
 
 import StatCard from '../../components/dashboard/widgets/StatCard';
@@ -35,6 +36,7 @@ import {
   BarChart,
   Bar,
 } from 'recharts';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const formatClassDate = (d) => {
   if (!d) return '—';
@@ -329,20 +331,69 @@ const HijriDateCard = ({ variant = 'card', timeZone, locale }) => {
 const DashboardHome = ({ isActive = true }) => {
   const { user, isAdmin, isTeacher, isGuardian, isStudent } = useAuth();
   const [compactAdmin, setCompactAdmin] = React.useState(false);
+  const [requestsTab, setRequestsTab] = React.useState('teachers');
 
   const userRole = user?.role;
 
   // --- UI / data state
   const [stats, setStats] = useState({ loading: true, data: {}, role: null, error: null });
+  const statsRef = useRef({ loading: true, data: {}, role: null, error: null });
+  const fetchStatsInFlightRef = useRef(false);
+  const fetchStatsKeyRef = useRef('');
+  const fetchStatsAbortRef = useRef(null);
+  const fetchStatsRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    statsRef.current = stats;
+  }, [stats]);
 
   // Fetch real dashboard stats from the server (extracted so we can retry)
   const fetchStats = React.useCallback(async () => {
-    let mounted = true;
-    setStats((s) => ({ ...s, loading: true, error: null }));
+    const requestSignature = JSON.stringify({ userId: user?._id, role: userRole || user?.role || null });
+    if (fetchStatsInFlightRef.current && fetchStatsKeyRef.current === requestSignature) {
+      return;
+    }
+
+    fetchStatsKeyRef.current = requestSignature;
+    fetchStatsInFlightRef.current = true;
+
+    const requestId = fetchStatsRequestIdRef.current + 1;
+    fetchStatsRequestIdRef.current = requestId;
+
+    if (fetchStatsAbortRef.current) {
+      try {
+        fetchStatsAbortRef.current.abort();
+      } catch (e) {
+        // ignore abort errors
+      }
+    }
+
+    const controller = new AbortController();
+    fetchStatsAbortRef.current = controller;
+
+    const hasExisting = statsRef.current?.data && Object.keys(statsRef.current.data || {}).length > 0;
+    if (!hasExisting) {
+      setStats((s) => ({ ...s, loading: true, error: null }));
+    }
     try {
-      const res = await api.get('/dashboard/stats');
+      const cacheKey = makeCacheKey('dashboard:stats', user?._id || 'anon', { role: userRole || user?.role || 'unknown' });
+      const cachedEntry = readCache(cacheKey, { deps: ['dashboard', 'classes', 'users'] });
+      if (cachedEntry.hit && cachedEntry.value) {
+        const payload = cachedEntry.value;
+        const role = payload.role ?? userRole ?? null;
+        const data = payload.stats || payload;
+        setStats({ loading: false, data, role, error: null, cached: payload.cached ?? true });
+        if (cachedEntry.ageMs < 60_000) {
+          fetchStatsInFlightRef.current = false;
+          return;
+        }
+      }
+
+      const res = await api.get('/dashboard/stats', { signal: controller.signal });
+      if (requestId !== fetchStatsRequestIdRef.current) {
+        return;
+      }
       const payload = res.data;
-      if (!mounted) return;
       if (!payload) {
         setStats({ loading: false, data: {}, role: null, error: 'No data' });
         return;
@@ -350,14 +401,17 @@ const DashboardHome = ({ isActive = true }) => {
       // payload shape: { success: true, role: 'teacher', stats: { ... } }
       const role = payload.role ?? userRole ?? null;
       const data = payload.stats || payload;
-      const cached = payload.cached ?? false;
-      setStats({ loading: false, data, role, error: null, cached });
+      setStats({ loading: false, data, role, error: null, cached: payload.cached ?? false });
+      writeCache(cacheKey, payload, { ttlMs: 5 * 60_000, deps: ['dashboard', 'classes', 'users'] });
     } catch (err) {
-      console.error('Failed to load dashboard stats', err);
-      setStats({ loading: false, data: {}, role: null, error: err?.message || 'Failed to load' });
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error('Failed to load dashboard stats', err);
+        setStats({ loading: false, data: {}, role: null, error: err?.message || 'Failed to load' });
+      }
     }
-    return () => { mounted = false; };
-  }, [userRole]);
+    fetchStatsInFlightRef.current = false;
+  }, [userRole, user?._id, user?.role]);
 
   useEffect(() => {
     fetchStats();
@@ -598,12 +652,38 @@ const DashboardHome = ({ isActive = true }) => {
 
   const renderAdminDashboard = () => {
             const data = stats.data || {};
+            const formatDelta = (current, previous) => {
+              const cur = Number(current || 0);
+              const prev = Number(previous || 0);
+              if (!Number.isFinite(cur) || !Number.isFinite(prev) || prev <= 0) return null;
+              const pct = ((cur - prev) / prev) * 100;
+              if (!Number.isFinite(pct)) return null;
+              return {
+                pct,
+                label: `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}% vs last 30d`,
+                isUp: pct >= 0
+              };
+            };
             // Users: support many payload shapes from server.
             // Try multiple known keys and fall back to zeros.
             let totalUsers = 0, totalTeachers = 0;
             // Attempt common locations in order of likelihood
             const tryNumber = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
             const pickFirst = (vals) => { for (const v of vals) { const n = tryNumber(v); if (n != null) return n; } return 0; };
+            const teacherRequestsUnopened = pickFirst([
+              data.requests?.teachers?.unopenedCount,
+              data.requests?.teachers?.unreadCount,
+              data.teacherRequestsUnopened,
+              data.teacherRequestsUnread,
+              data.requestsTeachersUnopened
+            ]);
+            const guardianRequestsUnopened = pickFirst([
+              data.requests?.guardians?.unopenedCount,
+              data.requests?.guardians?.unreadCount,
+              data.guardianRequestsUnopened,
+              data.guardianRequestsUnread,
+              data.requestsGuardiansUnopened
+            ]);
 
             // total users: several possible keys
             totalUsers = pickFirst([
@@ -626,6 +706,62 @@ const DashboardHome = ({ isActive = true }) => {
               (Array.isArray(data.users) ? (data.users.find(u => (u._id === 'teacher' || u.role === 'teacher') )?.count) : null)
             ]);
 
+            const activeTeachersTotal = pickFirst([
+              data.activeTeachersTotal,
+              data.teachers?.activeTeachersTotal,
+              data.users?.activeTeachersTotal,
+              data.summary?.teachers?.activeTeachersTotal,
+              data.summary?.users?.activeTeachersTotal
+            ]);
+
+            const totalGuardians = pickFirst([
+              data.totalGuardians,
+              data.guardians?.totalGuardians,
+              data.users?.totalGuardians,
+              data.summary?.guardians?.totalGuardians,
+              data.summary?.users?.totalGuardians
+            ]);
+
+            const activeGuardiansLast30 = pickFirst([
+              data.activeGuardiansLast30,
+              data.guardians?.activeGuardiansLast30,
+              data.summary?.guardians?.activeGuardiansLast30
+            ]);
+
+            const activeGuardiansPrev30 = pickFirst([
+              data.activeGuardiansPrev30,
+              data.guardians?.activeGuardiansPrev30,
+              data.summary?.guardians?.activeGuardiansPrev30
+            ]);
+
+            const totalStudents = pickFirst([
+              data.totalStudents,
+              data.students?.totalStudents,
+              data.users?.totalStudents,
+              data.summary?.students?.totalStudents,
+              data.summary?.users?.totalStudents
+            ]);
+
+            const activeStudentsTotal = pickFirst([
+              data.activeStudentsTotal,
+              data.students?.activeStudentsTotal,
+              data.users?.activeStudentsTotal,
+              data.summary?.students?.activeStudentsTotal,
+              data.summary?.users?.activeStudentsTotal
+            ]);
+
+            const activeTeachersLast30 = pickFirst([
+              data.activeTeachersLast30,
+              data.teachers?.activeTeachersLast30,
+              data.summary?.teachers?.activeTeachersLast30
+            ]);
+
+            const activeTeachersPrev30 = pickFirst([
+              data.activeTeachersPrev30,
+              data.teachers?.activeTeachersPrev30,
+              data.summary?.teachers?.activeTeachersPrev30
+            ]);
+
             // New users this month (best-effort)
             const newUsersThisMonth = pickFirst([
               data.newUsersThisMonth,
@@ -635,17 +771,6 @@ const DashboardHome = ({ isActive = true }) => {
               data.users?.newUsersThisMonth,
               data.growth?.newUsersThisMonth,
               data.growth?.newUsers
-            ]);
-
-            // Active users by schedule (best-effort)
-            const activeUsersByScheduleCount = pickFirst([
-              data.activeUsersByScheduleCount,
-              data.activeUsersCount,
-              data.summary?.classes?.activeUsersByScheduleCount,
-              data.summary?.classes?.activeUsersCount,
-              data.activeUsers,
-              data.activeUsersThisMonth,
-              data.users?.activeCount
             ]);
 
             // Daily unique dashboard users (count each user once per day)
@@ -658,7 +783,7 @@ const DashboardHome = ({ isActive = true }) => {
               data.dailyActiveUsers,
             ]);
 
-            // Unique users in last 30 days (deduplicated)
+            // Unique users in Thirty days (deduplicated)
             const uniqueUsersLast30Days = pickFirst([
               data.uniqueUsersLast30Days,
               data.uniqueUsers30Days,
@@ -688,6 +813,24 @@ const DashboardHome = ({ isActive = true }) => {
             // Revenue
             const monthlyRevenue = data.revenue?.monthly?.total ?? data.revenue?.totalRevenue ?? data.revenue?.total ?? (data.revenue && data.revenue.total) ?? 0;
             const unpaidBalance = data.revenue?.unpaidBalanceTotal ?? data.unpaidBalanceTotal ?? 0;
+            const timeseries = data.summary?.timeseries ?? data.timeseries ?? null;
+            const past30Scheduled = Array.isArray(timeseries?.classesScheduled)
+              ? timeseries.classesScheduled.reduce((sum, v) => sum + Number(v || 0), 0)
+              : 0;
+            const upcomingNext30 = pickFirst([
+              data.classes?.upcomingNext30,
+              data.upcomingClasses30,
+              data.upcomingClasses
+            ]);
+            const expectedNext30 = pickFirst([
+              data.classes?.expectedNext30,
+              data.expectedClasses
+            ]);
+            const upcomingDelta = formatDelta(upcomingNext30, past30Scheduled);
+            const expectedDelta = formatDelta(expectedNext30, past30Scheduled);
+            const guardiansDelta = formatDelta(activeGuardiansLast30, activeGuardiansPrev30);
+            const teachersDelta = formatDelta(activeTeachersLast30, activeTeachersPrev30);
+            const inactiveStudentsAfterActivity = data.inactiveStudentsAfterActivity || data.students?.inactiveStudentsAfterActivity || data.summary?.students?.inactiveStudentsAfterActivity || [];
 
             return (
               <div className="space-y-3 sm:space-y-4">
@@ -703,14 +846,24 @@ const DashboardHome = ({ isActive = true }) => {
                   <div className="flex items-center space-x-3">
                     <HijriDateCard variant="inline" timeZone={user?.timezone} />
                     <div className="text-sm text-muted-foreground">
-                      {stats.data && stats.data.timestamps && stats.data.timestamps.computedAt && (
-                        <span>Last updated {new Date(stats.data.timestamps.computedAt).toLocaleTimeString()}</span>
-                      )}
+                      {stats.data && stats.data.timestamps && stats.data.timestamps.computedAt && (() => {
+                        const d = new Date(stats.data.timestamps.computedAt);
+                        if (Number.isNaN(d.getTime())) return null;
+                        const date = `${d.getDate()}/${d.getMonth() + 1}`;
+                        const hours = d.getHours() % 12 || 12;
+                        const minutes = String(d.getMinutes()).padStart(2, '0');
+                        const time = `${hours}:${minutes}`;
+                        return <span>Updated {date} • {time}</span>;
+                      })()}
                     </div>
                     <button
-                      className="px-3 py-1 rounded border border-border bg-card text-sm"
+                      aria-label="Refresh"
+                      title="Refresh"
+                      className="ml-1 inline-flex items-center justify-center rounded-full text-white bg-gradient-to-r from-emerald-500 to-teal-500 shadow-sm hover:opacity-95 h-8 w-8"
                       onClick={async () => { try { await api.post('/dashboard/refresh'); await fetchStats(); } catch (e) { console.error(e); } }}
-                    >↻ Refresh</button>
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                    </button>
 
                   </div>
                 </div>
@@ -720,16 +873,26 @@ const DashboardHome = ({ isActive = true }) => {
                   {/* Classes column (single consolidated box) */}
                   <div className="space-y-3">
                     <div className="text-sm font-medium text-foreground">Classes</div>
-                    <div className="bg-card rounded-lg p-4">
+                    <div className="bg-gradient-to-br from-sky-50 via-card to-card rounded-xl p-4 border border-sky-100">
                       <div className="grid grid-cols-1 gap-3">
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Upcoming (30 days)</div>
-                          <div className="text-base sm:text-lg font-semibold">{data.classes?.upcomingNext30 ?? data.upcomingClasses30 ?? data.upcomingClasses ?? 0}</div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">Upcoming classes (next 30 days)</div>
+                            {upcomingDelta && (
+                              <div className={`text-[11px] font-medium ${upcomingDelta.isUp ? 'text-emerald-600' : 'text-rose-600'}`}>{upcomingDelta.label}</div>
+                            )}
+                          </div>
+                          <div className="text-base sm:text-lg font-semibold">{upcomingNext30}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Expected (30 days)</div>
-                          <div className="text-base sm:text-lg font-semibold">{data.classes?.expectedNext30 ?? data.expectedClasses ?? 0}</div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">Expected to end of month</div>
+                            {expectedDelta && (
+                              <div className={`text-[11px] font-medium ${expectedDelta.isUp ? 'text-emerald-600' : 'text-rose-600'}`}>{expectedDelta.label}</div>
+                            )}
+                          </div>
+                          <div className="text-base sm:text-lg font-semibold">{expectedNext30}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
@@ -743,7 +906,7 @@ const DashboardHome = ({ isActive = true }) => {
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Completed (month)</div>
+                          <div className="text-xs text-muted-foreground">Reported this month</div>
                           <div className="text-base sm:text-lg font-semibold">{Number(data.completedHoursThisMonth ?? 0).toFixed(2)} hrs</div>
                         </div>
 
@@ -752,10 +915,6 @@ const DashboardHome = ({ isActive = true }) => {
                           <div className="text-base sm:text-lg font-semibold">{Number(data.cancelledHoursThisMonth ?? 0).toFixed(2)} hrs</div>
                         </div>
 
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Next Auto-Generation</div>
-                          <div className="text-xs">{(data.timestamps && data.timestamps.nextAutoGeneration) ? new Date(data.timestamps.nextAutoGeneration).toLocaleString() : (data.nextAutoGeneration ? new Date(data.nextAutoGeneration).toLocaleString() : '—')}</div>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -763,16 +922,32 @@ const DashboardHome = ({ isActive = true }) => {
                   {/* Users column (single consolidated box) */}
                   <div className="space-y-3">
                     <div className="text-sm font-medium text-foreground">Users</div>
-                    <div className="bg-card rounded-lg p-4">
+                    <div className="bg-gradient-to-br from-emerald-50 via-card to-card rounded-xl p-4 border border-emerald-100">
                       <div className="grid grid-cols-1 gap-3">
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Total users</div>
-                          <div className="text-base sm:text-lg font-semibold">{totalUsers}</div>
+                        
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="rounded-lg bg-white/70 border border-emerald-100 p-2">
+                            <div className="text-xs text-muted-foreground">Active students</div>
+                            <div className="text-sm font-semibold">{activeStudentsTotal} <span className="text-xs text-muted-foreground">/ {totalStudents}</span></div>
+                          </div>
+                          <div className="rounded-lg bg-white/70 border border-emerald-100 p-2">
+                            <div className="text-xs text-muted-foreground">Active teachers</div>
+                            <div className="text-sm font-semibold">{activeTeachersTotal} <span className="text-xs text-muted-foreground">/ {totalTeachers}</span></div>
+                            {teachersDelta && (
+                              <div className={`text-[11px] font-medium ${teachersDelta.isUp ? 'text-emerald-600' : 'text-rose-600'}`}>{teachersDelta.label}</div>
+                            )}
+                          </div>
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Teachers</div>
-                          <div className="text-base sm:text-lg font-semibold">{totalTeachers}</div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">Active guardians (Thirty days)</div>
+                            {guardiansDelta && (
+                              <div className={`text-[11px] font-medium ${guardiansDelta.isUp ? 'text-emerald-600' : 'text-rose-600'}`}>{guardiansDelta.label}</div>
+                            )}
+                          </div>
+                          <div className="text-base sm:text-lg font-semibold">{activeGuardiansLast30} <span className="text-xs text-muted-foreground">/ {totalGuardians}</span></div>
                         </div>
 
                         <div className="flex items-center justify-between">
@@ -781,22 +956,17 @@ const DashboardHome = ({ isActive = true }) => {
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Active users (by schedule)</div>
-                          <div className="text-base sm:text-lg font-semibold">{activeUsersByScheduleCount ?? 0}</div>
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Unique users (today)</div>
+                          <div className="text-xs text-muted-foreground">Unique devices (today)</div>
                           <div className="text-base sm:text-lg font-semibold">{dailyUniqueDashboardUsers ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Unique users (last 30 days)</div>
+                          <div className="text-xs text-muted-foreground">Unique devices (Thirty days)</div>
                           <div className="text-base sm:text-lg font-semibold">{uniqueUsersLast30Days ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Currently online (dashboard)</div>
+                          <div className="text-xs text-muted-foreground">Online now (dashboard)</div>
                           <div className="text-base sm:text-lg font-semibold">{currentActiveDashboardUsers ?? 0}</div>
                         </div>
                       </div>
@@ -806,10 +976,10 @@ const DashboardHome = ({ isActive = true }) => {
                   {/* Finance column (single consolidated box) */}
                   <div className="space-y-3">
                     <div className="text-sm font-medium text-foreground">Finance</div>
-                    <div className="bg-card rounded-lg p-4">
+                    <div className="bg-gradient-to-br from-amber-50 via-card to-card rounded-xl p-4 border border-amber-100">
                       <div className="grid grid-cols-1 gap-3">
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Monthly Revenue</div>
+                          <div className="text-xs text-muted-foreground">Revenue (month to date)</div>
                           <div className="text-base sm:text-lg font-semibold">${monthlyRevenue ?? 0}</div>
                         </div>
 
@@ -838,82 +1008,98 @@ const DashboardHome = ({ isActive = true }) => {
                 </div>
 
                 {/* Charts moved to the bottom: three compact chart cards */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  <DashboardChartCard title="Revenue (last 30 days)" subtitle="Daily revenue">
-                    {(() => {
-                      const ts = data.summary?.timeseries ?? data.timeseries ?? null;
-                      const dates = (ts && ts.dates) ?? [];
-                      const revenue = (ts && ts.revenue) ?? [];
-                      const chartData = dates.map((d, i) => ({ date: d.slice(5), revenue: revenue[i] ?? 0 }));
-                      return chartData.length === 0 ? (
-                        <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">No revenue data</div>
-                      ) : (
-                        <ResponsiveContainer height={180}>
-                          <LineChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 6 }}>
-                            <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
-                            <XAxis dataKey="date" />
-                            <YAxis />
-                            <Tooltip />
-                            <Line type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={2} dot={false} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      );
-                    })()}
-                  </DashboardChartCard>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full">
+                    <DashboardChartCard title="Revenue (Thirty days)" subtitle="Daily revenue">
+                      {(() => {
+                        const ts = data.summary?.timeseries ?? data.timeseries ?? null;
+                        const dates = (ts && ts.dates) ?? [];
+                        const revenue = (ts && ts.revenue) ?? [];
+                        const chartData = dates.map((d, i) => ({ date: d.slice(5), revenue: revenue[i] ?? 0 }));
+                        return chartData.length === 0 ? (
+                          <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">No revenue data</div>
+                        ) : (
+                          <ResponsiveContainer height={140}>
+                            <LineChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 6 }}>
+                              <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
+                              <XAxis dataKey="date" />
+                              <YAxis />
+                              <Tooltip />
+                              <Line type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={2} dot={false} />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        );
+                      })()}
+                    </DashboardChartCard>
 
-                  <DashboardChartCard title="Classes (last 30 days)" subtitle="Scheduled vs Completed">
-                    {(() => {
-                      const ts = data.summary?.timeseries ?? data.timeseries ?? null;
-                      const dates = (ts && ts.dates) ?? [];
-                      const scheduled = (ts && ts.classesScheduled) ?? [];
-                      const completed = (ts && ts.classesCompleted) ?? [];
-                      const chartData = dates.map((d, i) => ({ date: d.slice(5), scheduled: scheduled[i] ?? 0, completed: completed[i] ?? 0 }));
-                      return chartData.length === 0 ? (
-                        <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">No class data</div>
-                      ) : (
-                        <ResponsiveContainer height={180}>
-                          <BarChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 6 }}>
-                            <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
-                            <XAxis dataKey="date" />
-                            <YAxis />
-                            <Tooltip />
-                            <Bar dataKey="scheduled" fill="#10b981" />
-                            <Bar dataKey="completed" fill="#4f46e5" />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      );
-                    })()}
-                  </DashboardChartCard>
+                    <DashboardChartCard title="Classes (Thirty days)" subtitle="Scheduled vs completed">
+                      {(() => {
+                        const ts = data.summary?.timeseries ?? data.timeseries ?? null;
+                        const dates = (ts && ts.dates) ?? [];
+                        const scheduled = (ts && ts.classesScheduled) ?? [];
+                        const completed = (ts && ts.classesCompleted) ?? [];
+                        const chartData = dates.map((d, i) => ({ date: d.slice(5), scheduled: scheduled[i] ?? 0, completed: completed[i] ?? 0 }));
+                        return chartData.length === 0 ? (
+                          <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">No class data</div>
+                        ) : (
+                          <ResponsiveContainer height={140}>
+                            <BarChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 6 }}>
+                              <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
+                              <XAxis dataKey="date" />
+                              <YAxis />
+                              <Tooltip />
+                              <Bar dataKey="scheduled" fill="#10b981" />
+                              <Bar dataKey="completed" fill="#4f46e5" />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        );
+                      })()}
+                    </DashboardChartCard>
+                  </div>
 
-                  <DashboardChartCard title="Active Users / Teachers (last 30 days)" subtitle="Daily active users and teachers">
-                    {(() => {
-                      const ts = data.summary?.timeseries ?? data.timeseries ?? null;
-                      const dates = (ts && ts.dates) ?? [];
-                      const activeUsers = (ts && (ts.activeUsers ?? ts.users ?? ts.active)) ?? [];
-                      const teachers = (ts && ts.teachers) ?? [];
-                      const chartData = dates.map((d, i) => ({ date: d.slice(5), activeUsers: activeUsers[i] ?? 0, teachers: teachers[i] ?? 0 }));
-                      return chartData.length === 0 ? (
-                        <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">No activity data</div>
-                      ) : (
-                        <ResponsiveContainer height={180}>
-                          <LineChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 6 }}>
-                            <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
-                            <XAxis dataKey="date" />
-                            <YAxis />
-                            <Tooltip />
-                            <Line type="monotone" dataKey="activeUsers" stroke="#f59e0b" strokeWidth={2} dot={false} />
-                            <Line type="monotone" dataKey="teachers" stroke="#2C736C" strokeWidth={2} dot={false} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      );
-                    })()}
-                  </DashboardChartCard>
+                  <div className="bg-card rounded-lg border border-border p-4 h-full flex flex-col">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground">Requests inbox</h3>
+                        <p className="text-xs text-muted-foreground">Centralized messages for admins</p>
+                      </div>
+                      <div className="flex items-center gap-1 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setRequestsTab('teachers')}
+                          className={`px-2 py-0.5 rounded-full border ${requestsTab === 'teachers' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted/40 text-muted-foreground border-border'}`}
+                        >
+                          Teachers
+                          <span className={`ml-1 font-semibold ${teacherRequestsUnopened > 0 ? 'text-rose-600' : 'text-muted-foreground'}`}>
+                            ({teacherRequestsUnopened})
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRequestsTab('guardians')}
+                          className={`px-2 py-0.5 rounded-full border ${requestsTab === 'guardians' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted/40 text-muted-foreground border-border'}`}
+                        >
+                          Guardians
+                          <span className={`ml-1 font-semibold ${guardianRequestsUnopened > 0 ? 'text-rose-600' : 'text-muted-foreground'}`}>
+                            ({guardianRequestsUnopened})
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground flex-1 overflow-y-auto text-center">
+                      <div className="min-h-[160px] flex items-center justify-center">
+                        {requestsTab === 'teachers'
+                          ? 'Teacher requests will appear here. This will replace WhatsApp with a structured request flow.'
+                          : 'Guardian requests will appear here. This will replace WhatsApp with a structured request flow.'}
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Secondary lists placed side-by-side to reduce vertical length */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                   <div className="bg-card rounded-lg border border-border p-4">
-                    <h3 className="text-sm font-semibold mb-2">Top Owing Guardians</h3>
+                    <h3 className="text-sm font-semibold mb-2">Top owing guardians</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(data.topOwingGuardians || data.guardians?.topOwingGuardians || []).slice(0,5).map((g, idx) => (
                         <div key={idx} className="flex items-center justify-between">
@@ -926,7 +1112,7 @@ const DashboardHome = ({ isActive = true }) => {
                   </div>
 
                   <div className="bg-card rounded-lg border border-border p-4">
-                    <h3 className="text-sm font-semibold mb-2">Guardians Low on Hours</h3>
+                    <h3 className="text-sm font-semibold mb-2">Guardians low on hours</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(data.guardiansLowHours || data.guardians?.guardiansLowHours || []).slice(0,5).map((g, idx) => (
                         <div key={idx} className="flex items-center justify-between">
@@ -939,7 +1125,49 @@ const DashboardHome = ({ isActive = true }) => {
                   </div>
 
                   <div className="bg-card rounded-lg border border-border p-4">
-                    <h3 className="text-sm font-semibold mb-2">Users on Vacation</h3>
+                    <h3 className="text-sm font-semibold mb-2">New students (last 30 days)</h3>
+                    <div className="space-y-2 text-sm text-muted-foreground">
+                      {(data.newStudentsLast30Days || data.students?.newStudentsLast30Days || []).slice(0, 6).map((s) => {
+                        const firstAttendedAt = s.firstAttendedAt ? new Date(s.firstAttendedAt) : null;
+                        const firstClassAt = s.firstScheduledAt ? new Date(s.firstScheduledAt) : null;
+                        const now = new Date();
+                        const dateToShow = firstAttendedAt || firstClassAt;
+                        const isUpcoming = dateToShow && dateToShow > now;
+                        const hoursUntil = isUpcoming ? (dateToShow.getTime() - now.getTime()) / (1000 * 60 * 60) : null;
+                        const dateColor = isUpcoming
+                          ? (hoursUntil != null && hoursUntil <= 24 ? 'text-amber-600' : 'text-emerald-600')
+                          : 'text-muted-foreground';
+
+                        return (
+                          <div key={`${s.studentId || s.studentName}-${s.teacherId || s.teacherName}`} className="flex items-center justify-between">
+                            <div className="truncate">{s.studentName || 'Student'}{s.teacherName ? ` • ${s.teacherName}` : ''}</div>
+                            <div className={`text-xs ${dateColor}`}>{dateToShow ? formatDateDDMMMYYYY(dateToShow) : '—'}</div>
+                          </div>
+                        );
+                      })}
+                      {((data.newStudentsLast30Days || data.students?.newStudentsLast30Days || []).length === 0) && (
+                        <div className="text-xs text-muted-foreground">No new students in the last 30 days</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-card rounded-lg border border-border p-4">
+                    <h3 className="text-sm font-semibold mb-2">Inactive students (no teacher after 24h)</h3>
+                    <div className="space-y-2 text-sm text-muted-foreground">
+                      {(inactiveStudentsAfterActivity || []).slice(0, 6).map((s) => (
+                        <div key={s.studentId || s._id} className="flex items-center justify-between">
+                          <div className="truncate">{s.studentName || 'Student'}</div>
+                          <div className="text-xs">{s.inactiveAt ? formatDateDDMMMYYYY(s.inactiveAt) : (s.lastClassAt ? formatDateDDMMMYYYY(s.lastClassAt) : '—')}</div>
+                        </div>
+                      ))}
+                      {(!inactiveStudentsAfterActivity || inactiveStudentsAfterActivity.length === 0) && (
+                        <div className="text-xs text-muted-foreground">No recent inactive students found</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-card rounded-lg border border-border p-4">
+                    <h3 className="text-sm font-semibold mb-2">Users on vacation</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(() => {
                         const teachers = (data.teachersOnVacationList || data.teachers?.teachersOnVacationList || []).map((t) => ({
@@ -1218,7 +1446,7 @@ const DashboardHome = ({ isActive = true }) => {
           <div className="bg-gradient-to-br from-primary/5 via-card to-card rounded-lg border border-primary/15 p-4">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Hours (last 30 days)</p>
+                <p className="text-sm font-medium text-muted-foreground">Hours (Thirty days)</p>
                 <p className="text-lg sm:text-xl font-semibold text-foreground">{(data.totalHoursLast30 ?? 0)} hrs</p>
                 {/* small per-student list inside the same card (full list, small font) */}
                 {Array.isArray(data.recentStudentHours) && data.recentStudentHours.length > 0 ? (
@@ -1231,7 +1459,7 @@ const DashboardHome = ({ isActive = true }) => {
                     ))}
                   </div>
                 ) : (
-                  <div className="mt-2 text-xs text-muted-foreground">No hours recorded in the last 30 days</div>
+                  <div className="mt-2 text-xs text-muted-foreground">No hours recorded in the Thirty days</div>
                 )}
               </div>
               <div className="flex flex-col items-center">

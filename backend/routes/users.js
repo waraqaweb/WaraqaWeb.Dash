@@ -2118,7 +2118,7 @@ router.post('/:id/login-as', authenticateToken, requireAdmin, async (req, res) =
       return res.status(404).json({ message: 'User not found' });
     }
 
-    const token = generateToken(userToImpersonate._id);
+    const token = generateToken(userToImpersonate, { impersonatedBy: req.user?._id });
 
     res.json({
       user: userToImpersonate,

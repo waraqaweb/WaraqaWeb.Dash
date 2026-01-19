@@ -5,7 +5,7 @@
  * Displays student list with details and provides actions for adding/editing students.
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Users, MessageCircle, Mail, ChevronDown, UserX, UserCheck } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
@@ -73,6 +73,11 @@ const MyStudentsPage = () => {
   const [, setTotalHours] = useState(0);
   const [localLoading, setLocalLoading] = useState(true);
   const [error, setError] = useState('');
+  const studentsRef = useRef([]);
+  const fetchStudentsInFlightRef = useRef(false);
+  const fetchStudentsKeyRef = useRef('');
+  const fetchStudentsAbortRef = useRef(null);
+  const fetchStudentsRequestIdRef = useRef(0);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState(null);
   const [expandedStudent, setExpandedStudent] = useState(null);
@@ -129,8 +134,44 @@ const MyStudentsPage = () => {
   }, [effectiveSearchTerm, statusFilter]);
 
 
+  useEffect(() => {
+    studentsRef.current = students || [];
+  }, [students]);
+
 const fetchStudents = async () => {
-  setLocalLoading(true);
+  const requestSignature = JSON.stringify({
+    role: user?.role,
+    guardianFilter,
+    statusFilter,
+    globalFilter,
+    search: (effectiveSearchTerm || '').trim() || undefined,
+    page: currentPage,
+  });
+
+  if (fetchStudentsInFlightRef.current && fetchStudentsKeyRef.current === requestSignature) {
+    return;
+  }
+
+  fetchStudentsKeyRef.current = requestSignature;
+  fetchStudentsInFlightRef.current = true;
+
+  const requestId = fetchStudentsRequestIdRef.current + 1;
+  fetchStudentsRequestIdRef.current = requestId;
+
+  if (fetchStudentsAbortRef.current) {
+    try {
+      fetchStudentsAbortRef.current.abort();
+    } catch (e) {
+      // ignore abort errors
+    }
+  }
+
+  const controller = new AbortController();
+  fetchStudentsAbortRef.current = controller;
+  const requestOptions = { signal: controller.signal };
+
+  const hasExisting = (studentsRef.current || []).length > 0;
+  setLocalLoading(!hasExisting);
   setError('');
   console.log('[MyStudentsPage] fetchStudents() start', {
     role: user?.role,
@@ -152,7 +193,7 @@ const fetchStudents = async () => {
     if (guardianFilter !== 'all') {
       if (isTeacher && isTeacher()) {
         const teacherId = user._id || user.id;
-        const res = await api.get(`/users/teacher/${teacherId}/students`);
+        const res = await api.get(`/users/teacher/${teacherId}/students`, requestOptions);
         const arrAll = res.data.students || [];
         guardianStudentsArr = arrAll.filter(s => String(s.guardianId || s.guardian) === String(guardianFilter));
         const withTZ = guardianStudentsArr.map(st => ({ ...st, timezone: deriveStudentTimezone(st) }));
@@ -160,7 +201,7 @@ const fetchStudents = async () => {
         // Do not expose total hours to teachers
         setTotalHours(0);
       } else {
-        response = await api.get(`/users/${guardianFilter}/students`);
+        response = await api.get(`/users/${guardianFilter}/students`, requestOptions);
         guardianStudentsArr = response.data.students || [];
         const withTZ = guardianStudentsArr.map(st => ({ ...st, timezone: deriveStudentTimezone(st) }));
         setStudents(withTZ);
@@ -196,7 +237,10 @@ const fetchStudents = async () => {
       setStudents(cached.value.students || []);
       setTotalHours(cached.value.totalHours || 0);
       setLocalLoading(false);
-      if (cached.ageMs < 60_000) return;
+      if (cached.ageMs < 60_000) {
+        fetchStudentsInFlightRef.current = false;
+        return;
+      }
     }
 
     if (isAdmin && isAdmin()) {
@@ -206,7 +250,8 @@ const fetchStudents = async () => {
         params: {
           search: (effectiveSearchTerm || '').trim() || undefined,
           limit: 400,
-        }
+        },
+        signal: controller.signal
       });
       const arr = response.data.students || [];
       const withTZ = arr.map((st) => ({
@@ -227,7 +272,7 @@ const fetchStudents = async () => {
       // For teachers show only students who have upcoming classes with this teacher.
       try {
         const teacherId = user._id || user.id;
-        const classesRes = await api.get('/classes', { params: { filter: 'upcoming', teacher: teacherId, limit: 2000 } });
+        const classesRes = await api.get('/classes', { params: { filter: 'upcoming', teacher: teacherId, limit: 2000 }, signal: controller.signal });
         const classesArr = classesRes.data.classes || [];
         const upcomingNonCancelled = classesArr.filter((cls) => !isCancelledClassStatus(cls?.status));
         console.log('[MyStudentsPage] fetched upcoming classes for teacher', { count: upcomingNonCancelled.length, teacher: teacherId });
@@ -293,7 +338,7 @@ const fetchStudents = async () => {
         const guardiansMap = {};
         let teacherStudentsArr = [];
         try {
-          const teacherStudentsRes = await api.get(`/users/teacher/${teacherId}/students`);
+          const teacherStudentsRes = await api.get(`/users/teacher/${teacherId}/students`, requestOptions);
           teacherStudentsArr = teacherStudentsRes.data.students || [];
           teacherStudentsArr.forEach((s) => {
             const gId = String(s.guardianId || s.guardian || '');
@@ -444,7 +489,7 @@ const fetchStudents = async () => {
         setError('Failed to fetch students');
       }
     } else if (isGuardian && isGuardian()) {
-      response = await api.get(`/users/${user._id || user.id}/students`);
+      response = await api.get(`/users/${user._id || user.id}/students`, requestOptions);
       const arr = response.data.students || [];
       const withTZ = arr.map(st => ({ ...st, timezone: deriveStudentTimezone(st) }));
       fetchedArr = withTZ;
@@ -473,7 +518,7 @@ const fetchStudents = async () => {
         if (isGuardian && isGuardian()) {
           // For guardians, fetch all past classes related to this guardian once and sum durations per student
           try {
-            const classesRes = await api.get('/classes', { params: { filter: 'past', guardian: user._id, limit: 1000 } });
+            const classesRes = await api.get('/classes', { params: { filter: 'past', guardian: user._id, limit: 1000 }, signal: controller.signal });
             const classesArr = classesRes.data.classes || [];
             classesArr.forEach(cls => {
               if (!countableStatuses.includes(cls.status)) return;
@@ -502,7 +547,8 @@ const fetchStudents = async () => {
                   filter: 'past',
                   studentIds: chunk.join(','),
                   limit: 1000,
-                }
+                },
+                signal: controller.signal
               });
               const classesArr = res.data.classes || [];
               classesArr.forEach((c) => {
@@ -534,11 +580,15 @@ const fetchStudents = async () => {
       setClassesHoursMap({});
     }
   } catch (error) {
-    console.error('❌ Error fetching students:', error);
-    const errorMessage = error.response?.data?.message || 'Failed to fetch students.';
-    setError(errorMessage);
+    const isCanceled = error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError';
+    if (!isCanceled) {
+      console.error('❌ Error fetching students:', error);
+      const errorMessage = error.response?.data?.message || 'Failed to fetch students.';
+      setError(errorMessage);
+    }
   } finally {
     setLocalLoading(false);
+    fetchStudentsInFlightRef.current = false;
   }
 };
 

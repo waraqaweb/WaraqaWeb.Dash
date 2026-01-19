@@ -35,6 +35,16 @@ export const useLibraryData = ({ searchTerm: externalSearchTerm = '', filter: ex
   const [isTreeLoading, setIsTreeLoading] = useState(false);
 
   const debouncedSearchRef = useRef(null);
+  const itemsRef = useRef([]);
+  const foldersRef = useRef([]);
+
+  useEffect(() => {
+    itemsRef.current = items || [];
+  }, [items]);
+
+  useEffect(() => {
+    foldersRef.current = folders || [];
+  }, [folders]);
 
   const hydrateTree = useCallback(async () => {
     try {
@@ -56,7 +66,8 @@ export const useLibraryData = ({ searchTerm: externalSearchTerm = '', filter: ex
   }, [user?._id]);
 
   const loadFolder = useCallback(async (folderId = 'root', options = {}) => {
-    setIsLoading(true);
+    const hasExisting = (itemsRef.current || []).length > 0 || (foldersRef.current || []).length > 0;
+    setIsLoading(!hasExisting);
     setError(null);
     try {
       const cacheKey = makeCacheKey('library:folder', user?._id, { folderId, options });
@@ -111,7 +122,8 @@ export const useLibraryData = ({ searchTerm: externalSearchTerm = '', filter: ex
       loadFolder(activeFolder || 'root');
       return;
     }
-    setIsLoading(true);
+    const hasExisting = (itemsRef.current || []).length > 0;
+    setIsLoading(!hasExisting);
     try {
       const cacheKey = makeCacheKey('library:search', user?._id, { q: nextTerm });
       const cached = readCache(cacheKey, { deps: ['library'] });

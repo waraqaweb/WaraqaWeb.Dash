@@ -74,7 +74,9 @@ const filterOptions = {
     { value: 'all', label: 'All Classes' },
     { value: 'scheduled', label: 'Scheduled' },
     { value: 'completed', label: 'Completed' },
-    { value: 'cancelled', label: 'Cancelled' }
+    { value: 'cancelled', label: 'Cancelled' },
+    { value: 'pending_report', label: 'Pending report' },
+    { value: 'missed_report', label: 'Missed report' }
   ],
   profile: [
     { value: 'all', label: 'All Users' },

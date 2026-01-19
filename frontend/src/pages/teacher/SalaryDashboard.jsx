@@ -8,13 +8,15 @@
  * - Payment status tracking
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSearch } from '../../contexts/SearchContext';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import TeacherInvoiceDetailModal from '../../components/teacherSalary/TeacherInvoiceDetailModal';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import {
   FileText,
   DollarSign,
@@ -27,12 +29,12 @@ import {
   CheckCircle,
   ChevronLeft,
   ChevronRight,
-  Filter,
   Sparkles
 } from 'lucide-react';
 
 const SalaryDashboard = () => {
   const { user } = useAuth();
+  const { searchTerm } = useSearch();
   const navigate = useNavigate();
   const isTeacher = user?.role === 'teacher';
 
@@ -52,8 +54,7 @@ const SalaryDashboard = () => {
 
   // Filter state
   const [filters, setFilters] = useState({
-    status: '', // published, paid
-    month: '' // YYYY-MM
+    status: 'published'
   });
 
   // Pagination state
@@ -65,27 +66,59 @@ const SalaryDashboard = () => {
   // Modal state
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const fetchYTDSummaryInFlightRef = useRef(false);
+  const fetchYTDSummaryKeyRef = useRef('');
+  const fetchInvoicesInFlightRef = useRef(false);
+  const fetchInvoicesKeyRef = useRef('');
 
   // Fetch YTD summary
   const fetchYTDSummary = useCallback(async () => {
     try {
+      const year = new Date().getFullYear();
+      const requestSignature = JSON.stringify({ year, userId: user?._id || null });
+      if (fetchYTDSummaryInFlightRef.current && fetchYTDSummaryKeyRef.current === requestSignature) {
+        return;
+      }
+      fetchYTDSummaryKeyRef.current = requestSignature;
+      fetchYTDSummaryInFlightRef.current = true;
+
+      const cacheKey = makeCacheKey('teacher-salary:ytd', user?._id || 'anon', { year });
+      const cached = readCache(cacheKey, { deps: ['teacher-salary'] });
+      if (cached.hit && cached.value) {
+        setYtdSummary(cached.value.summary || cached.value);
+        if (cached.ageMs < 60_000) {
+          fetchYTDSummaryInFlightRef.current = false;
+          return;
+        }
+      }
+
       const response = await api.get('/teacher-salary/teacher/ytd');
       setYtdSummary(response.data.summary);
+      writeCache(cacheKey, response.data, { ttlMs: 5 * 60_000, deps: ['teacher-salary'] });
     } catch (err) {
       console.error('Error fetching YTD summary:', err);
       setError(err.response?.data?.message || 'Failed to load salary summary');
+    } finally {
+      fetchYTDSummaryInFlightRef.current = false;
     }
-  }, []);
+  }, [user?._id]);
 
   // Fetch invoices
   const fetchInvoices = useCallback(async () => {
     try {
+      const requestSignature = JSON.stringify({ page, limit, filters, searchTerm, userId: user?._id || null });
+      if (fetchInvoicesInFlightRef.current && fetchInvoicesKeyRef.current === requestSignature) {
+        return;
+      }
+      fetchInvoicesKeyRef.current = requestSignature;
+      fetchInvoicesInFlightRef.current = true;
       setInvoicesLoading(true);
 
       const params = {
         page,
         limit,
-        ...filters
+        ...filters,
+        search: searchTerm || undefined
       };
 
       // Remove empty filters
@@ -93,19 +126,37 @@ const SalaryDashboard = () => {
         if (params[key] === '') delete params[key];
       });
 
+      const cacheKey = makeCacheKey('teacher-salary:teacher-invoices', user?._id || 'anon', params);
+      const cached = readCache(cacheKey, { deps: ['teacher-salary'] });
+      if (cached.hit && cached.value) {
+        const payload = cached.value;
+        setInvoices(payload.invoices || []);
+        setTotalPages(payload.pagination?.totalPages || payload.pagination?.pages || 1);
+        setTotalInvoices(payload.pagination?.total || 0);
+        setPage(payload.pagination?.page || 1);
+        setInvoicesLoading(false);
+
+        if (cached.ageMs < 60_000) {
+          fetchInvoicesInFlightRef.current = false;
+          return;
+        }
+      }
+
       const response = await api.get('/teacher-salary/teacher/invoices', { params });
 
       setInvoices(response.data.invoices || []);
       setTotalPages(response.data.pagination?.totalPages || 1);
       setTotalInvoices(response.data.pagination?.total || 0);
       setPage(response.data.pagination?.page || 1);
+      writeCache(cacheKey, response.data, { ttlMs: 5 * 60_000, deps: ['teacher-salary'] });
     } catch (err) {
       console.error('Error fetching invoices:', err);
       setError(err.response?.data?.message || 'Failed to load invoices');
     } finally {
       setInvoicesLoading(false);
+      fetchInvoicesInFlightRef.current = false;
     }
-  }, [page, limit, filters]);
+  }, [page, limit, filters, user?._id, searchTerm]);
 
   // Initial data fetch
   useEffect(() => {
@@ -126,11 +177,9 @@ const SalaryDashboard = () => {
     setPage(1);
   };
 
-  // Clear filters
-  const handleClearFilters = () => {
-    setFilters({ status: '', month: '' });
+  useEffect(() => {
     setPage(1);
-  };
+  }, [searchTerm]);
 
   // View invoice details
   const handleViewDetails = (invoice) => {
@@ -220,7 +269,7 @@ const SalaryDashboard = () => {
               </div>
               <h3 className="text-sm font-medium text-gray-600 mb-1">Total Hours</h3>
               <p className="text-3xl font-bold text-gray-900">
-                {ytdSummary.totalHoursYTD?.toFixed(1) || '0.0'}
+                {Number(ytdSummary.totalHoursYTD ?? ytdSummary.totalHours ?? 0).toFixed(1)}
               </p>
               <p className="text-xs text-gray-500 mt-1">hours taught this year</p>
             </div>
@@ -235,7 +284,7 @@ const SalaryDashboard = () => {
               </div>
               <h3 className="text-sm font-medium text-gray-600 mb-1">Total Earnings</h3>
               <p className="text-3xl font-bold text-gray-900">
-                ${ytdSummary.totalEarningsYTD?.toFixed(2) || '0.00'}
+                ${Number(ytdSummary.totalEarningsYTD ?? ytdSummary.totalEarnedUSD ?? 0).toFixed(2)}
               </p>
               <p className="text-xs text-gray-500 mt-1">USD earned this year</p>
             </div>
@@ -250,12 +299,12 @@ const SalaryDashboard = () => {
               </div>
               <h3 className="text-sm font-medium text-gray-600 mb-1">Rate Tier</h3>
               <div className="flex items-center gap-2">
-                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium ${getTierInfo(ytdSummary.currentRatePartition).bgColor} ${getTierInfo(ytdSummary.currentRatePartition).color}`}>
+                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium ${getTierInfo(ytdSummary.currentRatePartition || ytdSummary.ratePartition || '0-50h').bgColor} ${getTierInfo(ytdSummary.currentRatePartition || ytdSummary.ratePartition || '0-50h').color}`}>
                   <Sparkles className="w-3 h-3" />
-                  {getTierInfo(ytdSummary.currentRatePartition).name}
+                  {getTierInfo(ytdSummary.currentRatePartition || ytdSummary.ratePartition || '0-50h').name}
                 </span>
               </div>
-              <p className="text-xs text-gray-500 mt-2">{ytdSummary.currentRatePartition}</p>
+              <p className="text-xs text-gray-500 mt-2">{ytdSummary.currentRatePartition || ytdSummary.ratePartition || '—'}</p>
             </div>
 
             {/* Current Hourly Rate */}
@@ -268,7 +317,7 @@ const SalaryDashboard = () => {
               </div>
               <h3 className="text-sm font-medium text-gray-600 mb-1">Hourly Rate</h3>
               <p className="text-3xl font-bold text-gray-900">
-                ${ytdSummary.effectiveRate?.toFixed(2) || '0.00'}
+                ${Number(ytdSummary.effectiveRate ?? ytdSummary.currentRateUSD ?? 0).toFixed(2)}
               </p>
               <p className="text-xs text-gray-500 mt-1">per hour (USD)</p>
             </div>
@@ -287,53 +336,22 @@ const SalaryDashboard = () => {
             </div>
           </div>
 
-          {/* Filters */}
-          <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
-            <div className="flex items-center gap-2 mb-3">
-              <Filter className="w-4 h-4 text-gray-600" />
-              <span className="text-sm font-medium text-gray-700">Filters</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Status Filter */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Status
-                </label>
-                <select
-                  value={filters.status}
-                  onChange={(e) => handleFilterChange('status', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-transparent"
-                >
-                  <option value="">All Statuses</option>
-                  <option value="published">Published</option>
-                  <option value="paid">Paid</option>
-                </select>
-              </div>
-
-              {/* Month Filter */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Month
-                </label>
-                <input
-                  type="month"
-                  value={filters.month}
-                  onChange={(e) => handleFilterChange('month', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-transparent"
-                />
-              </div>
-
-              {/* Clear Button */}
-              <div className="flex items-end">
-                {Object.values(filters).some(v => v !== '') && (
-                  <button
-                    onClick={handleClearFilters}
-                    className="text-sm font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
-                  >
-                    Clear filters
-                  </button>
-                )}
-              </div>
+          <div className="px-6 py-3 border-b border-gray-200">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleFilterChange('status', 'published')}
+                className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${filters.status !== 'paid' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+              >
+                Unpaid
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFilterChange('status', 'paid')}
+                className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${filters.status === 'paid' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+              >
+                Paid
+              </button>
             </div>
           </div>
 
@@ -347,15 +365,25 @@ const SalaryDashboard = () => {
               <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
               <p className="text-gray-600">No invoices found</p>
               <p className="text-sm text-gray-500 mt-1">
-                {Object.values(filters).some(v => v !== '')
-                  ? 'Try adjusting your filters'
+                {searchTerm
+                  ? 'Try a different search'
                   : 'Invoices will appear here once published by admin'}
               </p>
             </div>
           ) : (
             <>
               <div className="divide-y divide-gray-200">
-                {invoices.map((invoice) => (
+                {invoices.map((invoice) => {
+                  const periodLabel = invoice.month && invoice.year
+                    ? `${String(invoice.month).padStart(2, '0')}/${invoice.year}`
+                    : (invoice.invoiceMonth ? formatDateDDMMMYYYY(invoice.invoiceMonth) : '—');
+                  const rateUSD = Number(invoice.rateSnapshot?.rate || invoice.snapshotRate?.rateUSD || invoice.hourlyRateUSD || 0);
+                  const amountEGP = Number(invoice.netAmountEGP || invoice.totalEGP || invoice.grossAmountEGP || invoice.finalTotalEGP || invoice.finalTotalInEGP || 0);
+                  const fallbackAmount = amountEGP > 0
+                    ? formatCurrency(amountEGP, 'EGP')
+                    : formatCurrency(invoice.finalTotal, invoice.currency || 'EGP');
+
+                  return (
                   <div
                     key={invoice._id}
                     className="px-6 py-4 hover:bg-gray-50 transition-colors"
@@ -375,7 +403,7 @@ const SalaryDashboard = () => {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                           <div className="flex items-center gap-2 text-gray-600">
                             <Calendar className="w-4 h-4" />
-                            <span>{formatDateDDMMMYYYY(invoice.invoiceMonth)}</span>
+                            <span>{periodLabel}</span>
                           </div>
                           <div className="flex items-center gap-2 text-gray-600">
                             <Clock className="w-4 h-4" />
@@ -383,11 +411,11 @@ const SalaryDashboard = () => {
                           </div>
                           <div className="flex items-center gap-2 text-gray-600">
                             <TrendingUp className="w-4 h-4" />
-                            <span>${invoice.snapshotRate?.rateUSD?.toFixed(2) || '0.00'}/hr</span>
+                            <span>${rateUSD.toFixed(2)}/hr</span>
                           </div>
                           <div className="flex items-center gap-2 font-semibold text-green-600">
                             <DollarSign className="w-4 h-4" />
-                            <span>{formatCurrency(invoice.finalTotal, invoice.currency)}</span>
+                            <span>{fallbackAmount}</span>
                           </div>
                         </div>
 
@@ -410,7 +438,8 @@ const SalaryDashboard = () => {
                       </div>
                     </div>
                   </div>
-                ))}
+                );
+                })}
               </div>
 
               {/* Pagination */}

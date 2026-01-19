@@ -18,7 +18,7 @@ const impersonate = async (req, res) => {
       return res.status(403).json({ message: 'Cannot impersonate inactive or locked user' });
     }
 
-    const token = jwt.sign({ userId: targetUser._id }, process.env.JWT_SECRET, {
+    const token = jwt.sign({ userId: targetUser._id, impersonatedBy: String(req.user?._id || ''), isImpersonated: true }, process.env.JWT_SECRET, {
       expiresIn: '7d'
     });
 

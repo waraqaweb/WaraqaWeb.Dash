@@ -585,24 +585,39 @@ teacherInvoiceSchema.statics.getTeacherYTDSummary = async function(teacherId, ye
     deleted: false
   });
 
+  const latestInvoice = await this.findOne({
+    teacher: teacherId,
+    year: year,
+    deleted: false
+  }).sort({ month: -1, createdAt: -1 });
+
   const summary = {
     totalHours: 0,
+    totalHoursYTD: 0,
     totalEarnedEGP: 0,
+    totalEarnedUSD: 0,
+    totalEarningsYTD: 0,
     invoicesPaid: 0,
     invoicesPending: 0,
     avgMonthlyHours: 0,
-    avgMonthlyEarnings: 0
+    avgMonthlyEarnings: 0,
+    currentRatePartition: latestInvoice?.rateSnapshot?.partition || null,
+    effectiveRate: latestInvoice?.rateSnapshot?.rate || 0
   };
 
   invoices.forEach(inv => {
     summary.totalHours += inv.totalHours || 0;
     if (inv.status === 'paid') {
       summary.totalEarnedEGP += inv.netAmountEGP || 0;
+      summary.totalEarnedUSD += inv.totalUSD || 0;
       summary.invoicesPaid++;
     } else if (inv.status === 'published') {
       summary.invoicesPending++;
     }
   });
+
+  summary.totalHoursYTD = summary.totalHours;
+  summary.totalEarningsYTD = summary.totalEarnedUSD;
 
   const monthsWorked = invoices.length;
   if (monthsWorked > 0) {

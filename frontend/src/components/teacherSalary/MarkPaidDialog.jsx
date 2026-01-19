@@ -14,7 +14,7 @@ const MarkPaidDialog = ({ invoice, onClose, onSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [formData, setFormData] = useState({
-    paymentMethod: 'bank_transfer',
+    paymentMethod: 'instapay',
     paymentProofUrl: '',
     notes: ''
   });
@@ -53,18 +53,70 @@ const MarkPaidDialog = ({ invoice, onClose, onSuccess }) => {
     return `${value.toFixed(2)} EGP`;
   };
 
+  const getExchangeRate = () => {
+    const rate = invoice?.exchangeRateSnapshot?.rate
+      || invoice?.exchangeRate
+      || invoice?.exchangeRateEGP
+      || invoice?.usdToEgp
+      || invoice?.exchangeRateUsed;
+    return Number(rate) || 1;
+  };
+
+  const resolveAmountEGP = () => {
+    const candidates = [
+      invoice?.netAmountEGP,
+      invoice?.totalEGP,
+      invoice?.grossAmountEGP,
+      invoice?.finalTotalEGP,
+      invoice?.finalTotalInEGP
+    ];
+    for (const c of candidates) {
+      const v = Number(c);
+      if (Number.isFinite(v) && v > 0) return v;
+    }
+    const finalTotal = Number(invoice?.finalTotal || 0);
+    if (finalTotal > 0) {
+      if ((invoice?.currency || 'EGP') === 'EGP') return finalTotal;
+      return finalTotal * getExchangeRate();
+    }
+    return 0;
+  };
+
+  const resolveBonusesEGP = () => {
+    const direct = Number(invoice?.bonusesEGP || 0);
+    if (direct) return direct;
+    const usd = Number(invoice?.bonusesUSD || 0);
+    return usd ? usd * getExchangeRate() : 0;
+  };
+
+  const resolveExtrasEGP = () => {
+    const direct = Number(invoice?.extrasEGP || 0);
+    if (direct) return direct;
+    const usd = Number(invoice?.extrasUSD || 0);
+    return usd ? usd * getExchangeRate() : 0;
+  };
+
+  const amountEGP = resolveAmountEGP();
+  const totalHours = Number(invoice?.totalHours || 0);
+  const hourlyRate = Number(invoice?.rateSnapshot?.rate || invoice?.snapshotRate?.rateUSD || invoice?.hourlyRateUSD || 0);
+  const tierLabel = invoice?.rateSnapshot?.partition || invoice?.snapshotRate?.partition || '—';
+  const bonusesEGP = resolveBonusesEGP();
+  const extrasEGP = resolveExtrasEGP();
+  const transferFeeEGP = Number(invoice?.transferFeeEGP || 0);
+  const instapayName = invoice?.teacher?.teacherInfo?.instapayName || invoice?.teacher?.instapayName || '';
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <DollarSign className="w-6 h-6 text-green-600" />
+            <div className="p-2 bg-emerald-100 rounded-lg">
+              <DollarSign className="w-5 h-5 text-emerald-600" />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-gray-900">Mark as Paid</h3>
-              <p className="text-sm text-gray-600">Invoice #{invoice?.invoiceNumber}</p>
+              <h3 className="text-lg font-semibold text-gray-900">Mark invoice as paid</h3>
+              <p className="text-xs text-gray-500">Invoice #{invoice?.invoiceNumber}</p>
             </div>
           </div>
           <button
@@ -76,88 +128,95 @@ const MarkPaidDialog = ({ invoice, onClose, onSuccess }) => {
         </div>
 
         {/* Invoice Summary */}
-        <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-gray-600">Teacher</span>
-            <span className="text-sm font-medium text-gray-900">
-              {invoice?.teacher?.firstName} {invoice?.teacher?.lastName}
-            </span>
-          </div>
+        <div className="mb-5 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-600">Amount</span>
-            <span className="text-lg font-bold text-green-600">
-              {formatCurrency(invoice?.finalTotal, invoice?.currency)}
-            </span>
+            <div className="text-sm font-medium text-gray-900">
+              {invoice?.teacher?.firstName} {invoice?.teacher?.lastName}
+            </div>
+            <div className="text-lg font-semibold text-emerald-700">
+              {formatCurrency(amountEGP, 'EGP')}
+            </div>
           </div>
-          <p className="mt-3 text-xs text-gray-600">
-            Fields affected: sets <span className="font-mono">TeacherInvoice.status</span> to <span className="font-mono">paid</span> and stores payment details (method/proof/notes). Paid invoices are treated as closed; late classes create adjustment invoices.
-          </p>
+          {instapayName && (
+            <div className="mt-1 text-xs text-emerald-700">Instapay: {instapayName}</div>
+          )}
+          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-gray-600">
+            <div className="flex items-center justify-between">
+              <span>Hours</span>
+              <span className="font-medium text-gray-800">{totalHours.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Rate tier</span>
+              <span className="font-medium text-gray-800">{tierLabel}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Hourly rate</span>
+              <span className="font-medium text-gray-800">${hourlyRate.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Bonus</span>
+              <span className="font-medium text-gray-800">{formatCurrency(bonusesEGP, 'EGP')}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Extra / Deduction</span>
+              <span className="font-medium text-gray-800">{formatCurrency(extrasEGP, 'EGP')}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Transfer fee</span>
+              <span className="font-medium text-gray-800">{formatCurrency(transferFeeEGP, 'EGP')}</span>
+            </div>
+          </div>
         </div>
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Payment Method */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Payment Method *
-            </label>
-            <select
-              value={formData.paymentMethod}
-              onChange={(e) => handleChange('paymentMethod', e.target.value)}
-              required
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-transparent"
-            >
-              <option value="bank_transfer">Bank Transfer</option>
-              <option value="instapay">Instapay</option>
-              <option value="paypal">PayPal</option>
-              <option value="cash">Cash</option>
-              <option value="other">Other</option>
-            </select>
+            <label className="block text-xs font-medium text-gray-600 mb-2">Payment method</label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { value: 'instapay', label: 'Instapay' },
+                { value: 'bank_transfer', label: 'Bank Transfer' },
+                { value: 'cash', label: 'Cash' },
+                { value: 'other', label: 'Other' }
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handleChange('paymentMethod', option.value)}
+                  className={`rounded-lg border px-3 py-2 text-xs font-medium transition ${formData.paymentMethod === option.value ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
-
-          {/* Payment Proof URL */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Payment Proof URL (Optional)
-            </label>
+            <label className="block text-xs font-medium text-gray-600 mb-2">Proof link (optional)</label>
             <div className="relative">
-              <Upload className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Upload className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
                 type="url"
                 value={formData.paymentProofUrl}
                 onChange={(e) => handleChange('paymentProofUrl', e.target.value)}
-                placeholder="https://..."
-                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-transparent"
+                placeholder="Paste link"
+                className="w-full pl-10 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-transparent"
               />
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Link to payment receipt or screenshot (e.g., from cloud storage)
+              Link to payment receipt or screenshot.
             </p>
           </div>
-
-          {/* Notes */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Notes (Optional)
-            </label>
+            <label className="block text-xs font-medium text-gray-600 mb-2">Notes (optional)</label>
             <textarea
               value={formData.notes}
               onChange={(e) => handleChange('notes', e.target.value)}
-              placeholder="Additional payment details..."
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-transparent resize-none"
+              rows={2}
+              placeholder="Add a short note"
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-custom-teal focus:border-transparent"
             />
           </div>
-
-          {/* Error Message */}
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-800 text-sm">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              {error}
-            </div>
-          )}
-
-          {/* Actions */}
           <div className="flex items-center gap-3 pt-2">
             <button
               type="button"

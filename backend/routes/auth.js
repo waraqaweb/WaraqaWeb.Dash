@@ -50,9 +50,14 @@ const { sendMail } = require('../services/emailService');
 /**
  * Generate JWT token
  */
-const generateToken = (userId) => {
+const generateToken = (userId, options = {}) => {
+  const payload = { userId };
+  if (options && options.impersonatedBy) {
+    payload.impersonatedBy = String(options.impersonatedBy);
+    payload.isImpersonated = true;
+  }
   return jwt.sign(
-    { userId },
+    payload,
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRE || "7d" }
   );

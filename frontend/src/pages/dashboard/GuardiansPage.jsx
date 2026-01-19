@@ -5,7 +5,7 @@
  * Includes detailed view with collapsible information, linked students, and payment info.
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import { useNavigate } from 'react-router-dom';
@@ -53,6 +53,11 @@ const GuardiansPage = () => {
   const [guardians, setGuardians] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const guardiansRef = useRef([]);
+  const fetchGuardiansInFlightRef = useRef(false);
+  const fetchGuardiansKeyRef = useRef('');
+  const fetchGuardiansAbortRef = useRef(null);
+  const fetchGuardiansRequestIdRef = useRef(0);
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const sortBy = 'firstName';
   const sortOrder = 'asc';
@@ -115,8 +120,42 @@ const GuardiansPage = () => {
     }
   }, [debouncedSearch, statusFilter]);
 
+  useEffect(() => {
+    guardiansRef.current = guardians || [];
+  }, [guardians]);
+
   const fetchGuardians = useCallback(async () => {
     try {
+      const requestSignature = JSON.stringify({
+        page: currentPage,
+        limit: itemsPerPage,
+        search: (debouncedSearch || '').trim() || undefined,
+        statusFilter,
+        sortBy,
+        order: sortOrder,
+      });
+
+      if (fetchGuardiansInFlightRef.current && fetchGuardiansKeyRef.current === requestSignature) {
+        return;
+      }
+
+      fetchGuardiansKeyRef.current = requestSignature;
+      fetchGuardiansInFlightRef.current = true;
+
+      const requestId = fetchGuardiansRequestIdRef.current + 1;
+      fetchGuardiansRequestIdRef.current = requestId;
+
+      if (fetchGuardiansAbortRef.current) {
+        try {
+          fetchGuardiansAbortRef.current.abort();
+        } catch (e) {
+          // ignore abort errors
+        }
+      }
+
+      const controller = new AbortController();
+      fetchGuardiansAbortRef.current = controller;
+
       const cacheKey = makeCacheKey('guardians:list', 'admin', {
         page: currentPage,
         limit: itemsPerPage,
@@ -133,10 +172,14 @@ const GuardiansPage = () => {
         if (cached.value.statusCounts) setStatusCounts(cached.value.statusCounts);
         setError('');
         setLoading(false);
-        if (cached.ageMs < 60_000) return;
+        if (cached.ageMs < 60_000) {
+          fetchGuardiansInFlightRef.current = false;
+          return;
+        }
       }
 
-      setLoading(true);
+      const hasExisting = (guardiansRef.current || []).length > 0;
+      setLoading(!hasExisting);
       const params = {
         role: 'guardian',
         page: currentPage,
@@ -150,7 +193,10 @@ const GuardiansPage = () => {
         params.isActive = statusFilter === 'active';
       }
 
-      const response = await api.get('/users', { params });
+      const response = await api.get('/users', { params, signal: controller.signal });
+      if (requestId !== fetchGuardiansRequestIdRef.current) {
+        return;
+      }
       const fetched = response.data.users || [];
       const nextTotalPages = response.data.pagination?.pages || 1;
       setGuardians(fetched);
@@ -163,10 +209,14 @@ const GuardiansPage = () => {
         { ttlMs: 5 * 60_000, deps: ['users', 'guardians'] }
       );
     } catch (err) {
-      setError('Failed to fetch guardians');
-      console.error('Fetch guardians error:', err);
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        setError('Failed to fetch guardians');
+        console.error('Fetch guardians error:', err);
+      }
     } finally {
       setLoading(false);
+      fetchGuardiansInFlightRef.current = false;
     }
   }, [currentPage, debouncedSearch, fetchStatusCounts, itemsPerPage, sortBy, sortOrder, statusFilter]);
 

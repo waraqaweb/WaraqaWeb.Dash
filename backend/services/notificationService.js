@@ -747,15 +747,20 @@ async function notifyAdminInvoiceGeneration(summary) {
         const periodText = hasPeriod ? `${summary.month}/${summary.year}` : null;
 
         // Create in-app notification
+        const totalTeachers = summary.totalProcessed || summary.total || summary.summary?.total || 0;
+        const createdCount = summary.created || summary.summary?.created || 0;
+        const skippedCount = summary.skipped?.length || summary.summary?.skipped || 0;
+        const failedCount = summary.failed?.length || summary.summary?.failed || 0;
+
         await Notification.create({
           user: admin._id,
           role: 'admin',
           type: 'system',
           relatedTo: 'teacher_invoice',
           title: periodText ? `Teacher Invoices Generated - ${periodText}` : 'Teacher Invoices Generated',
-          message: `${summary.created} invoices created, ${summary.skipped?.length || 0} teachers skipped, ${summary.failed?.length || 0} failed.`,
+          message: `Processed ${totalTeachers} teachers • Created ${createdCount} invoices • Skipped ${skippedCount} • Failed ${failedCount}.`,
           actionRequired: true,
-          actionLink: '/admin/teacher-invoices',
+          actionLink: '/admin/teacher-salaries',
           metadata: summary
         });
 
@@ -783,6 +788,61 @@ async function notifyAdminInvoiceGeneration(summary) {
     return { success: true, results };
   } catch (error) {
     console.error('[NotificationService] Error in notifyAdminInvoiceGeneration:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Notify admins about upcoming monthly invoice generation (24h notice)
+ */
+async function notifyAdminInvoiceGenerationUpcoming(payload) {
+  try {
+    const admins = await User.find({ role: 'admin', isActive: true });
+
+    if (admins.length === 0) {
+      console.warn('[NotificationService] No admin users found');
+      return { success: false, reason: 'no_admins' };
+    }
+
+    const results = [];
+
+    for (const admin of admins) {
+      try {
+        const periodText = payload?.month && payload?.year
+          ? `${payload.month}/${payload.year}`
+          : 'the upcoming period';
+
+        const steps = Array.isArray(payload?.steps) && payload.steps.length > 0
+          ? payload.steps
+          : [
+            'Check auto-generation setting is enabled',
+            'Verify exchange rate is set for the period',
+            'Generate draft invoices for teachers with billable hours',
+            'Log audit + notify admins with a summary'
+          ];
+
+        await Notification.create({
+          user: admin._id,
+          role: 'admin',
+          type: 'system',
+          relatedTo: 'teacher_invoice',
+          title: `Teacher invoice run in 24h (${periodText})`,
+          message: `In 24 hours we will: ${steps.join(' • ')}.`,
+          actionRequired: false,
+          actionLink: '/admin/teacher-salaries',
+          metadata: payload
+        });
+
+        results.push({ adminId: admin._id, email: admin.email, inApp: true });
+      } catch (error) {
+        console.error(`[NotificationService] Failed upcoming notice for admin ${admin.email}:`, error.message);
+        results.push({ adminId: admin._id, email: admin.email, error: error.message });
+      }
+    }
+
+    return { success: true, results };
+  } catch (error) {
+    console.error('[NotificationService] Error in notifyAdminInvoiceGenerationUpcoming:', error.message);
     return { success: false, error: error.message };
   }
 }
@@ -887,6 +947,7 @@ module.exports = {
   notifyBonusAdded,
   notifyExtraAdded,
   notifyAdminInvoiceGeneration,
+  notifyAdminInvoiceGenerationUpcoming,
   getUserNotificationPreferences,
   updateUserNotificationPreferences
 };

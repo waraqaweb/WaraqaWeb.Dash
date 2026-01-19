@@ -4,7 +4,7 @@
  * Admin UI to manage meeting availability slots that feed the public booking flow.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Calendar, Clock, Edit, Plus, Trash2, X, AlertCircle, Link2 } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import {
@@ -18,6 +18,7 @@ import {
 } from '../../../api/meetings';
 import { getMeetingTimezoneOptions } from '../../../utils/timezone';
 import { MEETING_DEFAULT_DURATIONS } from '../../../constants/meetingConstants';
+import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
 const MEETING_TYPE_LABELS = {
   new_student_evaluation: 'New Student Evaluations',
@@ -147,6 +148,16 @@ const MeetingAvailabilityAdminPage = () => {
     hours: '',
     description: ''
   }));
+  const slotsRef = useRef([]);
+  const refreshSlotsInFlightRef = useRef(false);
+  const refreshSlotsKeyRef = useRef('');
+  const refreshSlotsAbortRef = useRef(null);
+  const refreshSlotsRequestIdRef = useRef(0);
+  const timeOffRef = useRef([]);
+  const refreshTimeOffInFlightRef = useRef(false);
+  const refreshTimeOffKeyRef = useRef('');
+  const refreshTimeOffAbortRef = useRef(null);
+  const refreshTimeOffRequestIdRef = useRef(0);
 
   const publicEvaluationLink = useMemo(() => {
     if (typeof window === 'undefined') return '';
@@ -161,15 +172,67 @@ const MeetingAvailabilityAdminPage = () => {
     }
   }, [activeType, meetingTypes]);
 
+  useEffect(() => {
+    slotsRef.current = slots || [];
+  }, [slots]);
+
+  useEffect(() => {
+    timeOffRef.current = timeOffPeriods || [];
+  }, [timeOffPeriods]);
+
   const refreshSlots = useCallback(async (options = {}) => {
     const currentType = activeType;
     if (!currentType) return;
+    const requestSignature = JSON.stringify({ type: currentType, includeInactive: false });
+    if (refreshSlotsInFlightRef.current && refreshSlotsKeyRef.current === requestSignature) {
+      return;
+    }
+
+    refreshSlotsKeyRef.current = requestSignature;
+    refreshSlotsInFlightRef.current = true;
+
+    const requestId = refreshSlotsRequestIdRef.current + 1;
+    refreshSlotsRequestIdRef.current = requestId;
+
+    if (refreshSlotsAbortRef.current) {
+      try {
+        refreshSlotsAbortRef.current.abort();
+      } catch (e) {
+        // ignore abort errors
+      }
+    }
+
+    const controller = new AbortController();
+    refreshSlotsAbortRef.current = controller;
+
     if (!options.silent) {
-      setLoading(true);
+      const hasExisting = (slotsRef.current || []).length > 0;
+      setLoading(!hasExisting);
     }
     setError('');
     try {
-      const data = await listMeetingAvailabilitySlots({ meetingType: currentType, includeInactive: false });
+      const cacheKey = makeCacheKey('meetings:availabilitySlots', user?._id || 'admin', { meetingType: currentType });
+      const cached = readCache(cacheKey, { deps: ['meetings'] });
+      if (cached.hit && cached.value) {
+        const data = cached.value;
+        setSlots(data.slots || []);
+        if (Array.isArray(data.meetingTypes) && data.meetingTypes.length) {
+          setMeetingTypes(data.meetingTypes);
+          if (!data.meetingTypes.includes(currentType)) {
+            setActiveType(data.meetingTypes[0]);
+          }
+        }
+        if (data.timezone) {
+          setTimezone(data.timezone);
+        }
+        if (cached.ageMs < 60_000) {
+          refreshSlotsInFlightRef.current = false;
+          return;
+        }
+      }
+
+      const data = await listMeetingAvailabilitySlots({ meetingType: currentType, includeInactive: false }, { signal: controller.signal });
+      if (requestId !== refreshSlotsRequestIdRef.current) return;
       setSlots(data.slots || []);
       if (Array.isArray(data.meetingTypes) && data.meetingTypes.length) {
         setMeetingTypes(data.meetingTypes);
@@ -180,33 +243,77 @@ const MeetingAvailabilityAdminPage = () => {
       if (data.timezone) {
         setTimezone(data.timezone);
       }
+      writeCache(cacheKey, data, { ttlMs: 5 * 60_000, deps: ['meetings'] });
     } catch (err) {
-      console.error('Failed to load meeting availability slots', err);
-      setError(err.response?.data?.message || 'Failed to load meeting availability');
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error('Failed to load meeting availability slots', err);
+        setError(err.response?.data?.message || 'Failed to load meeting availability');
+      }
     } finally {
       if (!options.silent) {
         setLoading(false);
       }
+      refreshSlotsInFlightRef.current = false;
     }
-  }, [activeType]);
+  }, [activeType, user?._id]);
 
   const refreshTimeOff = useCallback(async () => {
-    setTimeOffLoading(true);
+    const requestSignature = JSON.stringify({ scope: 'next-60-days' });
+    if (refreshTimeOffInFlightRef.current && refreshTimeOffKeyRef.current === requestSignature) {
+      return;
+    }
+
+    refreshTimeOffKeyRef.current = requestSignature;
+    refreshTimeOffInFlightRef.current = true;
+
+    const requestId = refreshTimeOffRequestIdRef.current + 1;
+    refreshTimeOffRequestIdRef.current = requestId;
+
+    if (refreshTimeOffAbortRef.current) {
+      try {
+        refreshTimeOffAbortRef.current.abort();
+      } catch (e) {
+        // ignore abort errors
+      }
+    }
+
+    const controller = new AbortController();
+    refreshTimeOffAbortRef.current = controller;
+
+    const hasExisting = (timeOffRef.current || []).length > 0;
+    setTimeOffLoading(!hasExisting);
     setTimeOffError('');
     try {
       // Load nearby periods (next 60 days) for convenience.
       const start = new Date();
       const end = new Date();
       end.setDate(end.getDate() + 60);
-      const data = await listMeetingTimeOff({ rangeStart: start.toISOString(), rangeEnd: end.toISOString() });
+      const cacheKey = makeCacheKey('meetings:timeOff', user?._id || 'admin', { rangeStart: start.toISOString(), rangeEnd: end.toISOString() });
+      const cached = readCache(cacheKey, { deps: ['meetings'] });
+      if (cached.hit && cached.value) {
+        setTimeOffPeriods(cached.value.periods || []);
+        if (cached.ageMs < 60_000) {
+          refreshTimeOffInFlightRef.current = false;
+          return;
+        }
+      }
+
+      const data = await listMeetingTimeOff({ rangeStart: start.toISOString(), rangeEnd: end.toISOString() }, { signal: controller.signal });
+      if (requestId !== refreshTimeOffRequestIdRef.current) return;
       setTimeOffPeriods(data.periods || []);
+      writeCache(cacheKey, data, { ttlMs: 5 * 60_000, deps: ['meetings'] });
     } catch (err) {
-      console.error('Failed to load meeting time off', err);
-      setTimeOffError(err?.response?.data?.message || 'Failed to load time off');
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error('Failed to load meeting time off', err);
+        setTimeOffError(err?.response?.data?.message || 'Failed to load time off');
+      }
     } finally {
       setTimeOffLoading(false);
+      refreshTimeOffInFlightRef.current = false;
     }
-  }, []);
+  }, [user?._id]);
 
   useEffect(() => {
     refreshSlots();

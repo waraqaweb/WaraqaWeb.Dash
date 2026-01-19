@@ -1,5 +1,5 @@
 // /frontend/src/components/dashboard/salaries/SalariesPage.jsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../../api/axios';
 import { Plus, Eye, Pencil, DollarSign } from "lucide-react";
@@ -21,6 +21,11 @@ const SalariesPage = () => {
   const [salaries, setSalaries] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const salariesRef = useRef([]);
+  const fetchSalariesInFlightRef = useRef(false);
+  const fetchSalariesKeyRef = useRef('');
+  const fetchSalariesAbortRef = useRef(null);
+  const fetchSalariesRequestIdRef = useRef(0);
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -51,8 +56,40 @@ const SalariesPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, globalFilter, currentPage]);
 
+  useEffect(() => {
+    salariesRef.current = salaries || [];
+  }, [salaries]);
+
   const fetchSalaries = async () => {
     try {
+      const requestSignature = JSON.stringify({
+        page: currentPage,
+        limit: itemsPerPage,
+        search: (debouncedSearch || '').trim() || undefined,
+        status: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+      });
+
+      if (fetchSalariesInFlightRef.current && fetchSalariesKeyRef.current === requestSignature) {
+        return;
+      }
+
+      fetchSalariesKeyRef.current = requestSignature;
+      fetchSalariesInFlightRef.current = true;
+
+      const requestId = fetchSalariesRequestIdRef.current + 1;
+      fetchSalariesRequestIdRef.current = requestId;
+
+      if (fetchSalariesAbortRef.current) {
+        try {
+          fetchSalariesAbortRef.current.abort();
+        } catch (e) {
+          // ignore abort errors
+        }
+      }
+
+      const controller = new AbortController();
+      fetchSalariesAbortRef.current = controller;
+
       const cacheKey = makeCacheKey(
         'salaries:list',
         user?._id,
@@ -69,10 +106,14 @@ const SalariesPage = () => {
         setSalaries(cached.value.salaries || []);
         setTotalPages(cached.value.totalPages || 1);
         setLoading(false);
-        if (cached.ageMs < 60_000) return;
+        if (cached.ageMs < 60_000) {
+          fetchSalariesInFlightRef.current = false;
+          return;
+        }
       }
 
-      setLoading(true);
+      const hasExisting = (salariesRef.current || []).length > 0;
+      setLoading(!hasExisting);
       const params = {
         type: 'teacher_payment',
         page: currentPage,
@@ -92,7 +133,10 @@ const SalariesPage = () => {
         delete params.order;
       }
 
-      const res = await api.get('/invoices', { params });
+      const res = await api.get('/invoices', { params, signal: controller.signal });
+      if (requestId !== fetchSalariesRequestIdRef.current) {
+        return;
+      }
       setSalaries(res.data.invoices || []);
       setTotalPages(res.data.pagination?.pages || 1);
 
@@ -105,9 +149,13 @@ const SalariesPage = () => {
         { ttlMs: 5 * 60_000, deps: ['invoices'] }
       );
     } catch (err) {
-      console.error("Error fetching salaries:", err);
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error("Error fetching salaries:", err);
+      }
     } finally {
       setLoading(false);
+      fetchSalariesInFlightRef.current = false;
     }
   };
 

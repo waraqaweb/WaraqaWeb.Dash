@@ -247,6 +247,33 @@ const buildConciseShareMessageFromResults = ({
   return [...headerLines, '', ...blocks].join('\n\n');
 };
 
+const buildSlotSearchMessage = ({ results = [], timezoneLabel = '' } = {}) => {
+  const lines = [];
+  if (timezoneLabel) {
+    lines.push(`Times shown in: ${timezoneLabel}`);
+    lines.push('');
+  }
+
+  (results || []).forEach((slotResult) => {
+    const slot = slotResult?.slot || {};
+    const dayLabel = DAY_NAMES_FULL[slot.dayOfWeek] || 'Day';
+    const timeLabel = `${formatTimeLabel(slot.startTime)} • ${slot.durationMinutes || 0} min`;
+    lines.push(`${dayLabel} — ${timeLabel}`);
+
+    const available = Array.isArray(slotResult?.availableTeachers) ? slotResult.availableTeachers : [];
+    if (available.length === 0) {
+      lines.push('  - No teachers available');
+    } else {
+      available.forEach((t) => {
+        lines.push(`  - ${t.name || 'Teacher'}`);
+      });
+    }
+    lines.push('');
+  });
+
+  return lines.join('\n').trim();
+};
+
 const prettifyTimezoneLabel = (label = "", value = "") => {
   const cleanedLabel = label.trim();
 
@@ -358,6 +385,7 @@ const ClassesPage = ({ isActive = true }) => {
   const [statusFilter] = useState("all");
   const [teacherFilter] = useState("all");
   const [guardianFilter] = useState("all");
+  const [teacherReportWindowHours, setTeacherReportWindowHours] = useState(72);
   const [expandedClass, setExpandedClass] = useState(null);
   const [currentPage, setCurrentPage] = useState(getInitialPage);
   const [totalPages, setTotalPages] = useState(1);
@@ -401,6 +429,13 @@ const ClassesPage = ({ isActive = true }) => {
   const [shareMode, setShareMode] = useState(isTeacherUser ? "teacher" : "admin");
   const [shareLoading, setShareLoading] = useState(false);
   const [shareMessage, setShareMessage] = useState("");
+  const [availabilitySearchMode, setAvailabilitySearchMode] = useState("teacher");
+  const [availabilitySearchSlots, setAvailabilitySearchSlots] = useState([
+    { dayOfWeek: 1, startTime: "09:00", durationMinutes: 60 }
+  ]);
+  const [availabilitySearchResults, setAvailabilitySearchResults] = useState(null);
+  const [availabilitySearchLoading, setAvailabilitySearchLoading] = useState(false);
+  const [availabilitySearchError, setAvailabilitySearchError] = useState("");
   const [targetTimezone, setTargetTimezone] = useState(adminTimezone);
   const [teacherAvailability, setTeacherAvailability] = useState(() => createAvailabilityState());
   const [calendarAvailability, setCalendarAvailability] = useState(null);
@@ -579,7 +614,77 @@ const ClassesPage = ({ isActive = true }) => {
     [debouncedSearchTerm]
   );
 
-  const filteredClasses = useMemo(() => classes || [], [classes]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!isAdminUser) return;
+    (async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:teacherReportWindowHours', user?._id || 'admin', { key: 'teacher_report_window_hours' });
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          if (!cancelled) setTeacherReportWindowHours(Number(cached.value.value || cached.value) || 72);
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/teacher_report_window_hours');
+        if (!cancelled && res.data?.setting) {
+          const hours = Number(res.data.setting.value) || 72;
+          setTeacherReportWindowHours(hours);
+          writeCache(cacheKey, res.data.setting, { ttlMs: 5 * 60_000, deps: ['settings'] });
+        }
+      } catch (err) {
+        // ignore and keep default
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAdminUser, user?._id]);
+
+  const getDisplayStatus = useCallback((classItem) => {
+    const rawStatus = classItem?.status || '';
+    const handledStatuses = new Set([
+      'attended',
+      'missed_by_student',
+      'cancelled_by_teacher',
+      'cancelled_by_student',
+      'cancelled_by_guardian',
+      'cancelled_by_admin',
+      'no_show_both',
+      'completed',
+    ]);
+    if (handledStatuses.has(rawStatus)) return rawStatus;
+
+    const reportSubmitted = Boolean(classItem?.classReport?.submittedAt);
+    if (reportSubmitted) return rawStatus || 'completed';
+
+    const scheduledMs = classItem?.scheduledDate ? new Date(classItem.scheduledDate).getTime() : NaN;
+    const durationMinutes = Number(classItem?.duration || 0);
+    const classEndMs = Number.isFinite(scheduledMs)
+      ? scheduledMs + Math.max(0, durationMinutes) * 60 * 1000
+      : NaN;
+    const now = Date.now();
+    const hasEnded = Number.isFinite(classEndMs) ? now >= classEndMs : false;
+
+    if (!hasEnded) return rawStatus || 'scheduled';
+
+    let deadlineMs = classItem?.reportSubmission?.teacherDeadline
+      ? new Date(classItem.reportSubmission.teacherDeadline).getTime()
+      : NaN;
+    if (!Number.isFinite(deadlineMs) && Number.isFinite(classEndMs)) {
+      const hours = Number(teacherReportWindowHours) || 72;
+      deadlineMs = classEndMs + Math.max(1, hours) * 60 * 60 * 1000;
+    }
+    const statusUnreported = classItem?.reportSubmission?.status === 'unreported';
+    const deadlinePassed = statusUnreported || (Number.isFinite(deadlineMs) ? now >= deadlineMs : false);
+
+    return deadlinePassed ? 'missed_report' : 'pending_report';
+  }, [teacherReportWindowHours]);
+
+  const filteredClasses = useMemo(() => {
+    let working = classes || [];
+    if (globalFilter === 'pending_report' || globalFilter === 'missed_report') {
+      working = working.filter((cls) => getDisplayStatus(cls) === globalFilter);
+    }
+    return working;
+  }, [classes, globalFilter, getDisplayStatus]);
 
 
   const mapAvailabilityResponse = useCallback((raw = {}) => createAvailabilityState({
@@ -1059,8 +1164,9 @@ const fetchClasses = useCallback(async () => {
     if (teacherFilter !== "all") params.teacher = teacherFilter;
     if (guardianFilter !== "all") params.guardian = guardianFilter;
     
-    // Apply global filter
-    if (globalFilter && globalFilter !== 'all') {
+    // Apply global filter (skip client-only report filters)
+    const isReportFilter = globalFilter === 'pending_report' || globalFilter === 'missed_report';
+    if (globalFilter && globalFilter !== 'all' && !isReportFilter) {
       params.status = globalFilter;
     }
 
@@ -1241,6 +1347,10 @@ fetchClassesRef.current = fetchClasses;
     const nextMode = isAdminUser ? "admin" : "teacher";
     setShareMode(nextMode);
     setShareMessage("");
+    setAvailabilitySearchMode("teacher");
+    setAvailabilitySearchResults(null);
+    setAvailabilitySearchError("");
+    setAvailabilitySearchLoading(false);
     setSelectedGuardianId(null);
     setRecipientPhone("");
     setTargetTimezone(user?.timezone || DEFAULT_TIMEZONE);
@@ -1265,11 +1375,74 @@ fetchClassesRef.current = fetchClasses;
     setShowShareModal(true);
   };
 
+  const handleAddAvailabilitySearchSlot = () => {
+    setAvailabilitySearchSlots((prev) => ([
+      ...prev,
+      { dayOfWeek: 1, startTime: "09:00", durationMinutes: 60 }
+    ]));
+  };
+
+  const handleUpdateAvailabilitySearchSlot = (idx, patch) => {
+    setAvailabilitySearchSlots((prev) => prev.map((slot, i) => (i === idx ? { ...slot, ...patch } : slot)));
+  };
+
+  const handleRemoveAvailabilitySearchSlot = (idx) => {
+    setAvailabilitySearchSlots((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleSearchAvailabilityBySlots = async () => {
+    const payloadSlots = (availabilitySearchSlots || [])
+      .map((slot) => ({
+        dayOfWeek: Number(slot.dayOfWeek),
+        startTime: String(slot.startTime || '').trim(),
+        durationMinutes: Number(slot.durationMinutes || 0)
+      }))
+      .filter((slot) => Number.isFinite(slot.dayOfWeek) && slot.dayOfWeek >= 0 && slot.dayOfWeek <= 6)
+      .filter((slot) => /^\d{1,2}:\d{2}$/.test(slot.startTime))
+      .filter((slot) => Number.isFinite(slot.durationMinutes) && slot.durationMinutes > 0);
+
+    if (payloadSlots.length === 0) {
+      setAvailabilitySearchError("Add at least one valid day, time, and duration.");
+      setAvailabilitySearchResults(null);
+      return;
+    }
+
+    try {
+      setAvailabilitySearchLoading(true);
+      setAvailabilitySearchError("");
+      const res = await api.post('/availability/search-slots', {
+        slots: payloadSlots,
+        timezone: targetTimezone,
+        teacherId: selectedTeacherId && selectedTeacherId !== ALL_TEACHERS_OPTION_VALUE ? selectedTeacherId : null
+      });
+      setAvailabilitySearchResults(res.data || null);
+    } catch (err) {
+      setAvailabilitySearchResults(null);
+      setAvailabilitySearchError(err?.response?.data?.message || err?.message || 'Failed to search availability');
+    } finally {
+      setAvailabilitySearchLoading(false);
+    }
+  };
+
   // Floating FAB cluster is now handled by a reusable component (FABCluster)
 
   const handleGenerateShareMessage = async () => {
     const isAdminAllTeachers = shareMode === 'admin' && selectedTeacherId === ALL_TEACHERS_OPTION_VALUE;
     const isAdminSpecificTeacher = shareMode === 'admin' && selectedTeacherId && selectedTeacherId !== ALL_TEACHERS_OPTION_VALUE;
+
+    if (shareMode === 'admin' && availabilitySearchMode === 'times') {
+      if (!availabilitySearchResults?.results || availabilitySearchResults.results.length === 0) {
+        setShareMessage('Run a time-slot search first to generate a message.');
+        return;
+      }
+
+      const message = buildSlotSearchMessage({
+        results: availabilitySearchResults.results,
+        timezoneLabel: timezoneFriendlyLabel || targetTimezone
+      });
+      setShareMessage(message || 'No available teachers found for the selected slots.');
+      return;
+    }
 
     if (shareMode === 'admin' && !selectedTeacherId) {
       setShareMessage("Select a teacher (or All teachers) before generating a share message.");
@@ -2246,8 +2419,11 @@ Would you like to create another series anyway?`
   }, [user?.timezone]);
 
   const formatStatus = (status) => {
+    if (status === 'pending_report') return 'Pending report';
+    if (status === 'missed_report') return 'Missed report';
     return status?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Unknown';
   };
+
 
   const openMeetingReportModal = useCallback((meeting) => {
     if (!meeting) return;
@@ -2442,6 +2618,8 @@ Would you like to create another series anyway?`
       cancelled_by_student: "bg-red-100 text-red-800",
       cancelled_by_admin: "bg-red-100 text-red-800",
       no_show_both: "bg-gray-100 text-gray-800",
+      pending_report: "bg-amber-100 text-amber-800",
+      missed_report: "bg-rose-100 text-rose-800",
     };
     return colors[status] || "bg-gray-100 text-gray-800";
   };
@@ -2457,6 +2635,8 @@ Would you like to create another series anyway?`
       cancelled_by_student: <XCircle className="h-4 w-4" />,
       cancelled_by_admin: <XCircle className="h-4 w-4" />,
       no_show_both: <XCircle className="h-4 w-4" />,
+      pending_report: <AlertCircle className="h-4 w-4" />,
+      missed_report: <AlertCircle className="h-4 w-4" />,
     };
     return icons[status] || <Clock className="h-4 w-4" />;
   };
@@ -2556,10 +2736,15 @@ Would you like to create another series anyway?`
                   <h3 className="text-sm font-semibold text-gray-900">{classItem?.student?.studentName}</h3>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
                     {/* Status Tag */}
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(classItem?.status)}`}>
-                      {getStatusIcon(classItem?.status)}
-                      <span className="ml-1">{formatStatus(classItem?.status || "Pending")}</span>
-                    </span>
+                    {(() => {
+                      const displayStatus = getDisplayStatus(classItem);
+                      return (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(displayStatus)}`}>
+                          {getStatusIcon(displayStatus)}
+                          <span className="ml-1">{formatStatus(displayStatus || "Pending")}</span>
+                        </span>
+                      );
+                    })()}
 
                     {/* Recurring Tag */}
                     {classItem?.isRecurring && (
@@ -3363,26 +3548,193 @@ Would you like to create another series anyway?`
               <div className="grid gap-6 md:grid-cols-2">
                 <div className="space-y-5">
                   {shareMode === "admin" && (
-                    <div className="space-y-2">
-                      <label className="block text-sm font-medium text-gray-700">Choose a teacher</label>
-                      <Select
-                        value={selectedTeacherOption}
-                        onChange={(option) => handleAdminTeacherChange(option?.value || null)}
-                        options={teacherOptions}
-                        placeholder="Search teacher by name or email"
-                        isClearable
-                        isSearchable
-                        styles={selectStyles}
-                        menuPortalTarget={menuPortalTarget}
-                        menuPosition="fixed"
-                        filterOption={teacherFilterOption}
-                        formatOptionLabel={teacherOptionLabel}
-                        noOptionsMessage={({ inputValue }) => inputValue ? `No teachers found for "${inputValue}"` : 'No teachers found'}
-                      />
-                      {selectedTeacher && (
-                        <p className="text-xs text-gray-500">
-                          Crafting a message for {selectedTeacher.firstName} {selectedTeacher.lastName}.
-                        </p>
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setAvailabilitySearchMode("teacher")}
+                          className={`rounded-full px-3 py-1.5 border ${availabilitySearchMode === "teacher" ? 'bg-primary/10 text-primary border-primary/30' : 'bg-white text-gray-500 border-gray-200'}`}
+                        >
+                          Search by teacher
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAvailabilitySearchMode("times");
+                            if (!selectedTeacherId || selectedTeacherId === ALL_TEACHERS_OPTION_VALUE) return;
+                            setSelectedTeacherId(ALL_TEACHERS_OPTION_VALUE);
+                          }}
+                          className={`rounded-full px-3 py-1.5 border ${availabilitySearchMode === "times" ? 'bg-primary/10 text-primary border-primary/30' : 'bg-white text-gray-500 border-gray-200'}`}
+                        >
+                          Search by times
+                        </button>
+                      </div>
+
+                      {availabilitySearchMode === "teacher" && (
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-gray-700">Choose a teacher</label>
+                          <Select
+                            value={selectedTeacherOption}
+                            onChange={(option) => handleAdminTeacherChange(option?.value || null)}
+                            options={teacherOptions}
+                            placeholder="Search teacher by name or email"
+                            isClearable
+                            isSearchable
+                            styles={selectStyles}
+                            menuPortalTarget={menuPortalTarget}
+                            menuPosition="fixed"
+                            filterOption={teacherFilterOption}
+                            formatOptionLabel={teacherOptionLabel}
+                            noOptionsMessage={({ inputValue }) => inputValue ? `No teachers found for "${inputValue}"` : 'No teachers found'}
+                          />
+                          {selectedTeacher && (
+                            <p className="text-xs text-gray-500">
+                              Crafting a message for {selectedTeacher.firstName} {selectedTeacher.lastName}.
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {availabilitySearchMode === "times" && (
+                        <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
+                          <div className="space-y-2">
+                            <label className="block text-sm font-medium text-gray-700">Filter by teacher (optional)</label>
+                            <Select
+                              value={selectedTeacherOption}
+                              onChange={(option) => handleAdminTeacherChange(option?.value || null)}
+                              options={teacherOptions}
+                              placeholder="All teachers"
+                              isClearable
+                              isSearchable
+                              styles={selectStyles}
+                              menuPortalTarget={menuPortalTarget}
+                              menuPosition="fixed"
+                              filterOption={teacherFilterOption}
+                              formatOptionLabel={teacherOptionLabel}
+                              noOptionsMessage={({ inputValue }) => inputValue ? `No teachers found for "${inputValue}"` : 'No teachers found'}
+                            />
+                          </div>
+
+                          <div className="text-sm font-semibold text-gray-800">Search by time slots</div>
+
+                          <div className="space-y-2">
+                            {availabilitySearchSlots.map((slot, idx) => (
+                              <div key={`slot-${idx}`} className="flex flex-wrap items-center gap-2">
+                                <select
+                                  value={slot.dayOfWeek}
+                                  onChange={(e) => handleUpdateAvailabilitySearchSlot(idx, { dayOfWeek: Number(e.target.value) })}
+                                  className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs"
+                                >
+                                  {DAY_NAMES_FULL.map((d, dayIdx) => (
+                                    <option key={d} value={dayIdx}>{d}</option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="time"
+                                  value={slot.startTime}
+                                  onChange={(e) => handleUpdateAvailabilitySearchSlot(idx, { startTime: e.target.value })}
+                                  className="rounded-lg border border-gray-300 px-2 py-1 text-xs"
+                                />
+                                <input
+                                  type="number"
+                                  min={15}
+                                  step={5}
+                                  value={slot.durationMinutes}
+                                  onChange={(e) => handleUpdateAvailabilitySearchSlot(idx, { durationMinutes: Number(e.target.value) })}
+                                  className="w-24 rounded-lg border border-gray-300 px-2 py-1 text-xs"
+                                  placeholder="Minutes"
+                                />
+                                {availabilitySearchSlots.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveAvailabilitySearchSlot(idx)}
+                                    className="text-xs text-red-500 hover:text-red-600"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={handleAddAvailabilitySearchSlot}
+                              className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              Add slot
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleSearchAvailabilityBySlots}
+                              className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#265f59]"
+                              disabled={availabilitySearchLoading}
+                            >
+                              {availabilitySearchLoading ? 'Searching…' : 'Find available teachers'}
+                            </button>
+                          </div>
+
+                          {availabilitySearchError && (
+                            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                              {availabilitySearchError}
+                            </div>
+                          )}
+
+                          {availabilitySearchResults?.results?.length > 0 && (
+                            <div className="space-y-4">
+                              {availabilitySearchResults.results.map((slotResult, slotIdx) => {
+                                const slotData = slotResult?.slot || {};
+                                const dayLabel = DAY_NAMES_FULL[slotData.dayOfWeek] || 'Day';
+                                const timeLabel = `${formatTimeLabel(slotData.startTime)} • ${slotData.durationMinutes} min`;
+                                const available = Array.isArray(slotResult?.availableTeachers) ? slotResult.availableTeachers : [];
+                                const unavailable = Array.isArray(slotResult?.unavailableTeachers) ? slotResult.unavailableTeachers : [];
+
+                                return (
+                                  <div key={`slot-result-${slotIdx}`} className="rounded-xl border border-gray-100 bg-gray-50/60 p-3">
+                                    <div className="text-xs font-semibold text-gray-700">{dayLabel} — {timeLabel}</div>
+
+                                    <div className="mt-2 space-y-2">
+                                      {available.length > 0 && (
+                                        <div className="space-y-1">
+                                          {available.map((t) => (
+                                            <div key={`avail-${t.id}`} className="flex items-center gap-2 text-xs text-emerald-700">
+                                              <CheckCircle className="h-3.5 w-3.5" />
+                                              <span className="truncate">{t.name}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {unavailable.length > 0 && (
+                                        <div className="space-y-2">
+                                          {unavailable.map((t) => (
+                                            <div key={`unavail-${t.id}`} className="text-xs text-gray-600">
+                                              <div className="flex items-center gap-2 text-red-600">
+                                                <XCircle className="h-3.5 w-3.5" />
+                                                <span className="truncate">{t.name}</span>
+                                              </div>
+                                              {Array.isArray(t.alternatives) && t.alternatives.length > 0 && (
+                                                <div className="ml-5 mt-1 text-[11px] text-gray-500">
+                                                  Suggestions: {t.alternatives.slice(0, 2).map((alt) => formatAlternativeSlot(alt)).filter(Boolean).join(' • ')}
+                                                </div>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {available.length === 0 && unavailable.length === 0 && (
+                                        <div className="text-xs text-gray-500">No teachers found for this slot.</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
@@ -3405,48 +3757,53 @@ Would you like to create another series anyway?`
                     <p className="text-xs text-gray-500">Families will see these times converted automatically.</p>
                   </div>
 
-                  <div className="rounded-2xl border border-gray-200 bg-[#F8FBFB] p-5">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-semibold text-gray-800">
-                        {shareMode === "admin" && selectedTeacher
-                          ? `${selectedTeacher.firstName} ${selectedTeacher.lastName}`
-                          : "Your"} availability overview
-                      </p>
-                      <span className="text-xs font-medium text-gray-400">
-                        {defaultAvailabilityActive
-                          ? 'Default 24/7 availability'
-                          : isAdminAllTeachersShare
-                            ? 'All teachers'
-                            : hasAvailability
-                            ? `${teacherAvailability.slots.length} slot${teacherAvailability.slots.length !== 1 ? 's' : ''}`
-                            : 'No slots saved'}
-                      </span>
+                  {availabilitySearchMode === "teacher" && (
+                    <div className="rounded-2xl border border-gray-200 bg-[#F8FBFB] p-5">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-gray-800">
+                          {shareMode === "admin" && selectedTeacher
+                            ? `${selectedTeacher.firstName} ${selectedTeacher.lastName}`
+                            : "Your"} availability overview
+                        </p>
+                        <span className="text-xs font-medium text-gray-400">
+                          {defaultAvailabilityActive
+                            ? 'Default 24/7 availability'
+                            : isAdminAllTeachersShare
+                              ? 'All teachers'
+                              : hasAvailability
+                              ? `${teacherAvailability.slots.length} slot${teacherAvailability.slots.length !== 1 ? 's' : ''}`
+                              : 'No slots saved'}
+                        </span>
+                      </div>
+                      <div className="mt-4">
+                        {isAdminAllTeachersShare
+                          ? (
+                            <p className="text-sm text-gray-600">
+                              This will generate a message for all teachers.
+                            </p>
+                          )
+                          : renderTeacherAvailabilitySummary()}
+                      </div>
                     </div>
-                    <div className="mt-4">
-                      {isAdminAllTeachersShare
-                        ? (
-                          <p className="text-sm text-gray-600">
-                            This will generate a message for all teachers.
-                          </p>
-                        )
-                        : renderTeacherAvailabilitySummary()}
-                    </div>
-                  </div>
+                  )}
 
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <button
                       onClick={handleGenerateShareMessage}
                       className="inline-flex items-center justify-center rounded-full bg-[#2C736C] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#265f59] disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={shareLoading || !hasShareableAvailability}
+                      disabled={shareLoading || (availabilitySearchMode === 'teacher' ? !hasShareableAvailability : !(availabilitySearchResults?.results?.length > 0))}
                     >
                       {shareLoading ? 'Generating…' : 'Generate friendly message'}
                     </button>
-                    {!hasShareableAvailability && (
+                    {availabilitySearchMode === 'teacher' && !hasShareableAvailability && (
                       <p className="text-xs text-red-500">
                         {shareMode === "admin"
                           ? 'Select a teacher or choose All teachers.'
                           : 'Add availability slots or refresh to continue.'}
                       </p>
+                    )}
+                    {availabilitySearchMode === 'times' && !(availabilitySearchResults?.results?.length > 0) && (
+                      <p className="text-xs text-red-500">Run a time-slot search to generate a message.</p>
                     )}
                   </div>
                 </div>

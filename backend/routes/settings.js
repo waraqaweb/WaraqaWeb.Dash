@@ -14,6 +14,9 @@ const upload = multer({ storage, limits: { fileSize: Number(process.env.MAX_FILE
 // Known defaults for some settings — returned when setting not present in DB
 const KNOWN_DEFAULTS = {
   firstClassWindowHours: 24,
+  unreportedClassCleanupDays: 30,
+  teacher_report_window_hours: 72,
+  admin_extension_hours: 24,
   // add other well-known setting defaults here as needed
 };
 

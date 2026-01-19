@@ -21,8 +21,8 @@ export async function bookMeeting(payload) {
   return data;
 }
 
-export async function listMeetingAvailabilitySlots(params = {}) {
-  const { data } = await api.get(`${BASE}/availability/slots`, { params });
+export async function listMeetingAvailabilitySlots(params = {}, options = {}) {
+  const { data } = await api.get(`${BASE}/availability/slots`, { params, ...options });
   return data;
 }
 
@@ -41,8 +41,8 @@ export async function deleteMeetingAvailabilitySlot(slotId) {
   return data;
 }
 
-export async function listMeetingTimeOff(params = {}) {
-  const { data } = await api.get(`${BASE}/availability/timeoff`, { params });
+export async function listMeetingTimeOff(params = {}, options = {}) {
+  const { data } = await api.get(`${BASE}/availability/timeoff`, { params, ...options });
   return data;
 }
 

@@ -33,18 +33,19 @@ async function recomputeDashboardStats() {
   console.log('[jobs] recomputeDashboardStats: start');
   const DBG = process.env.DASHBOARD_DEBUG === 'true';
   try {
-    const [users, classes, revenue, teachers, guardians, growth] = await Promise.all([
+    const [users, classes, revenue, teachers, guardians, growth, students] = await Promise.all([
       dashboardService.getUserStats(),
       dashboardService.getClassStats(),
       dashboardService.getInvoiceStats(),
       dashboardService.getTeacherStats(),
       dashboardService.getGuardianStats(),
-      dashboardService.getGrowthStats()
+      dashboardService.getGrowthStats(),
+      dashboardService.getStudentStats()
     ]);
 
     // DEBUG: log raw service outputs to help trace missing values in the UI
     try {
-      if (DBG) console.log('[jobs] recomputeDashboardStats: raw service outputs:\n', util.inspect({ users, classes, revenue, teachers, guardians, growth }, { depth: 3, colors: false }));
+      if (DBG) console.log('[jobs] recomputeDashboardStats: raw service outputs:\n', util.inspect({ users, classes, revenue, teachers, guardians, growth, students }, { depth: 3, colors: false }));
     } catch (e) {
       if (DBG) console.log('[jobs] recomputeDashboardStats: failed to inspect service outputs', e && e.message);
     }
@@ -59,7 +60,8 @@ async function recomputeDashboardStats() {
         revenue: revenue || {},
         teachers: teachers || {},
         guardians: guardians || {},
-        growth: growth || {}
+        growth: growth || {},
+        students: students || {}
       },
       timestamps: { computedAt, expiresAt }
     };

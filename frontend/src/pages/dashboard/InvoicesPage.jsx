@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -58,6 +58,11 @@ const InvoicesPage = ({ isActive = true }) => {
   const [invoices, setInvoices] = useState([]);
   const [invoicesCorpus, setInvoicesCorpus] = useState([]);
   const loadedInvoicePagesRef = React.useRef(new Set());
+  const invoicesRef = useRef([]);
+  const fetchInvoicesInFlightRef = useRef(false);
+  const fetchInvoicesKeyRef = useRef('');
+  const fetchInvoicesAbortRef = useRef(null);
+  const fetchInvoicesRequestIdRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -321,8 +326,43 @@ const InvoicesPage = ({ isActive = true }) => {
     user?._id,
   ]);
 
+  useEffect(() => {
+    invoicesRef.current = invoices || [];
+  }, [invoices]);
+
   const fetchInvoices = async () => {
     try {
+      const requestSignature = JSON.stringify({
+        page: currentPage,
+        limit: itemsPerPage,
+        showDeleted: Boolean(showDeleted && isAdmin()),
+        activeTab,
+        statusFilter,
+        typeFilter,
+        segmentFilter,
+      });
+
+      if (fetchInvoicesInFlightRef.current && fetchInvoicesKeyRef.current === requestSignature) {
+        return;
+      }
+
+      fetchInvoicesKeyRef.current = requestSignature;
+      fetchInvoicesInFlightRef.current = true;
+
+      const requestId = fetchInvoicesRequestIdRef.current + 1;
+      fetchInvoicesRequestIdRef.current = requestId;
+
+      if (fetchInvoicesAbortRef.current) {
+        try {
+          fetchInvoicesAbortRef.current.abort();
+        } catch (e) {
+          // ignore abort errors
+        }
+      }
+
+      const controller = new AbortController();
+      fetchInvoicesAbortRef.current = controller;
+
       const cacheKey = makeCacheKey(
         'invoices:list',
         user?._id,
@@ -346,10 +386,12 @@ const InvoicesPage = ({ isActive = true }) => {
         setLoading(false);
 
         if (cached.ageMs < 60_000) {
+          fetchInvoicesInFlightRef.current = false;
           return;
         }
       } else {
-        setLoading(true);
+        const hasExisting = (invoicesRef.current || []).length > 0;
+        setLoading(!hasExisting);
       }
       const params = {
         page: currentPage,
@@ -391,7 +433,10 @@ const InvoicesPage = ({ isActive = true }) => {
       if (typeFilter !== 'all') params.type = typeFilter;
       if (segmentFilter !== 'all') params.segment = segmentFilter;
 
-      const { data } = await api.get('/invoices', { params });
+      const { data } = await api.get('/invoices', { params, signal: controller.signal });
+      if (requestId !== fetchInvoicesRequestIdRef.current) {
+        return;
+      }
       const invoiceList = data.invoices || [];
       setInvoices(invoiceList);
       loadedInvoicePagesRef.current.add(currentPage);
@@ -413,7 +458,7 @@ const InvoicesPage = ({ isActive = true }) => {
       let nextGuardianStudentsMap = {};
       if (guardianIds.length > 0) {
         try {
-          const response = await api.post('/users/students/batch', { guardianIds });
+          const response = await api.post('/users/students/batch', { guardianIds }, { signal: controller.signal });
           nextGuardianStudentsMap = response.data?.map || {};
           setGuardianStudentsMap(nextGuardianStudentsMap);
         } catch (err) {
@@ -436,10 +481,14 @@ const InvoicesPage = ({ isActive = true }) => {
         { ttlMs: 5 * 60_000, deps: ['invoices'] }
       );
     } catch (err) {
-      console.error(err);
-      setError('Failed to fetch invoices');
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error(err);
+        setError('Failed to fetch invoices');
+      }
     } finally {
       setLoading(false);
+      fetchInvoicesInFlightRef.current = false;
     }
   };
 

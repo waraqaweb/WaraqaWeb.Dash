@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 // Vacation request and management for teachers and students
 const MyVacationsPage = () => {
@@ -9,24 +10,76 @@ const MyVacationsPage = () => {
   const [vacations, setVacations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const vacationsRef = useRef([]);
+  const fetchVacationsInFlightRef = useRef(false);
+  const fetchVacationsKeyRef = useRef('');
+  const fetchVacationsAbortRef = useRef(null);
+  const fetchVacationsRequestIdRef = useRef(0);
   const [success, setSuccess] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ startDate: '', endDate: '', reason: '' });
 
   const userId = user?._id;
 
+  useEffect(() => {
+    vacationsRef.current = vacations || [];
+  }, [vacations]);
+
   const fetchVacations = useCallback(async () => {
     if (!userId) return; // Don't fetch if no user
-    setLoading(true);
+    const requestSignature = JSON.stringify({ userId });
+    if (fetchVacationsInFlightRef.current && fetchVacationsKeyRef.current === requestSignature) {
+      return;
+    }
+
+    fetchVacationsKeyRef.current = requestSignature;
+    fetchVacationsInFlightRef.current = true;
+
+    const requestId = fetchVacationsRequestIdRef.current + 1;
+    fetchVacationsRequestIdRef.current = requestId;
+
+    if (fetchVacationsAbortRef.current) {
+      try {
+        fetchVacationsAbortRef.current.abort();
+      } catch (e) {
+        // ignore abort errors
+      }
+    }
+
+    const controller = new AbortController();
+    fetchVacationsAbortRef.current = controller;
+
+    const hasExisting = (vacationsRef.current || []).length > 0;
+    setLoading(!hasExisting);
     try {
-      const res = await api.get(`/vacations/user/${userId}`);
+      const cacheKey = makeCacheKey('vacations:mine', userId, { userId });
+      const cached = readCache(cacheKey, { deps: ['vacations'] });
+      if (cached.hit && cached.value) {
+        setVacations(cached.value.vacations || []);
+        setError('');
+        setLoading(false);
+        if (cached.ageMs < 60_000) {
+          fetchVacationsInFlightRef.current = false;
+          return;
+        }
+      }
+
+      const res = await api.get(`/vacations/user/${userId}`, { signal: controller.signal });
+      if (requestId !== fetchVacationsRequestIdRef.current) {
+        return;
+      }
       setVacations(res.data.vacations);
       setError('');
+      writeCache(cacheKey, { vacations: res.data.vacations || [] }, { ttlMs: 5 * 60_000, deps: ['vacations'] });
     } catch (err) {
-      console.error('Fetch vacations error:', err);
-      setError(err.response?.data?.message || 'Failed to load vacations');
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error('Fetch vacations error:', err);
+        setError(err.response?.data?.message || 'Failed to load vacations');
+      }
     } finally {
       setLoading(false);
+      fetchVacationsInFlightRef.current = false;
     }
   }, [userId]);
 

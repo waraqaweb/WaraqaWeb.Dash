@@ -1,4 +1,6 @@
 import { defineConfig, transformWithEsbuild } from 'vite';
+import fs from 'fs';
+import path from 'path';
 import react from '@vitejs/plugin-react';
 
 function jsxInJs() {
@@ -29,6 +31,28 @@ export default defineConfig(({ command }) => {
   return {
     plugins: [
       jsxInJs(),
+      {
+        name: 'waraqa:favicon-ico',
+        configureServer(server) {
+          const faviconPath = path.resolve(process.cwd(), 'public', 'favicon.svg');
+          server.middlewares.use((req, res, next) => {
+            if (req.url === '/favicon.ico') {
+              fs.readFile(faviconPath, (err, data) => {
+                if (err) {
+                  res.statusCode = 404;
+                  res.end();
+                  return;
+                }
+                res.setHeader('Content-Type', 'image/svg+xml');
+                res.statusCode = 200;
+                res.end(data);
+              });
+              return;
+            }
+            next();
+          });
+        },
+      },
       react({
         include: ['**/*.{js,jsx,ts,tsx}'],
       }),

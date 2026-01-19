@@ -65,6 +65,26 @@ const instance = axios.create({
   timeout: 60000 // Allow up to 60s for large uploads before aborting
 });
 
+const DEVICE_ID_KEY = 'waraqa:deviceId';
+
+const getDeviceId = () => {
+  try {
+    if (typeof window === 'undefined') return null;
+    const existing = window.localStorage?.getItem(DEVICE_ID_KEY);
+    if (existing) return existing;
+    let next = null;
+    if (typeof window.crypto?.randomUUID === 'function') {
+      next = window.crypto.randomUUID();
+    } else {
+      next = `dev-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+    }
+    window.localStorage?.setItem(DEVICE_ID_KEY, next);
+    return next;
+  } catch (e) {
+    return null;
+  }
+};
+
 // Get initial token
 const initialToken = localStorage.getItem("token");
 if (initialToken) {
@@ -164,6 +184,10 @@ instance.interceptors.request.use(
     const token = localStorage.getItem("token");
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    const deviceId = getDeviceId();
+    if (deviceId) {
+      config.headers['x-device-id'] = deviceId;
     }
     // Ensure API responses are not served from a stale HTTP cache in the browser
     // Some browsers / service workers may attempt to read from Cache Storage and fail

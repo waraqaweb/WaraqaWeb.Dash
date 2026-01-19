@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import api from '../../api/axios';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { 
   Calendar, 
   Clock, 
@@ -49,6 +50,10 @@ const VacationManagementPage = () => {
   const [systemVacations, setSystemVacations] = useState([]);
   const [myVacations, setMyVacations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const fetchDataInFlightRef = useRef(false);
+  const fetchDataKeyRef = useRef('');
+  const fetchDataAbortRef = useRef(null);
+  const fetchDataRequestIdRef = useRef(0);
 
   const [summaryFrom, setSummaryFrom] = useState(() => {
     const now = new Date();
@@ -98,26 +103,85 @@ const VacationManagementPage = () => {
   }, [availableTabs, activeTab]);
 
   const fetchData = useCallback(async () => {
-    setLoading(true);
+    const requestSignature = JSON.stringify({ tab: activeTab, role: user?.role, userId: user?._id || user?.id });
+    if (fetchDataInFlightRef.current && fetchDataKeyRef.current === requestSignature) {
+      return;
+    }
+
+    fetchDataKeyRef.current = requestSignature;
+    fetchDataInFlightRef.current = true;
+
+    const requestId = fetchDataRequestIdRef.current + 1;
+    fetchDataRequestIdRef.current = requestId;
+
+    if (fetchDataAbortRef.current) {
+      try {
+        fetchDataAbortRef.current.abort();
+      } catch (e) {
+        // ignore abort errors
+      }
+    }
+
+    const controller = new AbortController();
+    fetchDataAbortRef.current = controller;
+
+    const hasExisting =
+      (activeTab === 'individual' && (individualVacations || []).length > 0) ||
+      (activeTab === 'system' && (systemVacations || []).length > 0) ||
+      (activeTab === 'my-vacations' && (myVacations || []).length > 0);
+
+    setLoading(!hasExisting);
     try {
+      const cacheKey = makeCacheKey('vacations:management', user?._id || 'anon', {
+        tab: activeTab,
+        role: user?.role || 'anon'
+      });
+      const cached = readCache(cacheKey, { deps: ['vacations'] });
+      if (cached.hit && cached.value) {
+        if (activeTab === 'individual') setIndividualVacations(cached.value || []);
+        if (activeTab === 'system') setSystemVacations(cached.value || []);
+        if (activeTab === 'my-vacations') setMyVacations(cached.value || []);
+        setLoading(false);
+        if (cached.ageMs < 60_000) {
+          fetchDataInFlightRef.current = false;
+          return;
+        }
+      }
+
       if (activeTab === 'individual' && user?.role === 'admin') {
-        const res = await api.get('/vacations');
-        setIndividualVacations(res.data.vacations || []);
+        const res = await api.get('/vacations', { signal: controller.signal });
+        if (requestId !== fetchDataRequestIdRef.current) return;
+        const list = res.data.vacations || [];
+        setIndividualVacations(list);
+        writeCache(cacheKey, list, { ttlMs: 5 * 60_000, deps: ['vacations'] });
       } else if (activeTab === 'system' && user?.role === 'admin') {
-        const res = await api.get('/system-vacations');
-        setSystemVacations(res.data.systemVacations || res.data || []);
+        const res = await api.get('/system-vacations', { signal: controller.signal });
+        if (requestId !== fetchDataRequestIdRef.current) return;
+        const list = res.data.systemVacations || res.data || [];
+        setSystemVacations(list);
+        writeCache(cacheKey, list, { ttlMs: 5 * 60_000, deps: ['vacations'] });
       } else if (activeTab === 'my-vacations' && user?.role === 'teacher') {
         const teacherId = user?._id || user?.id;
-        const res = await api.get(`/vacations/user/${teacherId}`);
-        setMyVacations(res.data.vacations || []);
+        const res = await api.get(`/vacations/user/${teacherId}`, { signal: controller.signal });
+        if (requestId !== fetchDataRequestIdRef.current) return;
+        const list = res.data.vacations || [];
+        setMyVacations(list);
+        writeCache(cacheKey, list, { ttlMs: 5 * 60_000, deps: ['vacations'] });
       } else if (activeTab === 'my-vacations' && user?.role === 'guardian') {
-        const res = await api.get('/vacations/guardian');
-        setMyVacations(res.data.vacations || []);
+        const res = await api.get('/vacations/guardian', { signal: controller.signal });
+        if (requestId !== fetchDataRequestIdRef.current) return;
+        const list = res.data.vacations || [];
+        setMyVacations(list);
+        writeCache(cacheKey, list, { ttlMs: 5 * 60_000, deps: ['vacations'] });
       }
     } catch (err) {
-      console.error('Error fetching vacation data:', err);
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error('Error fetching vacation data:', err);
+      }
     } finally {
       setLoading(false);
+      fetchDataInFlightRef.current = false;
     }
   }, [activeTab, user?.role, user?._id, user?.id]);
 

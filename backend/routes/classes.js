@@ -868,9 +868,18 @@ router.get("/", authenticateToken, async (req, res) => {
       "cancelled",
     ];
 
-    filters.status = filters.status && filters.status !== "all"
-      ? filters.status
-      : { $in: STATUS_ALLOW_LIST };
+    if (filters.status && filters.status !== "all") {
+      const normalizedStatus = String(filters.status || "").toLowerCase();
+      if (normalizedStatus === 'completed') {
+        filters.status = { $in: ['completed', 'attended'] };
+      } else if (normalizedStatus === 'cancelled' || normalizedStatus === 'canceled') {
+        filters.status = { $in: ['cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian', 'cancelled_by_admin', 'cancelled', 'no_show_both'] };
+      } else {
+        filters.status = filters.status;
+      }
+    } else {
+      filters.status = { $in: STATUS_ALLOW_LIST };
+    }
 
     const [rawClasses, totalClasses] = await Promise.all([
       Class.find(filters)
@@ -3004,12 +3013,14 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
     const recitedQuran =
       payload.recitedQuran ?? payload.quranRecitation ?? classDoc.classReport?.recitedQuran ?? "";
 
+    const incomingScore = Number(payload.classScore);
+    const hasIncomingScore = Number.isFinite(incomingScore) && incomingScore > 0;
     const classScore = attendanceValue === "attended"
-      ? (Number.isFinite(Number(payload.classScore))
-          ? Number(payload.classScore)
+      ? (hasIncomingScore
+          ? incomingScore
           : Number.isFinite(Number(classDoc.classReport?.classScore))
             ? Number(classDoc.classReport.classScore)
-            : 5)
+            : 0)
       : 0;
 
     const absenceExcused = typeof payload.absenceExcused !== "undefined"
@@ -3028,6 +3039,18 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
 
     if (attendanceValue === "attended") {
       const effectiveSubject = rawSubject || classDoc.classReport?.subject || classDoc.subject || "";
+      const effectiveTopic = (customLessonTopic || lessonTopic || "").trim();
+      if (isTeacherUser) {
+        if (!effectiveSubject) {
+          return res.status(400).json({ message: "Subject is required", error: "SUBJECT_REQUIRED" });
+        }
+        if (!effectiveTopic) {
+          return res.status(400).json({ message: "Lesson topic is required", error: "LESSON_TOPIC_REQUIRED" });
+        }
+        if (!hasIncomingScore && !Number.isFinite(Number(classDoc.classReport?.classScore))) {
+          return res.status(400).json({ message: "Class performance is required", error: "CLASS_SCORE_REQUIRED" });
+        }
+      }
       reportPayload = {
         attendance: attendanceValue,
         absenceExcused,

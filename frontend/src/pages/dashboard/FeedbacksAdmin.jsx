@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import { Archive, Check, ChevronLeft, ChevronRight, MessageSquare, Search as SearchIcon } from 'lucide-react';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const STATUS_TABS = [
   { key: 'unread', label: 'Unread' },
@@ -193,6 +194,11 @@ const FeedbacksAdmin = () => {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [notifCount, setNotifCount] = useState(0);
+  const feedbacksRef = useRef([]);
+  const fetchListInFlightRef = useRef(false);
+  const fetchListKeyRef = useRef('');
+  const fetchListAbortRef = useRef(null);
+  const fetchListRequestIdRef = useRef(0);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -201,18 +207,68 @@ const FeedbacksAdmin = () => {
     return () => clearTimeout(handle);
   }, [q]);
 
+  useEffect(() => {
+    feedbacksRef.current = feedbacks || [];
+  }, [feedbacks]);
+
   const fetchList = useCallback(async () => {
     try {
-      setLoading(true);
-      const res = await api.get('/feedbacks', { params: { q: debouncedQ, page, limit, archived: false } });
+      const requestSignature = JSON.stringify({ q: debouncedQ, page, limit, archived: false });
+      if (fetchListInFlightRef.current && fetchListKeyRef.current === requestSignature) {
+        return;
+      }
+
+      fetchListKeyRef.current = requestSignature;
+      fetchListInFlightRef.current = true;
+
+      const requestId = fetchListRequestIdRef.current + 1;
+      fetchListRequestIdRef.current = requestId;
+
+      if (fetchListAbortRef.current) {
+        try {
+          fetchListAbortRef.current.abort();
+        } catch (e) {
+          // ignore abort errors
+        }
+      }
+
+      const controller = new AbortController();
+      fetchListAbortRef.current = controller;
+
+      const cacheKey = makeCacheKey('feedbacks:list', 'admin', { q: debouncedQ, page, limit, archived: false });
+      const cached = readCache(cacheKey, { deps: ['feedbacks'] });
+      if (cached.hit && cached.value) {
+        setFeedbacks(cached.value.feedbacks || []);
+        setTotal(cached.value.total || 0);
+        if (cached.ageMs < 60_000) {
+          fetchListInFlightRef.current = false;
+          return;
+        }
+      }
+
+      const hasExisting = (feedbacksRef.current || []).length > 0;
+      setLoading(!hasExisting);
+      const res = await api.get('/feedbacks', { params: { q: debouncedQ, page, limit, archived: false }, signal: controller.signal });
+      if (requestId !== fetchListRequestIdRef.current) {
+        return;
+      }
       if (res.data && res.data.success) {
         setFeedbacks(res.data.feedbacks || []);
         setTotal(res.data.total || 0);
+        writeCache(
+          cacheKey,
+          { feedbacks: res.data.feedbacks || [], total: res.data.total || 0 },
+          { ttlMs: 5 * 60_000, deps: ['feedbacks'] }
+        );
       }
     } catch (err) {
-      console.error('Fetch feedbacks admin error', err);
+      const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      if (!isCanceled) {
+        console.error('Fetch feedbacks admin error', err);
+      }
     } finally {
       setLoading(false);
+      fetchListInFlightRef.current = false;
     }
   }, [debouncedQ, page, limit]);
 

@@ -7,6 +7,8 @@ import Toast from "../../components/ui/Toast";
 import { saveDraft, loadDraft, clearDraft } from "../../utils/localStorageUtils";
 import ReportSubmissionStatus from "../../components/dashboard/ReportSubmissionStatus";
 import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
+import { useAuth } from "../../contexts/AuthContext";
+import { makeCacheKey, readCache, writeCache } from "../../utils/sessionCache";
 
 const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => {
   const derivedClassId = reportClass?._id || reportClassId;
@@ -14,6 +16,9 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const [classLoadError, setClassLoadError] = useState(null);
   const [classLoading, setClassLoading] = useState(!reportClass && Boolean(reportClassId));
   const [submissionEligibility, setSubmissionEligibility] = useState(null);
+    const { user } = useAuth();
+    const submitInFlightRef = useRef(false);
+    const classFetchAbortRef = useRef(null);
   const [, setCheckingEligibility] = useState(false);
   const [userRole, setUserRole] = useState(null);
   const hasInitializedState = useRef(false);
@@ -69,7 +74,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     classScore:
       typeof baseClass?.classReport?.classScore === "number"
         ? baseClass.classReport.classScore
-        : 5,
+        : null,
     submittedAt: baseClass?.classReport?.submittedAt || null,
     submittedBy: baseClass?.classReport?.submittedBy || null,
   });
@@ -159,20 +164,40 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
   useEffect(() => {
     let ignore = false;
+    if (classFetchAbortRef.current) {
+      try { classFetchAbortRef.current.abort(); } catch (e) { /* ignore */ }
+    }
+
     if (!reportClass && reportClassId) {
-      setClassLoading(true);
       setClassLoadError(null);
+      const cacheKey = makeCacheKey('class:detail', reportClassId, { role: user?.role || 'unknown' });
+      const cached = readCache(cacheKey, { deps: ['classes'] });
+      if (cached.hit && cached.value?.class) {
+        setClassData(cached.value.class);
+        setClassLoading(false);
+        if (cached.ageMs < 60_000) return () => { ignore = true; };
+      } else {
+        setClassLoading(true);
+      }
+
+      const controller = new AbortController();
+      classFetchAbortRef.current = controller;
+
       api
-        .get(`/classes/${reportClassId}`)
+        .get(`/classes/${reportClassId}`, { signal: controller.signal })
         .then((res) => {
           if (ignore) return;
           const fetchedClass = res.data?.class || null;
           setClassData(fetchedClass);
+          writeCache(cacheKey, { class: fetchedClass }, { ttlMs: 5 * 60_000, deps: ['classes'] });
         })
         .catch((err) => {
           if (ignore) return;
-          console.error("[ClassReport] failed to load class data", err);
-          setClassLoadError(err);
+          const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+          if (!isCanceled) {
+            console.error("[ClassReport] failed to load class data", err);
+            setClassLoadError(err);
+          }
         })
         .finally(() => {
           if (ignore) return;
@@ -185,7 +210,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     return () => {
       ignore = true;
     };
-  }, [reportClass, reportClassId]);
+  }, [reportClass, reportClassId, user?.role]);
 
   useEffect(() => {
     if (hasInitializedState.current) return;
@@ -216,16 +241,10 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
   // Fetch user role
   useEffect(() => {
-    const fetchUserRole = async () => {
-      try {
-        const res = await api.get('/auth/me');
-        setUserRole(res.data?.user?.role || null);
-      } catch (err) {
-        console.error('Error fetching user role:', err);
-      }
-    };
-    fetchUserRole();
-  }, []);
+    if (user?.role) {
+      setUserRole(user.role);
+    }
+  }, [user?.role]);
 
   // Check submission eligibility for teachers
   useEffect(() => {
@@ -260,13 +279,33 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   }, [classData?.subject]);
 
   // ✅ Submit Report
+  const [hoverScore, setHoverScore] = useState(0);
+
   const handleSubmitReport = async (e) => {
     e.preventDefault();
+    if (submitInFlightRef.current) return;
     setLoading(true);
+    submitInFlightRef.current = true;
 
     try {
       if (!derivedClassId) {
         throw new Error("Class identifier is missing");
+      }
+
+      if (userRole === 'teacher' && classReport.attendance === 'attended') {
+        const subjectValue = (classReport.subject || '').trim();
+        const topicValue = (classReport.customLessonTopic || classReport.lessonTopic || '').trim();
+        const scoreValue = Number(classReport.classScore || 0);
+        if (!subjectValue || !topicValue || !scoreValue) {
+          setShowToast({
+            show: true,
+            type: "error",
+            message: "Please fill subject, lesson topic, and class performance before submitting."
+          });
+          setLoading(false);
+          submitInFlightRef.current = false;
+          return;
+        }
       }
 
       const {
@@ -368,6 +407,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         }
 
         onSuccess?.();
+          submitInFlightRef.current = false;
         onClose?.();
       }
     } catch (err) {
@@ -768,27 +808,34 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                 </div>
               </div>
 
-              {/* Score */}
+              {/* Class performance */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Class Score</label>
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1">
-                    {[1,2,3,4,5].map((i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        aria-label={`${i} star${i>1?'s':''}`}
-                        onClick={() => setClassReport({ ...classReport, classScore: i })}
-                        className="p-1"
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setClassReport({ ...classReport, classScore: i }); } }}
-                      >
-                        <Star className={`h-6 w-6 ${i <= (classReport.classScore || 0) ? 'text-yellow-400' : 'text-gray-300'}`} />
-                      </button>
-                    ))}
+                <label className="block text-sm font-medium text-gray-700 mb-2 text-center">Class performance</label>
+                <div className="flex flex-col items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    {[1,2,3,4,5].map((i) => {
+                      const activeScore = hoverScore || Number(classReport.classScore || 0);
+                      const isActive = i <= activeScore;
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          aria-label={`${i} star${i>1?'s':''}`}
+                          onClick={() => setClassReport({ ...classReport, classScore: i })}
+                          onMouseEnter={() => setHoverScore(i)}
+                          onMouseLeave={() => setHoverScore(0)}
+                          onFocus={() => setHoverScore(i)}
+                          onBlur={() => setHoverScore(0)}
+                          className={`h-9 w-9 rounded-full border transition-all duration-150 flex items-center justify-center ${isActive ? 'bg-amber-400/90 border-amber-300 text-white shadow-sm' : 'bg-white border-gray-200 text-gray-300'}`}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setClassReport({ ...classReport, classScore: i }); } }}
+                        >
+                          <Star className={`h-5 w-5 ${isActive ? 'fill-current' : ''}`} />
+                        </button>
+                      );
+                    })}
                   </div>
-                  <span className="text-sm text-gray-600">{(classReport.classScore || 0)}/5</span>
+                  <span className="text-xs text-gray-500">{(classReport.classScore || 0)}/5</span>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Tap stars to rate student performance</p>
               </div>
             </>
           )}

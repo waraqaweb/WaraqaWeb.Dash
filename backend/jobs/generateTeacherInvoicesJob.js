@@ -89,6 +89,44 @@ async function notifyAdmins(results) {
 }
 
 /**
+ * Notify admins 24h before the scheduled run (only when tomorrow is the 1st)
+ */
+async function notifyAdminsUpcoming(payload) {
+  try {
+    const notificationService = require('../services/notificationService');
+    await notificationService.notifyAdminInvoiceGenerationUpcoming(payload);
+  } catch (error) {
+    console.error('[notifyAdminsUpcoming] Error:', error);
+  }
+}
+
+async function sendUpcomingGenerationNoticeIfNeeded() {
+  const now = dayjs().tz(CAIRO_TZ);
+  const tomorrow = now.add(1, 'day');
+
+  if (tomorrow.date() !== 1) return;
+
+  const month = now.month() + 1; // current month (target for next run)
+  const year = now.year();
+
+  const settings = await SalarySettings.getGlobalSettings();
+  const exchangeRateExists = await MonthlyExchangeRates.hasRateForMonth(month, year);
+
+  await notifyAdminsUpcoming({
+    month,
+    year,
+    autoGenerateEnabled: settings.autoGenerateInvoices !== false,
+    exchangeRateSet: exchangeRateExists,
+    steps: [
+      'Check auto-generation setting is enabled',
+      `Verify exchange rate is set for ${month}/${year}`,
+      'Generate draft invoices for teachers with billable hours',
+      'Log audit + send admin summary'
+    ]
+  });
+}
+
+/**
  * Send notifications to teachers about new invoices
  */
 async function notifyTeachers(invoices) {
@@ -319,6 +357,23 @@ function initializeJob(redisClient = null) {
   return task;
 }
 
+function initializeUpcomingNotificationJob() {
+  const schedule = '5 0 * * *'; // daily at 00:05 Cairo time
+
+  const task = cron.schedule(schedule, async () => {
+    try {
+      await sendUpcomingGenerationNoticeIfNeeded();
+    } catch (error) {
+      console.error('[GenerateTeacherInvoicesJob] Upcoming notice failed:', error);
+    }
+  }, {
+    scheduled: true,
+    timezone: CAIRO_TZ
+  });
+
+  return task;
+}
+
 /**
  * Cleanup stale locks (run every 10 minutes)
  */
@@ -362,6 +417,7 @@ function initializeLockCleanup(redisClient = null) {
 function startInvoiceGenerationJob() {
   initializeJob();
   initializeLockCleanup();
+  initializeUpcomingNotificationJob();
 }
 
 module.exports = {

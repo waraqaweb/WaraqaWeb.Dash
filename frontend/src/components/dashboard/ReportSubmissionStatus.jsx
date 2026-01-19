@@ -15,6 +15,24 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
   const [extensionReason, setExtensionReason] = useState('');
   const [processing, setProcessing] = useState(false);
 
+  useEffect(() => {
+    if (userRole !== 'admin') return;
+    let cancelled = false;
+    const fetchDefaultHours = async () => {
+      try {
+        const res = await api.get('/settings/admin_extension_hours');
+        const hours = Number(res.data?.setting?.value) || 24;
+        if (!cancelled) {
+          setExtensionHours(hours);
+        }
+      } catch (err) {
+        // ignore
+      }
+    };
+    fetchDefaultHours();
+    return () => { cancelled = true; };
+  }, [userRole]);
+
   const fetchStatus = useCallback(async () => {
     if (!classId) return;
     try {

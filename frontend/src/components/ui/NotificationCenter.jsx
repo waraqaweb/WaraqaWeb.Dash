@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { Bell, Calendar, X } from 'lucide-react';
@@ -7,6 +8,7 @@ import RescheduleRequestDetailsModal from '../dashboard/RescheduleRequestDetails
 
 const NotificationCenter = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -85,6 +87,25 @@ const NotificationCenter = () => {
     const kind = notification?.metadata?.kind;
     const classId = notification?.metadata?.classId || notification?.relatedId;
     return Boolean(kind === 'class_reschedule_request' && classId);
+  };
+
+  const handleOpenActionLink = async (notification) => {
+    const link = notification?.actionLink;
+    if (!link) return;
+    try {
+      if (!notification.isRead) {
+        await markAsRead([notification._id]);
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    if (/^https?:\/\//i.test(link)) {
+      window.open(link, '_blank', 'noopener,noreferrer');
+    } else {
+      navigate(link);
+      setIsOpen(false);
+    }
   };
 
   const openRescheduleDetails = async (notification) => {
@@ -274,6 +295,17 @@ const NotificationCenter = () => {
                                 </button>
                               </>
                             )}
+                          </div>
+                        )}
+                        {!isActionableReschedule(notification) && notification?.actionLink && (
+                          <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenActionLink(notification)}
+                              className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground"
+                            >
+                              Open class
+                            </button>
                           </div>
                         )}
                         <p className="text-xs text-gray-400 mt-2">

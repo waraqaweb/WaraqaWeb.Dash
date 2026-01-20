@@ -218,20 +218,17 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
   const handleDeleteInvoice = async () => {
     if (user?.role !== 'admin') return;
     if (!invoiceId) return;
-    if (!invoice || !['draft', 'published'].includes(invoice.status)) {
-      setError('Only unpaid (draft/published) invoices can be deleted');
-      return;
-    }
+    if (!invoice) return;
 
     const confirmed = window.confirm(
-      `Delete invoice ${invoice.invoiceNumber || ''}?\n\nThis will unmark its linked classes so they can be invoiced again. This action cannot be undone.`
+      `Delete invoice ${invoice.invoiceNumber || ''}?\n\nThis will remove the invoice from lists and keep teacher hours unchanged. This action cannot be undone.`
     );
     if (!confirmed) return;
 
     try {
       setDeleting(true);
       setError(null);
-      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`);
+      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`, { params: { preserveHours: true } });
       if (onUpdate) onUpdate();
       onClose();
     } catch (err) {
@@ -372,7 +369,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
               <PrimaryButton onClick={handleExportExcel} variant="subtle" size="sm" title="Excel" circle>
                 <FileSpreadsheet className="w-5 h-5" />
               </PrimaryButton>
-              {user?.role === 'admin' && (invoice?.status === 'draft' || invoice?.status === 'published') && (
+              {user?.role === 'admin' && (
                 <PrimaryButton
                   onClick={handleDeleteInvoice}
                   variant="danger"

@@ -61,3 +61,8 @@ export async function submitMeetingReport(meetingId, payload) {
   const { data } = await api.post(`${BASE}/${meetingId}/report`, payload);
   return data.meeting;
 }
+
+export async function deleteMeeting(meetingId) {
+  const { data } = await api.delete(`${BASE}/${meetingId}`);
+  return data.meeting;
+}

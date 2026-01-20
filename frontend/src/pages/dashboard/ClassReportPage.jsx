@@ -794,7 +794,9 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                     onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
                     className="w-full border rounded-lg p-2"
                     rows={3}
+                    placeholder="Visible to guardians and admins"
                   />
+                  <p className="mt-1 text-xs text-gray-500">These notes are shared with guardians.</p>
                 </div>
 
                 <div>
@@ -804,7 +806,9 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                     onChange={(e) => setClassReport({ ...classReport, supervisorNotes: e.target.value })}
                     className="w-full border rounded-lg p-2"
                     rows={3}
+                    placeholder="Visible to admins only"
                   />
+                  <p className="mt-1 text-xs text-gray-500">Only admins can see these notes.</p>
                 </div>
               </div>
 

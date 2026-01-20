@@ -365,12 +365,12 @@ const TeacherInvoices = () => {
     setShowAddExtraDialog(true);
   };
 
-  // Delete draft invoice
+  // Delete unpaid/cancelled invoice
   const handleDeleteInvoice = async (invoice) => {
     if (!invoice?._id) return;
 
-    if (!(invoice.status === 'draft' || invoice.status === 'published')) {
-      setError('Only unpaid (draft/published) invoices can be deleted');
+    if (!(invoice.status === 'draft' || invoice.status === 'published' || invoice.status === 'cancelled')) {
+      setError('Only unpaid (draft/published) or cancelled invoices can be deleted');
       return;
     }
 
@@ -463,7 +463,7 @@ const TeacherInvoices = () => {
                     <li><span className="font-medium">Publish</span>: sets <span className="font-mono">TeacherInvoice.status</span> to <span className="font-mono">published</span> (teacher can view/export). Classes stay linked.</li>
                     <li><span className="font-medium">Mark paid</span>: sets <span className="font-mono">status=paid</span> and stores payment details (method/proof/notes). Paid invoices are treated as closed.</li>
                     <li><span className="font-medium">Bonus / Extra</span>: updates invoice totals (bonus/extras snapshots) only — does not change class links.</li>
-                    <li><span className="font-medium">Delete (draft/published)</span>: soft-deletes the invoice (<span className="font-mono">deleted=true</span>) and clears its class links so hours become unbilled again.</li>
+                    <li><span className="font-medium">Delete (draft/published/cancelled)</span>: soft-deletes the invoice (<span className="font-mono">deleted=true</span>) and clears its class links so hours become unbilled again.</li>
                     <li><span className="font-medium">Late reports</span>: if a paid month gets new eligible classes later, the system creates an <span className="font-mono">adjustment invoice</span> instead of reopening the paid one.</li>
                   </ul>
                   <p className="mt-2 text-blue-800">
@@ -821,7 +821,7 @@ const TeacherInvoices = () => {
                               </button>
                             )}
 
-                            {(invoice.status === 'draft' || invoice.status === 'published') && (
+                            {(invoice.status === 'draft' || invoice.status === 'published' || invoice.status === 'cancelled') && (
                               <button
                                 onClick={() => handleDeleteInvoice(invoice)}
                                 disabled={deletingInvoiceId === invoice._id}

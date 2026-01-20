@@ -900,6 +900,17 @@ router.get("/", authenticateToken, async (req, res) => {
           'cancellation',
           'classReport.submittedAt',
           'classReport.classScore',
+          'classReport.attendance',
+          'classReport.subject',
+          'classReport.subjects',
+          'classReport.lessonTopic',
+          'classReport.customLessonTopic',
+          'classReport.teacherNotes',
+          'classReport.supervisorNotes',
+          'classReport.newAssignment',
+          'classReport.surah',
+          'classReport.verseEnd',
+          'classReport.recitedQuran',
           'reportSubmission.status',
           'createdAt',
           'updatedAt'
@@ -3231,6 +3242,39 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
         }
       } catch (e) {
         console.warn("⚠️ Socket emit error (supervisorNote):", e.message);
+      }
+
+      try {
+        const notificationService = require("../services/notificationService");
+        const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
+        const admins = await User.find({ role: "admin", isActive: true }).select("_id");
+        const teacherName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || req.user.email || "Teacher";
+        const studentName = classDoc.student?.studentName || "student";
+        const subjectLabel = classDoc.subject ? ` (${classDoc.subject})` : "";
+        const classTime = classDoc.scheduledDate
+          ? formatTimeInTimezone(classDoc.scheduledDate, DEFAULT_TIMEZONE, "DD MMM YYYY hh:mm A")
+          : null;
+        const actionLink = `/dashboard/classes?tab=previous&open=${classDoc._id}`;
+
+        await Promise.allSettled((admins || []).map((admin) => (
+          notificationService.createNotification({
+            userId: admin._id,
+            title: "Supervisor note submitted",
+            message: `${teacherName} left supervisor notes for ${studentName}${subjectLabel}${classTime ? ` on ${classTime}` : ''}.`,
+            type: "class",
+            relatedTo: "class",
+            relatedId: classDoc._id,
+            actionRequired: true,
+            actionLink,
+            metadata: {
+              kind: "class_supervisor_note",
+              classId: String(classDoc._id),
+              teacherId: String(req.user._id)
+            }
+          })
+        )));
+      } catch (notifyErr) {
+        console.warn("⚠️ Failed to notify admins about supervisor notes:", notifyErr.message);
       }
     }
 

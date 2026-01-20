@@ -7,7 +7,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useSearch } from "../../contexts/SearchContext";
 import api from '../../api/axios';
 import { makeCacheKey, readCache, writeCache } from "../../utils/sessionCache";
-import { listMeetings } from '../../api/meetings';
+import { deleteMeeting, listMeetings } from '../../api/meetings';
 import Select from "react-select";
 import {
   ChevronDown, ChevronUp, Video, Clock, CheckCircle,
@@ -26,7 +26,7 @@ import RescheduleRequestDetailsModal from "../../components/dashboard/Reschedule
 import DeleteClassModal from "../../components/dashboard/DeleteClassModal";
 import DuplicateClassModal from "../../components/dashboard/DuplicateClassModal";
 import ClassesCalendarView from "../../components/dashboard/ClassesCalendarView";
-import { MEETING_TYPE_LABELS } from '../../constants/meetingConstants';
+import { MEETING_TYPES, MEETING_TYPE_LABELS } from '../../constants/meetingConstants';
 import CancelClassModal from "../../components/dashboard/CancelClassModal";
 import { useDeleteClassCountdown } from "../../contexts/DeleteClassCountdownContext";
 import SeriesScannerModal from "../../components/dashboard/SeriesScannerModal";
@@ -951,6 +951,26 @@ const ClassesPage = ({ isActive = true }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, location.search]);
 
+  useEffect(() => {
+    if (!isActive) return;
+    try {
+      const q = new URLSearchParams(location.search);
+      const openId = q.get('open');
+      if (!openId) return;
+      const target = (filteredClasses || []).find((cls) => String(cls?._id) === String(openId));
+      if (!target) return;
+      setExpandedClass(openId);
+      window.setTimeout(() => {
+        const el = document.getElementById(`class-card-${openId}`);
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 150);
+    } catch (e) {
+      // ignore
+    }
+  }, [isActive, location.search, filteredClasses]);
+
   // Persist currentPage in URL (refresh keeps your place)
   useEffect(() => {
     if (!isActive) return;
@@ -1290,7 +1310,10 @@ fetchClassesRef.current = fetchClasses;
         rangeEnd: windowEnd,
         limit: rangeOverride.limit || 200
       });
-      setMeetings(Array.isArray(meetingResponse) ? meetingResponse : []);
+      const sanitizedMeetings = Array.isArray(meetingResponse)
+        ? meetingResponse.filter((meeting) => meeting?.status !== 'cancelled')
+        : [];
+      setMeetings(sanitizedMeetings);
     } catch (err) {
       console.error('Fetch meetings error:', err);
     } finally {
@@ -2436,6 +2459,18 @@ Would you like to create another series anyway?`
     setReportMeeting(null);
   }, []);
 
+  const handleDeleteMeeting = useCallback(async (meeting) => {
+    if (!meeting?._id) return;
+    if (!window.confirm('Delete this meeting? This cannot be undone.')) return;
+    try {
+      await deleteMeeting(meeting._id);
+      await fetchMeetings();
+    } catch (err) {
+      const message = err?.response?.data?.message || err?.message || 'Failed to delete meeting';
+      alert(message);
+    }
+  }, [fetchMeetings]);
+
   const handleMeetingReportSaved = useCallback(async () => {
     await fetchMeetings();
     closeMeetingReportModal();
@@ -2458,9 +2493,19 @@ Would you like to create another series anyway?`
       const studentLabel = studentCount
         ? `${studentCount} student${studentCount === 1 ? '' : 's'}`
         : 'No students listed';
-      const guardianName = meeting.bookingPayload?.guardianName || meeting.guardianName;
-      const teacherName = meeting.attendees?.teacherName || meeting.teacherName;
-      const attendeeLabel = guardianName || teacherName || 'Admin team';
+      const rawGuardianName = meeting.bookingPayload?.guardianName || meeting.guardianName;
+      const rawTeacherName = meeting.attendees?.teacherName || meeting.teacherName;
+      const isTeacherSync = meeting.meetingType === MEETING_TYPES.TEACHER_SYNC;
+      const guardianName = isTeacherSync ? null : rawGuardianName;
+      const teacherName = isTeacherSync ? (rawTeacherName || rawGuardianName) : rawTeacherName;
+      const normalizedGuardian = guardianName?.trim?.() || '';
+      const normalizedTeacher = teacherName?.trim?.() || '';
+      const finalGuardianName = normalizedGuardian && normalizedTeacher && normalizedGuardian === normalizedTeacher
+        ? null
+        : guardianName;
+      const attendeeLabel = isTeacherSync
+        ? (teacherName || 'Teacher sync')
+        : (finalGuardianName || teacherName || 'Admin team');
       const meetingLabel = MEETING_TYPE_LABELS[meeting.meetingType] || 'Meeting';
 
       const entry = {
@@ -2474,7 +2519,7 @@ Would you like to create another series anyway?`
         timezone: formatted.timezone,
         isConverted: formatted.isConverted,
         scheduledAt,
-        guardianName,
+        guardianName: finalGuardianName,
         teacherName,
         reportSubmitted: Boolean(meeting.report?.submittedAt)
       };
@@ -2671,6 +2716,18 @@ Would you like to create another series anyway?`
           const boundedClassScore = hasClassScore
             ? Math.max(0, Math.min(5, parsedClassScore))
             : null;
+          const reportData = classItem?.classReport || {};
+          const lessonTopicValue = reportData.lessonTopic
+            || reportData.customLessonTopic
+            || classItem?.lessonTopic
+            || classItem?.customLessonTopic
+            || '';
+          const subjectValue = (Array.isArray(reportData.subjects) && reportData.subjects.length)
+            ? reportData.subjects.join(', ')
+            : (reportData.subject || classItem?.subject || '');
+          const teacherNotesValue = reportData.teacherNotes || classItem?.teacherNotes || '';
+          const supervisorNotesValue = reportData.supervisorNotes || classItem?.supervisorNotes || '';
+          const assignmentValue = reportData.newAssignment || classItem?.newAssignment || '';
           const showCancellationReason = isAdminUser && classItem?.cancellation?.reason;
           const classId = classItem?._id;
           const classPolicy = getPolicyForClass(classId);
@@ -2704,7 +2761,11 @@ Would you like to create another series anyway?`
           );
           
           return (
-            <div key={classItem._id} className="bg-white rounded-md border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-150">
+            <div
+              key={classItem._id}
+              id={`class-card-${classItem._id}`}
+              className="bg-white rounded-md border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-150"
+            >
           {/* Class Summary */}
           <div className="p-3">
 
@@ -2785,15 +2846,17 @@ Would you like to create another series anyway?`
                     <AlertCircle className="h-3.5 w-3.5" /> Pending approval
                   </button>
                 )}
-                {classItem?.meetingLink && (
+                {tabFilter === 'upcoming' && classItem?.meetingLink && (
                   <div className="flex items-center space-x-1">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); openGoogleMeet(classItem.meetingLink); }}
-                      className="icon-button icon-button--blue"
-                      title="Join Google Meet"
-                    >
-                      <Video className="h-4 w-4" />
-                    </button>
+                    {!isAdminUser && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openGoogleMeet(classItem.meetingLink); }}
+                        className="icon-button icon-button--blue"
+                        title="Join Google Meet"
+                      >
+                        <Video className="h-4 w-4" />
+                      </button>
+                    )}
                     <CopyButton text={classItem.meetingLink} />
                   </div>
                 )}
@@ -2854,7 +2917,7 @@ Would you like to create another series anyway?`
                       className="icon-button icon-button--green"
                       title="Duplicate Class"
                     >
-                      <Copy className="h-4 w-4" />
+                      <Repeat className="h-4 w-4" />
                     </button>
 
                     <button
@@ -2954,35 +3017,9 @@ Would you like to create another series anyway?`
                       <p className="text-sm italic text-gray-500">Report not submitted yet.</p>
                     ) : (
                       <div className="flex flex-col space-y-2 text-sm">
-                        {classItem.classReport.attendance && (
+                        {lessonTopicValue && (
                           <div>
-                            <span className="font-medium">Attendance:</span>{" "}
-                            <span
-                              className={`px-2 py-0.5 rounded text-white text-xs ${
-                                classItem.classReport.attendance === "attended"
-                                  ? "bg-green-600"
-                                  : classItem.classReport.attendance === "missed_by_student"
-                                  ? "bg-red-500"
-                                  : "bg-gray-500"
-                              }`}
-                            >
-                              {classItem.classReport.attendance === "attended"
-                                ? "Attended"
-                                : classItem.classReport.attendance === "missed_by_student"
-                                ? "Absent"
-                                : "Cancelled"}
-                            </span>
-                            {classItem.classReport.attendance === "missed_by_student" && (
-                              <span className="ml-2 text-xs text-gray-600">
-                                {classItem.classReport.countAbsentForBilling ? "(Counted for billing)" : "(Not billed)"}
-                              </span>
-                            )}
-                          </div>
-                        )}
-
-                        {classItem.classReport.lessonTopic && (
-                          <div>
-                            <span className="font-medium">Lesson Topic:</span> {classItem.classReport.lessonTopic}
+                            <span className="font-medium">Lesson Topic:</span> {lessonTopicValue}
                           </div>
                         )}
 
@@ -3021,15 +3058,21 @@ Would you like to create another series anyway?`
                           </div>
                         )}
 
-                        {classItem.classReport.teacherNotes && (
+                        {teacherNotesValue && (
                           <div className="bg-gray-50 p-2 rounded">
-                            <span className="font-medium">Teacher Notes:</span> {classItem.classReport.teacherNotes}
+                            <span className="font-medium">Teacher Notes:</span> {teacherNotesValue}
                           </div>
                         )}
 
-                        {user.role !== "guardian" && classItem.classReport.supervisorNotes && (
+                        {assignmentValue && (
+                          <div className="bg-gray-50 p-2 rounded">
+                            <span className="font-medium">New Assignment:</span> {assignmentValue}
+                          </div>
+                        )}
+
+                        {isAdminUser && supervisorNotesValue && (
                           <div className="bg-gray-100 p-2 rounded border-l-4 border-indigo-500">
-                            <span className="font-medium">Supervisor Notes:</span> {classItem.classReport.supervisorNotes}
+                            <span className="font-medium">Supervisor Notes:</span> {supervisorNotesValue}
                           </div>
                         )}
                       </div>
@@ -3139,6 +3182,16 @@ Would you like to create another series anyway?`
                         className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:border-teal-500 hover:text-teal-600"
                       >
                         {meetingCard.reportSubmitted ? 'View report' : 'Add report'}
+                      </button>
+                    )}
+                    {isAdminUser && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMeeting(meetingCard.meeting)}
+                        className="inline-flex items-center gap-1 rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600 hover:border-rose-400 hover:text-rose-700"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
                       </button>
                     )}
                   </div>

@@ -739,21 +739,24 @@ class TeacherSalaryService {
    * @param {ObjectId|String} invoiceId
    * @param {ObjectId|String} userId
    */
-  static async deleteDraftInvoice(invoiceId, userId) {
+  static async deleteInvoice(invoiceId, userId, options = {}) {
+    const { preserveHours = false } = options;
     const invoice = await TeacherInvoice.findById(invoiceId);
     if (!invoice) {
       throw new Error('Invoice not found');
     }
 
-    if (!['draft', 'published'].includes(invoice.status)) {
-      throw new Error('Only unpaid (draft/published) invoices can be deleted');
+    if (!preserveHours && !['draft', 'published'].includes(invoice.status)) {
+      throw new Error('Only unpaid (draft/published) invoices can be deleted unless preserveHours=true');
     }
 
     invoice.deleted = true;
     invoice.updatedBy = userId;
     await invoice.save();
 
-    await this.unmarkClassesForInvoice(invoice._id);
+    if (!preserveHours) {
+      await this.unmarkClassesForInvoice(invoice._id);
+    }
 
     await TeacherSalaryAudit.logAction({
       action: 'invoice_delete',
@@ -765,7 +768,9 @@ class TeacherSalaryService {
         invoiceNumber: invoice.invoiceNumber,
         teacher: invoice.teacher,
         month: invoice.month,
-        year: invoice.year
+        year: invoice.year,
+        status: invoice.status,
+        preserveHours
       }
     });
 

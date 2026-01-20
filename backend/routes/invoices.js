@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const Invoice = require('../models/Invoice');
+const Class = require('../models/Class');
 const User = require('../models/User');
 const InvoiceService = require('../services/invoiceService');
 const { buildGuardianFinancialSnapshot } = require('../utils/guardianFinancial');
@@ -161,6 +162,193 @@ const updateBillingWindowFromItems = (invoice) => {
   } catch (e) {
     // non-fatal
   }
+};
+
+const normalizeInvoiceItemStatus = (status) => {
+  const allowed = new Set([
+    'scheduled',
+    'in_progress',
+    'completed',
+    'attended',
+    'missed_by_student',
+    'cancelled_by_teacher',
+    'cancelled_by_guardian',
+    'cancelled_by_admin',
+    'no_show_both',
+    'absent',
+    'cancelled',
+    'unreported'
+  ]);
+  if (allowed.has(status)) return status;
+  return 'scheduled';
+};
+
+const computeTransferFeePreview = ({ baseTotal, guardianFinancial, coverage }) => {
+  const transferFee = guardianFinancial?.transferFee && typeof guardianFinancial.transferFee === 'object'
+    ? guardianFinancial.transferFee
+    : {};
+  const allowedModes = ['fixed', 'percent'];
+  const normalizedMode = allowedModes.includes(transferFee.mode) ? transferFee.mode : 'fixed';
+  const valueNumeric = Number(transferFee.value);
+  const normalizedValue = Number.isFinite(valueNumeric) ? valueNumeric : 0;
+  const coverageWaive = coverage?.waiveTransferFee === true;
+  const manualWaive = transferFee.waived === true;
+  const isWaived = coverageWaive || manualWaive;
+
+  let computedTransferFee = 0;
+  if (!isWaived) {
+    if (normalizedMode === 'percent') {
+      computedTransferFee = roundCurrency((baseTotal * normalizedValue) / 100);
+    } else {
+      computedTransferFee = roundCurrency(normalizedValue);
+    }
+  }
+
+  return {
+    transferFeeAmount: computedTransferFee,
+    transferFeeMode: normalizedMode,
+    transferFeeValue: normalizedValue,
+    transferFeeWaived: isWaived
+  };
+};
+
+const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
+  if (!guardianId) {
+    return { error: 'Guardian is required' };
+  }
+
+  const guardian = await User.findById(guardianId).lean();
+  if (!guardian) {
+    return { error: 'Guardian not found' };
+  }
+
+  const studentIds = Array.isArray(guardian.guardianInfo?.students)
+    ? guardian.guardianInfo.students.map((s) => s && (s._id || s.id)).filter(Boolean)
+    : [];
+
+  if (!studentIds.length) {
+    return { error: 'Guardian has no students' };
+  }
+
+  const invoicedClassIds = await Invoice.distinct('items.class', {
+    deleted: { $ne: true },
+    status: { $nin: ['cancelled', 'refunded'] }
+  });
+
+  let unpaidClasses = await Class.find({
+    'student.guardianId': guardian._id,
+    'student.studentId': { $in: studentIds },
+    _id: { $nin: invoicedClassIds }
+  })
+    .populate('student.guardianId', 'firstName lastName email')
+    .populate('teacher', 'firstName lastName email')
+    .lean();
+
+  unpaidClasses = unpaidClasses.filter((cls) => cls?.status !== 'pattern');
+
+  unpaidClasses.sort((a, b) => {
+    const dateA = new Date(a.scheduledDate || a.date || 0);
+    const dateB = new Date(b.scheduledDate || b.date || 0);
+    return dateA - dateB;
+  });
+
+  if (!unpaidClasses.length) {
+    return { error: 'No unpaid classes found for this guardian' };
+  }
+
+  const startDate = unpaidClasses[0].scheduledDate || unpaidClasses[0].date || new Date();
+  const normalizedHoursLimit = Number.isFinite(Number(hoursLimit)) && Number(hoursLimit) > 0
+    ? Number(hoursLimit)
+    : null;
+
+  let selectedClasses = [];
+  let totalHours = 0;
+  let endDate = null;
+
+  if (normalizedHoursLimit) {
+    for (const cls of unpaidClasses) {
+      const durationMinutes = Number(cls.duration || 0);
+      const hours = durationMinutes / 60;
+      if (!Number.isFinite(hours) || hours <= 0) continue;
+      selectedClasses.push(cls);
+      totalHours += hours;
+      if (totalHours >= normalizedHoursLimit) break;
+    }
+    const last = selectedClasses[selectedClasses.length - 1];
+    endDate = last ? (last.scheduledDate || last.date || startDate) : startDate;
+  } else {
+    const defaultEnd = new Date(startDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+    selectedClasses = unpaidClasses.filter((cls) => {
+      const clsDate = new Date(cls.scheduledDate || cls.date);
+      return clsDate >= new Date(startDate) && clsDate < defaultEnd;
+    });
+    endDate = defaultEnd;
+    totalHours = selectedClasses.reduce((sum, cls) => {
+      const hours = (Number(cls.duration || 0) || 0) / 60;
+      return sum + (Number.isFinite(hours) ? hours : 0);
+    }, 0);
+  }
+
+  if (!selectedClasses.length) {
+    return { error: 'No unpaid classes found for the selected period' };
+  }
+
+  const rate = guardian.guardianInfo?.hourlyRate || 10;
+  const items = selectedClasses.map((cls) => {
+    const duration = Number(cls.duration || 60);
+    const amount = (duration / 60) * rate;
+    const studentName = cls.student?.studentName || '';
+    const [studentFirstName, ...studentLastBits] = studentName.split(' ').filter(Boolean);
+    return {
+      lessonId: cls._id?.toString(),
+      class: cls._id,
+      student: cls.student?.studentId,
+      studentSnapshot: {
+        firstName: studentFirstName || '',
+        lastName: studentLastBits.join(' '),
+        email: ''
+      },
+      teacher: cls.teacher?._id,
+      teacherSnapshot: {
+        firstName: cls.teacher?.firstName,
+        lastName: cls.teacher?.lastName,
+        email: cls.teacher?.email || ''
+      },
+      description: `${cls.subject || 'Class'} with ${cls.teacher?.firstName || ''}`.trim(),
+      date: cls.scheduledDate || cls.date,
+      duration,
+      rate,
+      amount,
+      status: normalizeInvoiceItemStatus(cls.status),
+      attended: cls.status === 'attended'
+    };
+  });
+
+  const subtotal = items.reduce((sum, item) => sum + (Number(item.amount || 0) || 0), 0);
+
+  const coverage = {
+    strategy: normalizedHoursLimit ? 'cap_hours' : 'full_period',
+    maxHours: normalizedHoursLimit || undefined,
+    waiveTransferFee: false
+  };
+
+  const guardianFinancial = buildGuardianFinancialSnapshot(guardian);
+  const transferFeePreview = computeTransferFeePreview({ baseTotal: subtotal, guardianFinancial, coverage });
+
+  return {
+    guardian,
+    items,
+    subtotal,
+    total: subtotal,
+    startDate,
+    endDate,
+    totalHours,
+    rate,
+    classIds: items.map((it) => it.class || it.lessonId).filter(Boolean),
+    coverage,
+    guardianFinancial,
+    transferFeePreview
+  };
 };
 
 // -----------------------------
@@ -723,6 +911,127 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
 // -----------------------------
 // Create manual invoice (Admin)
 // -----------------------------
+router.post('/manual/guardian/preview', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { guardianId, hoursLimit } = req.body || {};
+    const result = await buildManualGuardianInvoiceData({ guardianId, hoursLimit });
+    if (result.error) {
+      return res.status(400).json({ success: false, message: result.error });
+    }
+
+    return res.json({
+      success: true,
+      preview: {
+        startDate: result.startDate,
+        endDate: result.endDate,
+        totalHours: Math.round(result.totalHours * 1000) / 1000,
+        totalAmount: Math.round((result.total + (result.transferFeePreview?.transferFeeAmount || 0)) * 100) / 100,
+        itemsCount: result.items.length,
+        rate: result.rate,
+        transferFeeAmount: result.transferFeePreview?.transferFeeAmount || 0,
+        transferFeeMode: result.transferFeePreview?.transferFeeMode || 'fixed',
+        transferFeeValue: result.transferFeePreview?.transferFeeValue || 0,
+        transferFeeWaived: result.transferFeePreview?.transferFeeWaived || false
+      }
+    });
+  } catch (err) {
+    console.error('Preview manual guardian invoice error:', err);
+    const response = { success: false, message: 'Failed to preview invoice', error: err.message };
+    if (process.env.NODE_ENV !== 'production' && err && err.stack) {
+      response.errorStack = err.stack;
+    }
+    return res.status(500).json(response);
+  }
+});
+
+router.post('/manual/guardian', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { guardianId, hoursLimit, dueDate, notes } = req.body || {};
+    const result = await buildManualGuardianInvoiceData({ guardianId, hoursLimit });
+    if (result.error) {
+      return res.status(400).json({ success: false, message: result.error });
+    }
+
+    const billingStart = result.startDate;
+    const billingEnd = result.endDate;
+    const invoice = new Invoice({
+      type: 'guardian_invoice',
+      guardian: guardianId,
+      billingType: 'manual',
+      generationSource: 'manual',
+      billingPeriod: {
+        startDate: billingStart,
+        endDate: billingEnd,
+        month: new Date(billingStart).getMonth() + 1,
+        year: new Date(billingStart).getFullYear()
+      },
+      items: result.items,
+      subtotal: result.subtotal,
+      total: result.total,
+      adjustedTotal: result.total,
+      status: 'draft',
+      dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      notes,
+      createdBy: req.user._id,
+      guardianFinancial: result.guardianFinancial,
+      coverage: result.coverage
+    });
+
+    await invoice.ensureIdentifiers({ forceNameRefresh: false });
+    await invoice.save();
+    await invoice.populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee');
+
+    if (result.classIds.length > 0) {
+      await Class.updateMany(
+        { _id: { $in: result.classIds } },
+        { $set: { billedInInvoiceId: invoice._id, billedAt: new Date(), flaggedUninvoiced: false } }
+      );
+    }
+
+    await invoice.recordAuditEntry({
+      actor: req.user?._id,
+      action: 'create',
+      diff: {
+        type: invoice.type,
+        billingType: invoice.billingType,
+        subtotal: invoice.subtotal,
+        total: invoice.total,
+        itemCount: Array.isArray(invoice.items) ? invoice.items.length : 0
+      },
+      meta: {
+        route: 'POST /api/invoices/manual/guardian',
+        guardian: guardianId
+      }
+    });
+
+    try {
+      const notificationService = require('../services/notificationService');
+      notificationService.notifyInvoiceEvent({
+        invoice,
+        eventType: 'created'
+      }).catch(console.error);
+    } catch (e) {
+      console.warn('Notification trigger failed', e.message);
+    }
+
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('invoice:created', { invoice: invoice.toObject({ virtuals: true }) });
+    } catch (emitErr) {
+      console.warn('Failed to emit invoice:created socket event', emitErr.message);
+    }
+
+    return res.status(201).json({ success: true, message: 'Invoice created successfully', invoice });
+  } catch (err) {
+    console.error('Create manual guardian invoice error:', err);
+    const response = { success: false, message: 'Failed to create invoice', error: err.message };
+    if (process.env.NODE_ENV !== 'production' && err && err.stack) {
+      response.errorStack = err.stack;
+    }
+    return res.status(500).json(response);
+  }
+});
+
 router.post('/', authenticateToken, async (req, res) => {
   try {
     console.log('=== [Invoices API] POST /invoices START ===', { body: req.body, user: req.user?._id });
@@ -1663,8 +1972,16 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
     const force = String(req.query.force || req.body?.force || '').toLowerCase() === 'true';
+    const preserveHours = (() => {
+      const raw = req.query.preserveHours ?? req.body?.preserveHours ?? req.headers['x-preserve-hours'];
+      if (raw === undefined || raw === null) return true;
+      const normalized = String(raw).trim().toLowerCase();
+      if (!normalized) return true; // treat ?preserveHours as truthy
+      if (['0', 'false', 'no', 'n'].includes(normalized)) return false;
+      return ['1', 'true', 'yes', 'y'].includes(normalized);
+    })();
     // For safety, allow deleting drafts/pending normally. For paid/sent/overdue, require force to reverse hours and then soft-delete.
-    if (!['draft', 'pending'].includes(invoice.status)) {
+    if (!preserveHours && !['draft', 'pending'].includes(invoice.status)) {
       if (!force) {
         return res.status(409).json({ success: false, message: 'Invoice is not draft/pending. Use force=true to void and reverse hours.' });
       }
@@ -1695,18 +2012,20 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
     invoice.deletedBy = req.user._id;
 
     // ✅ Clear billedInInvoiceId from all classes in this invoice so they can be re-invoiced
-    try {
-      const Class = require('../models/Class');
-      const classIds = (invoice.items || []).map(it => it.class || it.lessonId).filter(Boolean);
-      if (classIds.length > 0) {
-        await Class.updateMany(
-          { _id: { $in: classIds }, billedInInvoiceId: invoice._id },
-          { $unset: { billedInInvoiceId: 1, billedAt: 1 } }
-        );
-        console.log(`✅ Cleared billedInInvoiceId for ${classIds.length} classes from deleted invoice ${invoice._id}`);
+    if (!preserveHours) {
+      try {
+        const Class = require('../models/Class');
+        const classIds = (invoice.items || []).map(it => it.class || it.lessonId).filter(Boolean);
+        if (classIds.length > 0) {
+          await Class.updateMany(
+            { _id: { $in: classIds }, billedInInvoiceId: invoice._id },
+            { $unset: { billedInInvoiceId: 1, billedAt: 1 } }
+          );
+          console.log(`✅ Cleared billedInInvoiceId for ${classIds.length} classes from deleted invoice ${invoice._id}`);
+        }
+      } catch (clearErr) {
+        console.warn('Failed to clear billedInInvoiceId from classes:', clearErr.message);
       }
-    } catch (clearErr) {
-      console.warn('Failed to clear billedInInvoiceId from classes:', clearErr.message);
     }
 
     // Audit and activity entry (guarded with local try/catch so we can surface errors)
@@ -1747,7 +2066,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       console.warn('Failed to emit invoice:deleted socket event', emitErr.message);
     }
 
-    res.json({ success: true, message: 'Draft invoice soft-deleted', invoiceId: invoice._id });
+    res.json({ success: true, message: preserveHours ? 'Invoice soft-deleted (hours preserved)' : 'Draft invoice soft-deleted', invoiceId: invoice._id });
   } catch (err) {
     console.error('Delete invoice error:', err);
     const response = { success: false, message: 'Failed to delete invoice', error: err.message };

@@ -97,26 +97,35 @@ instance.interceptors.response.use(
     try {
       const method = String(response?.config?.method || '').toLowerCase();
       if (method && method !== 'get') {
-        const url = String(response?.config?.url || '');
+        const rawUrl = String(response?.config?.url || '');
+        const normalizedPath = (() => {
+          try {
+            const pathname = new URL(rawUrl, API_BASE).pathname || '';
+            return pathname.replace(/^\/api(\/|$)/, '/');
+          } catch (e) {
+            return rawUrl;
+          }
+        })();
         // Very small, safe invalidation set: bump domain versions so cached GETs
         // are ignored on next read.
-        if (url.startsWith('/classes')) {
+        if (normalizedPath.startsWith('/classes')) {
           bumpDomainVersion('classes');
           bumpDomainVersion('availability');
         }
-        if (url.startsWith('/invoices')) bumpDomainVersion('invoices');
-        if (url.startsWith('/library')) bumpDomainVersion('library');
-        if (url.startsWith('/availability')) bumpDomainVersion('availability');
-        if (url.startsWith('/students')) bumpDomainVersion('students');
-        if (url.startsWith('/users')) {
+        if (normalizedPath.startsWith('/invoices')) bumpDomainVersion('invoices');
+        if (normalizedPath.startsWith('/library')) bumpDomainVersion('library');
+        if (normalizedPath.startsWith('/availability')) bumpDomainVersion('availability');
+        if (normalizedPath.startsWith('/students')) bumpDomainVersion('students');
+        if (normalizedPath.startsWith('/users')) {
           bumpDomainVersion('users');
           bumpDomainVersion('students');
           bumpDomainVersion('teachers');
           bumpDomainVersion('guardians');
         }
-        if (url.startsWith('/teachers')) bumpDomainVersion('teachers');
-        if (url.startsWith('/guardians')) bumpDomainVersion('guardians');
-        if (url.startsWith('/salaries')) bumpDomainVersion('salaries');
+        if (normalizedPath.startsWith('/teachers')) bumpDomainVersion('teachers');
+        if (normalizedPath.startsWith('/guardians')) bumpDomainVersion('guardians');
+        if (normalizedPath.startsWith('/salaries')) bumpDomainVersion('salaries');
+        if (normalizedPath.startsWith('/teacher-salary')) bumpDomainVersion('teacher-salary');
       }
     } catch (e) {
       // ignore cache version bump failures
@@ -125,6 +134,12 @@ instance.interceptors.response.use(
     return response;
   },
   (error) => {
+    const isCanceled = error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError';
+    if (isCanceled) {
+      error.isCanceled = true;
+      return Promise.reject(error);
+    }
+
     // Network / cache failures (no response) happen when the browser
     // fails to read from the HTTP cache/storage (service worker or disk)
     if (!error.response && error.request) {

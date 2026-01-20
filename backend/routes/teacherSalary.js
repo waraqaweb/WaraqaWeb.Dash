@@ -458,7 +458,15 @@ router.post('/admin/invoices/:id/bonuses', authenticateToken, requireAdmin, asyn
  */
 router.delete('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    await TeacherSalaryService.deleteDraftInvoice(req.params.id, req.user._id);
+    const preserveHours = (() => {
+      const raw = req.query.preserveHours ?? req.body?.preserveHours ?? req.headers['x-preserve-hours'];
+      if (raw === undefined || raw === null) return true;
+      const normalized = String(raw).trim().toLowerCase();
+      if (!normalized) return true;
+      if (['0', 'false', 'no', 'n'].includes(normalized)) return false;
+      return ['1', 'true', 'yes', 'y'].includes(normalized);
+    })();
+    await TeacherSalaryService.deleteInvoice(req.params.id, req.user._id, { preserveHours });
 
     res.json({
       success: true,
@@ -472,6 +480,7 @@ router.delete('/admin/invoices/:id', authenticateToken, requireAdmin, async (req
     if (
       error.message === 'Only draft invoices can be deleted'
       || error.message === 'Only unpaid (draft/published) invoices can be deleted'
+      || error.message === 'Only unpaid (draft/published) invoices can be deleted unless preserveHours=true'
     ) {
       return res.status(400).json({ error: error.message });
     }

@@ -206,4 +206,17 @@ router.post('/:meetingId/report', authenticateToken, requireAdmin, async (req, r
   }
 });
 
+router.delete('/:meetingId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const meeting = await meetingService.cancelMeeting({
+      meetingId: req.params.meetingId,
+      adminId: parseAdminId(req),
+      reason: req.body?.reason
+    });
+    res.json({ message: 'Meeting cancelled', meeting });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 module.exports = router;

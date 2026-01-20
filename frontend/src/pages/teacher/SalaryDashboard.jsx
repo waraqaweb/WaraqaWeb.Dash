@@ -8,7 +8,7 @@
  * - Payment status tracking
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
@@ -231,6 +231,14 @@ const SalaryDashboard = () => {
     return tiers[partition] || tiers['0-50h'];
   };
 
+  const orderedInvoices = useMemo(() => {
+    const list = (invoices || []).slice();
+    if (filters.status === 'paid') {
+      list.sort((a, b) => new Date(b.paidAt || b.updatedAt || b.createdAt) - new Date(a.paidAt || a.updatedAt || a.createdAt));
+    }
+    return list;
+  }, [invoices, filters.status]);
+
   if (!isTeacher) {
     return null;
   }
@@ -373,7 +381,7 @@ const SalaryDashboard = () => {
           ) : (
             <>
               <div className="divide-y divide-gray-200">
-                {invoices.map((invoice) => {
+                {orderedInvoices.map((invoice) => {
                   const periodLabel = invoice.month && invoice.year
                     ? `${String(invoice.month).padStart(2, '0')}/${invoice.year}`
                     : (invoice.invoiceMonth ? formatDateDDMMMYYYY(invoice.invoiceMonth) : '—');

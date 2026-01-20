@@ -118,7 +118,7 @@ const TeacherSalaries = () => {
 
   useEffect(() => {
     if (!viewFilters[TEACHER_SALARY_VIEW_KEY]) {
-      setFiltersForView(TEACHER_SALARY_VIEW_KEY, defaultFilters);
+      setFiltersForView(TEACHER_SALARY_VIEW_KEY, { ...defaultFilters, status: 'unpaid' });
     }
   }, [defaultFilters, setFiltersForView, viewFilters]);
 
@@ -247,12 +247,13 @@ const TeacherSalaries = () => {
 
   // Delete invoice
   const handleDeleteInvoice = async (invoiceId) => {
-    if (!window.confirm('Are you sure you want to delete this invoice? This action cannot be undone.')) {
+    if (!window.confirm('Delete this invoice? It will be removed from lists. Teacher hours will NOT be changed.')) {
       return;
     }
 
     try {
-      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`);
+      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`, { params: { preserveHours: true } });
+      setInvoices((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
       setSuccessMessage('✓ Invoice deleted successfully');
       fetchInvoices();
       setTimeout(() => setSuccessMessage(null), 5000);
@@ -388,13 +389,36 @@ const TeacherSalaries = () => {
     salaryFilters ? Object.values(salaryFilters).some(value => Boolean(value)) : false
   ), [salaryFilters]);
 
+  const orderedInvoices = useMemo(() => {
+    const list = (invoices || []).slice();
+    const sortByTeacherName = (a, b) => {
+      const aName = `${a.teacher?.firstName || ''} ${a.teacher?.lastName || ''}`.trim().toLowerCase();
+      const bName = `${b.teacher?.firstName || ''} ${b.teacher?.lastName || ''}`.trim().toLowerCase();
+      return aName.localeCompare(bName);
+    };
+
+    if (activeStatusTab === 'paid') {
+      list.sort((a, b) => new Date(b.paidAt || b.updatedAt || b.createdAt) - new Date(a.paidAt || a.updatedAt || a.createdAt));
+      return list;
+    }
+
+    const statusOrder = ['draft', 'published'];
+    list.sort((a, b) => {
+      const aIdx = statusOrder.indexOf(a.status);
+      const bIdx = statusOrder.indexOf(b.status);
+      if (aIdx !== bIdx) return aIdx - bIdx;
+      return sortByTeacherName(a, b);
+    });
+    return list;
+  }, [invoices, activeStatusTab]);
+
   if (!isAdmin) {
     return null;
   }
 
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
-      <div className="mx-auto w-full max-w-7xl px-6 py-8 space-y-8">
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 space-y-6">
         {/* Header */}
         <div className="rounded-3xl bg-white/80 shadow-sm ring-1 ring-black/5 backdrop-blur-sm">
           
@@ -413,9 +437,9 @@ const TeacherSalaries = () => {
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
                   {summaryHighlights.map((card) => (
-                    <div key={card.key} className="rounded-2xl border border-slate-100 bg-slate-50/80 p-4 transition hover:-translate-y-0.5 hover:shadow-md">
+                    <div key={card.key} className="rounded-xl border border-slate-100 bg-slate-50/80 p-3 transition hover:-translate-y-0.5 hover:shadow-md">
                       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{card.label}</p>
                       <p className="mt-2 text-2xl font-semibold text-slate-900">{card.value}</p>
                       {card.delta && summary.previousPeriod && (
@@ -439,17 +463,17 @@ const TeacherSalaries = () => {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {[
                   { label: 'Total Invoices', value: stats.total, icon: FileText },
                   { label: 'Draft', value: stats.draft, icon: FileText },
                   { label: 'Published', value: stats.published, icon: Eye },
                   { label: 'Paid', value: stats.paid, icon: Check }
                 ].map(({ label, value, icon: Icon }) => (
-                  <div key={label} className="flex flex-col gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 p-4 transition hover:-translate-y-0.5 hover:shadow-md">
+                  <div key={label} className="flex flex-col gap-2 rounded-xl border border-slate-100 bg-slate-50/80 p-3 transition hover:-translate-y-0.5 hover:shadow-md">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</span>
-                      <span className="rounded-full bg-white p-2 text-slate-500 shadow-sm"><Icon className="h-4 w-4" /></span>
+                      <span className="rounded-full bg-white p-1.5 text-slate-500 shadow-sm"><Icon className="h-3.5 w-3.5" /></span>
                     </div>
                     <span className="text-2xl font-semibold text-slate-900">{value}</span>
                   </div>
@@ -491,7 +515,7 @@ const TeacherSalaries = () => {
         {/* Search/filter controls now live in the global dashboard header */}
 
         {/* Invoices List */}
-        <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-black/5">
+          <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5">
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -529,11 +553,11 @@ const TeacherSalaries = () => {
           ) : (
             <>
               <div className="space-y-4">
-                {invoices.map((invoice) => {
+                {orderedInvoices.map((invoice) => {
                   const statusColor = getStatusColor(invoice.status);
                   return (
-                    <div key={invoice._id} className="rounded-2xl border border-slate-100 bg-gradient-to-br from-white via-white to-slate-50 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-                      <div className="flex flex-col gap-4 p-4 md:p-6 lg:flex-row lg:items-start lg:justify-between">
+                    <div key={invoice._id} className="rounded-xl border border-slate-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+                      <div className="flex flex-col gap-3 p-3 md:p-4 lg:flex-row lg:items-start lg:justify-between">
                         <div className="flex-1 space-y-2">
                           <div className="flex items-center gap-3 flex-wrap">
                             <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${statusColor}`}>
@@ -671,17 +695,17 @@ const TeacherSalaries = () => {
                               >
                                 <Send className="h-5 w-5" aria-hidden="true" />
                               </button>
-                              <button
-                                onClick={() => handleDeleteInvoice(invoice._id)}
-                                className="inline-flex items-center justify-center rounded-md bg-red-50 p-2 text-red-600 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                                type="button"
-                                title="Delete Invoice"
-                                aria-label={`Delete invoice ${invoice.invoiceNumber || ''}`}
-                              >
-                                <Trash className="h-5 w-5" aria-hidden="true" />
-                              </button>
                               </>
                           )}
+                          <button
+                            onClick={() => handleDeleteInvoice(invoice._id)}
+                            className="inline-flex items-center justify-center rounded-md bg-red-50 p-2 text-red-600 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                            type="button"
+                            title="Delete Invoice"
+                            aria-label={`Delete invoice ${invoice.invoiceNumber || ''}`}
+                          >
+                            <Trash className="h-5 w-5" aria-hidden="true" />
+                          </button>
                           
                           {invoice.status === 'published' && (
                             <button

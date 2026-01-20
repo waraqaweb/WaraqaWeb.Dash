@@ -35,6 +35,7 @@ import Badge from '../../components/ui/Badge';
 import InvoiceViewModal from '../../components/invoices/InvoiceViewModal';
 import RecordPaymentModal from '../../components/invoices/RecordPaymentModal';
 import RefundInvoiceModal from '../../components/invoices/RefundInvoiceModal';
+import CreateGuardianInvoiceModal from '../../components/invoices/CreateGuardianInvoiceModal';
 import ConfirmModal from '../../components/ui/ConfirmModal';
 import Toast from '../../components/ui/Toast';
 import { computeInvoiceTotals } from '../../utils/invoiceTotals';
@@ -106,6 +107,7 @@ const InvoicesPage = ({ isActive = true }) => {
   const [downloadingDocId, setDownloadingDocId] = useState(null);
   const [copiedInvoiceId, setCopiedInvoiceId] = useState(null);
   const [toast, setToast] = useState({ show: false, type: '', message: '' });
+  const [createInvoiceOpen, setCreateInvoiceOpen] = useState(false);
 
   const derivedFilters = useMemo(() => {
     if (!globalFilter || globalFilter === 'all') {
@@ -176,6 +178,13 @@ const InvoicesPage = ({ isActive = true }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, showDeleted]);
 
+  useEffect(() => {
+    if (!isActive) return;
+    setCurrentPage(1);
+    fetchInvoices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, isGlobalSearching]);
+
   // Reset local corpus when primary filters change (search should not reset).
   useEffect(() => {
     if (!isActive) return;
@@ -205,20 +214,25 @@ const InvoicesPage = ({ isActive = true }) => {
       }
 
       // Active tab controls ordering and (optionally) status.
-      if (activeTab && activeTab !== 'all') {
-        params.status = activeTab;
-        if (activeTab === 'unpaid') {
-          params.sortBy = 'createdAt';
-          params.order = 'asc';
-        } else {
-          params.sortBy = 'paidAt';
-          params.order = 'desc';
-        }
-      } else if (statusFilter !== 'all') {
-        params.status = statusFilter;
-        if (statusFilter === 'unpaid') {
-          params.sortBy = 'createdAt';
-          params.order = 'asc';
+      if (!isGlobalSearching) {
+        if (activeTab && activeTab !== 'all') {
+          params.status = activeTab;
+          if (activeTab === 'unpaid') {
+            params.sortBy = 'createdAt';
+            params.order = 'asc';
+          } else {
+            params.sortBy = 'paidAt';
+            params.order = 'desc';
+          }
+        } else if (statusFilter !== 'all') {
+          params.status = statusFilter;
+          if (statusFilter === 'unpaid') {
+            params.sortBy = 'createdAt';
+            params.order = 'asc';
+          } else {
+            params.sortBy = 'paidAt';
+            params.order = 'desc';
+          }
         } else {
           params.sortBy = 'paidAt';
           params.order = 'desc';
@@ -269,6 +283,7 @@ const InvoicesPage = ({ isActive = true }) => {
             statusFilter,
             typeFilter,
             segmentFilter,
+            searchMode: isGlobalSearching,
           }
         );
 
@@ -340,6 +355,7 @@ const InvoicesPage = ({ isActive = true }) => {
         statusFilter,
         typeFilter,
         segmentFilter,
+        searchMode: isGlobalSearching,
       });
 
       if (fetchInvoicesInFlightRef.current && fetchInvoicesKeyRef.current === requestSignature) {
@@ -374,6 +390,7 @@ const InvoicesPage = ({ isActive = true }) => {
           statusFilter,
           typeFilter,
           segmentFilter,
+          searchMode: isGlobalSearching,
         }
       );
 
@@ -406,26 +423,31 @@ const InvoicesPage = ({ isActive = true }) => {
       // - Unpaid tab: show oldest created invoices first (createdAt asc)
       // - Paid tab: show latest paid invoices first (paidAt desc)
       // - All tab (or none): show invoices by latest payment (paidAt desc, fallback createdAt)
-      if (activeTab && activeTab !== 'all') {
-        params.status = activeTab;
-        if (activeTab === 'unpaid') {
-          params.sortBy = 'createdAt';
-          params.order = 'asc';
+      if (!isGlobalSearching) {
+        if (activeTab && activeTab !== 'all') {
+          params.status = activeTab;
+          if (activeTab === 'unpaid') {
+            params.sortBy = 'createdAt';
+            params.order = 'asc';
+          } else {
+            params.sortBy = 'paidAt';
+            params.order = 'desc';
+          }
+        } else if (statusFilter !== 'all') {
+          params.status = statusFilter;
+          if (statusFilter === 'unpaid') {
+            params.sortBy = 'createdAt';
+            params.order = 'asc';
+          } else {
+            params.sortBy = 'paidAt';
+            params.order = 'desc';
+          }
         } else {
-          params.sortBy = 'paidAt';
-          params.order = 'desc';
-        }
-      } else if (statusFilter !== 'all') {
-        params.status = statusFilter;
-        if (statusFilter === 'unpaid') {
-          params.sortBy = 'createdAt';
-          params.order = 'asc';
-        } else {
+          // Default for the 'all' tab: latest payment first
           params.sortBy = 'paidAt';
           params.order = 'desc';
         }
       } else {
-        // Default for the 'all' tab: latest payment first
         params.sortBy = 'paidAt';
         params.order = 'desc';
       }
@@ -534,13 +556,13 @@ const InvoicesPage = ({ isActive = true }) => {
   };
 
   const handleDeleteInvoice = async (invoice) => {
-    const statusLabel = invoice?.status === 'pending' ? 'pending' : 'draft';
+    const statusLabel = invoice?.status || 'invoice';
     setConfirmModal({
       open: true,
       action: 'delete',
       invoiceId: invoice?._id,
       title: `Delete ${statusLabel} invoice`,
-      message: `Delete this ${statusLabel} invoice? You can restore it later.`,
+      message: 'Delete this invoice? It will be removed from lists and hours will not change.',
       confirmText: 'Delete',
       danger: true
     });
@@ -560,8 +582,10 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const performDeleteInvoice = async (invoiceId) => {
     try {
-      const { data } = await api.delete(`/invoices/${invoiceId}`);
+      const { data } = await api.delete(`/invoices/${invoiceId}`, { params: { preserveHours: true } });
       if (data.success) {
+        setInvoices((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
+        setInvoicesCorpus((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
         alert('Invoice deleted');
         fetchInvoices();
         if (isAdmin()) fetchStats();
@@ -1257,6 +1281,13 @@ const InvoicesPage = ({ isActive = true }) => {
     }
   };
 
+  const getUnpaidSortWeight = (inv) => {
+    const status = (inv?.status || '').toLowerCase();
+    const order = ['draft', 'pending', 'sent', 'overdue', 'partially_paid'];
+    const idx = order.indexOf(status);
+    return idx === -1 ? order.length : idx;
+  };
+
   // When the server returns filtered/sorted results we should preserve that
   // ordering and avoid re-sorting here. We still apply client-side search and
   // type filtering for quick UI responsiveness.
@@ -1286,17 +1317,19 @@ const InvoicesPage = ({ isActive = true }) => {
     }
 
     // Apply the effective status filter: the active tab takes precedence.
-    const effectiveStatus = activeTab !== 'unpaid' ? activeTab : statusFilter;
-    if (effectiveStatus !== 'all') {
-      if (effectiveStatus === 'paid') {
-        result = result.filter((inv) => ['paid', 'refunded'].includes(inv.status));
-      } else if (effectiveStatus === 'refunded') {
-        result = result.filter((inv) => inv.status === 'refunded');
-      } else if (effectiveStatus === 'unpaid') {
-        // keep any status that is not paid/refunded
-        result = result.filter((inv) => !['paid', 'refunded'].includes(inv.status));
-      } else {
-        result = result.filter((inv) => inv.status === effectiveStatus);
+    if (!isGlobalSearching) {
+      const effectiveStatus = activeTab !== 'unpaid' ? activeTab : statusFilter;
+      if (effectiveStatus !== 'all') {
+        if (effectiveStatus === 'paid') {
+          result = result.filter((inv) => ['paid', 'refunded'].includes(inv.status));
+        } else if (effectiveStatus === 'refunded') {
+          result = result.filter((inv) => inv.status === 'refunded');
+        } else if (effectiveStatus === 'unpaid') {
+          // keep any status that is not paid/refunded
+          result = result.filter((inv) => !['paid', 'refunded'].includes(inv.status));
+        } else {
+          result = result.filter((inv) => inv.status === effectiveStatus);
+        }
       }
     }
 
@@ -1314,15 +1347,23 @@ const InvoicesPage = ({ isActive = true }) => {
   // Ensure consistent ordering client-side as a fallback in case backend doesn't apply requested sort.
   const displayedInvoices = useMemo(() => {
     const list = (filteredInvoices || []).slice();
+
+    if (isGlobalSearching) {
+      list.sort((a, b) => getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a));
+      return list;
+    }
+
     if (activeTab === 'unpaid') {
-      // oldest created first
-      list.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      list.sort((a, b) => {
+        const weightDiff = getUnpaidSortWeight(a) - getUnpaidSortWeight(b);
+        if (weightDiff !== 0) return weightDiff;
+        return new Date(a.createdAt) - new Date(b.createdAt);
+      });
     } else {
-      // all other views: latest payment first (fallback to createdAt)
       list.sort((a, b) => getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a));
     }
     return list;
-  }, [filteredInvoices, activeTab]);
+  }, [filteredInvoices, activeTab, isGlobalSearching]);
 
 
   const getChannelInfo = (invoice, channel) => (invoice?.delivery?.channels || []).find((entry) => entry.channel === channel);
@@ -1520,15 +1561,15 @@ const InvoicesPage = ({ isActive = true }) => {
               ].map(({ label, value, icon: Icon, trend }) => (
                 <div
                   key={label}
-                  className="flex flex-col gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 p-4 transition hover:-translate-y-0.5 hover:shadow-md"
+                  className="flex flex-col gap-1.5 rounded-xl border border-slate-100 bg-slate-50/80 p-3 transition hover:-translate-y-0.5 hover:shadow-md"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</span>
-                    <span className="rounded-full bg-white p-2 text-slate-500 shadow-sm">
-                      <Icon className="h-4 w-4" />
+                    <span className="rounded-full bg-white p-1.5 text-slate-500 shadow-sm">
+                      <Icon className="h-3.5 w-3.5" />
                     </span>
                   </div>
-                  <span className="text-2xl font-semibold text-slate-900">{value}</span>
+                  <span className="text-lg font-semibold text-slate-900">{value}</span>
                   <span className="text-xs text-slate-500">{trend}</span>
                 </div>
               ))}
@@ -1536,7 +1577,7 @@ const InvoicesPage = ({ isActive = true }) => {
           )}
         </div>
 
-        <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-black/5">
+        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5">
          
 
           {error && (
@@ -1574,10 +1615,10 @@ const InvoicesPage = ({ isActive = true }) => {
                 return (
                   <div
                     key={invoice._id}
-                    className="rounded-2xl border border-slate-100 bg-gradient-to-br from-white via-white to-slate-50 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                    className="rounded-xl border border-slate-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                   >
-                    <div className="flex flex-col gap-6 p-6">
-                      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="flex flex-col gap-3 p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div className="flex-1 space-y-3">
                           <div className="flex flex-wrap items-center gap-3">
                             <Badge tone={statusTone} pill title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>
@@ -1596,15 +1637,17 @@ const InvoicesPage = ({ isActive = true }) => {
                               </span>
                             )}
                           </div>
-                          <div className="space-y-2 text-sm text-slate-600">
+                          <div className="space-y-1.5 text-sm text-slate-600">
                             <div className="flex flex-wrap items-center gap-4">
                               <span className="inline-flex items-center gap-2 text-slate-700">
                                 <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
                                   {getInitials(invoice.guardian?.firstName, invoice.guardian?.lastName)}
                                 </span>
-                                <span className="flex flex-col leading-tight">
-                                  <span className="text-[11px] text-slate-500">Guardian</span>
+                                <span className="inline-flex items-center gap-2">
                                   <span className="text-slate-700">{invoice.guardian?.firstName} {invoice.guardian?.lastName}</span>
+                                  {invoice.guardian?.email && (
+                                    <span className="text-xs text-slate-400">• {invoice.guardian.email}</span>
+                                  )}
                                 </span>
                               </span>
                               
@@ -1628,10 +1671,6 @@ const InvoicesPage = ({ isActive = true }) => {
                               />
                             </div>
                             
-                            {invoice.guardian?.email && (
-                              
-                              <p className="text-xs text-slate-400">{invoice.guardian.email}</p>
-                            )}
                           </div>
                         </div>
 
@@ -1683,16 +1722,14 @@ const InvoicesPage = ({ isActive = true }) => {
                                 >
                                   <CreditCard className="h-4 w-4" />
                                 </button>
-                                {(invoice.status === 'draft' || invoice.status === 'pending') && (
-                                  !invoice.deleted && (
-                                    <button
-                                      onClick={() => handleDeleteInvoice(invoice)}
-                                      className="inline-flex items-center justify-center rounded-full border border-rose-100 p-2 text-rose-500 transition hover:border-rose-200 hover:text-rose-700"
-                                      type="button"
-                                    >
-                                      <XCircle className="h-4 w-4" />
-                                    </button>
-                                  )
+                                {!invoice.deleted && (
+                                  <button
+                                    onClick={() => handleDeleteInvoice(invoice)}
+                                    className="inline-flex items-center justify-center rounded-full border border-rose-100 p-2 text-rose-500 transition hover:border-rose-200 hover:text-rose-700"
+                                    type="button"
+                                  >
+                                    <XCircle className="h-4 w-4" />
+                                  </button>
                                 )}
                                 {invoice.deleted && isAdmin() && (
                                   <>
@@ -1757,8 +1794,8 @@ const InvoicesPage = ({ isActive = true }) => {
                       </div>
 
                       {expandedInvoice === invoice._id && (
-                        <div className="grid gap-6 border-t border-slate-100 bg-slate-50/60 p-6 md:grid-cols-2">
-                          <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white/70 p-4">
+                        <div className="grid gap-4 border-t border-slate-100 bg-slate-50/60 p-4 md:grid-cols-2">
+                          <div className="flex flex-col gap-3 rounded-xl border border-slate-100 bg-white/70 p-3">
                             <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Snapshot</span>
                             <div className="space-y-2 text-sm text-slate-600">
                               <div className="flex items-start gap-2">
@@ -1784,7 +1821,7 @@ const InvoicesPage = ({ isActive = true }) => {
                             </div>
                           </div>
 
-                          <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white/70 p-4">
+                          <div className="flex flex-col gap-3 rounded-xl border border-slate-100 bg-white/70 p-3">
                             <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Delivery status</span>
                             <div className="space-y-2 text-sm text-slate-600">
                               <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-white px-3 py-2" title={`Last updated: ${formatDate(invoice.updatedAt)}`}>
@@ -1871,6 +1908,17 @@ const InvoicesPage = ({ isActive = true }) => {
           }}
         />
       )}
+      {createInvoiceOpen && (
+        <CreateGuardianInvoiceModal
+          open={createInvoiceOpen}
+          onClose={() => setCreateInvoiceOpen(false)}
+          onCreated={() => {
+            setToast({ show: true, type: 'success', message: 'Invoice created' });
+            fetchInvoices();
+            if (isAdmin()) fetchStats();
+          }}
+        />
+      )}
       {toast.show && (
         <Toast
           type={toast.type || 'success'}
@@ -1922,7 +1970,7 @@ const InvoicesPage = ({ isActive = true }) => {
                 </span>
                 <PrimaryButton
                   title="Create invoice"
-                  onClick={() => { setFabOpen(false); alert('Manual invoice creation is coming soon.'); }}
+                  onClick={() => { setFabOpen(false); setCreateInvoiceOpen(true); }}
                   circle
                   size="lg"
                 >

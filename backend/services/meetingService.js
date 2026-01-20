@@ -904,6 +904,30 @@ const listMeetings = async ({ requester, filters = {} }) => {
   return meetings.map(formatMeetingResponse);
 };
 
+const cancelMeeting = async ({ meetingId, adminId, reason }) => {
+  if (!meetingId) {
+    throw createError(400, 'Meeting id is required');
+  }
+  const admin = await resolveAdmin(adminId);
+  const meeting = await Meeting.findById(meetingId);
+  if (!meeting) {
+    throw createError(404, 'Meeting not found');
+  }
+  if (admin && meeting.adminId && String(meeting.adminId) !== String(admin._id)) {
+    throw createError(403, 'Not allowed to cancel this meeting');
+  }
+
+  meeting.status = MEETING_STATUSES.CANCELLED;
+  meeting.cancellation = {
+    reason: (reason || '').trim() || 'Cancelled by admin',
+    cancelledBy: admin?._id,
+    cancelledAt: new Date()
+  };
+
+  await meeting.save();
+  return formatMeetingResponse(meeting);
+};
+
 const submitMeetingReport = async ({ meetingId, payload, submittedBy }) => {
   const meeting = await Meeting.findById(meetingId);
   if (!meeting) {
@@ -965,6 +989,7 @@ module.exports = {
   getAvailabilityWindows,
   bookMeeting,
   listMeetings,
+  cancelMeeting,
   submitMeetingReport,
   resolveAdmin,
   buildCalendarLinks,

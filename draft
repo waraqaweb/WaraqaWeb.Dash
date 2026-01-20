@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "improvements"
+git commit -m "fix series student linkage and hours reconciliation"
 git push origin main
 
 ---

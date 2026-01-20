@@ -95,6 +95,10 @@ const classSchema = new mongoose.Schema({
     max: 180,
     default: 60,
   },
+  endsAt: {
+    type: Date,
+    index: true,
+  },
   timezone: {
     type: String,
     required: true,
@@ -657,6 +661,7 @@ classSchema.index({ status: 1, scheduledDate: 1 });
 classSchema.index({ hidden: 1, scheduledDate: 1 });
 classSchema.index({ hidden: 1, status: 1, scheduledDate: 1 });
 classSchema.index({ scheduledDate: 1 });
+classSchema.index({ endsAt: 1 });
 classSchema.index({ createdAt: 1 });
 classSchema.index({ parentRecurringClass: 1 });
 classSchema.index({ isRecurring: 1, status: 1 });
@@ -714,6 +719,9 @@ classSchema.post('init', function(doc) {
 // Capture previous snapshot for change handling and update lastModifiedBy  
 classSchema.pre('save', function(next) {
   try {
+    if (this.scheduledDate && Number.isFinite(this.duration)) {
+      this.endsAt = new Date(this.scheduledDate.getTime() + (this.duration * 60000));
+    }
     if (this.isModified() && !this.isNew) {
       this.lastModifiedBy = this.lastModifiedBy || this.createdBy;
     }
@@ -753,6 +761,36 @@ classSchema.pre('save', function(next) {
       billedInInvoiceId: this.billedInInvoiceId,
       wasReportSubmitted: false
     };
+  }
+  next();
+});
+
+// Keep endsAt in sync for findOneAndUpdate / findByIdAndUpdate
+classSchema.pre('findOneAndUpdate', async function(next) {
+  try {
+    const update = this.getUpdate() || {};
+    const set = update.$set || {};
+    const hasScheduled = Object.prototype.hasOwnProperty.call(set, 'scheduledDate')
+      || Object.prototype.hasOwnProperty.call(update, 'scheduledDate');
+    const hasDuration = Object.prototype.hasOwnProperty.call(set, 'duration')
+      || Object.prototype.hasOwnProperty.call(update, 'duration');
+
+    if (!hasScheduled && !hasDuration) return next();
+
+    const existing = await this.model.findOne(this.getQuery()).select('scheduledDate duration').lean();
+    const rawScheduled = hasScheduled ? (set.scheduledDate ?? update.scheduledDate) : existing?.scheduledDate;
+    const rawDuration = hasDuration ? (set.duration ?? update.duration) : existing?.duration;
+    if (rawScheduled) {
+      const scheduledDate = new Date(rawScheduled);
+      const duration = Number(rawDuration || 0);
+      if (Number.isFinite(scheduledDate.getTime())) {
+        const endsAt = new Date(scheduledDate.getTime() + (duration * 60000));
+        update.$set = { ...set, endsAt };
+        this.setUpdate(update);
+      }
+    }
+  } catch (e) {
+    // Non-fatal: skip endsAt sync on error
   }
   next();
 });

@@ -221,7 +221,95 @@ async function hydrateUnknownStudentNames(classes = []) {
     if (fullName) c.student.studentName = fullName;
   });
 
+  const stillUnknown = (classes || []).filter((c) => isUnknownStudentName(c?.student?.studentName));
+  if (!stillUnknown.length) return classes;
+
+  const guardianIds = Array.from(
+    new Set(
+      stillUnknown
+        .map((c) => c?.student?.guardianId)
+        .filter(Boolean)
+        .map((v) => String(v))
+    )
+  );
+  if (!guardianIds.length) return classes;
+
+  let guardians = [];
+  try {
+    guardians = await User.find({ _id: { $in: guardianIds }, role: 'guardian' })
+      .select('guardianInfo.students')
+      .lean();
+  } catch (e) {
+    return classes;
+  }
+
+  const embeddedNameByKey = new Map();
+  (guardians || []).forEach((g) => {
+    const gid = String(g._id);
+    const students = Array.isArray(g.guardianInfo?.students) ? g.guardianInfo.students : [];
+    students.forEach((s) => {
+      const fullName = `${s.firstName || ''} ${s.lastName || ''}`.trim();
+      if (!fullName) return;
+      if (s._id) embeddedNameByKey.set(`${gid}|${String(s._id)}`, fullName);
+      if (s.standaloneStudentId) embeddedNameByKey.set(`${gid}|${String(s.standaloneStudentId)}`, fullName);
+      if (s.studentInfo?.standaloneStudentId) embeddedNameByKey.set(`${gid}|${String(s.studentInfo.standaloneStudentId)}`, fullName);
+    });
+  });
+
+  (classes || []).forEach((c) => {
+    if (!c?.student) return;
+    if (!isUnknownStudentName(c.student.studentName)) return;
+    const gid = c.student.guardianId ? String(c.student.guardianId) : '';
+    const sid = c.student.studentId ? String(c.student.studentId) : '';
+    if (!gid || !sid) return;
+    const fullName = embeddedNameByKey.get(`${gid}|${sid}`);
+    if (fullName) c.student.studentName = fullName;
+  });
+
   return classes;
+}
+
+async function resolveStudentForClass(studentInput, guardianDoc) {
+  if (!studentInput || !guardianDoc) return null;
+  const providedStudentName = (studentInput && typeof studentInput.studentName === 'string')
+    ? studentInput.studentName.trim()
+    : '';
+
+  const embeddedStudent = guardianDoc.guardianInfo?.students?.id?.(studentInput.studentId) || null;
+
+  let standaloneStudent = null;
+  if (!embeddedStudent && studentInput.studentId && mongoose.Types.ObjectId.isValid(studentInput.studentId)) {
+    try {
+      standaloneStudent = await Student.findById(studentInput.studentId).select('firstName lastName').lean();
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  let embeddedByStandalone = null;
+  if (!embeddedStudent && standaloneStudent && Array.isArray(guardianDoc.guardianInfo?.students)) {
+    embeddedByStandalone = guardianDoc.guardianInfo.students.find((s) =>
+      String(s.standaloneStudentId || s.studentInfo?.standaloneStudentId || '') === String(standaloneStudent._id)
+    ) || null;
+  }
+
+  const resolvedStudentId = embeddedStudent?._id
+    || embeddedByStandalone?._id
+    || studentInput.studentId
+    || standaloneStudent?._id
+    || null;
+
+  const resolvedStudentName =
+    providedStudentName
+    || (embeddedStudent ? `${embeddedStudent.firstName} ${embeddedStudent.lastName}`.trim() : '')
+    || (embeddedByStandalone ? `${embeddedByStandalone.firstName} ${embeddedByStandalone.lastName}`.trim() : '')
+    || (standaloneStudent ? `${standaloneStudent.firstName} ${standaloneStudent.lastName}`.trim() : '')
+    || 'Unknown Student';
+
+  return {
+    studentId: resolvedStudentId,
+    studentName: resolvedStudentName,
+  };
 }
 
 function normalizePendingReschedule(pending) {
@@ -777,33 +865,44 @@ router.get("/", authenticateToken, async (req, res) => {
     }
 
     // upcoming / previous filtering
-    // IMPORTANT: avoid $expr end-time calculations here because they force collection scans
-    // and can lead to >60s timeouts on large datasets.
-    // We approximate "ongoing" by including a safety window equal to the max class duration.
-    const MAX_CLASS_DURATION_MINUTES = 180;
-    const cutoff = new Date(now.getTime() - MAX_CLASS_DURATION_MINUTES * 60000);
+    // Prefer endsAt for accurate "class ended" logic; fall back to scheduledDate+duration if endsAt is missing.
+    const durationMsExpr = { $multiply: [{ $ifNull: ["$duration", 0] }, 60000] };
+    const endsAtExpr = { $add: ["$scheduledDate", durationMsExpr] };
 
     if (filter === "upcoming") {
-      // Include classes starting from (now - maxDuration) so ongoing classes still show.
-      if (!filters.scheduledDate || typeof filters.scheduledDate !== 'object') {
-        filters.scheduledDate = { $gte: cutoff };
-      } else {
-        const existingGte = filters.scheduledDate.$gte ? new Date(filters.scheduledDate.$gte) : null;
-        filters.scheduledDate.$gte = existingGte && existingGte > cutoff ? existingGte : cutoff;
-      }
+      const timeFilter = {
+        $or: [
+          { endsAt: { $gte: now } },
+          {
+            endsAt: { $exists: false },
+            scheduledDate: { $exists: true, $ne: null },
+            $expr: { $gte: [endsAtExpr, now] },
+          },
+          {
+            endsAt: null,
+            scheduledDate: { $exists: true, $ne: null },
+            $expr: { $gte: [endsAtExpr, now] },
+          },
+        ],
+      };
+      filters.$and = [...(filters.$and || []), timeFilter];
     } else if (filter === "previous") {
-      // Classes that must have ended before now have scheduledDate < (now - maxDuration).
-      if (!filters.scheduledDate || typeof filters.scheduledDate !== 'object') {
-        filters.scheduledDate = { $lt: cutoff };
-      } else {
-        // Keep existing bounds but enforce an upper bound.
-        const existingLt = filters.scheduledDate.$lt ? new Date(filters.scheduledDate.$lt) : null;
-        const existingLte = filters.scheduledDate.$lte ? new Date(filters.scheduledDate.$lte) : null;
-        const existingUpper = existingLt || existingLte;
-        // Prefer strict $lt for consistency.
-        filters.scheduledDate.$lt = existingUpper && existingUpper < cutoff ? existingUpper : cutoff;
-        if (filters.scheduledDate.$lte) delete filters.scheduledDate.$lte;
-      }
+      const timeFilter = {
+        $or: [
+          { endsAt: { $lt: now } },
+          {
+            endsAt: { $exists: false },
+            scheduledDate: { $exists: true, $ne: null },
+            $expr: { $lt: [endsAtExpr, now] },
+          },
+          {
+            endsAt: null,
+            scheduledDate: { $exists: true, $ne: null },
+            $expr: { $lt: [endsAtExpr, now] },
+          },
+        ],
+      };
+      filters.$and = [...(filters.$and || []), timeFilter];
     }
 
     // Filter out classes that are hidden due to system vacation or individual teacher vacation
@@ -1037,6 +1136,8 @@ router.get("/series", authenticateToken, requireRole(["admin"]), async (req, res
       .populate('teacher', 'firstName lastName email')
       .populate('student.guardianId', 'firstName lastName email')
       .lean();
+
+    await hydrateUnknownStudentNames(patterns);
 
     const patternIds = patterns.map((p) => p._id);
     const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'];
@@ -1833,28 +1934,11 @@ router.post(
         console.log("Student found:", sExists.firstName, sExists.lastName);
       }
 
-      // If the studentId is a standalone Student record (not an embedded guardian subdoc), resolve name from Student collection.
-      let standaloneStudent = null;
-      if (!sExists) {
-        try {
-          standaloneStudent = await Student.findById(student.studentId).select('firstName lastName guardian').lean();
-        } catch (e) {
-          // ignore
-        }
-      }
-
-      // Prepare student object with name for class creation
-      const providedStudentName = (student && typeof student.studentName === 'string') ? student.studentName.trim() : '';
-      const resolvedStudentName =
-        providedStudentName ||
-        (sExists ? `${sExists.firstName} ${sExists.lastName}`.trim() : '') ||
-        (standaloneStudent ? `${standaloneStudent.firstName} ${standaloneStudent.lastName}`.trim() : '') ||
-        'Unknown Student';
-
+      const resolvedStudent = await resolveStudentForClass(student, guardianDoc);
       const studentForClass = {
         guardianId: student.guardianId,
-        studentId: student.studentId,
-        studentName: resolvedStudentName
+        studentId: resolvedStudent?.studentId || student.studentId,
+        studentName: resolvedStudent?.studentName || student.studentName || 'Unknown Student'
       };
       console.log("Student object for class:", studentForClass);
 
@@ -2304,12 +2388,27 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
 
     // If updating a single instance (non-recurring)
     if (!toBool(updates.isRecurring)) {
+      let resolvedStudent = updates.student;
+      if (updates.student?.guardianId && updates.student?.studentId) {
+        const guardianDoc = await User.findOne({ _id: updates.student.guardianId, role: 'guardian' });
+        if (guardianDoc) {
+          const resolved = await resolveStudentForClass(updates.student, guardianDoc);
+          if (resolved) {
+            resolvedStudent = {
+              guardianId: updates.student.guardianId,
+              studentId: resolved.studentId,
+              studentName: resolved.studentName
+            };
+          }
+        }
+      }
+
       const updatePayload = {
         title: updates.title,
         description: updates.description,
         subject: updates.subject,
         teacher: updates.teacher,
-        student: updates.student,
+        student: resolvedStudent,
         scheduledDate: updates.scheduledDate ? new Date(updates.scheduledDate) : classDoc.scheduledDate,
         duration: (typeof updates.duration !== "undefined") ? Number(updates.duration) : classDoc.duration,
         timezone: updates.timezone || classDoc.timezone,
@@ -2488,7 +2587,23 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
     if (description) pattern.description = description;
     if (subject) pattern.subject = subject;
     if (teacher) pattern.teacher = teacher;
-    if (student) pattern.student = student;
+    if (student) {
+      let resolvedStudent = student;
+      if (student?.guardianId && student?.studentId) {
+        const guardianDoc = await User.findOne({ _id: student.guardianId, role: 'guardian' });
+        if (guardianDoc) {
+          const resolved = await resolveStudentForClass(student, guardianDoc);
+          if (resolved) {
+            resolvedStudent = {
+              guardianId: student.guardianId,
+              studentId: resolved.studentId,
+              studentName: resolved.studentName
+            };
+          }
+        }
+      }
+      pattern.student = resolvedStudent;
+    }
     if (typeof duration !== "undefined") pattern.duration = Number(duration);
     pattern.timezone = proposedTimezone || pattern.timezone;
     if (scheduledDate) {

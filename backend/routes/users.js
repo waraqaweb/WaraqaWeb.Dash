@@ -16,6 +16,7 @@ const User = require('../models/User');
 const Teacher = require('../models/Teacher');
 const Guardian = require('../models/Guardian');
 const Student = require('../models/Student');
+const Invoice = require('../models/Invoice');
 const GuardianHoursAudit = require('../models/GuardianHoursAudit');
 const Notification = require('../models/Notification');
 const Class = require('../models/Class');
@@ -450,6 +451,275 @@ router.post('/admin/guardians/:guardianId/hours', [
       message: 'Failed to update guardian hours',
       error: error.message,
     });
+  }
+});
+
+/**
+ * Recompute guardian hours from class reports + payments (Admin only)
+ * POST /api/users/admin/guardians/:guardianId/recompute-hours
+ * Body: { mode?: 'billing'|'students', dryRun?: boolean }
+ */
+router.post('/admin/guardians/:guardianId/recompute-hours', [
+  authenticateToken,
+  requireAdmin,
+], async (req, res) => {
+  try {
+    const { guardianId } = req.params;
+    const mode = String(req.body?.mode || 'billing').toLowerCase();
+    const dryRun = Boolean(req.body?.dryRun);
+
+    const guardian = await User.findById(guardianId);
+    if (!guardian) {
+      return res.status(404).json({ message: 'Guardian not found' });
+    }
+    if (guardian.role !== 'guardian') {
+      return res.status(400).json({ message: 'User is not a guardian' });
+    }
+
+    guardian.guardianInfo = guardian.guardianInfo && typeof guardian.guardianInfo === 'object' ? guardian.guardianInfo : {};
+    const students = Array.isArray(guardian.guardianInfo.students) ? guardian.guardianInfo.students : [];
+
+    const countableStatuses = new Set(['attended', 'missed_by_student', 'absent']);
+    const classes = await Class.find({
+      'student.guardianId': guardian._id,
+      deleted: { $ne: true }
+    })
+      .select('_id student status duration classReport')
+      .lean();
+
+    const consumedByStudent = new Map();
+    let totalConsumed = 0;
+    for (const cls of classes) {
+      const status = cls?.status;
+      if (!countableStatuses.has(status)) continue;
+      const durationHours = Number(cls?.duration || 0) / 60;
+      if (!Number.isFinite(durationHours) || durationHours <= 0) continue;
+      totalConsumed += durationHours;
+      const sid = cls?.student?.studentId ? String(cls.student.studentId) : null;
+      if (!sid) continue;
+      consumedByStudent.set(sid, (consumedByStudent.get(sid) || 0) + durationHours);
+    }
+
+    const findStudentIndex = (studentId) => {
+      if (!studentId) return -1;
+      const target = String(studentId);
+      return students.findIndex((s) => {
+        const candidates = [
+          s?._id,
+          s?.id,
+          s?.studentId,
+          s?.standaloneStudentId,
+          s?.studentInfo?.standaloneStudentId
+        ]
+          .filter(Boolean)
+          .map((v) => String(v));
+        return candidates.includes(target);
+      });
+    };
+
+    const perStudent = [];
+    for (const s of students) {
+      const candidateIds = [
+        s?._id,
+        s?.id,
+        s?.studentId,
+        s?.standaloneStudentId,
+        s?.studentInfo?.standaloneStudentId
+      ]
+        .filter(Boolean)
+        .map((v) => String(v));
+      const consumed = candidateIds.reduce((sum, id) => sum + (consumedByStudent.get(id) || 0), 0);
+      const newHoursRemaining = Math.round((-consumed) * 1000) / 1000;
+      perStudent.push({
+        id: s?._id || s?.studentId || s?.standaloneStudentId || null,
+        name: `${s?.firstName || ''} ${s?.lastName || ''}`.trim() || s?.studentName || 'Student',
+        consumedHours: Math.round(consumed * 1000) / 1000,
+        hoursRemaining: newHoursRemaining
+      });
+      if (!dryRun) {
+        const idx = findStudentIndex(s?._id || s?.studentId || s?.standaloneStudentId);
+        if (idx !== -1) {
+          guardian.guardianInfo.students[idx].hoursRemaining = newHoursRemaining;
+        }
+      }
+    }
+
+    let creditedHours = 0;
+    if (mode === 'billing') {
+      const invoices = await Invoice.find({ guardian: guardian._id, deleted: { $ne: true } }).lean();
+      for (const invoice of invoices) {
+        const logs = Array.isArray(invoice.paymentLogs) ? invoice.paymentLogs : [];
+        const invoiceRate = Number(invoice?.guardianFinancial?.hourlyRate || 0)
+          || Number(guardian.guardianInfo?.hourlyRate || 0)
+          || 10;
+        for (const log of logs) {
+          if (!log || typeof log.amount !== 'number' || log.amount <= 0) continue;
+          if (log.method === 'refund' || log.method === 'tip_distribution') continue;
+          if (log.paidHours !== undefined && log.paidHours !== null) {
+            creditedHours += Number(log.paidHours) || 0;
+          } else {
+            creditedHours += Number(log.amount || 0) / invoiceRate;
+          }
+        }
+      }
+    }
+
+    const normalizedConsumed = Math.round(totalConsumed * 1000) / 1000;
+    const normalizedCredited = Math.round(creditedHours * 1000) / 1000;
+    const totalHours = mode === 'billing'
+      ? Math.round((normalizedCredited - normalizedConsumed) * 1000) / 1000
+      : perStudent.reduce((sum, s) => sum + (Number(s.hoursRemaining) || 0), 0);
+
+    if (!dryRun) {
+      guardian.guardianInfo.autoTotalHours = mode === 'students';
+      guardian.guardianInfo.totalHours = totalHours;
+      guardian.markModified('guardianInfo.students');
+      guardian.markModified('guardianInfo');
+      await guardian.save();
+      try {
+        await Guardian.updateTotalRemainingMinutes(guardian._id);
+      } catch (e) {
+        console.warn('Recompute guardian hours: failed to sync Guardian model', e && e.message);
+      }
+    }
+
+    return res.json({
+      message: dryRun ? 'Recompute preview complete' : 'Guardian hours recomputed',
+      guardianId: guardian._id,
+      mode,
+      dryRun,
+      totalConsumed: normalizedConsumed,
+      totalCredited: normalizedCredited,
+      totalHours,
+      perStudent
+    });
+  } catch (error) {
+    console.error('Recompute guardian hours error:', error);
+    return res.status(500).json({ message: 'Failed to recompute guardian hours', error: error.message });
+  }
+});
+
+/**
+ * Admin: Adjust guardian student hours reliably
+ * POST /api/users/admin/guardians/:guardianId/students/:studentId/hours
+ * Body: { action: 'add'|'subtract'|'set', hours: number }
+ */
+router.post('/admin/guardians/:guardianId/students/:studentId/hours', [
+  authenticateToken,
+  requireAdmin,
+  body('action').isIn(['add', 'subtract', 'set']).withMessage('Action must be add, subtract, or set'),
+  body('hours').isNumeric().withMessage('Hours must be a number'),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
+  }
+
+  try {
+    const { guardianId, studentId } = req.params;
+    const { action, hours } = req.body;
+
+    const guardian = await User.findById(guardianId);
+    if (!guardian) return res.status(404).json({ message: 'Guardian not found' });
+    if (guardian.role !== 'guardian') return res.status(400).json({ message: 'User is not a guardian' });
+
+    guardian.guardianInfo = guardian.guardianInfo && typeof guardian.guardianInfo === 'object' ? guardian.guardianInfo : {};
+    const students = Array.isArray(guardian.guardianInfo.students) ? guardian.guardianInfo.students : [];
+
+    const target = String(studentId);
+    const idx = students.findIndex((s) => {
+      const candidates = [
+        s?._id,
+        s?.id,
+        s?.studentId,
+        s?.standaloneStudentId,
+        s?.studentInfo?.standaloneStudentId
+      ]
+        .filter(Boolean)
+        .map((v) => String(v));
+      return candidates.includes(target);
+    });
+
+    if (idx === -1) {
+      return res.status(404).json({ message: 'Student not found under guardian' });
+    }
+
+    const current = Number(students[idx].hoursRemaining || 0);
+    const delta = Number(hours) || 0;
+    let next = current;
+    if (action === 'add') next = current + delta;
+    if (action === 'subtract') next = current - delta;
+    if (action === 'set') next = delta;
+    students[idx].hoursRemaining = Math.round(next * 1000) / 1000;
+
+    guardian.guardianInfo.autoTotalHours = true;
+    guardian.guardianInfo.totalHours = students.reduce((sum, s) => sum + (Number(s.hoursRemaining) || 0), 0);
+    guardian.markModified('guardianInfo.students');
+    guardian.markModified('guardianInfo');
+    await guardian.save();
+
+    try {
+      await Guardian.updateTotalRemainingMinutes(guardian._id);
+    } catch (syncErr) {
+      console.warn('Student hours adjust: failed to sync Guardian model', syncErr && syncErr.message);
+    }
+
+    return res.json({
+      message: 'Student hours updated successfully',
+      guardianId: guardian._id,
+      student: students[idx],
+      totalHours: guardian.guardianInfo.totalHours,
+      autoTotalHours: guardian.guardianInfo.autoTotalHours
+    });
+  } catch (error) {
+    console.error('Update guardian student hours error:', error);
+    return res.status(500).json({ message: 'Failed to update student hours', error: error.message });
+  }
+});
+
+/**
+ * Admin: Adjust teacher monthly hours
+ * POST /api/users/admin/teachers/:teacherId/hours
+ * Body: { action: 'add'|'subtract'|'set', hours: number }
+ */
+router.post('/admin/teachers/:teacherId/hours', [
+  authenticateToken,
+  requireAdmin,
+  body('action').isIn(['add', 'subtract', 'set']).withMessage('Action must be add, subtract, or set'),
+  body('hours').isNumeric().withMessage('Hours must be a number'),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
+  }
+
+  try {
+    const { teacherId } = req.params;
+    const { action, hours } = req.body;
+    const teacher = await User.findById(teacherId);
+    if (!teacher) return res.status(404).json({ message: 'Teacher not found' });
+    if (teacher.role !== 'teacher') return res.status(400).json({ message: 'User is not a teacher' });
+
+    teacher.teacherInfo = teacher.teacherInfo || {};
+    const current = Number(teacher.teacherInfo.monthlyHours || 0);
+    const delta = Number(hours) || 0;
+    let change = 0;
+    if (action === 'add') change = delta;
+    if (action === 'subtract') change = -delta;
+    if (action === 'set') change = delta - current;
+
+    await teacher.addTeachingHours(change);
+
+    return res.json({
+      message: 'Teacher hours updated successfully',
+      teacherId: teacher._id,
+      monthlyHours: teacher.teacherInfo?.monthlyHours || 0,
+      monthlyRate: teacher.teacherInfo?.monthlyRate || 0,
+      monthlyEarnings: teacher.teacherInfo?.monthlyEarnings || 0
+    });
+  } catch (error) {
+    console.error('Update teacher hours error:', error);
+    return res.status(500).json({ message: 'Failed to update teacher hours', error: error.message });
   }
 });
 

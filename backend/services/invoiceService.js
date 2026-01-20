@@ -111,23 +111,66 @@ const toObjectId = (value) => {
   }
 };
 
-const getGuardianStudentIds = (guardianDoc, invoiceDoc) => {
+const getGuardianStudentIds = async (guardianDoc, invoiceDoc) => {
   const collected = new Set();
   const studentEntries = Array.isArray(guardianDoc?.guardianInfo?.students)
     ? guardianDoc.guardianInfo.students
     : [];
   for (const entry of studentEntries) {
-    const candidate = entry?.studentId || entry?._id || entry?.id;
-    const objId = toObjectId(candidate);
-    if (objId) collected.add(objId.toString());
+    const candidates = [
+      entry?.studentId,
+      entry?._id,
+      entry?.id,
+      entry?.standaloneStudentId,
+      entry?.studentInfo?.standaloneStudentId
+    ];
+    candidates.forEach((candidate) => {
+      const objId = toObjectId(candidate);
+      if (objId) collected.add(objId.toString());
+    });
   }
+
+  if (guardianDoc?._id) {
+    try {
+      const standalone = await Student.find({ guardian: guardianDoc._id }).select('_id').lean();
+      (standalone || []).forEach((s) => {
+        const objId = toObjectId(s?._id);
+        if (objId) collected.add(objId.toString());
+      });
+    } catch (e) {
+      // ignore
+    }
+  }
+
   if (!collected.size && Array.isArray(invoiceDoc?.items)) {
     for (const item of invoiceDoc.items) {
       const objId = toObjectId(item?.student);
       if (objId) collected.add(objId.toString());
     }
   }
+
   return Array.from(collected).map((id) => new mongoose.Types.ObjectId(id));
+};
+
+const findGuardianStudentIndex = (guardianDoc, studentId) => {
+  if (!guardianDoc || !studentId) return -1;
+  const students = Array.isArray(guardianDoc.guardianInfo?.students)
+    ? guardianDoc.guardianInfo.students
+    : [];
+  if (!students.length) return -1;
+  const target = String(studentId);
+  return students.findIndex((s) => {
+    const candidates = [
+      s?._id,
+      s?.id,
+      s?.studentId,
+      s?.standaloneStudentId,
+      s?.studentInfo?.standaloneStudentId
+    ]
+      .filter(Boolean)
+      .map((v) => String(v));
+    return candidates.includes(target);
+  });
 };
 
 const resolveStudentSnapshotFromClass = (cls) => {
@@ -1320,9 +1363,7 @@ class InvoiceService {
                 // Find the student in guardian's students array
                 const studentId = classDoc.student?.studentId?._id || classDoc.student?.studentId;
                 if (studentId && Array.isArray(guardian.guardianInfo?.students)) {
-                  const studentIndex = guardian.guardianInfo.students.findIndex(
-                    s => s._id?.toString() === studentId.toString()
-                  );
+                  const studentIndex = findGuardianStudentIndex(guardian, studentId);
                   
                   if (studentIndex !== -1) {
                     const student = guardian.guardianInfo.students[studentIndex];
@@ -1414,9 +1455,7 @@ class InvoiceService {
                 // Find the student in guardian's students array
                 const studentId = classDoc.student?.studentId?._id || classDoc.student?.studentId;
                 if (studentId && Array.isArray(guardian.guardianInfo?.students)) {
-                  const studentIndex = guardian.guardianInfo.students.findIndex(
-                    s => s._id?.toString() === studentId.toString()
-                  );
+                  const studentIndex = findGuardianStudentIndex(guardian, studentId);
                   
                   if (studentIndex !== -1) {
                     const student = guardian.guardianInfo.students[studentIndex];
@@ -1535,10 +1574,8 @@ class InvoiceService {
               // Find the student in guardian's students array
               const studentId = classDoc.student?.studentId?._id || classDoc.student?.studentId;
               if (studentId && Array.isArray(guardian.guardianInfo?.students)) {
-                const studentIndex = guardian.guardianInfo.students.findIndex(
-                  s => s._id?.toString() === studentId.toString()
-                );
-                
+                const studentIndex = findGuardianStudentIndex(guardian, studentId);
+
                 if (studentIndex !== -1) {
                   const student = guardian.guardianInfo.students[studentIndex];
                   const oldStudentHours = Number(student.hoursRemaining || 0);
@@ -1945,7 +1982,7 @@ class InvoiceService {
         return resultFallback;
       }
 
-      const studentIds = getGuardianStudentIds(guardianDoc, invoiceDoc);
+      const studentIds = await getGuardianStudentIds(guardianDoc, invoiceDoc);
       if (!studentIds.length) {
         return resultFallback;
       }

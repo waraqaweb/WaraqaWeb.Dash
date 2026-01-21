@@ -688,6 +688,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const computedRemaining = roundCurrency(Math.max(0, totalAmount - paidAmount));
   const remainingBalance = computedRemaining;
   const amount = totalAmount;
+  const isPaidStatus = ['paid', 'refunded'].includes(invoice?.status);
+  const primaryAmount = isPaidStatus && paidAmount > 0 ? paidAmount : totalAmount;
+  const primaryLabel = isPaidStatus ? 'Paid' : 'Invoice total';
 
   const actualHoursDisplay = useMemo(() => formatHoursValue(totalMinutes / 60), [totalMinutes, formatHoursValue]);
 
@@ -1451,8 +1454,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
               <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
               <div className="mt-2 space-y-2">
                       <div>
-                        <p className="text-2xl font-semibold text-slate-900">${amount.toFixed(2)}</p>
-                        <p className="text-xs uppercase tracking-wide text-slate-400">Invoice total</p>
+                        <p className="text-2xl font-semibold text-slate-900">${primaryAmount.toFixed(2)}</p>
+                        <p className="text-xs uppercase tracking-wide text-slate-400">{primaryLabel}</p>
                       </div>
                       <div className="space-y-1 text-sm text-slate-600">
                         <div className="flex justify-between">
@@ -1498,10 +1501,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                         <div className="flex justify-between pt-2">
                           <span>Paid</span>
                           <span>${paidAmount.toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-900">
-                          <span>Remaining</span>
-                          <span>${remainingBalance.toFixed(2)}</span>
                         </div>
                       </div>
                       <div className="mt-3 border-t border-slate-100 pt-3 text-sm text-slate-600">

@@ -477,6 +477,21 @@ async function getRecentNotifications(userId, limit = 10) {
   }
 }
 
+/**
+ * Delete a notification belonging to a user
+ * @param {string} userId The user ID
+ * @param {string} notificationId The notification ID
+ */
+async function deleteNotification(userId, notificationId) {
+  try {
+    const result = await Notification.deleteOne({ _id: notificationId, user: userId });
+    return { deletedCount: result.deletedCount || 0 };
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    throw error;
+  }
+}
+
 // ====================================================================
 // TEACHER SALARY NOTIFICATION FUNCTIONS
 // ====================================================================
@@ -932,6 +947,7 @@ module.exports = {
   markNotificationsAsRead,
   getUnreadCount,
   getRecentNotifications,
+  deleteNotification,
   notifyRole,
   notifySystem,
   notifyNewUser,

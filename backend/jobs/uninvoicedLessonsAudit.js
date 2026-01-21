@@ -14,7 +14,7 @@ async function runUninvoicedLessonsAudit(options = {}) {
   const notifyAdmins = String(process.env.AUDIT_NOTIFY_ADMINS || options.notifyAdmins || 'true').toLowerCase() === 'true';
 
   try {
-  const uninvoiced = await findUninvoicedLessons({ sinceDays, includeCancelled });
+    const uninvoiced = await findUninvoicedLessons({ sinceDays, includeCancelled });
     const total = uninvoiced.length;
     if (total === 0) {
       console.log(`[UninvoicedLessonsAudit] No uninvoiced lessons found in the last ${sinceDays} days.`);
@@ -23,12 +23,14 @@ async function runUninvoicedLessonsAudit(options = {}) {
 
     // Log top-50 details to keep console noise reasonable
     const sample = uninvoiced.slice(0, 50).map((c) => ({
-      id: c._id?.toString?.() || String(c._id),
+      id: c.classId || c._id?.toString?.() || String(c._id),
       status: c.status,
       scheduledDate: c.scheduledDate,
       duration: c.duration,
       student: c.student,
       teacher: c.teacher,
+      guardian: c.guardian,
+      reason: c.reasonCode || c.reason
     }));
 
     console.warn(`[UninvoicedLessonsAudit] Found ${total} lessons not tied to any invoice (since ${sinceDays}d). Showing top ${sample.length}.`);
@@ -37,7 +39,9 @@ async function runUninvoicedLessonsAudit(options = {}) {
     // Flag them for UI surfacing
     try {
       const Class = require('../models/Class');
-      const ids = uninvoiced.map((c) => c._id).filter(Boolean);
+      const ids = uninvoiced
+        .map((c) => c.classId || c._id)
+        .filter(Boolean);
       if (ids.length) {
         await Class.updateMany({ _id: { $in: ids } }, { $set: { flaggedUninvoiced: true } });
       }
@@ -53,7 +57,11 @@ async function runUninvoicedLessonsAudit(options = {}) {
           message: `There are ${total} lessons not attached to any invoice in the last ${sinceDays} days. Review and attach as needed.`,
           type: 'warning',
           // Use a valid relatedTo enum; include extra context via metadata
-          related: { relatedTo: 'system', relatedId: 'uninvoiced-lessons', metadata: { category: 'audit' } }
+          related: {
+            relatedTo: 'system',
+            relatedId: 'uninvoiced-lessons',
+            metadata: { category: 'audit', kind: 'uninvoiced_lessons', sinceDays, total }
+          }
         });
       } catch (notifyErr) {
         console.warn('[UninvoicedLessonsAudit] Failed to notify admins:', notifyErr && notifyErr.message);

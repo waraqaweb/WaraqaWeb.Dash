@@ -11,8 +11,8 @@ import { deleteMeeting, listMeetings } from '../../api/meetings';
 import Select from "react-select";
 import {
   ChevronDown, ChevronUp, Video, Clock, CheckCircle,
-  XCircle, AlertCircle, Plus, Trash2, Calendar, User, Users, BookOpen, 
-  Pencil, Copy, Repeat, Star, FileText, RotateCcw, Globe, MessageCircle,
+  XCircle, AlertCircle, Plus, Trash2, Calendar, User, Users, BookOpen,
+  Pencil, Copy, Repeat, Star, FileText, RotateCcw, Globe, MessageCircle, Image,
 } from "lucide-react";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import CopyButton from "../../components/ui/CopyButton";
@@ -143,6 +143,20 @@ const compressDaysLabel = (dayNums = []) => {
     i += 1;
   }
   return parts.join(", ");
+};
+
+const resolvePreviewUrl = (rawUrl) => {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
+  try {
+    const baseUrl = new URL(api?.defaults?.baseURL || '', window.location.origin);
+    if (rawUrl.startsWith('/')) {
+      return `${baseUrl.origin}${rawUrl}`;
+    }
+    return `${baseUrl.origin}/${rawUrl}`;
+  } catch (e) {
+    return rawUrl;
+  }
 };
 
 const buildConciseShareMessageFromResults = ({
@@ -389,6 +403,9 @@ const ClassesPage = ({ isActive = true }) => {
   const [expandedClass, setExpandedClass] = useState(null);
   const [currentPage, setCurrentPage] = useState(getInitialPage);
   const [totalPages, setTotalPages] = useState(1);
+  const [whiteboardPreviewUrls, setWhiteboardPreviewUrls] = useState({});
+  const [whiteboardPreviewLoading, setWhiteboardPreviewLoading] = useState(false);
+  const [whiteboardPreviewError, setWhiteboardPreviewError] = useState('');
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showSeriesScanner, setShowSeriesScanner] = useState(false);
@@ -448,6 +465,71 @@ const ClassesPage = ({ isActive = true }) => {
   const [selectedGuardianId, setSelectedGuardianId] = useState(null);
   const [recipientPhone, setRecipientPhone] = useState("");
   const [classDetails, setClassDetails] = useState({});
+
+  useEffect(() => {
+    if (!expandedClass) {
+      setWhiteboardPreviewUrls({});
+      setWhiteboardPreviewError('');
+      setWhiteboardPreviewLoading(false);
+      return;
+    }
+
+    const classItem = classDetails[expandedClass]
+      || classes.find((item) => String(item._id) === String(expandedClass));
+    const materials = Array.isArray(classItem?.materials) ? classItem.materials : [];
+    const screenshotMaterials = materials.filter((mat) => Boolean(mat?.libraryItem));
+
+    if (!screenshotMaterials.length) {
+      setWhiteboardPreviewUrls({});
+      setWhiteboardPreviewError('');
+      setWhiteboardPreviewLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchPreviews = async () => {
+      setWhiteboardPreviewLoading(true);
+      setWhiteboardPreviewError('');
+      try {
+        const entries = await Promise.all(
+          screenshotMaterials.map(async (material) => {
+            const itemId = material.libraryItem;
+            const res = await api.get(`/library/items/${itemId}/download`, {
+              params: { attachment: false }
+            });
+            return [String(itemId), resolvePreviewUrl(res.data?.url)];
+          })
+        );
+        if (cancelled) return;
+        setWhiteboardPreviewUrls(Object.fromEntries(entries));
+      } catch (err) {
+        if (cancelled) return;
+        setWhiteboardPreviewError(err?.response?.data?.message || 'Failed to load screenshots');
+      } finally {
+        if (!cancelled) setWhiteboardPreviewLoading(false);
+      }
+    };
+
+    fetchPreviews();
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedClass, classes, classDetails]);
+
+
+  const handleDeleteWhiteboardMaterial = async (classId, materialId) => {
+    if (!classId || !materialId) return;
+    try {
+      await api.delete(`/whiteboard/screenshot/class/${classId}/${materialId}`);
+      if (fetchClassesRef.current) {
+        fetchClassesRef.current({ force: true });
+      }
+    } catch (err) {
+      console.error('Failed to delete screenshot:', err);
+      alert(err?.response?.data?.message || 'Failed to delete screenshot');
+    }
+  };
+
   const [classPolicies, setClassPolicies] = useState({});
   const [focusedClassId, setFocusedClassId] = useState(null);
   const [, setFocusedPolicy] = useState(null);
@@ -932,7 +1014,8 @@ const ClassesPage = ({ isActive = true }) => {
   useEffect(() => {
     if (!isActive) return;
     const q = new URLSearchParams(location.search);
-    const tab = q.get('tab') || 'upcoming';
+    const tab = q.get('tab');
+    if (!tab) return;
     if (tab !== tabFilter) setTabFilter(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, location.search]);
@@ -979,7 +1062,7 @@ const ClassesPage = ({ isActive = true }) => {
       const currentParam = Number(q.get('page') || '1');
       if (currentParam === Number(currentPage || 1)) return;
       q.set('page', String(currentPage || 1));
-      navigate(`${location.pathname}?${q.toString()}`, { replace: false });
+      navigate(`${location.pathname}?${q.toString()}`, { replace: true });
     } catch (e) {
       // ignore
     }
@@ -1041,11 +1124,17 @@ const ClassesPage = ({ isActive = true }) => {
 
   const handleTabChange = (nextTab) => {
     if (!nextTab) return;
+    if (nextTab === tabFilter) return;
     const q = new URLSearchParams(location.search);
     q.set('tab', nextTab);
     q.set('view', 'classes');
     q.set('page', '1');
     navigate(`${location.pathname}?${q.toString()}`, { state: { background: location.state?.background }, replace: false });
+    setLoading(true);
+    setClasses([]);
+    setClassesCorpus([]);
+    loadedClassPagesRef.current = new Set();
+    setCurrentPage(1);
     setTabFilter(nextTab);
   };
 
@@ -2409,6 +2498,14 @@ Would you like to create another series anyway?`
     [classDetails, classPolicies]
   );
 
+  useEffect(() => {
+    if (!expandedClass) return;
+    const hasDetails = Boolean(classDetails[expandedClass]);
+    const hasPolicy = Boolean(classPolicies[expandedClass]);
+    if (hasDetails && hasPolicy) return;
+    ensureClassDetail(expandedClass);
+  }, [expandedClass, ensureClassDetail, classDetails, classPolicies]);
+
   const getPolicyForClass = useCallback(
     (classId) => (classId ? classPolicies[classId] || null : null),
     [classPolicies]
@@ -2729,6 +2826,15 @@ Would you like to create another series anyway?`
           const supervisorNotesValue = reportData.supervisorNotes || classItem?.supervisorNotes || '';
           const assignmentValue = reportData.newAssignment || classItem?.newAssignment || '';
           const showCancellationReason = isAdminUser && classItem?.cancellation?.reason;
+          const summaryMaterials = Array.isArray(classItem?.materials) ? classItem.materials : [];
+          const hasWhiteboardScreenshot = summaryMaterials.some(
+            (material) => material?.kind === 'whiteboard' && Boolean(material?.libraryItem)
+          );
+          const classItemForDetails = expandedClass === classItem?._id
+            ? (classDetails[classItem._id] || classItem)
+            : classItem;
+          const screenshotMaterials = (Array.isArray(classItemForDetails?.materials) ? classItemForDetails.materials : [])
+            .filter((material) => material?.kind === 'whiteboard' && (material?.uploadedByRole === 'teacher' || isAdminUser));
           const classId = classItem?._id;
           const classPolicy = getPolicyForClass(classId);
           const policyLoadingForClass = Boolean(policyLoading && classId && focusedClassId === classId);
@@ -2823,6 +2929,12 @@ Would you like to create another series anyway?`
                     </span>
                     <span className="flex items-center whitespace-nowrap">
                       <span className="font-medium">Subject:</span> {classItem?.subject}
+                      {hasWhiteboardScreenshot && (
+                        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                          <Image className="h-3 w-3" />
+                          Screenshot
+                        </span>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -2985,15 +3097,15 @@ Would you like to create another series anyway?`
                 <div className="flex-1 min-w-[250px] max-w-lg space-y-4">
                   <h4 className="font-medium text-gray-900 mb-2">Class Details</h4>
                   <div className="space-y-2 text-sm">
-                    <div><span className="font-medium">Duration:</span> {classItem?.duration} minutes</div>
-                    <div><span className="font-medium">Timezone:</span> {classItem?.timezone}</div>
-                    <div><span className="font-medium">Class type: </span> {classItem?.title}</div>
-                    {classItem?.meetingLink && (
+                    <div><span className="font-medium">Duration:</span> {classItemForDetails?.duration} minutes</div>
+                    <div><span className="font-medium">Timezone:</span> {classItemForDetails?.timezone}</div>
+                    <div><span className="font-medium">Class type: </span> {classItemForDetails?.title}</div>
+                    {classItemForDetails?.meetingLink && (
                       <div>
                         <span className="font-medium">Meeting Link:</span>
-                        <a href={classItem.meetingLink} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">
+                        <a href={classItemForDetails.meetingLink} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">
                           Join Meeting</a>
-                        {classItem?.description && <div><span className="font-medium">Description:</span> {classItem.description}</div>}
+                        {classItemForDetails?.description && <div><span className="font-medium">Description:</span> {classItemForDetails.description}</div>}
                       </div>
                     )}
                   </div>
@@ -3003,11 +3115,88 @@ Would you like to create another series anyway?`
                 <div className="flex-1 min-w-[250px] max-w-lg space-y-2">
                   <h4 className="font-medium text-gray-900 mb-2">Participants</h4>
                   <div className="space-y-2 text-sm">
-                    <div><span className="font-medium">Teacher:</span> {classItem?.teacher?.firstName} {classItem?.teacher?.lastName}</div>
-                    <div><span className="font-medium">Student:</span> {classItem?.student?.studentName}</div>
-                    <div><span className="font-medium">Guardian:</span> {classItem?.student?.guardianId?.firstName} {classItem?.student?.guardianId?.lastName}</div>
+                    <div><span className="font-medium">Teacher:</span> {classItemForDetails?.teacher?.firstName} {classItemForDetails?.teacher?.lastName}</div>
+                    <div><span className="font-medium">Student:</span> {classItemForDetails?.student?.studentName}</div>
+                    <div><span className="font-medium">Guardian:</span> {classItemForDetails?.student?.guardianId?.firstName} {classItemForDetails?.student?.guardianId?.lastName}</div>
                   </div>
                 </div>
+
+                {screenshotMaterials.length > 0 && (
+                  <div className="flex-1 min-w-[250px] max-w-lg space-y-2">
+                    <h4 className="font-medium text-gray-900 mb-2">Whiteboard Screenshots</h4>
+
+                    {whiteboardPreviewLoading ? (
+                      <p className="text-sm text-gray-500">Loading screenshots…</p>
+                    ) : whiteboardPreviewError ? (
+                      <p className="text-sm text-red-600">{whiteboardPreviewError}</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {screenshotMaterials.map((material) => {
+                          const previewUrl = material?.libraryItem
+                            ? whiteboardPreviewUrls[String(material.libraryItem)]
+                            : null;
+                          const previewKey = String(material.libraryItem || '');
+                          const downloadUrl = material?.libraryItem
+                            ? resolvePreviewUrl(`/api/library/items/${material.libraryItem}/download?attachment=true&redirect=true`)
+                            : null;
+                          return (
+                            <div key={material._id} className="rounded-lg border border-gray-200 bg-white p-2">
+                              {previewUrl ? (
+                                <img
+                                  src={previewUrl}
+                                  alt={material.name}
+                                  className="h-40 w-full rounded-md object-contain bg-white"
+                                  onError={() => {
+                                    setWhiteboardPreviewUrls((prev) => ({
+                                      ...prev,
+                                      [previewKey]: null
+                                    }));
+                                  }}
+                                />
+                              ) : (
+                                <div className="h-40 w-full rounded-md bg-gray-100 flex items-center justify-center text-xs text-gray-500">
+                                  Preview unavailable
+                                </div>
+                              )}
+                              <div className="mt-2 flex items-center justify-between text-xs text-gray-600">
+                                <span className="truncate">{material.name}</span>
+                                {isAdminUser && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteWhiteboardMaterial(classItem._id, material._id)}
+                                    className="text-red-600 hover:text-red-700"
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                              <div className="mt-2 flex items-center gap-2">
+                                {previewUrl && (
+                                  <a
+                                    href={previewUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="rounded-md border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-100"
+                                  >
+                                    Open larger
+                                  </a>
+                                )}
+                                {downloadUrl && (
+                                  <a
+                                    href={downloadUrl}
+                                    className="rounded-md border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-100"
+                                  >
+                                    Download
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Class Report */}
                 {classItem?.classReport && (
@@ -3392,13 +3581,13 @@ Would you like to create another series anyway?`
      <div className="flex flex-wrap items-start justify-between gap-6">
                <div className="max-w-3xl space-y-3">
                  <button
-                   onClick={() => setTabFilter("upcoming")}
+                  onClick={() => handleTabChange("upcoming")}
                    className={`tab-toggle rounded-full px-4 py-1.5 ${tabFilter === "upcoming" ? "active" : ""}`}
                  >
                    Upcoming
                  </button>
                  <button
-                   onClick={() => setTabFilter("previous")}
+                  onClick={() => handleTabChange("previous")}
                    className={`tab-toggle rounded-full px-4 py-1.5 ${tabFilter === "previous" ? "active" : ""}`}
                  >
                    Previous
@@ -4072,6 +4261,7 @@ Would you like to create another series anyway?`
         onClose={handleCloseDeleteModal}
         onCountdownStart={handleDeleteCountdownStart}
       />
+
 
     </div>
   );

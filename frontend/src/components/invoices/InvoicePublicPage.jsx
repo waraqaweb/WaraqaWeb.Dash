@@ -118,6 +118,11 @@ const InvoicePublicPage = () => {
   const guardianEmail = guardian?.email || null;
   const guardianPhone = guardian?.phone || null;
   const coverageStrategy = coverage?.strategy;
+  const isPaidStatus = ['paid', 'refunded'].includes(invoice?.status);
+  const primaryAmount = isPaidStatus && Number(financials.paidAmount || 0) > 0
+    ? financials.paidAmount
+    : financials.total;
+  const primaryLabel = isPaidStatus ? 'Paid' : 'Total';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 text-slate-900">
@@ -143,8 +148,8 @@ const InvoicePublicPage = () => {
             </div>
 
             <div className="rounded-3xl border border-slate-100 bg-white p-6 text-sm text-slate-800 shadow-inner">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Amount due</p>
-              <p className="mt-2 text-3xl font-semibold text-slate-900">{formatCurrency(financials.total, currency)}</p>
+              <p className="text-xs uppercase tracking-wide text-slate-500">{primaryLabel}</p>
+              <p className="mt-2 text-3xl font-semibold text-slate-900">{formatCurrency(primaryAmount, currency)}</p>
               <div className="mt-4 space-y-2 text-xs">
                 <div className="flex items-center gap-2">
                   <Users className="h-4 w-4 text-slate-500" />
@@ -186,14 +191,12 @@ const InvoicePublicPage = () => {
                 <p className="text-xs uppercase tracking-wide text-slate-500">Subtotal</p>
                 <p className="mt-1 text-lg font-semibold text-slate-900">{formatCurrency(financials.subtotal, currency)}</p>
               </div>
-              <div className="rounded-2xl border border-slate-100 bg-white p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Paid</p>
-                <p className="mt-1 text-lg font-semibold text-slate-900">{formatCurrency(financials.paidAmount, currency)}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-100 bg-white p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Remaining</p>
-                <p className="mt-1 text-lg font-semibold text-slate-900">{formatCurrency(financials.remainingBalance, currency)}</p>
-              </div>
+              {Number(financials.paidAmount || 0) > 0 && (
+                <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Paid</p>
+                  <p className="mt-1 text-lg font-semibold text-slate-900">{formatCurrency(financials.paidAmount, currency)}</p>
+                </div>
+              )}
               <div className="rounded-2xl border border-slate-100 bg-white p-4">
                 <p className="text-xs uppercase tracking-wide text-slate-500">Transfer fee</p>
                 <p className="mt-1 text-lg font-semibold text-slate-900">

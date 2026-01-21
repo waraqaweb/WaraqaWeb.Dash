@@ -438,6 +438,22 @@ const classSchema = new mongoose.Schema({
       required: true,
       trim: true,
     },
+    libraryItem: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'LibraryItem'
+    },
+    kind: {
+      type: String,
+      trim: true
+    },
+    uploadedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    uploadedByRole: {
+      type: String,
+      trim: true
+    },
     type: {
       type: String,
       enum: ["document", "video", "audio", "link", "other"],

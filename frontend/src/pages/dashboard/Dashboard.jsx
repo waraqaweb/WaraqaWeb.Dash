@@ -51,6 +51,11 @@ const DashboardQuerySync = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { searchTerm, setSearchTerm } = useSearch();
+  const normalizeSearch = (search) => {
+    const params = new URLSearchParams(search || '');
+    const entries = Array.from(params.entries()).sort(([a], [b]) => a.localeCompare(b));
+    return new URLSearchParams(entries).toString();
+  };
 
   // Pull `q` from the URL (supports refresh/back to restore search).
   useEffect(() => {
@@ -76,7 +81,7 @@ const DashboardQuerySync = () => {
         else params.delete('q');
         const next = params.toString();
         const current = (location.search || '').replace(/^\?/, '');
-        if (next === current) return;
+        if (normalizeSearch(next) === normalizeSearch(current)) return;
         navigate({ pathname: location.pathname, search: next ? `?${next}` : '' }, { replace: true });
       } catch (err) {
         // ignore URL sync errors

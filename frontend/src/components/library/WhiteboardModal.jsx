@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Trash2, X } from 'lucide-react';
+import { Maximize2, Minimize2, Plus, Send, Trash2, X } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import AnnotationToolbar from './AnnotationToolbar';
+import api from '../../api/axios';
+import { useAuth } from '../../contexts/AuthContext';
+import { formatDateTimeDDMMMYYYYhhmmA } from '../../utils/date';
 
-const SVG_WIDTH = 800;
+const SVG_WIDTH = 1000;
 const SVG_HEIGHT = 1100;
 const DEFAULT_PEN_OPACITY = 0.9;
 const DEFAULT_HIGHLIGHT_OPACITY = 0.35;
@@ -86,7 +89,8 @@ const pointsToPath = (points = []) => {
   return d;
 };
 
-const WhiteboardModal = ({ open, onClose }) => {
+const WhiteboardModal = ({ open, onClose, classId = null, onSent }) => {
+  const { user } = useAuth();
   const initialBoardIdRef = useRef(createId());
   const initialBoardId = initialBoardIdRef.current;
 
@@ -103,11 +107,26 @@ const WhiteboardModal = ({ open, onClose }) => {
   const [fontSize, setFontSize] = useState(18);
   const [liveStroke, setLiveStroke] = useState(null);
   const [liveShape, setLiveShape] = useState(null);
+  const [textDraft, setTextDraft] = useState(null);
   const [exporting, setExporting] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendStatus, setSendStatus] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [recentClasses, setRecentClasses] = useState([]);
+  const [recentLoading, setRecentLoading] = useState(false);
+  const [recentError, setRecentError] = useState(null);
+  const [recentSearch, setRecentSearch] = useState('');
+  const [selectedClassId, setSelectedClassId] = useState(classId || null);
 
   const svgRef = useRef(null);
   const boardRef = useRef(null);
+  const containerRef = useRef(null);
   const drawingRef = useRef(false);
+  const textInputRef = useRef(null);
+
+  const userTimezone = user?.timezone || user?.guardianInfo?.timezone || user?.teacherInfo?.timezone;
+  const canAttach = user?.role === 'admin' || user?.role === 'teacher';
 
   useEffect(() => {
     if (!activeBoard && boards.length) {
@@ -122,6 +141,35 @@ const WhiteboardModal = ({ open, onClose }) => {
       return { ...prev, [activeBoard]: createPageState() };
     });
   }, [activeBoard]);
+
+  useEffect(() => {
+    if (classId) {
+      setSelectedClassId(classId);
+    }
+  }, [classId]);
+
+  const fetchRecentClasses = useCallback(async (searchValue = '') => {
+    try {
+      setRecentLoading(true);
+      setRecentError(null);
+      const res = await api.get('/whiteboard/recent-classes', {
+        params: { q: searchValue || undefined }
+      });
+      setRecentClasses(res.data?.classes || []);
+    } catch (error) {
+      setRecentError(error?.response?.data?.message || 'Failed to load recent classes');
+    } finally {
+      setRecentLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
 
   const applyUpdate = useCallback((boardId, updater, { pushHistory = true } = {}) => {
     if (!boardId) return;
@@ -182,19 +230,15 @@ const WhiteboardModal = ({ open, onClose }) => {
         current: point
       });
     } else if (tool === 'text') {
-      const value = window.prompt('Add note');
-      if (value) {
-        applyUpdate(activeBoard, (draft) => {
-          draft.texts.push({
-            id: createId(),
-            text: value,
-            x: point.x,
-            y: point.y,
-            color,
-            fontSize
-          });
-        });
-      }
+      setTextDraft({
+        id: createId(),
+        x: point.x,
+        y: point.y,
+        value: '',
+        boardId: activeBoard,
+        color,
+        fontSize
+      });
     } else if (tool === 'eraser') {
       applyUpdate(activeBoard, (draft) => {
         const shapes = draft.extras?.shapes || [];
@@ -355,6 +399,91 @@ const WhiteboardModal = ({ open, onClose }) => {
     }
   };
 
+  const buildLightweightImageDataUrl = async () => {
+    if (!boardRef.current) return null;
+    const canvas = await html2canvas(boardRef.current, {
+      backgroundColor: '#ffffff',
+      logging: false,
+      scale: 1
+    });
+
+    const maxWidth = 1200;
+    if (canvas.width > maxWidth) {
+      const ratio = maxWidth / canvas.width;
+      const resized = document.createElement('canvas');
+      resized.width = Math.round(canvas.width * ratio);
+      resized.height = Math.round(canvas.height * ratio);
+      const ctx = resized.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(canvas, 0, 0, resized.width, resized.height);
+        return resized.toDataURL('image/jpeg', 0.6);
+      }
+    }
+
+    return canvas.toDataURL('image/jpeg', 0.6);
+  };
+
+  const handleSend = async (targetClassId = null) => {
+    if (!boardRef.current) return;
+    try {
+      setSending(true);
+      setSendStatus(null);
+      const imageData = await buildLightweightImageDataUrl();
+      if (!imageData) throw new Error('Failed to create screenshot');
+      const safeName = (boards.find((board) => board.id === activeBoard)?.name || 'whiteboard')
+        .toLowerCase()
+        .replace(/\s+/g, '_');
+      const fileName = `${safeName}.jpg`;
+      const resolvedClassId = targetClassId || classId;
+      if (resolvedClassId) {
+        await api.post('/whiteboard/screenshot/class', {
+          classId: resolvedClassId,
+          imageData,
+          fileName
+        });
+        setSendStatus('Sent to class');
+      } else {
+        await api.post('/whiteboard/screenshot', {
+          imageData,
+          fileName
+        });
+        setSendStatus('Sent to admin');
+      }
+      if (typeof onSent === 'function') {
+        onSent();
+      }
+      setAttachOpen(false);
+    } catch (error) {
+      console.error('Whiteboard send failed', error);
+      const message = error?.response?.data?.message || 'Failed to send';
+      setSendStatus(message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const openAttachPicker = async () => {
+    if (classId) {
+      setSelectedClassId(classId);
+    }
+    setAttachOpen(true);
+    await fetchRecentClasses(recentSearch);
+  };
+
+  const toggleFullscreen = async () => {
+    const container = containerRef.current;
+    if (!container) return;
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await container.requestFullscreen();
+      }
+    } catch (error) {
+      console.warn('Fullscreen toggle failed', error);
+    }
+  };
+
   const handleAddBoard = () => {
     const newBoard = {
       id: createId(),
@@ -385,41 +514,157 @@ const WhiteboardModal = ({ open, onClose }) => {
   const activeAnnotations = annotationCache[activeBoard] || createPageState();
   const canUndo = Boolean(activeAnnotations.history?.length);
   const canRedo = Boolean(activeAnnotations.redo?.length);
+    useEffect(() => {
+      if (!textDraft) return;
+      const timer = setTimeout(() => {
+        textInputRef.current?.focus();
+      }, 0);
+      return () => clearTimeout(timer);
+    }, [textDraft]);
+
+    const commitTextDraft = useCallback(() => {
+      if (!textDraft) return;
+      const value = String(textDraft.value || '').trim();
+      if (value && textDraft.boardId) {
+        applyUpdate(textDraft.boardId, (draft) => {
+          draft.texts.push({
+            id: textDraft.id,
+            text: value,
+            x: textDraft.x,
+            y: textDraft.y,
+            color: textDraft.color,
+            fontSize: textDraft.fontSize
+          });
+        });
+      }
+      setTextDraft(null);
+    }, [applyUpdate, textDraft]);
+
+    const cancelTextDraft = useCallback(() => {
+      setTextDraft(null);
+    }, []);
   const activeBoardMeta = useMemo(
     () => boards.find((board) => board.id === activeBoard),
     [boards, activeBoard]
   );
 
+  const attachPanel = attachOpen ? (
+    <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 space-y-2">
+      {user?.role === 'admin' && (
+        <input
+          type="text"
+          value={recentSearch}
+          onChange={(e) => setRecentSearch(e.target.value)}
+          onBlur={() => fetchRecentClasses(recentSearch)}
+          placeholder="Search by student name"
+          className="w-full rounded-md border border-slate-200 px-2 py-1 text-xs"
+        />
+      )}
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-slate-500">Last 24 hours</span>
+        <button
+          type="button"
+          onClick={() => fetchRecentClasses(recentSearch)}
+          className="text-[11px] text-slate-500 hover:text-slate-700"
+        >
+          Refresh
+        </button>
+      </div>
+      {recentLoading ? (
+        <div className="text-[11px] text-slate-500">Loading classes…</div>
+      ) : recentError ? (
+        <div className="text-[11px] text-red-600">{recentError}</div>
+      ) : recentClasses.length === 0 ? (
+        <div className="text-[11px] text-slate-500">No classes found.</div>
+      ) : (
+        <div className="max-h-40 overflow-auto space-y-1">
+          {recentClasses.map((cls) => {
+            const teacherName = cls?.teacher ? `${cls.teacher.firstName || ''} ${cls.teacher.lastName || ''}`.trim() : '—';
+            const studentName = cls?.student?.studentName || 'Unknown student';
+            const timeLabel = formatDateTimeDDMMMYYYYhhmmA(cls?.scheduledDate, { timeZone: userTimezone });
+            const isSelected = String(selectedClassId || '') === String(cls._id);
+            return (
+              <button
+                key={cls._id}
+                type="button"
+                onClick={() => setSelectedClassId(cls._id)}
+                className={`w-full rounded-md border px-2 py-1 text-left text-[11px] ${isSelected ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200 hover:bg-slate-50'}`}
+              >
+                <div className="font-semibold text-slate-700">{studentName}</div>
+                <div className="text-slate-500">{timeLabel}{user?.role === 'admin' ? ` • ${teacherName}` : ''}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setAttachOpen(false)}
+          className="text-[11px] text-slate-500 hover:text-slate-700"
+        >
+          Close
+        </button>
+        <button
+          type="button"
+          onClick={() => handleSend(selectedClassId)}
+          disabled={!selectedClassId || sending}
+          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+        >
+          Attach to class
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="flex h-[90vh] w-[95vw] flex-col overflow-hidden rounded-3xl bg-slate-950/95 text-white shadow-2xl">
-        <header className="flex items-center gap-4 border-b border-white/10 px-6 py-4">
+    <div className={`fixed inset-0 z-50 flex items-center justify-center ${isFullscreen ? 'bg-slate-100 p-0' : 'bg-slate-200/90 p-4'}`}>
+      <div
+        ref={containerRef}
+        className={`flex flex-col overflow-hidden bg-slate-100 text-slate-900 shadow-2xl ${isFullscreen ? 'h-screen w-screen rounded-none' : 'h-[90vh] w-[95vw] rounded-3xl'} border border-slate-200`}
+      >
+        {attachOpen && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/20 p-4">
+            <div className="w-full max-w-md">
+              {attachPanel}
+            </div>
+          </div>
+        )}
+        <header className="flex items-center gap-4 border-b border-slate-200 px-6 py-4">
           <div>
-            <p className="text-xs uppercase tracking-wide text-white/60">Sketchboard</p>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Sketchboard</p>
             <h2 className="text-lg font-semibold">Interactive Whiteboard</h2>
           </div>
-          <p className="ml-auto text-xs text-white/60">
+          <p className="ml-auto text-xs text-slate-500">
             Pages reset when you close this window.
           </p>
           <button
             type="button"
+            onClick={toggleFullscreen}
+            className="rounded-full border border-slate-200 bg-white p-2 text-slate-600 hover:bg-slate-100"
+            title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+          >
+            {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+          </button>
+          <button
+            type="button"
             onClick={onClose}
-            className="rounded-full bg-white/10 p-2 hover:bg-white/20"
+            className="rounded-full border border-slate-200 bg-white p-2 hover:bg-slate-100"
           >
             <X className="h-5 w-5" />
           </button>
         </header>
 
         <div className="flex flex-1 gap-4 overflow-hidden p-4">
-          <aside className="w-60 rounded-2xl border border-white/10 bg-white/5 p-3">
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-white/60">
+          <aside className="w-60 rounded-2xl border border-slate-200 bg-white p-3">
+            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
               <span>Pages</span>
               <button
                 type="button"
                 onClick={handleAddBoard}
-                className="inline-flex items-center gap-1 rounded-full border border-white/20 px-2 py-1 text-[11px] font-semibold text-white hover:bg-white/10"
+                className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
               >
                 <Plus className="h-3.5 w-3.5" />
                 New
@@ -431,8 +676,8 @@ const WhiteboardModal = ({ open, onClose }) => {
                   key={board.id}
                   className={`flex items-center justify-between rounded-xl border px-3 py-2 text-sm ${
                     activeBoard === board.id
-                      ? 'border-emerald-400/70 bg-emerald-400/10 text-white'
-                      : 'border-white/10 text-white/70 hover:bg-white/10'
+                      ? 'border-emerald-400/70 bg-emerald-50 text-emerald-900'
+                      : 'border-slate-200 text-slate-600 hover:bg-slate-100'
                   }`}
                 >
                   <button
@@ -442,13 +687,26 @@ const WhiteboardModal = ({ open, onClose }) => {
                   >
                     {board.name || `Board ${index + 1}`}
                   </button>
+                  {canAttach && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openAttachPicker();
+                      }}
+                      className="ml-2 rounded-full p-1 text-slate-500 hover:bg-slate-100"
+                      title="Attach screenshot"
+                    >
+                      <Send className="h-4 w-4" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
                       handleRemoveBoard(board.id);
                     }}
-                    className="ml-2 rounded-full p-1 text-white/60 hover:bg-white/10 disabled:opacity-40"
+                    className="ml-2 rounded-full p-1 text-slate-500 hover:bg-slate-100 disabled:opacity-40"
                     disabled={boards.length === 1}
                     title="Remove board"
                   >
@@ -461,23 +719,57 @@ const WhiteboardModal = ({ open, onClose }) => {
 
           <section className="flex flex-1 gap-4 overflow-hidden">
             <div className="flex flex-1 flex-col gap-3 overflow-hidden">
-              <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-2">
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-2">
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-white/50">Active page</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Active page</p>
                   <p className="text-sm font-semibold">{activeBoardMeta?.name || 'Board'}</p>
                 </div>
                 {exporting && (
-                  <span className="text-xs text-emerald-300">Preparing download…</span>
+                  <span className="text-xs text-emerald-600">Preparing download…</span>
+                )}
+                {sending && (
+                  <span className="text-xs text-blue-600">Sending…</span>
+                )}
+                {!sending && sendStatus && (
+                  <span className="text-xs text-slate-500">{sendStatus}</span>
                 )}
               </div>
 
               <div className="flex-1 overflow-auto">
-                <div className="mx-auto flex max-w-4xl justify-center">
+                <div className="mx-auto flex max-w-6xl justify-center">
                   <div
                     ref={boardRef}
-                    className="relative w-full overflow-hidden rounded-3xl border border-white/10 bg-white shadow-2xl"
+                    className="relative w-full overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
                     style={{ aspectRatio: `${SVG_WIDTH} / ${SVG_HEIGHT}` }}
                   >
+                    {textDraft && textDraft.boardId === activeBoard && (
+                      <textarea
+                        ref={textInputRef}
+                        value={textDraft.value}
+                        onChange={(e) => setTextDraft((prev) => prev ? { ...prev, value: e.target.value } : prev)}
+                        onBlur={commitTextDraft}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            cancelTextDraft();
+                          }
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            commitTextDraft();
+                          }
+                        }}
+                        className="absolute z-10 min-w-[140px] max-w-[320px] rounded-md border border-emerald-300 bg-white/95 px-2 py-1 text-sm text-slate-900 shadow-md focus:outline-none"
+                        style={{
+                          left: `${(textDraft.x / SVG_WIDTH) * 100}%`,
+                          top: `${(textDraft.y / SVG_HEIGHT) * 100}%`,
+                          transform: 'translate(-2px, -2px)',
+                          color: textDraft.color,
+                          fontSize: `${textDraft.fontSize}px`
+                        }}
+                        placeholder="Type here..."
+                        rows={1}
+                      />
+                    )}
                     <svg
                       ref={svgRef}
                       viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
@@ -582,9 +874,21 @@ const WhiteboardModal = ({ open, onClose }) => {
                 orientation="vertical"
                 className="h-full"
               />
-              <p className="mt-3 text-xs text-white/60">
-                Use Save to download the current board as a PNG. Nothing is uploaded to the server.
-              </p>
+              <div className="mt-3 space-y-2">
+                {canAttach && !attachOpen && (
+                  <button
+                    type="button"
+                    onClick={openAttachPicker}
+                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  >
+                    Attach screenshot to class
+                  </button>
+                )}
+                {attachPanel}
+                <p className="text-xs text-slate-500">
+                  Use Save to download the current board as a PNG. Send shares a lightweight screenshot for class attachment.
+                </p>
+              </div>
             </div>
           </section>
         </div>

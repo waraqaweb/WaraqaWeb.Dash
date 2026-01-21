@@ -25,8 +25,7 @@ import {
   DownloadCloud,
   BadgeCheck,
   TimerReset,
-  Link2,
-  Trash2
+  Link2
 } from 'lucide-react';
 
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
@@ -57,8 +56,6 @@ const InvoicesPage = ({ isActive = true }) => {
   const navigate = useNavigate();
 
   const [invoices, setInvoices] = useState([]);
-  const [invoicesCorpus, setInvoicesCorpus] = useState([]);
-  const loadedInvoicePagesRef = React.useRef(new Set());
   const invoicesRef = useRef([]);
   const fetchInvoicesInFlightRef = useRef(false);
   const fetchInvoicesKeyRef = useRef('');
@@ -72,7 +69,6 @@ const InvoicesPage = ({ isActive = true }) => {
   const [totalPages, setTotalPages] = useState(1);
   const [stats, setStats] = useState(null);
   const [checkingZeroHours, setCheckingZeroHours] = useState(false);
-  const [showDeleted, setShowDeleted] = useState(false);
   const [confirmModal, setConfirmModal] = useState({ open: false, action: null, invoiceId: null, title: '', message: '', confirmText: 'Confirm', danger: false });
   const [guardianStudentsMap, setGuardianStudentsMap] = useState({});
   // Default to showing unpaid invoices first per new UX
@@ -176,170 +172,14 @@ const InvoicesPage = ({ isActive = true }) => {
     fetchInvoices();
     if (isAdmin()) fetchStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, showDeleted]);
+  }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, debouncedSearch]);
 
   useEffect(() => {
     if (!isActive) return;
     setCurrentPage(1);
     fetchInvoices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, isGlobalSearching]);
-
-  // Reset local corpus when primary filters change (search should not reset).
-  useEffect(() => {
-    if (!isActive) return;
-    loadedInvoicePagesRef.current = new Set();
-    setInvoicesCorpus([]);
-  }, [isActive, statusFilter, typeFilter, segmentFilter, activeTab, showDeleted]);
-
-  // When searching, progressively prefetch more pages in the background so search can
-  // match across already-loaded content without blocking the initial page load.
-  useEffect(() => {
-    if (!isActive) return;
-    if (!isGlobalSearching) return;
-    if (loading) return; // ensure initial page rendered first
-    if (!Number.isFinite(totalPages) || totalPages <= 1) return;
-
-    let cancelled = false;
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-    const buildParamsForPage = (page) => {
-      const params = {
-        page,
-        limit: itemsPerPage,
-      };
-
-      if (showDeleted && isAdmin()) {
-        params.deleted = true;
-      }
-
-      // Active tab controls ordering and (optionally) status.
-      if (!isGlobalSearching) {
-        if (activeTab && activeTab !== 'all') {
-          params.status = activeTab;
-          if (activeTab === 'unpaid') {
-            params.sortBy = 'createdAt';
-            params.order = 'asc';
-          } else {
-            params.sortBy = 'paidAt';
-            params.order = 'desc';
-          }
-        } else if (statusFilter !== 'all') {
-          params.status = statusFilter;
-          if (statusFilter === 'unpaid') {
-            params.sortBy = 'createdAt';
-            params.order = 'asc';
-          } else {
-            params.sortBy = 'paidAt';
-            params.order = 'desc';
-          }
-        } else {
-          params.sortBy = 'paidAt';
-          params.order = 'desc';
-        }
-      } else {
-        params.sortBy = 'paidAt';
-        params.order = 'desc';
-      }
-
-      if (typeFilter !== 'all') params.type = typeFilter;
-      if (segmentFilter !== 'all') params.segment = segmentFilter;
-      return params;
-    };
-
-    const mergeInvoices = (next) => {
-      if (!Array.isArray(next) || next.length === 0) return;
-      setInvoicesCorpus((prev) => {
-        const map = new Map();
-        (prev || []).forEach((inv) => {
-          const id = inv?._id ? String(inv._id) : null;
-          if (id) map.set(id, inv);
-        });
-        next.forEach((inv) => {
-          const id = inv?._id ? String(inv._id) : null;
-          if (id) map.set(id, inv);
-        });
-        return Array.from(map.values());
-      });
-    };
-
-    const prefetch = async () => {
-      const maxPagesToPrefetch = 25;
-      let prefetchedCount = 0;
-
-      for (let page = 1; page <= totalPages; page += 1) {
-        if (cancelled) return;
-        if (prefetchedCount >= maxPagesToPrefetch) return;
-        if (loadedInvoicePagesRef.current.has(page)) continue;
-
-        const cacheKey = makeCacheKey(
-          'invoices:list',
-          user?._id,
-          {
-            page,
-            limit: itemsPerPage,
-            showDeleted: Boolean(showDeleted && isAdmin()),
-            activeTab,
-            statusFilter,
-            typeFilter,
-            segmentFilter,
-            searchMode: isGlobalSearching,
-          }
-        );
-
-        const cached = readCache(cacheKey, { deps: ['invoices'] });
-        if (cached.hit && cached.value?.invoices) {
-          mergeInvoices(cached.value.invoices);
-          loadedInvoicePagesRef.current.add(page);
-          prefetchedCount += 1;
-          continue;
-        }
-
-        try {
-          const params = buildParamsForPage(page);
-          const { data } = await api.get('/invoices', { params });
-          const invoiceList = data.invoices || [];
-          mergeInvoices(invoiceList);
-          loadedInvoicePagesRef.current.add(page);
-          prefetchedCount += 1;
-
-          writeCache(
-            cacheKey,
-            {
-              invoices: invoiceList,
-              totalPages: data.pagination?.pages || 1,
-              guardianStudentsMap: {},
-            },
-            { ttlMs: 5 * 60_000, deps: ['invoices'] }
-          );
-        } catch (e) {
-          // ignore; we can still search within whatever is already loaded
-        }
-
-        await sleep(120);
-      }
-    };
-
-    const t = setTimeout(() => {
-      prefetch();
-    }, 0);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [
-    activeTab,
-    isActive,
-    isGlobalSearching,
-    loading,
-    segmentFilter,
-    showDeleted,
-    statusFilter,
-    totalPages,
-    typeFilter,
-    user?._id,
-  ]);
+  }, [isActive, isGlobalSearching, debouncedSearch]);
 
   useEffect(() => {
     invoicesRef.current = invoices || [];
@@ -350,12 +190,12 @@ const InvoicesPage = ({ isActive = true }) => {
       const requestSignature = JSON.stringify({
         page: currentPage,
         limit: itemsPerPage,
-        showDeleted: Boolean(showDeleted && isAdmin()),
         activeTab,
         statusFilter,
         typeFilter,
         segmentFilter,
         searchMode: isGlobalSearching,
+        search: debouncedSearch,
       });
 
       if (fetchInvoicesInFlightRef.current && fetchInvoicesKeyRef.current === requestSignature) {
@@ -385,12 +225,12 @@ const InvoicesPage = ({ isActive = true }) => {
         {
           page: currentPage,
           limit: itemsPerPage,
-          showDeleted: Boolean(showDeleted && isAdmin()),
           activeTab,
           statusFilter,
           typeFilter,
           segmentFilter,
           searchMode: isGlobalSearching,
+          search: debouncedSearch,
         }
       );
 
@@ -414,10 +254,6 @@ const InvoicesPage = ({ isActive = true }) => {
         page: currentPage,
         limit: itemsPerPage,
       };
-
-      if (showDeleted && isAdmin()) {
-        params.deleted = true;
-      }
 
       // Active tab controls the primary status filter and desired ordering.
       // - Unpaid tab: show oldest created invoices first (createdAt asc)
@@ -454,6 +290,7 @@ const InvoicesPage = ({ isActive = true }) => {
 
       if (typeFilter !== 'all') params.type = typeFilter;
       if (segmentFilter !== 'all') params.segment = segmentFilter;
+      if (isGlobalSearching) params.search = debouncedSearch;
 
       const { data } = await api.get('/invoices', { params, signal: controller.signal });
       if (requestId !== fetchInvoicesRequestIdRef.current) {
@@ -461,19 +298,7 @@ const InvoicesPage = ({ isActive = true }) => {
       }
       const invoiceList = data.invoices || [];
       setInvoices(invoiceList);
-      loadedInvoicePagesRef.current.add(currentPage);
-      setInvoicesCorpus((prev) => {
-        const map = new Map();
-        (prev || []).forEach((inv) => {
-          const id = inv?._id ? String(inv._id) : null;
-          if (id) map.set(id, inv);
-        });
-        invoiceList.forEach((inv) => {
-          const id = inv?._id ? String(inv._id) : null;
-          if (id) map.set(id, inv);
-        });
-        return Array.from(map.values());
-      });
+      
       setTotalPages(data.pagination?.pages || 1);
 
       const guardianIds = [...new Set(invoiceList.map(inv => inv.guardian?._id).filter(Boolean))];
@@ -484,7 +309,11 @@ const InvoicesPage = ({ isActive = true }) => {
           nextGuardianStudentsMap = response.data?.map || {};
           setGuardianStudentsMap(nextGuardianStudentsMap);
         } catch (err) {
-          console.error('Failed to fetch guardian students batch', err);
+          const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+          const isTimeout = err?.code === 'ECONNABORTED';
+          if (!isCanceled && !isTimeout) {
+            console.error('Failed to fetch guardian students batch', err);
+          }
           nextGuardianStudentsMap = {};
           setGuardianStudentsMap(nextGuardianStudentsMap);
         }
@@ -562,7 +391,7 @@ const InvoicesPage = ({ isActive = true }) => {
       action: 'delete',
       invoiceId: invoice?._id,
       title: `Delete ${statusLabel} invoice`,
-      message: 'Delete this invoice? It will be removed from lists and hours will not change.',
+      message: 'Delete this invoice permanently? It will be removed from lists and hours will not change.',
       confirmText: 'Delete',
       danger: true
     });
@@ -585,8 +414,7 @@ const InvoicesPage = ({ isActive = true }) => {
       const { data } = await api.delete(`/invoices/${invoiceId}`, { params: { preserveHours: true } });
       if (data.success) {
         setInvoices((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
-        setInvoicesCorpus((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
-        alert('Invoice deleted');
+        alert('Invoice deleted permanently');
         fetchInvoices();
         if (isAdmin()) fetchStats();
       } else {
@@ -611,39 +439,6 @@ const InvoicesPage = ({ isActive = true }) => {
     } catch (err) {
       console.error('Cancel invoice error:', err);
       alert('Cancel failed');
-    }
-  };
-
-  const performRestoreInvoice = async (invoiceId) => {
-    try {
-      const { data } = await api.post(`/invoices/${invoiceId}/restore`);
-      if (data.success) {
-        alert('Invoice restored');
-        fetchInvoices();
-        if (isAdmin()) fetchStats();
-      } else {
-        alert(data.error || 'Restore failed');
-      }
-    } catch (err) {
-      console.error('Restore invoice error:', err);
-      alert('Restore failed');
-    }
-  };
-
-  const performPermanentDeleteInvoice = async (invoiceId) => {
-    try {
-      const { data } = await api.delete(`/invoices/${invoiceId}/permanent`);
-      if (data.success) {
-        alert('Invoice deleted permanently');
-        // Remove from local state completely
-        setInvoices((prev) => prev.filter((i) => i._id !== invoiceId));
-        if (isAdmin()) fetchStats();
-      } else {
-        alert(data.error || 'Delete failed');
-      }
-    } catch (err) {
-      console.error('Permanent delete invoice error:', err);
-      alert('Delete failed');
     }
   };
 
@@ -850,16 +645,6 @@ const InvoicesPage = ({ isActive = true }) => {
     const onRefunded = (payload) => {
       try { upsertInvoice(payload?.invoice); } catch (_) {}
     };
-    const onDeleted = (payload) => {
-      const id = payload?.id || payload?.invoice?._id;
-      if (!id) return;
-      setInvoices((prev) => prev.map((i) => (i._id === id ? { ...i, deleted: true } : i)));
-    };
-    const onRestored = (payload) => {
-      const id = payload?.id || payload?.invoice?._id;
-      if (!id) return;
-      setInvoices((prev) => prev.map((i) => (i._id === id ? { ...i, deleted: false } : i)));
-    };
     const onPermanentlyDeleted = (payload) => {
       const id = payload?.id || payload?.invoice?._id;
       if (!id) return;
@@ -872,8 +657,6 @@ const InvoicesPage = ({ isActive = true }) => {
     socket.on('invoice:paid', onPaid);
     socket.on('invoice:partially_paid', onPartiallyPaid);
     socket.on('invoice:refunded', onRefunded);
-    socket.on('invoice:deleted', onDeleted);
-    socket.on('invoice:restored', onRestored);
     socket.on('invoice:permanentlyDeleted', onPermanentlyDeleted);
 
     return () => {
@@ -883,8 +666,6 @@ const InvoicesPage = ({ isActive = true }) => {
         socket.off('invoice:paid', onPaid);
         socket.off('invoice:partially_paid', onPartiallyPaid);
         socket.off('invoice:refunded', onRefunded);
-        socket.off('invoice:deleted', onDeleted);
-        socket.off('invoice:restored', onRestored);
         socket.off('invoice:permanentlyDeleted', onPermanentlyDeleted);
       } catch (_) {}
     };
@@ -1292,29 +1073,7 @@ const InvoicesPage = ({ isActive = true }) => {
   // ordering and avoid re-sorting here. We still apply client-side search and
   // type filtering for quick UI responsiveness.
   const filteredInvoices = useMemo(() => {
-    let result = (isGlobalSearching
-      ? ((invoicesCorpus && invoicesCorpus.length) ? invoicesCorpus : invoices)
-      : invoices) || [];
-
-    if ((debouncedSearch || '').trim()) {
-      const globalTerm = debouncedSearch.toLowerCase();
-      result = result.filter((inv) => {
-        const guardianName = `${inv.guardian?.firstName || ''} ${inv.guardian?.lastName || ''}`.toLowerCase();
-        const guardianStudentNames = guardianStudentsMap[inv.guardian?._id] || [];
-        const matchesStudent = guardianStudentNames.some((name) => name.toLowerCase().includes(globalTerm));
-        return (
-          (inv.invoiceNumber || '').toLowerCase().includes(globalTerm) ||
-          (inv.invoiceName || '').toLowerCase().includes(globalTerm) ||
-          (inv.invoiceSlug || '').toLowerCase().includes(globalTerm) ||
-          guardianName.includes(globalTerm) ||
-          (inv.guardian?.email || '').toLowerCase().includes(globalTerm) ||
-          String(inv.amount || '').includes(globalTerm) ||
-          (inv.status || '').toLowerCase().includes(globalTerm) ||
-          String(inv._id).includes(globalTerm) ||
-          matchesStudent
-        );
-      });
-    }
+    let result = (invoices || []);
 
     // Apply the effective status filter: the active tab takes precedence.
     if (!isGlobalSearching) {
@@ -1342,7 +1101,7 @@ const InvoicesPage = ({ isActive = true }) => {
     }
 
     return result;
-  }, [invoices, invoicesCorpus, debouncedSearch, isGlobalSearching, activeTab, statusFilter, typeFilter, guardianStudentsMap]);
+  }, [invoices, isGlobalSearching, activeTab, statusFilter, typeFilter]);
 
   // Ensure consistent ordering client-side as a fallback in case backend doesn't apply requested sort.
   const displayedInvoices = useMemo(() => {
@@ -1494,92 +1253,60 @@ const InvoicesPage = ({ isActive = true }) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
       <div className="mx-auto w-full max-w-7xl px-6 py-8 space-y-8">
-        <div className="rounded-3xl bg-white/80 shadow-sm ring-1 ring-black/5 backdrop-blur-sm">
-          <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-center lg:justify-between lg:p-8">
-            <div className="space-y-1">
-              
-              <h1 className="text-3xl font-semibold text-slate-900">
-                {isGuardian() ? 'My invoices' : 'Guardian invoices'}
-              </h1>
-              <p className="text-sm text-slate-500">
-                {isGuardian()
-                  ? 'Track payments, download receipts, and view learning hours.'
-                  : ''}
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="inline-flex items-center gap-2 rounded-full bg-slate-100/80 p-1">
-                {[
-                  { key: 'unpaid', label: 'Unpaid' },
-                  { key: 'paid', label: 'Paid' },
-                  { key: 'all', label: 'All' }
-                ].map(({ key, label }) => (
-                  <button
-                    key={key}
-                    onClick={() => setActiveTab(key)}
-                    className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                      activeTab === key
-                        ? 'bg-white text-slate-900 shadow'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                    type="button"
-                  >
-                    {label}
-                  </button>
-                ))}
+        {isAdmin() && stats && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              {
+                label: 'Monthly revenue',
+                value: formatCurrency(stats.monthlyRevenue || 0)
+              },
+              {
+                label: 'Paid invoices',
+                value: stats.paidInvoices ?? '--'
+              },
+              {
+                label: 'Pending review',
+                value: stats.pendingInvoices ?? '--'
+              },
+              {
+                label: 'Zero-hour guardians',
+                value: stats.zeroHourStudents ?? '--'
+              }
+            ].map(({ label, value }) => (
+              <div
+                key={label}
+                className="flex flex-col items-center justify-center gap-1 rounded-lg bg-white/70 p-2"
+              >
+                <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
+                <span className="text-lg font-semibold text-slate-900">{value}</span>
               </div>
-            </div>
+            ))}
           </div>
-
-          {isAdmin() && stats && (
-            <div className="grid grid-cols-1 gap-4 border-t border-slate-100 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4 lg:px-8">
-              {[
-                {
-                  label: 'Monthly revenue',
-                  value: formatCurrency(stats.monthlyRevenue || 0),
-                  icon: DollarSign,
-                  trend: 'Collected this month'
-                },
-                {
-                  label: 'Paid invoices',
-                  value: stats.paidInvoices ?? '--',
-                  icon: CheckCircle2,
-                  trend: 'Fully settled'
-                },
-                {
-                  label: 'Pending review',
-                  value: stats.pendingInvoices ?? '--',
-                  icon: AlertTriangle,
-                  trend: 'Awaiting payment'
-                },
-                {
-                  label: 'Zero-hour guardians',
-                  value: stats.zeroHourStudents ?? '--',
-                  icon: Users,
-                  trend: 'Need top-up soon'
-                }
-              ].map(({ label, value, icon: Icon, trend }) => (
-                <div
-                  key={label}
-                  className="flex flex-col gap-1.5 rounded-xl border border-slate-100 bg-slate-50/80 p-3 transition hover:-translate-y-0.5 hover:shadow-md"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</span>
-                    <span className="rounded-full bg-white p-1.5 text-slate-500 shadow-sm">
-                      <Icon className="h-3.5 w-3.5" />
-                    </span>
-                  </div>
-                  <span className="text-lg font-semibold text-slate-900">{value}</span>
-                  <span className="text-xs text-slate-500">{trend}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        )}
 
         <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5">
-         
-
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex items-center gap-1 rounded-full bg-slate-100/80 p-1">
+              {[
+                { key: 'unpaid', label: 'Unpaid' },
+                { key: 'paid', label: 'Paid' },
+                { key: 'all', label: 'All' }
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setActiveTab(key)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    activeTab === key
+                      ? 'bg-white text-slate-900 shadow'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           {error && (
             <div className="mt-6 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-600">
               {error}
@@ -1587,7 +1314,7 @@ const InvoicesPage = ({ isActive = true }) => {
           )}
 
           <div className="mt-6 space-y-4">
-            {loading && invoices.length === 0 ? (
+            {loading && displayedInvoices.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 py-16 text-center text-slate-500">
                 <LoadingSpinner />
                 <p className="text-sm">Loading invoices…</p>
@@ -1607,7 +1334,10 @@ const InvoicesPage = ({ isActive = true }) => {
                 // ✅ Use computeInvoiceTotals to respect coverage.maxHours filter
                 const computed = computeInvoiceTotals(invoice);
                 const invoiceTotal = computed.total;
-                const remainingBalance = computed.remaining;
+                const paidAmount = computed.paid;
+                const isPaidStatus = ['paid', 'refunded'].includes(invoice.status);
+                const primaryAmount = isPaidStatus && paidAmount > 0 ? paidAmount : invoiceTotal;
+                const primaryLabel = isPaidStatus ? 'Paid' : 'Total';
                 
                 const emailChannel = getChannelInfo(invoice, 'email');
                 const whatsappChannel = getChannelInfo(invoice, 'whatsapp');
@@ -1652,16 +1382,7 @@ const InvoicesPage = ({ isActive = true }) => {
                               </span>
                               
                               <span className="inline-flex items-center gap-2">
-                                
-                                <span className={`font-medium ${remainingBalance > 0 ? 'text-rose-600' : 'text-slate-700'}`}>Due: {formatCurrency(remainingBalance)}</span>
-                              </span>
-                              <span className="inline-flex items-center gap-2">
-                                
-                                {remainingBalance > 0 ? (
-                                  <span className="font-medium text-slate-700">Total: {formatCurrency(invoiceTotal)}</span>
-                                ) : (
-                                  <span className="font-medium text-emerald-600">Paid in full</span>
-                                )}
+                                <span className="font-medium text-slate-700">{primaryLabel}: {formatCurrency(primaryAmount)}</span>
                               </span>
                               <span className="hidden h-1.5 w-1.5 rounded-full bg-slate-200 lg:block" />
                               {/* Billing window inline (computed like modal) */}
@@ -1722,43 +1443,13 @@ const InvoicesPage = ({ isActive = true }) => {
                                 >
                                   <CreditCard className="h-4 w-4" />
                                 </button>
-                                {!invoice.deleted && (
-                                  <button
-                                    onClick={() => handleDeleteInvoice(invoice)}
-                                    className="inline-flex items-center justify-center rounded-full border border-rose-100 p-2 text-rose-500 transition hover:border-rose-200 hover:text-rose-700"
-                                    type="button"
-                                  >
-                                    <XCircle className="h-4 w-4" />
-                                  </button>
-                                )}
-                                {invoice.deleted && isAdmin() && (
-                                  <>
-                                    <button
-                                      onClick={() => setConfirmModal({ open: true, action: 'restore', invoiceId: invoice._id, title: 'Restore invoice', message: 'Restore this deleted invoice?', confirmText: 'Restore', danger: false })}
-                                      className="inline-flex items-center justify-center rounded-full border border-emerald-100 p-2 text-emerald-600 transition hover:border-emerald-200 hover:text-emerald-700"
-                                      type="button"
-                                      title="Restore invoice"
-                                    >
-                                      <RefreshCw className="h-4 w-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => setConfirmModal({ 
-                                        open: true, 
-                                        action: 'permanentDelete', 
-                                        invoiceId: invoice._id, 
-                                        title: 'Permanently delete', 
-                                        message: 'Delete this invoice permanently? This cannot be undone.', 
-                                        confirmText: 'Delete permanently', 
-                                        danger: true 
-                                      })}
-                                      className="inline-flex items-center justify-center rounded-full border border-red-100 p-2 text-red-600 transition hover:border-red-200 hover:text-red-700"
-                                      type="button"
-                                      title="Permanently delete from database"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </button>
-                                  </>
-                                )}
+                                <button
+                                  onClick={() => handleDeleteInvoice(invoice)}
+                                  className="inline-flex items-center justify-center rounded-full border border-rose-100 p-2 text-rose-500 transition hover:border-rose-200 hover:text-rose-700"
+                                  type="button"
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </button>
                                 {invoice.status === 'sent' && (
                                   <button
                                     onClick={() => handleCancelInvoice(invoice._id)}
@@ -1805,10 +1496,6 @@ const InvoicesPage = ({ isActive = true }) => {
                                     <div className="flex items-center justify-between">
                                       <span className="text-slate-500">Issued:</span>
                                       <span className="font-medium text-slate-900">{formatDate(invoice.createdAt)}</span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-slate-500">Balance due:</span>
-                                      <span className={`font-semibold ${remainingBalance > 0 ? 'text-rose-600' : 'text-slate-900'}`}>{formatCurrency(remainingBalance)}</span>
                                     </div>
                                   </div>
                                   
@@ -1932,21 +1619,6 @@ const InvoicesPage = ({ isActive = true }) => {
           <div className="relative flex flex-col items-end">
             {/* Animated cluster items (appear when fabOpen=true) */}
             <div className="flex flex-col items-end gap-3 mb-2">
-              {/* Show deleted drafts with label */}
-              <div className={`flex items-center gap-3 transition-all duration-200 ${fabOpen ? 'opacity-100 translate-y-0' : 'opacity-0 pointer-events-none -translate-y-2'}`}>
-                <span className={`rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-md transition transform ${fabOpen ? 'translate-x-0 opacity-100' : 'translate-x-2 opacity-0'}`}>
-                  View deleted drafts
-                </span>
-                <button
-                  title="View deleted drafts"
-                  onClick={() => setShowDeleted((s) => !s)}
-                  className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 ${showDeleted ? 'bg-emerald-600 text-white' : 'bg-white text-slate-700'}`}
-                  type="button"
-                >
-                  <RefreshCw className="h-5 w-5" />
-                </button>
-              </div>
-
               {/* Check zero hours with label */}
               <div className={`flex items-center gap-3 transition-all duration-200 ${fabOpen ? 'opacity-100 translate-y-0' : 'opacity-0 pointer-events-none -translate-y-2'}`}>
                 <span className={`rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-md transition transform ${fabOpen ? 'translate-x-0 opacity-100' : 'translate-x-2 opacity-0'}`}>
@@ -2005,8 +1677,6 @@ const InvoicesPage = ({ isActive = true }) => {
           setConfirmModal((s) => ({ ...s, open: false }));
           if (action === 'delete') await performDeleteInvoice(id);
           else if (action === 'cancel') await performCancelInvoice(id);
-          else if (action === 'restore') await performRestoreInvoice(id);
-          else if (action === 'permanentDelete') await performPermanentDeleteInvoice(id);
         }}
       />
     </div>

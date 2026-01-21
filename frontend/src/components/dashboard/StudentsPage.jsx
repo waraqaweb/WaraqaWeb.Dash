@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import api from '../../api/axios';
 import EditStudentModal from '../students/EditStudentModal';
+import LoadingSpinner from '../ui/LoadingSpinner';
 
 const STUDENT_STATUS_TABS = [
   { id: 'active', label: 'Active' },
@@ -770,6 +771,13 @@ const StudentsPage = () => {
         </div>
 
         {/* Students List */}
+        {loading && sortedStudents.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12">
+            <LoadingSpinner text="Loading students…" />
+            {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
+          </div>
+        ) : null}
+
         <div className="space-y-3">
           {sortedStudents.map((student) => {
             // Resolve guardian object from multiple possible locations and the guardiansData cache

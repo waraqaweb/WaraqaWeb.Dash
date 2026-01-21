@@ -266,7 +266,7 @@ const SalariesPage = () => {
 
         <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-black/5">
           <div className="mt-2 space-y-4">
-            {loading && salaries.length === 0 ? (
+            {loading && visibleSalaries.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 py-16 text-center text-slate-500">
                 <LoadingSpinner />
                 <p className="text-sm">Fetching salary records…</p>

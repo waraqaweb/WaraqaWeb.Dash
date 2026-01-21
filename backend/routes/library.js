@@ -470,6 +470,9 @@ router.get(
         format: req.query.format,
         baseUrl
       });
+      if (req.query.redirect === 'true' && payload?.url) {
+        return res.redirect(payload.url);
+      }
       res.json(payload);
     } catch (error) {
       next(error);
@@ -783,6 +786,9 @@ router.get('/assets/download', async (req, res, next) => {
         'Content-Disposition',
         `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeRFC5987(safeName)}`
       );
+      // Allow inline previews from the dashboard origin during dev (different port).
+      // In production the frontend and backend are same-origin, so this is safe.
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     };
 
     res.on('close', () => {

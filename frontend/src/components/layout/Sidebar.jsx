@@ -5,10 +5,11 @@
  * Responsive design with mobile support
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../api/axios';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { 
   Home, 
   Users, 
@@ -55,15 +56,27 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
 
   const navigationItems = getNavigationItems();
   const navigate = useNavigate();
+  const location = useLocation();
   const { socket } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
+  const lastNavAtRef = useRef(0);
 
   useEffect(() => {
     let mounted = true;
     const fetchCount = async () => {
       try {
+        const cacheKey = makeCacheKey('feedbacks:unread-count', user?._id || 'anon');
+        const cached = readCache(cacheKey, { deps: ['feedbacks'] });
+        if (cached.hit && typeof cached.value?.count === 'number') {
+          if (mounted) setUnreadCount(cached.value.count || 0);
+          if (cached.ageMs < 30_000) return;
+        }
+
         const res = await api.get('/feedbacks/count/unread');
-        if (mounted && res.data?.success) setUnreadCount(res.data.count || 0);
+        if (mounted && res.data?.success) {
+          setUnreadCount(res.data.count || 0);
+          writeCache(cacheKey, { count: res.data.count || 0 }, { ttlMs: 30_000, deps: ['feedbacks'] });
+        }
       } catch (err) {
         console.error('Failed to fetch unread count', err);
       }
@@ -73,9 +86,17 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
     // fetch branding (public)
     (async () => {
       try {
+        const cacheKey = makeCacheKey('branding:public');
+        const cached = readCache(cacheKey, { deps: ['branding'] });
+        if (cached.hit && cached.value?.branding) {
+          if (mounted) setBranding(cached.value.branding);
+          if (cached.ageMs < 5 * 60_000) return;
+        }
+
         const res = await api.get('/settings/branding');
         if (mounted && res.data && res.data.branding) {
           setBranding(res.data.branding);
+          writeCache(cacheKey, { branding: res.data.branding }, { ttlMs: 5 * 60_000, deps: ['branding'] });
         }
       } catch (e) {
         // ignore branding load errors
@@ -94,11 +115,17 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
         // If payload contains branding, prefer it; otherwise re-fetch public branding
         if (payload && payload.branding) {
           setBranding(payload.branding);
+          const cacheKey = makeCacheKey('branding:public');
+          writeCache(cacheKey, { branding: payload.branding }, { ttlMs: 5 * 60_000, deps: ['branding'] });
           return;
         }
 
         const res = await api.get('/settings/branding');
-        if (res.data && res.data.branding) setBranding(res.data.branding);
+        if (res.data && res.data.branding) {
+          setBranding(res.data.branding);
+          const cacheKey = makeCacheKey('branding:public');
+          writeCache(cacheKey, { branding: res.data.branding }, { ttlMs: 5 * 60_000, deps: ['branding'] });
+        }
       } catch (e) {
         // ignore
       }
@@ -211,7 +238,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
             {navigationItems.map((item) => {
               const Icon = item.icon;
               // Check if current path matches this item's link
-              const currentPath = window.location.pathname;
+              const currentPath = location.pathname;
               const isActive = item.link ? currentPath === item.link : activeView === item.id;
               
               return (
@@ -220,15 +247,19 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    console.log('Sidebar item clicked:', item.id, item.link);
-                    
                     // Always use link property for navigation
                     if (item.link) {
-                      console.log('Navigating to:', item.link);
+                      if (currentPath === item.link) {
+                        if (onClose && typeof onClose === 'function') onClose();
+                        return;
+                      }
+                      const now = Date.now();
+                      if (now - lastNavAtRef.current < 300) return;
+                      lastNavAtRef.current = now;
                       navigate(item.link);
                       if (onClose && typeof onClose === 'function') onClose(); // Close mobile sidebar
                     } else {
-                      console.warn('No link defined for:', item.id);
+                      // no link
                     }
                   }}
                   className={`

@@ -111,6 +111,26 @@ const toObjectId = (value) => {
   }
 };
 
+const collectBilledClassIds = async (baseFilter = {}) => {
+  const [classIds, lessonIds] = await Promise.all([
+    Invoice.distinct('items.class', baseFilter),
+    Invoice.distinct('items.lessonId', baseFilter)
+  ]);
+
+  const merged = new Set();
+  for (const id of [...(classIds || []), ...(lessonIds || [])]) {
+    if (!id) continue;
+    try {
+      const str = id.toString();
+      if (str && str !== '[object Object]') merged.add(str);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  return Array.from(merged).map((id) => toObjectId(id)).filter(Boolean);
+};
+
 const getGuardianStudentIds = async (guardianDoc, invoiceDoc) => {
   const collected = new Set();
   const studentEntries = Array.isArray(guardianDoc?.guardianInfo?.students)
@@ -377,6 +397,20 @@ class InvoiceService {
       for (const entry of guardiansForOnZero) {
         const { guardian } = entry;
 
+        const existingUnpaidInvoice = await Invoice.findOne({
+          guardian: guardian._id,
+          type: 'guardian_invoice',
+          deleted: { $ne: true },
+          status: { $in: activeInvoiceStatuses }
+        }).sort({ createdAt: 1 });
+
+        if (existingUnpaidInvoice) {
+          await InvoiceService.syncUnpaidInvoiceItems(existingUnpaidInvoice, {
+            note: 'Synced unpaid invoice (auto-payg)'
+          });
+          continue;
+        }
+
         const outstandingAutoInvoice = await Invoice.findOne({
           guardian: guardian._id,
           type: 'guardian_invoice',
@@ -511,7 +545,7 @@ class InvoiceService {
         // Get classes that haven't been paid/invoiced (exclude classes already referenced in paid invoices)
         // ✅ Exclude classes that are already in ANY invoice (not just paid ones)
         // A class should only appear in one invoice, whether draft, sent, or paid
-        const invoicedClassIds = await Invoice.distinct("items.class", { 
+        const invoicedClassIds = await collectBilledClassIds({
           deleted: { $ne: true },
           status: { $nin: ['cancelled', 'refunded'] }
         });
@@ -667,6 +701,21 @@ class InvoiceService {
       const session = opts.session || null;
       const createdBy = opts.createdBy || null;
 
+      const existingUnpaid = await Invoice.findOne({
+        guardian: guardian._id,
+        type: 'guardian_invoice',
+        deleted: { $ne: true },
+        status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] }
+      }).sort({ createdAt: 1 });
+
+      if (existingUnpaid) {
+        await InvoiceService.syncUnpaidInvoiceItems(existingUnpaid, {
+          adminUserId: createdBy || null,
+          note: 'Synced unpaid invoice (first-lesson)'
+        });
+        return existingUnpaid;
+      }
+
       const firstDate = classDoc.scheduledDate || now;
       const defaultRate = guardian.guardianInfo?.hourlyRate || 10;
       
@@ -734,7 +783,7 @@ class InvoiceService {
           : [];
         if (studentIds.length > 0) {
           // ✅ Exclude classes already in any invoice (not just paid ones)
-          const billedIds = await Invoice.distinct('items.class', {
+          const billedIds = await collectBilledClassIds({
             deleted: { $ne: true },
             status: { $nin: ['cancelled', 'refunded'] }
           });
@@ -1034,7 +1083,7 @@ class InvoiceService {
 
         if (trackedStudentIds.length > 0) {
           // ✅ Exclude classes already in any active invoice
-          const billedIds = await Invoice.distinct('items.class', {
+          const billedIds = await collectBilledClassIds({
             deleted: { $ne: true },
             status: { $nin: ['cancelled', 'refunded'] }
           });
@@ -1832,7 +1881,10 @@ class InvoiceService {
       // Find all unpaid invoices containing this class
       const unpaidInvoices = await Invoice.find({
         _id: { $ne: paidInvoiceId },
-        'items.class': classId,
+        $or: [
+          { 'items.class': classId },
+          { 'items.lessonId': String(classId) }
+        ],
         status: { $in: ['draft', 'pending'] }, // Only modify draft/pending invoices
         deleted: { $ne: true }
       });
@@ -1899,7 +1951,10 @@ class InvoiceService {
       // 🔥 CRITICAL: Check if this class is already in ANY invoice (not just this one)
       // A class should only appear in ONE invoice, period
       const alreadyInAnyInvoice = await Invoice.findOne({
-        'items.class': classDoc._id,
+        $or: [
+          { 'items.class': classDoc._id },
+          { 'items.lessonId': String(classDoc._id) }
+        ],
         deleted: { $ne: true },
         status: { $nin: ['cancelled', 'refunded'] }
       });
@@ -2038,7 +2093,7 @@ class InvoiceService {
           .map((id) => id.toString())
       );
 
-      const billedElsewhere = await Invoice.distinct('items.class', {
+      const billedElsewhere = await collectBilledClassIds({
         guardian: guardianId,
         _id: { $ne: invoiceDoc._id },
         deleted: { $ne: true },
@@ -2254,6 +2309,143 @@ class InvoiceService {
     }
   }
 
+  static async syncUnpaidInvoiceItems(invoiceDocOrId, opts = {}) {
+    try {
+      const { adminUserId = null, note = 'Synced unpaid invoice classes', cleanupDuplicates = true } = opts || {};
+      const invoice = invoiceDocOrId && invoiceDocOrId._id
+        ? invoiceDocOrId
+        : await Invoice.findById(invoiceDocOrId);
+
+      if (!invoice) {
+        return { success: false, error: 'Invoice not found' };
+      }
+
+      if (invoice.status === 'paid') {
+        return { success: false, error: 'Cannot sync paid invoice' };
+      }
+
+      const dynamic = await InvoiceService.buildDynamicClassList(invoice);
+      const desiredItems = Array.isArray(dynamic?.items) ? dynamic.items : [];
+      const currentItems = Array.isArray(invoice.items) ? invoice.items : [];
+
+      const normalizeClassId = (value) => {
+        if (!value) return null;
+        if (typeof value === 'string' || typeof value === 'number') return value.toString();
+        if (typeof value === 'object') {
+          if (value._id) return value._id.toString();
+          if (typeof value.toString === 'function') {
+            const str = value.toString();
+            return str && str !== '[object Object]' ? str : null;
+          }
+        }
+        return null;
+      };
+
+      const currentByClass = new Map();
+      for (const item of currentItems) {
+        if (!item) continue;
+        const key = normalizeClassId(item.class || item.lessonId);
+        if (!key) continue;
+        currentByClass.set(key, item);
+      }
+
+      const desiredByClass = new Map();
+      for (const item of desiredItems) {
+        if (!item) continue;
+        const key = normalizeClassId(item.class || item.lessonId);
+        if (!key) continue;
+        desiredByClass.set(key, item);
+      }
+
+      const removeItemIds = [];
+      currentByClass.forEach((item, key) => {
+        if (!desiredByClass.has(key)) {
+          if (item?._id) removeItemIds.push(String(item._id));
+        }
+      });
+
+      const addItems = [];
+      const hourlyRate = resolveInvoiceHourlyRate(invoice);
+      desiredByClass.forEach((item, key) => {
+        if (currentByClass.has(key)) return;
+        const cls = item.class || {};
+        const classId = normalizeClassId(cls?._id || item.class || item.lessonId || key);
+        const classObjectId = toObjectId(classId) || classId;
+        const minutes = Number(item.duration || cls?.duration || 0) || 0;
+        const rate = Number(item.rate || 0) || hourlyRate;
+        const amount = Number(item.amount || 0) || Math.round(((minutes / 60) * rate) * 100) / 100;
+        const date = item.date || cls?.scheduledDate || cls?.dateTime || null;
+        const studentId = item.student || cls?.student?.studentId || null;
+        const teacherId = item.teacher?._id || item.teacher || cls?.teacher || null;
+
+        addItems.push({
+          lessonId: String(classId || ''),
+          class: classObjectId,
+          student: studentId,
+          studentSnapshot: item.studentSnapshot || resolveStudentSnapshotFromClass(cls),
+          teacher: teacherId,
+          teacherSnapshot: item.teacherSnapshot || null,
+          description: item.description || cls?.subject || 'Class session',
+          date,
+          duration: minutes,
+          rate,
+          amount,
+          attended: Boolean(item.attended || cls?.status === 'attended'),
+          status: item.status || cls?.status || 'scheduled'
+        });
+      });
+
+      if (!addItems.length && !removeItemIds.length) {
+        if (!cleanupDuplicates) {
+          return { success: true, noChanges: true, invoice };
+        }
+      }
+
+      const updateResult = (!addItems.length && !removeItemIds.length)
+        ? { success: true, noChanges: true, invoice }
+        : await InvoiceService.updateInvoiceItems(
+            String(invoice._id),
+            { addItems, removeItemIds, note },
+            adminUserId
+          );
+
+      if (cleanupDuplicates) {
+        const guardianId = invoice.guardian?._id || invoice.guardian;
+        const desiredIds = new Set(Array.from(desiredByClass.keys()));
+        if (guardianId && desiredIds.size) {
+          const otherInvoices = await Invoice.find({
+            guardian: guardianId,
+            _id: { $ne: invoice._id },
+            deleted: { $ne: true },
+            status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] }
+          });
+
+          for (const other of otherInvoices) {
+            const toRemove = [];
+            (other.items || []).forEach((item) => {
+              const key = normalizeClassId(item?.class || item?.lessonId);
+              if (key && desiredIds.has(key) && item?._id) {
+                toRemove.push(String(item._id));
+              }
+            });
+            if (toRemove.length) {
+              await InvoiceService.updateInvoiceItems(
+                String(other._id),
+                { removeItemIds: toRemove, note: 'Removed duplicate classes (synced to oldest unpaid invoice)' },
+                adminUserId
+              );
+            }
+          }
+        }
+      }
+
+      return updateResult;
+    } catch (err) {
+      console.warn('syncUnpaidInvoiceItems failed:', err?.message || err);
+      return { success: false, error: err?.message || 'Failed to sync invoice' };
+    }
+  }
+
   static async extendInvoiceWithScheduledClasses(invoiceDoc, options = {}) {
     try {
       if (!invoiceDoc || invoiceDoc.type !== 'guardian_invoice') {
@@ -2302,7 +2494,7 @@ class InvoiceService {
         });
       }
 
-      const billedElsewhere = await Invoice.distinct('items.class', {
+      const billedElsewhere = await collectBilledClassIds({
         guardian: guardianId,
         _id: { $ne: invoiceDoc._id },
         deleted: { $ne: true },
@@ -2645,7 +2837,7 @@ class InvoiceService {
         const billingEnd = invoice.billingPeriod?.endDate;
         
         // Get all classes already in active invoices
-        const billedClassIds = await Invoice.distinct('items.class', {
+        const billedClassIds = await collectBilledClassIds({
           deleted: { $ne: true },
           status: { $nin: ['cancelled', 'refunded'] }
         });
@@ -2812,7 +3004,10 @@ class InvoiceService {
 
       // Find if this class was in any paid/partially-paid invoice
       const affectedInvoices = await Invoice.find({
-        'items.class': classId,
+        $or: [
+          { 'items.class': classId },
+          { 'items.lessonId': String(classId) }
+        ],
         status: { $in: ['paid', 'partially_paid'] },
         deleted: { $ne: true }
       });
@@ -3070,6 +3265,7 @@ class InvoiceService {
           }
           if (newClassIds.length) {
             conflictQuery.$or.push({ 'items.class': { $in: newClassIds } });
+            conflictQuery.$or.push({ 'items.lessonId': { $in: newClassIds.map((id) => String(id)) } });
           }
           
           let conflict = sessionArg

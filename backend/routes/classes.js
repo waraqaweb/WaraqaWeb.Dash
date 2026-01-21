@@ -991,6 +991,7 @@ router.get("/", authenticateToken, async (req, res) => {
           'duration',
           'timezone',
           'meetingLink',
+          'materials',
           'parentRecurringClass',
           'student.guardianId',
           'student.studentId',

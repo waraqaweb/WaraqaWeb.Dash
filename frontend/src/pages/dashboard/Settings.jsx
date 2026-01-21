@@ -55,6 +55,8 @@ const Settings = () => {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [unreportedCleanupDays, setUnreportedCleanupDays] = useState(30);
   const [savingCleanupDays, setSavingCleanupDays] = useState(false);
+  const [whiteboardRetentionDays, setWhiteboardRetentionDays] = useState(90);
+  const [savingWhiteboardRetention, setSavingWhiteboardRetention] = useState(false);
   const [teacherReportWindowHours, setTeacherReportWindowHours] = useState(72);
   const [adminExtensionHours, setAdminExtensionHours] = useState(24);
   const [savingReportWindow, setSavingReportWindow] = useState(false);
@@ -108,6 +110,30 @@ const Settings = () => {
       }
     };
     fetchCleanupSetting();
+  }, [user?._id, user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchWhiteboardRetention = async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:whiteboardRetentionDays', user?._id || 'admin', { key: 'whiteboardScreenshotRetentionDays' });
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          setWhiteboardRetentionDays(Number(cached.value.value || cached.value) || 90);
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/whiteboardScreenshotRetentionDays');
+        if (res.data && res.data.setting) {
+          setWhiteboardRetentionDays(Number(res.data.setting.value) || 90);
+          writeCache(cacheKey, res.data.setting, { ttlMs: 5 * 60_000, deps: ['settings'] });
+        }
+      } catch (err) {
+        if (err.response?.status === 404) {
+          setWhiteboardRetentionDays(90);
+        }
+      }
+    };
+    fetchWhiteboardRetention();
   }, [user?._id, user?.role]);
 
   useEffect(() => {
@@ -556,6 +582,39 @@ const Settings = () => {
                     }
                   }}
                   className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingCleanupDays ? 'opacity-70' : ''}`}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+              <div>
+                <div className="font-medium mb-2">Whiteboard Screenshot Retention</div>
+                <div className="flex items-center space-x-3">
+                  <input type="number" min={1} value={whiteboardRetentionDays} onChange={(e)=>setWhiteboardRetentionDays(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
+                  <div className="text-sm text-muted">Auto-delete whiteboard screenshots after this many days from class time.</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={savingWhiteboardRetention}
+                  onClick={async ()=>{
+                    try {
+                      setSavingWhiteboardRetention(true);
+                      const res = await api.put('/settings/whiteboardScreenshotRetentionDays', { value: whiteboardRetentionDays });
+                      if (res.data?.success) {
+                        const cacheKey = makeCacheKey('settings:whiteboardRetentionDays', user?._id || 'admin', { key: 'whiteboardScreenshotRetentionDays' });
+                        writeCache(cacheKey, res.data.setting || { value: whiteboardRetentionDays }, { ttlMs: 5 * 60_000, deps: ['settings'] });
+                        setToast({ type: 'success', message: 'Whiteboard retention saved' });
+                      }
+                    } catch (err) {
+                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save retention settings' });
+                    } finally {
+                      setSavingWhiteboardRetention(false);
+                    }
+                  }}
+                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingWhiteboardRetention ? 'opacity-70' : ''}`}
                 >
                   Save
                 </button>

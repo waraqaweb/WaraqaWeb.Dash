@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const SystemVacationPage = () => {
   const { user } = useAuth();
@@ -43,12 +44,21 @@ const SystemVacationPage = () => {
 
   const checkCurrentVacation = async () => {
     try {
+      const cacheKey = makeCacheKey('system-vacations:current');
+      const cached = readCache(cacheKey, { deps: ['system-vacations'] });
+      if (cached.hit && cached.value) {
+        if (cached.value.isActive) setCurrentVacation(cached.value.vacation);
+        else setCurrentVacation(null);
+        if (cached.ageMs < 60_000) return;
+      }
+
       const res = await api.get('/system-vacations/current');
       if (res.data.isActive) {
         setCurrentVacation(res.data.vacation);
       } else {
         setCurrentVacation(null);
       }
+      writeCache(cacheKey, res.data, { ttlMs: 60_000, deps: ['system-vacations'] });
     } catch (err) {
       console.error('Check current vacation error:', err);
     }

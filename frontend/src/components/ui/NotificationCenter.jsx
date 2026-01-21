@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { useAuth } from '../../contexts/AuthContext';
 import { Bell, Calendar, X } from 'lucide-react';
-import { formatDateDDMMMYYYY, formatDateTimeDDMMMYYYYhhmmA } from '../../utils/date';
+import { formatDateTimeDDMMMYYYYhhmmA } from '../../utils/date';
 import RescheduleRequestDetailsModal from '../dashboard/RescheduleRequestDetailsModal';
 
 const NotificationCenter = () => {
@@ -17,6 +18,14 @@ const NotificationCenter = () => {
   const [rescheduleActionLoading, setRescheduleActionLoading] = useState(null);
   const [rescheduleDetailsOpen, setRescheduleDetailsOpen] = useState(false);
   const [rescheduleDetailsNotification, setRescheduleDetailsNotification] = useState(null);
+  const [deleteLoadingId, setDeleteLoadingId] = useState(null);
+  const [uninvoicedLessonsState, setUninvoicedLessonsState] = useState({
+    loading: false,
+    lessons: [],
+    total: 0,
+    sinceDays: null,
+    error: null
+  });
 
   useEffect(() => {
     if (user) {
@@ -24,6 +33,12 @@ const NotificationCenter = () => {
       checkCurrentVacation();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!isOpen || user?.role !== 'admin') return;
+    const hasUninvoicedAlert = notifications.some(isUninvoicedLessonsNotification);
+    if (hasUninvoicedAlert) fetchUninvoicedLessons();
+  }, [isOpen, user?.role, notifications]);
 
   const fetchNotifications = async () => {
     setLoading(true);
@@ -40,12 +55,21 @@ const NotificationCenter = () => {
 
   const checkCurrentVacation = async () => {
     try {
-  const res = await api.get('/system-vacations/current');
+      const cacheKey = makeCacheKey('system-vacations:current');
+      const cached = readCache(cacheKey, { deps: ['system-vacations'] });
+      if (cached.hit && cached.value) {
+        if (cached.value.isActive) setCurrentVacation(cached.value.vacation);
+        else setCurrentVacation(null);
+        if (cached.ageMs < 60_000) return;
+      }
+
+      const res = await api.get('/system-vacations/current');
       if (res.data.isActive) {
         setCurrentVacation(res.data.vacation);
       } else {
         setCurrentVacation(null);
       }
+      writeCache(cacheKey, res.data, { ttlMs: 60_000, deps: ['system-vacations'] });
     } catch (err) {
       console.error('Error checking current vacation:', err);
     }
@@ -87,6 +111,67 @@ const NotificationCenter = () => {
     const kind = notification?.metadata?.kind;
     const classId = notification?.metadata?.classId || notification?.relatedId;
     return Boolean(kind === 'class_reschedule_request' && classId);
+  };
+
+  const isUninvoicedLessonsNotification = (notification) => {
+    const kind = notification?.metadata?.kind;
+    const relatedId = notification?.relatedId;
+    const title = notification?.title || '';
+    return (
+      kind === 'uninvoiced_lessons' ||
+      relatedId === 'uninvoiced-lessons' ||
+      title.toLowerCase().includes('uninvoiced lessons')
+    );
+  };
+
+  const getUninvoicedReasonLabel = (lesson) => {
+    const code = lesson?.reasonCode;
+    if (code === 'linked_invoice_missing_or_voided') return 'Linked invoice is missing/voided.';
+    if (code === 'missing_invoice_link') return 'No invoice item/link found.';
+    return lesson?.reason || 'No invoice item/link found.';
+  };
+
+  const fetchUninvoicedLessons = async () => {
+    setUninvoicedLessonsState((prev) => ({
+      ...prev,
+      loading: true,
+      error: null
+    }));
+    try {
+      const cacheKey = makeCacheKey('audit:uninvoiced-lessons');
+      const cached = readCache(cacheKey, { deps: ['audit'] });
+      if (cached.hit && cached.value) {
+        setUninvoicedLessonsState({
+          loading: false,
+          lessons: cached.value.lessons || [],
+          total: cached.value.total || 0,
+          sinceDays: cached.value.sinceDays || null,
+          error: null
+        });
+        if (cached.ageMs < 60_000) return;
+      }
+
+      const res = await api.get('/invoices/uninvoiced-lessons');
+      const payload = {
+        lessons: res.data.lessons || [],
+        total: res.data.total || 0,
+        sinceDays: res.data.sinceDays || null
+      };
+      setUninvoicedLessonsState({
+        loading: false,
+        lessons: payload.lessons,
+        total: payload.total,
+        sinceDays: payload.sinceDays,
+        error: null
+      });
+      writeCache(cacheKey, payload, { ttlMs: 60_000, deps: ['audit'] });
+    } catch (err) {
+      setUninvoicedLessonsState((prev) => ({
+        ...prev,
+        loading: false,
+        error: err.response?.data?.message || 'Failed to load uninvoiced lessons'
+      }));
+    }
   };
 
   const handleOpenActionLink = async (notification) => {
@@ -135,6 +220,19 @@ const NotificationCenter = () => {
       alert(err.response?.data?.message || 'Failed to update reschedule request');
     } finally {
       setRescheduleActionLoading(null);
+    }
+  };
+
+  const handleDeleteNotification = async (notificationId) => {
+    if (!notificationId) return;
+    try {
+      setDeleteLoadingId(notificationId);
+      await api.delete(`/notifications/${notificationId}`);
+      await fetchNotifications();
+    } catch (err) {
+      console.error('Error deleting notification:', err);
+    } finally {
+      setDeleteLoadingId(null);
     }
   };
 
@@ -259,6 +357,57 @@ const NotificationCenter = () => {
                           {notification.message}
                         </p>
 
+                        {user?.role === 'admin' && isUninvoicedLessonsNotification(notification) && (
+                          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                            {uninvoicedLessonsState.loading ? (
+                              <p>Loading lesson details...</p>
+                            ) : uninvoicedLessonsState.error ? (
+                              <p>{uninvoicedLessonsState.error}</p>
+                            ) : uninvoicedLessonsState.total === 0 ? (
+                              <p>No uninvoiced lessons found.</p>
+                            ) : (
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between text-amber-900">
+                                  <span>
+                                    {uninvoicedLessonsState.total} lesson(s)
+                                    {uninvoicedLessonsState.sinceDays
+                                      ? ` in the last ${uninvoicedLessonsState.sinceDays} days`
+                                      : ''}
+                                  </span>
+                                  {uninvoicedLessonsState.total > 5 && (
+                                    <span className="text-amber-800">Showing 5</span>
+                                  )}
+                                </div>
+                                <ul className="space-y-1">
+                                  {uninvoicedLessonsState.lessons.slice(0, 5).map((lesson) => {
+                                    const teacherName = lesson?.teacher?.name || 'Unknown teacher';
+                                    const studentName = lesson?.student?.name || 'Unknown student';
+                                    const guardianName = lesson?.guardian?.name || 'Unknown guardian';
+                                    return (
+                                      <li key={lesson.classId} className="space-y-0.5">
+                                        <div className="font-medium text-amber-900">
+                                          {formatDateTimeDDMMMYYYYhhmmA(lesson.scheduledDate, { timeZone: userTimezone })}
+                                          {' • '}
+                                          {teacherName} {' • '} {studentName} {' • '} {guardianName}
+                                        </div>
+                                        <div className="text-amber-800">
+                                          {getUninvoicedReasonLabel(lesson)}
+                                        </div>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {notification?.metadata?.scheduledDate && (
+                          <p className="text-xs text-gray-500 mt-2">
+                            Lesson time: {formatDateTimeDDMMMYYYYhhmmA(notification.metadata.scheduledDate, { timeZone: userTimezone })}
+                          </p>
+                        )}
+
                         {notification?.metadata?.kind === 'class_reschedule_request' && notification?.metadata?.proposedDate && (
                           <p className="text-xs text-gray-500 mt-2">
                             Proposed: {formatDateTimeDDMMMYYYYhhmmA(notification.metadata.proposedDate, { timeZone: userTimezone })}
@@ -308,9 +457,22 @@ const NotificationCenter = () => {
                             </button>
                           </div>
                         )}
-                        <p className="text-xs text-gray-400 mt-2">
-                          {formatNotificationTimestamp(notification.createdAt)}
-                        </p>
+                        <div className="mt-2 flex items-center justify-between">
+                          <p className="text-xs text-gray-400">
+                            {formatNotificationTimestamp(notification.createdAt)}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteNotification(notification._id);
+                            }}
+                            disabled={deleteLoadingId === notification._id}
+                            className="text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-60"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>

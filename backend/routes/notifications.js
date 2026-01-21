@@ -46,4 +46,18 @@ router.post('/mark-read', requireAuth, async (req, res) => {
   }
 });
 
+// Delete a notification
+router.delete('/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await notificationService.deleteNotification(req.user._id, id);
+    if (!result.deletedCount) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+    res.json({ message: 'Notification deleted' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to delete notification', error: err.message });
+  }
+});
+
 module.exports = router;

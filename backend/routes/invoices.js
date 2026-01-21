@@ -230,15 +230,29 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
     return { error: 'Guardian has no students' };
   }
 
-  const invoicedClassIds = await Invoice.distinct('items.class', {
-    deleted: { $ne: true },
-    status: { $nin: ['cancelled', 'refunded'] }
-  });
+  const [invoicedClassIds, invoicedLessonIds] = await Promise.all([
+    Invoice.distinct('items.class', {
+      deleted: { $ne: true },
+      status: { $nin: ['cancelled', 'refunded'] }
+    }),
+    Invoice.distinct('items.lessonId', {
+      deleted: { $ne: true },
+      status: { $nin: ['cancelled', 'refunded'] }
+    })
+  ]);
+  const invoicedIdsSet = new Set(
+    [...(invoicedClassIds || []), ...(invoicedLessonIds || [])]
+      .map((id) => (id ? id.toString() : null))
+      .filter(Boolean)
+  );
+  const invoicedIds = Array.from(invoicedIdsSet)
+    .map((id) => (mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : null))
+    .filter(Boolean);
 
   let unpaidClasses = await Class.find({
     'student.guardianId': guardian._id,
     'student.studentId': { $in: studentIds },
-    _id: { $nin: invoicedClassIds }
+    _id: { $nin: invoicedIds }
   })
     .populate('student.guardianId', 'firstName lastName email')
     .populate('teacher', 'firstName lastName email')
@@ -796,11 +810,137 @@ router.get('/uninvoiced-lessons', authenticateToken, requireAdmin, async (req, r
   try {
     const { sinceDays, includeCancelled } = req.query || {};
     const audit = require('../services/invoiceAuditService');
-    const list = await audit.findUninvoicedLessons({ sinceDays, includeCancelled });
-    res.json({ success: true, lessons: list });
+    const lessons = await audit.findUninvoicedLessons({ sinceDays, includeCancelled });
+    res.json({
+      success: true,
+      total: lessons.length,
+      sinceDays: Number(sinceDays) || 90,
+      lessons
+    });
   } catch (err) {
     console.error('List uninvoiced lessons error:', err);
     res.status(500).json({ success: false, message: 'Failed to list uninvoiced lessons', error: err.message });
+  }
+});
+
+// -----------------------------
+// Attach a class to the current draft invoice or create first invoice (admin)
+// -----------------------------
+router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { classId } = req.body || {};
+    if (!classId) {
+      return res.status(400).json({ success: false, message: 'classId is required' });
+    }
+
+    const classDoc = await Class.findById(classId);
+    if (!classDoc) {
+      return res.status(404).json({ success: false, message: 'Class not found' });
+    }
+
+    if (classDoc.billedInInvoiceId) {
+      return res.status(409).json({
+        success: false,
+        message: 'Class already linked to an invoice',
+        invoiceId: classDoc.billedInInvoiceId
+      });
+    }
+
+    const guardianId = classDoc.student?.guardianId;
+    if (!guardianId) {
+      return res.status(400).json({ success: false, message: 'Class has no guardian linked' });
+    }
+
+    const alreadyInInvoice = await Invoice.findOne({
+      $or: [
+        { 'items.class': classDoc._id },
+        { 'items.lessonId': String(classDoc._id) }
+      ],
+      deleted: { $ne: true },
+      status: { $nin: ['cancelled', 'refunded'] }
+    });
+
+    if (alreadyInInvoice) {
+      return res.status(409).json({
+        success: false,
+        message: 'Class already exists in another invoice',
+        invoiceId: alreadyInInvoice._id,
+        invoiceNumber: alreadyInInvoice.invoiceNumber
+      });
+    }
+
+    const draftInvoice = await Invoice.findOne({
+      guardian: guardianId,
+      type: 'guardian_invoice',
+      status: 'draft',
+      deleted: { $ne: true }
+    }).sort({ createdAt: -1 });
+
+    if (draftInvoice) {
+      const guardian = await User.findById(guardianId).lean();
+      const rate = guardian?.guardianInfo?.hourlyRate || 10;
+      const duration = Number(classDoc.duration || 60);
+      const hours = duration / 60;
+      const amount = Math.round(hours * rate * 100) / 100;
+
+      const studentName = classDoc.student?.studentName || '';
+      const [firstName, ...rest] = String(studentName).trim().split(' ').filter(Boolean);
+      const lastName = rest.join(' ');
+
+      const result = await InvoiceService.updateInvoiceItems(
+        String(draftInvoice._id),
+        {
+          addItems: [{
+            lessonId: String(classDoc._id),
+            class: classDoc._id,
+            student: classDoc.student?.studentId || null,
+            studentSnapshot: { firstName: firstName || studentName, lastName: lastName || '', email: '' },
+            teacher: classDoc.teacher || null,
+            description: `${classDoc.subject || 'Class'}`,
+            date: classDoc.scheduledDate || new Date(),
+            duration,
+            rate,
+            amount,
+            attended: classDoc.status === 'attended',
+            status: classDoc.status || 'scheduled'
+          }],
+          note: 'Manual attach: add class to draft invoice'
+        },
+        req.user._id
+      );
+
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      return res.json({
+        success: true,
+        action: 'added_to_draft',
+        invoiceId: draftInvoice._id,
+        invoiceNumber: result.invoice?.invoiceNumber || draftInvoice.invoiceNumber,
+        invoice: result.invoice
+      });
+    }
+
+    const guardian = await User.findById(guardianId);
+    if (!guardian) {
+      return res.status(404).json({ success: false, message: 'Guardian not found' });
+    }
+
+    const invoice = await InvoiceService.createInvoiceForFirstLesson(guardian, classDoc, {
+      createdBy: req.user._id
+    });
+
+    return res.json({
+      success: true,
+      action: 'created_first_invoice',
+      invoiceId: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      invoice
+    });
+  } catch (err) {
+    console.error('Attach class to invoice error:', err);
+    res.status(500).json({ success: false, message: 'Failed to attach class to invoice', error: err.message });
   }
 });
 
@@ -1964,7 +2104,7 @@ router.post('/admin/resequence-unpaid', authenticateToken, requireAdmin, async (
   }
 });
 
-// Delete draft invoice (Admin)
+// Delete invoice (Admin) - permanently remove
 router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const invoice = await Invoice.findById(req.params.id);
@@ -1980,7 +2120,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       if (['0', 'false', 'no', 'n'].includes(normalized)) return false;
       return ['1', 'true', 'yes', 'y'].includes(normalized);
     })();
-    // For safety, allow deleting drafts/pending normally. For paid/sent/overdue, require force to reverse hours and then soft-delete.
+    // For safety, allow deleting drafts/pending normally. For paid/sent/overdue, require force to reverse hours.
     if (!preserveHours && !['draft', 'pending'].includes(invoice.status)) {
       if (!force) {
         return res.status(409).json({ success: false, message: 'Invoice is not draft/pending. Use force=true to void and reverse hours.' });
@@ -2006,11 +2146,6 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       }
     }
 
-  // Soft-delete: mark invoice as deleted rather than removing from DB
-    invoice.deleted = true;
-    invoice.deletedAt = new Date();
-    invoice.deletedBy = req.user._id;
-
     // ✅ Clear billedInInvoiceId from all classes in this invoice so they can be re-invoiced
     if (!preserveHours) {
       try {
@@ -2028,45 +2163,46 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       }
     }
 
-    // Audit and activity entry (guarded with local try/catch so we can surface errors)
+    // Audit entry (guarded with local try/catch so we can surface errors)
     try {
-      invoice.pushActivity({
+      const InvoiceAudit = require('../models/InvoiceAudit');
+      await InvoiceAudit.create({
+        invoiceId: invoice._id,
         actor: req.user._id,
-        action: 'delete',
-        note: 'Draft invoice soft-deleted by admin',
-        diff: { status: invoice.status }
+        action: 'permanent_delete',
+        diff: {
+          invoiceNumber: invoice.invoiceNumber,
+          guardian: invoice.guardian,
+          total: invoice.total,
+          status: invoice.status,
+          preserveHours
+        },
+        meta: { route: 'DELETE /api/invoices/:id', warning: 'Invoice permanently removed from database' }
       });
-
-      await invoice.recordAuditEntry({
-        actor: req.user._id,
-        action: 'delete',
-        diff: { invoiceId: invoice._id.toString(), status: invoice.status, invoiceNumber: invoice.invoiceNumber, deleted: true },
-        meta: { route: 'DELETE /api/invoices/:id' }
-      });
-
-      await invoice.save();
     } catch (innerErr) {
       // Log detailed info for debugging: include validation errors when present
-      console.error('Delete invoice - inner error while pushing audit/saving:', innerErr);
+      console.error('Delete invoice - inner error while creating audit entry:', innerErr);
       if (innerErr && innerErr.name === 'ValidationError' && innerErr.errors) {
         console.error('Validation errors:', Object.keys(innerErr.errors).reduce((acc, k) => {
           acc[k] = innerErr.errors[k].message;
           return acc;
         }, {}));
       }
-      // Re-throw to be handled by outer catch which will return 500
-      throw innerErr;
+      // Continue delete even if audit fails
     }
 
-    // Emit socket event for frontend listeners (keep legacy event name)
+    // Permanently delete the invoice from database
+    await Invoice.deleteOne({ _id: invoice._id });
+
+    // Emit socket event for frontend listeners
     try {
       const io = req.app.get('io');
-      if (io) io.emit('invoice:deleted', { id: invoice._id.toString(), invoiceNumber: invoice.invoiceNumber, deleted: true });
+      if (io) io.emit('invoice:permanentlyDeleted', { id: invoice._id.toString(), invoiceNumber: invoice.invoiceNumber });
     } catch (emitErr) {
-      console.warn('Failed to emit invoice:deleted socket event', emitErr.message);
+      console.warn('Failed to emit invoice:permanentlyDeleted socket event', emitErr.message);
     }
 
-    res.json({ success: true, message: preserveHours ? 'Invoice soft-deleted (hours preserved)' : 'Draft invoice soft-deleted', invoiceId: invoice._id });
+    res.json({ success: true, message: 'Invoice permanently deleted', invoiceId: invoice._id });
   } catch (err) {
     console.error('Delete invoice error:', err);
     const response = { success: false, message: 'Failed to delete invoice', error: err.message };

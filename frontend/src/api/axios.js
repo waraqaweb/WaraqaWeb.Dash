@@ -140,6 +140,12 @@ instance.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    const isTimeout = error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '');
+    if (isTimeout) {
+      error.isTimeout = true;
+      return Promise.reject(error);
+    }
+
     // Network / cache failures (no response) happen when the browser
     // fails to read from the HTTP cache/storage (service worker or disk)
     if (!error.response && error.request) {

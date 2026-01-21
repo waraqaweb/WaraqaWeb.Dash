@@ -17,6 +17,7 @@ const KNOWN_DEFAULTS = {
   unreportedClassCleanupDays: 30,
   teacher_report_window_hours: 72,
   admin_extension_hours: 24,
+  whiteboardScreenshotRetentionDays: 90,
   // add other well-known setting defaults here as needed
 };
 

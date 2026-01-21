@@ -1,6 +1,6 @@
 /**
  * Unified Teacher Salaries Page
- * 
+ *
  * Combines all teacher salary management features:
  * - List all teacher salary invoices
  * - Generate monthly invoices
@@ -420,33 +420,25 @@ const TeacherSalaries = () => {
     <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
       <div className="mx-auto w-full max-w-7xl px-4 py-6 space-y-6">
         {/* Header */}
-        <div className="rounded-3xl bg-white/80 shadow-sm ring-1 ring-black/5 backdrop-blur-sm">
+        <div className="rounded-2xl bg-white/80 shadow-sm backdrop-blur-sm">
           
 
           {/* Statistics Cards */}
-          <div className="border-t border-slate-100 px-6 py-6 lg:px-8">
+          <div className="px-4 py-4 lg:px-6">
             {summary?.period ? (
-              <div className="space-y-4">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Payroll snapshot</p>
-                    <p className="text-sm text-slate-600">{summary.period.label}</p>
-                  </div>
-                  {summary.previousPeriod && (
-                    <p className="text-xs text-slate-500">Comparing vs {summary.previousPeriod.label}</p>
-                  )}
-                </div>
-
+              <div className="space-y-3">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
                   {summaryHighlights.map((card) => (
-                    <div key={card.key} className="rounded-xl border border-slate-100 bg-slate-50/80 p-3 transition hover:-translate-y-0.5 hover:shadow-md">
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{card.label}</p>
-                      <p className="mt-2 text-2xl font-semibold text-slate-900">{card.value}</p>
-                      {card.delta && summary.previousPeriod && (
-                        <p className={`mt-1 text-xs font-medium ${card.trend === 'up' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {card.delta} vs {summary.previousPeriod.label}
-                        </p>
-                      )}
+                    <div key={card.key} className="rounded-lg bg-white/70 p-2">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{card.label}</p>
+                      <div className="mt-1 flex items-baseline gap-2">
+                        <span className="text-lg font-semibold text-slate-900">{card.value}</span>
+                        {card.delta && summary.previousPeriod && (
+                          <span className={`text-[11px] font-medium ${card.trend === 'up' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {card.delta} <span className="text-slate-500">vs {summary.previousPeriod.label}</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -465,17 +457,14 @@ const TeacherSalaries = () => {
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {[
-                  { label: 'Total Invoices', value: stats.total, icon: FileText },
-                  { label: 'Draft', value: stats.draft, icon: FileText },
-                  { label: 'Published', value: stats.published, icon: Eye },
-                  { label: 'Paid', value: stats.paid, icon: Check }
-                ].map(({ label, value, icon: Icon }) => (
-                  <div key={label} className="flex flex-col gap-2 rounded-xl border border-slate-100 bg-slate-50/80 p-3 transition hover:-translate-y-0.5 hover:shadow-md">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</span>
-                      <span className="rounded-full bg-white p-1.5 text-slate-500 shadow-sm"><Icon className="h-3.5 w-3.5" /></span>
-                    </div>
-                    <span className="text-2xl font-semibold text-slate-900">{value}</span>
+                  { label: 'Total Invoices', value: stats.total },
+                  { label: 'Draft', value: stats.draft },
+                  { label: 'Published', value: stats.published },
+                  { label: 'Paid', value: stats.paid }
+                ].map(({ label, value }) => (
+                  <div key={label} className="flex flex-col items-center justify-center gap-1 rounded-lg bg-white/70 p-2">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
+                    <span className="text-lg font-semibold text-slate-900">{value}</span>
                   </div>
                 ))}
               </div>

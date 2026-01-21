@@ -5,6 +5,7 @@ const fs = require('fs/promises');
 const LibraryFolder = require('../models/library/LibraryFolder');
 const LibraryItem = require('../models/library/LibraryItem');
 const LibraryAsset = require('../models/library/LibraryAsset');
+const Class = require('../models/Class');
 const { getUserAccessContext } = require('./libraryPermissionsService');
 const { buildSignedDownloadUrl, deleteLibraryAsset } = require('./libraryStorageService');
 const { normalizeUtf8FromLatin1 } = require('../utils/textEncoding');
@@ -760,11 +761,35 @@ async function getDownloadUrl({ itemId, user, shareToken, attachment = true, for
   const access = await getUserAccessContext({ user, shareToken });
   const { item, folder } = await loadItemWithFolder(itemId);
 
-  if (!canViewItem(item, folder, access)) {
+  const isWhiteboardAsset = item?.metadata?.source === 'whiteboard';
+  const whiteboardClassId = item?.metadata?.classId;
+  let hasWhiteboardAccess = false;
+
+  if (isWhiteboardAsset && whiteboardClassId && user?._id) {
+    try {
+      const classDoc = await Class.findById(whiteboardClassId)
+        .select('teacher student.guardianId')
+        .lean();
+      if (classDoc) {
+        const userId = String(user._id);
+        if (user.role === 'admin') {
+          hasWhiteboardAccess = true;
+        } else if (user.role === 'teacher' && classDoc.teacher && String(classDoc.teacher) === userId) {
+          hasWhiteboardAccess = true;
+        } else if (user.role === 'guardian' && classDoc.student?.guardianId && String(classDoc.student.guardianId) === userId) {
+          hasWhiteboardAccess = true;
+        }
+      }
+    } catch (err) {
+      hasWhiteboardAccess = false;
+    }
+  }
+
+  if (!canViewItem(item, folder, access) && !hasWhiteboardAccess) {
     throw httpError(403, 'Item access denied', 'ITEM_FORBIDDEN');
   }
 
-  const canDownload = canDownloadItem(item, folder, access);
+  const canDownload = canDownloadItem(item, folder, access) || isWhiteboardAsset;
   const inlinePreview = attachment === false;
 
   if (!canDownload && !inlinePreview) {

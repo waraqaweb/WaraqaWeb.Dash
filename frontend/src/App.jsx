@@ -7,6 +7,7 @@
 
 import React from 'react';
 import api from './api/axios';
+import { makeCacheKey, readCache, writeCache } from './utils/sessionCache';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import './App.css';
@@ -680,6 +681,16 @@ function App() {
 
     (async () => {
       try {
+        const cacheKey = makeCacheKey('branding:public');
+        const cached = readCache(cacheKey, { deps: ['branding'] });
+        if (cached.hit && cached.value?.branding) {
+          const branding = cached.value.branding;
+          if (!mounted) return;
+          const href = branding?.logo?.url || branding?.logo?.dataUri;
+          if (href) setFavicon(href);
+          if (cached.ageMs < 5 * 60_000) return;
+        }
+
         const res = await api.get('/settings/branding');
         if (!mounted) return;
         const branding = res?.data?.branding;
@@ -688,6 +699,7 @@ function App() {
           const href = branding.logo.url || branding.logo.dataUri;
           if (href) setFavicon(href);
         }
+        writeCache(cacheKey, { branding }, { ttlMs: 5 * 60_000, deps: ['branding'] });
       } catch (e) {
         // ignore fetch errors - keep default favicon
       }

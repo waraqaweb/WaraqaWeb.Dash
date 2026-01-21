@@ -235,9 +235,37 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState('personal');
   const [mainTab, setMainTab] = useState('self');
   const [manageUsersTab, setManageUsersTab] = useState('all');
+  const [manageUsersPage, setManageUsersPage] = useState(1);
+  const manageUsersPageSize = 20;
   const [teacherTotalHours, setTeacherTotalHours] = useState(null);
   const [guardianTotalFromStudents, setGuardianTotalFromStudents] = useState(null);
   const [guardianCumulativeFromStudents, setGuardianCumulativeFromStudents] = useState(null);
+
+  const filteredManageUsers = allUsers.filter((u) => {
+    const q = (searchTerm || '').trim().toLowerCase();
+    if (globalFilter === 'active' && !u.isActive) return false;
+    if (globalFilter === 'inactive' && u.isActive) return false;
+    if (manageUsersTab === 'teachers' && u.role !== 'teacher') return false;
+    if (manageUsersTab === 'guardians' && u.role !== 'guardian') return false;
+    if (!q) return true;
+    return (`${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q));
+  });
+  const totalManageUsers = filteredManageUsers.length;
+  const totalManageUserPages = Math.max(1, Math.ceil(totalManageUsers / manageUsersPageSize));
+  const safeManageUsersPage = Math.min(manageUsersPage, totalManageUserPages);
+  const manageUsersStartIndex = (safeManageUsersPage - 1) * manageUsersPageSize;
+  const manageUsersEndIndex = Math.min(manageUsersStartIndex + manageUsersPageSize, totalManageUsers);
+  const pagedManageUsers = filteredManageUsers.slice(manageUsersStartIndex, manageUsersStartIndex + manageUsersPageSize);
+
+  useEffect(() => {
+    setManageUsersPage(1);
+  }, [searchTerm, globalFilter, manageUsersTab]);
+
+  useEffect(() => {
+    if (manageUsersPage > totalManageUserPages) {
+      setManageUsersPage(totalManageUserPages);
+    }
+  }, [manageUsersPage, totalManageUserPages]);
 
   // If the current profile is a teacher, fetch dashboard stats to surface total hours
   useEffect(() => {
@@ -782,15 +810,7 @@ export default function ProfilePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {allUsers.filter((u) => {
-                    const q = (searchTerm || '').trim().toLowerCase();
-                    if (globalFilter === 'active' && !u.isActive) return false;
-                    if (globalFilter === 'inactive' && u.isActive) return false;
-                    if (manageUsersTab === 'teachers' && u.role !== 'teacher') return false;
-                    if (manageUsersTab === 'guardians' && u.role !== 'guardian') return false;
-                    if (!q) return true;
-                    return (`${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q));
-                  }).map((u) => (
+                  {pagedManageUsers.map((u) => (
                       <tr key={u._id} className="border-t">
                       <td className="p-2 text-base">{u.firstName} {u.lastName}</td>
                       <td className="p-2 text-base">{u.email}</td>
@@ -811,8 +831,38 @@ export default function ProfilePage() {
                       </td>
                     </tr>
                   ))}
+                  {pagedManageUsers.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-4 text-center text-sm text-gray-500">
+                        No users found.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm text-gray-600">
+                Showing {totalManageUsers === 0 ? 0 : manageUsersStartIndex + 1}–{manageUsersEndIndex} of {totalManageUsers}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setManageUsersPage((p) => Math.max(1, p - 1))}
+                  disabled={safeManageUsersPage <= 1}
+                  className={`px-3 py-1 rounded border text-sm ${safeManageUsersPage <= 1 ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                >
+                  Prev
+                </button>
+                <span className="text-sm text-gray-600">Page {safeManageUsersPage} of {totalManageUserPages}</span>
+                <button
+                  onClick={() => setManageUsersPage((p) => Math.min(totalManageUserPages, p + 1))}
+                  disabled={safeManageUsersPage >= totalManageUserPages}
+                  className={`px-3 py-1 rounded border text-sm ${safeManageUsersPage >= totalManageUserPages ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                >
+                  Next
+                </button>
+              </div>
             </div>
 
             {/* Info flying modal */}

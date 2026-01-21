@@ -32,6 +32,7 @@ const currencyRoutes = require('./routes/currency');
 const templateRoutes = require('./routes/templates');
 const libraryRoutes = require('./routes/library');
 const libraryShareRoutes = require('./routes/libraryShares');
+const whiteboardRoutes = require('./routes/whiteboard');
 const onboardingRoutes = require('./routes/onboarding');
 const meetingRoutes = require('./routes/meetings');
 
@@ -325,6 +326,7 @@ app.use('/api/currency', currencyRoutes);
 app.use('/api/templates', templateRoutes);
 app.use('/api/library', libraryRoutes);
 app.use('/api/library/shares', libraryShareRoutes);
+app.use('/api/whiteboard', whiteboardRoutes);
 app.use('/api/meetings', meetingRoutes);
 
 const vacationManagementRoutes = require('./routes/vacationManagement');
@@ -407,6 +409,22 @@ try {
   runUninvoicedLessonsAudit().catch((e) => console.warn('Initial uninvoiced-lessons audit failed:', e && e.message));
 } catch (e) {
   console.warn('Failed to schedule uninvoiced-lessons audit job:', e && e.message);
+}
+
+// Schedule whiteboard screenshot cleanup (daily at 03:10)
+try {
+  const cron = require('node-cron');
+  const { runWhiteboardScreenshotCleanup } = require('./jobs/whiteboardScreenshotCleanup');
+  cron.schedule('10 3 * * *', async () => {
+    try {
+      await runWhiteboardScreenshotCleanup();
+    } catch (e) {
+      console.error('Scheduled whiteboard screenshot cleanup failed:', e && e.message);
+    }
+  });
+  runWhiteboardScreenshotCleanup().catch((e) => console.warn('Initial whiteboard cleanup failed:', e && e.message));
+} catch (e) {
+  console.warn('Failed to schedule whiteboard screenshot cleanup job:', e && e.message);
 }
 
 // Schedule mark unreported classes job (hourly)

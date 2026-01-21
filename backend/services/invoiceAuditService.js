@@ -31,27 +31,109 @@ async function findUninvoicedLessons(options = {}) {
     status: { $in: billableStatuses }
   })
     .select('_id status scheduledDate student teacher duration flags metadata billedInInvoiceId')
+    .populate('teacher', 'firstName lastName email')
+    .populate('student.guardianId', 'firstName lastName email')
     .lean();
 
   if (!classes.length) return [];
 
   const lessonIds = classes.map(c => String(c._id));
-  const invoiced = new Set(
-    (await Invoice.aggregate([
-      { $unwind: '$items' },
-      { $match: { 'items.lessonId': { $in: lessonIds } } },
-      { $group: { _id: '$items.lessonId' } }
-    ])).map(r => String(r._id))
-  );
+  const classObjectIds = classes.map(c => c._id).filter(Boolean);
+
+  const activeInvoiceFilter = {
+    deleted: { $ne: true },
+    status: { $nin: ['cancelled', 'refunded'] }
+  };
+
+  const invoiced = new Set();
+  const invoiceMatches = await Invoice.aggregate([
+    { $match: activeInvoiceFilter },
+    { $unwind: '$items' },
+    {
+      $match: {
+        $or: [
+          { 'items.lessonId': { $in: lessonIds } },
+          { 'items.class': { $in: classObjectIds } }
+        ]
+      }
+    },
+    { $project: { lessonId: '$items.lessonId', classId: '$items.class' } }
+  ]);
+
+  for (const row of invoiceMatches) {
+    if (row.lessonId) invoiced.add(String(row.lessonId));
+    if (row.classId) invoiced.add(String(row.classId));
+  }
+
+  const billedInvoiceIds = classes
+    .map((cls) => cls.billedInInvoiceId)
+    .filter(Boolean);
+  const invoiceLinkMap = new Map();
+
+  if (billedInvoiceIds.length) {
+    const linkedInvoices = await Invoice.find(
+      { _id: { $in: billedInvoiceIds } },
+      '_id deleted status'
+    ).lean();
+    linkedInvoices.forEach((inv) => {
+      invoiceLinkMap.set(String(inv._id), { deleted: !!inv.deleted, status: inv.status });
+    });
+  }
 
   const uninvoiced = [];
   for (const cls of classes) {
     const id = String(cls._id);
     if (invoiced.has(id)) continue;
-    // If the class is already linked to an invoice via linkage field, skip
-    if (cls.billedInInvoiceId) continue;
+
+    const billedInvoiceId = cls.billedInInvoiceId ? String(cls.billedInInvoiceId) : null;
+    if (billedInvoiceId) {
+      const linkMeta = invoiceLinkMap.get(billedInvoiceId);
+      const isValidInvoice = linkMeta && !linkMeta.deleted && !['cancelled', 'refunded'].includes(linkMeta.status);
+      if (isValidInvoice) continue;
+    }
+
     if (exemptPredicate(cls)) continue;
-    uninvoiced.push(cls);
+
+    const teacher = cls.teacher && typeof cls.teacher === 'object'
+      ? {
+          id: cls.teacher._id?.toString?.() || cls.teacher._id,
+          name: [cls.teacher.firstName, cls.teacher.lastName].filter(Boolean).join(' ').trim() || null,
+          email: cls.teacher.email || null
+        }
+      : null;
+    const guardian = cls.student?.guardianId && typeof cls.student.guardianId === 'object'
+      ? {
+          id: cls.student.guardianId._id?.toString?.() || cls.student.guardianId._id,
+          name: [cls.student.guardianId.firstName, cls.student.guardianId.lastName].filter(Boolean).join(' ').trim() || null,
+          email: cls.student.guardianId.email || null
+        }
+      : null;
+    const student = cls.student && typeof cls.student === 'object'
+      ? {
+          id: cls.student.studentId?.toString?.() || cls.student.studentId || null,
+          name: cls.student.studentName || null
+        }
+      : null;
+
+    let reasonCode = 'missing_invoice_link';
+    let reason = 'No invoice item found and no invoice link is present.';
+    if (billedInvoiceId) {
+      reasonCode = 'linked_invoice_missing_or_voided';
+      reason = 'Class links to an invoice that is missing, deleted, or voided.';
+    }
+
+    uninvoiced.push({
+      classId: id,
+      scheduledDate: cls.scheduledDate,
+      duration: cls.duration,
+      status: cls.status,
+      billedInInvoiceId: billedInvoiceId,
+      teacher,
+      student,
+      guardian,
+      reasonCode,
+      reason
+    });
   }
 
   return uninvoiced;

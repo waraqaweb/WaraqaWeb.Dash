@@ -3344,101 +3344,169 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
       console.warn("⚠️ Socket emit error (reportSubmitted):", e.message);
     }
 
-    if (classDoc.classReport.supervisorNotes?.length > 0) {
-      try {
-        const io = req.app.get("io");
-        if (io) {
-          console.log("📡 Emitting socket: admin:supervisorNote");
-          io.emit("admin:supervisorNote", {
-            classId: classDoc._id,
-            supervisorNotes: classDoc.classReport.supervisorNotes,
-            teacherId: req.user._id,
-            classTitle: classDoc.title || "",
-          });
-        }
-      } catch (e) {
-        console.warn("⚠️ Socket emit error (supervisorNote):", e.message);
-      }
-
-      try {
-        const notificationService = require("../services/notificationService");
-        const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
-        const admins = await User.find({ role: "admin", isActive: true }).select("_id");
-        const teacherName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || req.user.email || "Teacher";
-        const studentName = classDoc.student?.studentName || "student";
-        const subjectLabel = classDoc.subject ? ` (${classDoc.subject})` : "";
-        const classTime = classDoc.scheduledDate
-          ? formatTimeInTimezone(classDoc.scheduledDate, DEFAULT_TIMEZONE, "DD MMM YYYY hh:mm A")
-          : null;
-        const actionLink = `/dashboard/classes?tab=previous&open=${classDoc._id}`;
-
-        await Promise.allSettled((admins || []).map((admin) => (
-          notificationService.createNotification({
-            userId: admin._id,
-            title: "Supervisor note submitted",
-            message: `${teacherName} left supervisor notes for ${studentName}${subjectLabel}${classTime ? ` on ${classTime}` : ''}.`,
-            type: "class",
-            relatedTo: "class",
-            relatedId: classDoc._id,
-            actionRequired: true,
-            actionLink,
-            metadata: {
-              kind: "class_supervisor_note",
-              classId: String(classDoc._id),
-              teacherId: String(req.user._id)
-            }
-          })
-        )));
-      } catch (notifyErr) {
-        console.warn("⚠️ Failed to notify admins about supervisor notes:", notifyErr.message);
-      }
-    }
-
-    // If this is the first time a report is submitted for this class, attempt to
-    // create an initial "first-lesson" invoice for the guardian/student pair.
-    if (isFirstSubmission) {
-      try {
-        const guardianUser = await User.findById(classDoc.student?.guardianId);
-        if (guardianUser) {
-          const studentId = classDoc.student?.studentId || null;
-          const existingInvoice = await InvoiceModel.findOne({
-            guardian: guardianUser._id,
-            'items.student': studentId
-          }).lean();
-
-          if (!existingInvoice) {
-            // create an invoice containing this lesson so the guardian can pay
-            try {
-              await InvoiceService.createInvoiceForFirstLesson(guardianUser, classDoc, { createdBy: req.user._id });
-              try {
-                const io = req.app.get('io');
-                if (io) io.emit('guardian:invoiceCreated', { guardianId: guardianUser._id });
-              } catch (emitErr) {
-                console.warn('Socket emit failed for first-lesson invoice', emitErr.message);
-              }
-            } catch (createErr) {
-              console.warn('Failed to create first-lesson invoice:', createErr.message);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('First-lesson invoice creation check failed:', err.message);
-      }
-    }
-
-    // ✅ HOURS LOGIC REMOVED - Now handled automatically by Class model hooks
-    // The Class model's post('save') hook triggers invoiceService.onClassStateChanged()
-    // which handles all hour adjustments (teacher & guardian) based on status changes
-    // This prevents duplicate hour updates and ensures consistency
-
     const responseClass = sanitizeClassForRole(classDoc.toObject({ virtuals: true }), req.user?.role);
     const responsePayload = { message: "Report submitted", class: responseClass };
 
-    try {
-      await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
-    } catch (refreshErr) {
-      console.warn("[report] Failed to refresh participant activity flags", refreshErr.message);
-    }
+    setImmediate(async () => {
+      if (classDoc.classReport.supervisorNotes?.length > 0) {
+        try {
+          const io = req.app.get("io");
+          if (io) {
+            console.log("📡 Emitting socket: admin:supervisorNote");
+            io.emit("admin:supervisorNote", {
+              classId: classDoc._id,
+              supervisorNotes: classDoc.classReport.supervisorNotes,
+              teacherId: req.user._id,
+              classTitle: classDoc.title || "",
+            });
+          }
+        } catch (e) {
+          console.warn("⚠️ Socket emit error (supervisorNote):", e.message);
+        }
+
+        try {
+          const notificationService = require("../services/notificationService");
+          const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
+          const admins = await User.find({ role: "admin", isActive: true }).select("_id");
+          const teacherName = `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() || req.user.email || "Teacher";
+          const studentName = classDoc.student?.studentName || "student";
+          const subjectLabel = classDoc.subject ? ` (${classDoc.subject})` : "";
+          const classTime = classDoc.scheduledDate
+            ? formatTimeInTimezone(classDoc.scheduledDate, DEFAULT_TIMEZONE, "DD MMM YYYY hh:mm A")
+            : null;
+          const actionLink = `/dashboard/classes?tab=previous&open=${classDoc._id}`;
+
+          await Promise.allSettled((admins || []).map((admin) => (
+            notificationService.createNotification({
+              userId: admin._id,
+              title: "Supervisor note submitted",
+              message: `${teacherName} left supervisor notes for ${studentName}${subjectLabel}${classTime ? ` on ${classTime}` : ''}.`,
+              type: "class",
+              relatedTo: "class",
+              relatedId: classDoc._id,
+              actionRequired: true,
+              actionLink,
+              metadata: {
+                kind: "class_supervisor_note",
+                classId: String(classDoc._id),
+                teacherId: String(req.user._id)
+              }
+            })
+          )));
+        } catch (notifyErr) {
+          console.warn("⚠️ Failed to notify admins about supervisor notes:", notifyErr.message);
+        }
+      }
+
+      if (isFirstSubmission && attendanceValue === 'attended' && Number.isFinite(Number(classScore)) && Number(classScore) > 0) {
+        try {
+          const LOW_SCORE_THRESHOLD = 2;
+          const LOW_SCORE_WINDOW = 3;
+          const LOW_SCORE_MIN_OCCURRENCES = 2;
+          const studentIdValue = classDoc.student?.studentId;
+          if (studentIdValue) {
+            const recentLowScores = await Class.find({
+              'student.studentId': studentIdValue,
+              'classReport.attendance': 'attended',
+              'classReport.classScore': { $lte: LOW_SCORE_THRESHOLD }
+            })
+              .sort({ scheduledDate: -1 })
+              .limit(LOW_SCORE_WINDOW)
+              .select('classReport.classScore scheduledDate subject teacher student')
+              .lean();
+
+            if ((recentLowScores || []).length >= LOW_SCORE_MIN_OCCURRENCES) {
+              const notificationService = require("../services/notificationService");
+              const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
+              const admins = await User.find({ role: "admin", isActive: true }).select("_id");
+              const guardianUser = guardianId ? await User.findById(guardianId).select('firstName lastName email') : null;
+              const teacherUser = teacherId ? await User.findById(teacherId).select('firstName lastName email') : null;
+              const studentName = classDoc.student?.studentName || 'student';
+              const guardianName = guardianUser
+                ? `${guardianUser.firstName || ''} ${guardianUser.lastName || ''}`.trim() || guardianUser.email
+                : '';
+              const teacherName = teacherUser
+                ? `${teacherUser.firstName || ''} ${teacherUser.lastName || ''}`.trim() || teacherUser.email
+                : '';
+              const subjectLabel = classDoc.subject ? ` (${classDoc.subject})` : '';
+              const scoresLabel = recentLowScores
+                .map((row) => {
+                  const when = row.scheduledDate
+                    ? formatTimeInTimezone(row.scheduledDate, DEFAULT_TIMEZONE, 'DD MMM YYYY')
+                    : '';
+                  const score = row?.classReport?.classScore ?? '-';
+                  return when ? `${score} on ${when}` : String(score);
+                })
+                .join(', ');
+              const actionLink = `/dashboard/classes?tab=previous&search=${encodeURIComponent(studentName)}`;
+
+              await Promise.allSettled((admins || []).map((admin) => (
+                notificationService.createNotification({
+                  userId: admin._id,
+                  title: 'Low performance follow-up needed',
+                  message: `${studentName}${subjectLabel} has repeated low scores (${scoresLabel}). ${guardianName ? `Guardian: ${guardianName}. ` : ''}${teacherName ? `Teacher: ${teacherName}. ` : ''}Consider scheduling a follow-up meeting or intensive support.`,
+                  type: 'warning',
+                  relatedTo: 'class',
+                  relatedId: classDoc._id,
+                  actionRequired: true,
+                  actionLink,
+                  metadata: {
+                    kind: 'low_score_followup',
+                    classId: String(classDoc._id),
+                    studentId: String(studentIdValue),
+                    guardianId: guardianId ? String(guardianId) : undefined,
+                    teacherId: teacherId ? String(teacherId) : undefined,
+                    scores: recentLowScores.map((row) => ({
+                      score: row?.classReport?.classScore ?? null,
+                      date: row?.scheduledDate || null,
+                      subject: row?.subject || null,
+                      classId: String(row?._id || '')
+                    }))
+                  }
+                })
+              )));
+            }
+          }
+        } catch (lowScoreErr) {
+          console.warn('[report] Failed to notify low score follow-up', lowScoreErr.message);
+        }
+      }
+
+      if (isFirstSubmission) {
+        try {
+          const guardianUser = await User.findById(classDoc.student?.guardianId);
+          if (guardianUser) {
+            const studentId = classDoc.student?.studentId || null;
+            const existingInvoice = await InvoiceModel.findOne({
+              guardian: guardianUser._id,
+              'items.student': studentId
+            }).lean();
+
+            if (!existingInvoice) {
+              try {
+                await InvoiceService.createInvoiceForFirstLesson(guardianUser, classDoc, { createdBy: req.user._id });
+                try {
+                  const io = req.app.get('io');
+                  if (io) io.emit('guardian:invoiceCreated', { guardianId: guardianUser._id });
+                } catch (emitErr) {
+                  console.warn('Socket emit failed for first-lesson invoice', emitErr.message);
+                }
+              } catch (createErr) {
+                console.warn('Failed to create first-lesson invoice:', createErr.message);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('First-lesson invoice creation check failed:', err.message);
+        }
+      }
+
+      try {
+        await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
+      } catch (refreshErr) {
+        console.warn("[report] Failed to refresh participant activity flags", refreshErr.message);
+      }
+    });
 
     return res.json(responsePayload);
   } catch (err) {

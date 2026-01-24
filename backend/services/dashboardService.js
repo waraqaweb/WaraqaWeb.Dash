@@ -113,7 +113,7 @@ async function getClassStats() {
 
     // cancelled hours this month
     const cancelledAgg = await Class.aggregate([
-      { $match: { scheduledDate: { $gte: monthStart, $lt: monthEnd }, status: { $in: ['cancelled','cancelled_by_teacher','cancelled_by_guardian','cancelled_by_admin'] } } },
+      { $match: { scheduledDate: { $gte: monthStart, $lt: monthEnd }, status: { $in: ['cancelled','cancelled_by_teacher','cancelled_by_guardian','cancelled_by_admin','cancelled_by_student'] } } },
       { $group: { _id: null, totalMinutes: { $sum: '$duration' } } }
     ]);
     const cancelledHoursThisMonth = (cancelledAgg[0]?.totalMinutes || 0) / 60;

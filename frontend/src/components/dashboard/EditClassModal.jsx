@@ -397,20 +397,21 @@ export default function EditClassModal({
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Duration (minutes) *
                   </label>
-                  <select
+                  <input
+                    type="number"
+                    min="10"
+                    step="10"
                     required
-                    value={editClass.duration || 60}
+                    value={editClass.duration || ''}
                     onChange={(e) =>
-                      setEditClass((prev) => ({ ...prev, duration: parseInt(e.target.value) }))
+                      setEditClass((prev) => ({
+                        ...prev,
+                        duration: e.target.value === '' ? '' : Number(e.target.value)
+                      }))
                     }
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                  >
-                    <option value={30}>30 minutes</option>
-                    <option value={45}>45 minutes</option>
-                    <option value={60}>60 minutes</option>
-                    <option value={90}>90 minutes</option>
-                    <option value={120}>120 minutes</option>
-                  </select>
+                    placeholder="Duration (minutes)"
+                  />
                 </div>
               </div>
             )}
@@ -476,17 +477,15 @@ export default function EditClassModal({
                       </div>
 
                       <div className="min-w-0">
-                        <select
-                          value={slot.duration}
-                          onChange={(e) => updateRecurrenceSlot(index, 'duration', parseInt(e.target.value))}
+                        <input
+                          type="number"
+                          min="10"
+                          step="10"
+                          value={slot.duration || ''}
+                          onChange={(e) => updateRecurrenceSlot(index, 'duration', e.target.value === '' ? null : Number(e.target.value))}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
-                        >
-                          <option value={30}>30 min</option>
-                          <option value={45}>45 min</option>
-                          <option value={60}>60 min</option>
-                          <option value={90}>90 min</option>
-                          <option value={120}>120 min</option>
-                        </select>
+                          placeholder="Duration (minutes)"
+                        />
                       </div>
 
                       <div className="min-w-0 flex items-center justify-center w-8 md:w-6 flex-shrink-0">

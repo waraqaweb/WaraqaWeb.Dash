@@ -20,6 +20,7 @@ import ForgotPassword from './components/auth/ForgotPassword';
 import ResetPassword from './components/auth/ResetPassword';
 import Dashboard from './pages/dashboard/Dashboard';
 import LoadingSpinner from './components/ui/LoadingSpinner';
+import useMinLoading from './components/ui/useMinLoading';
 import ClassReportPage from './pages/dashboard/ClassReportPage';
 import DashboardLayout from './components/layout/DashboardLayout';
 // Import invoice modals/pages
@@ -49,10 +50,11 @@ import LibraryDashboard from './pages/library/LibraryDashboard';
  */
 const ProtectedRoute = ({ children, requiredRole = null, allowedRoles = null }) => {
   const { user, loading, hasRole } = useAuth();
+  const showLoading = useMinLoading(loading);
 
   
 
-  if (loading) {
+  if (showLoading) {
     return <LoadingSpinner fullScreen />;
   }
 
@@ -82,10 +84,11 @@ const ProtectedRoute = ({ children, requiredRole = null, allowedRoles = null }) 
  */
 const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
+  const showLoading = useMinLoading(loading);
 
   
 
-  if (loading) {
+  if (showLoading) {
     return <LoadingSpinner fullScreen />;
   }
 
@@ -108,6 +111,7 @@ const PublicRoute = ({ children }) => {
  */
 const AppRoutes = () => {
   const { user, loading } = useAuth();
+  const showAuthLoading = useMinLoading(loading);
   const location = useLocation();
   // If we navigated to a modal route we save the previous location in state.background
   const background = location.state && location.state.background;
@@ -410,7 +414,7 @@ const AppRoutes = () => {
       {/* Default redirect - if authenticated, redirect based on role, otherwise to login */}
       <Route 
         path="/" 
-        element={loading ? <LoadingSpinner fullScreen /> : (user ? (user.role === 'admin' ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/dashboard" replace />) : <Navigate to="/dashboard/login" replace />)}
+        element={showAuthLoading ? <LoadingSpinner fullScreen /> : (user ? (user.role === 'admin' ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/dashboard" replace />) : <Navigate to="/dashboard/login" replace />)}
       />
       
       {/* Unauthorized page */}

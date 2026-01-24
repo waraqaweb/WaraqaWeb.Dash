@@ -38,12 +38,12 @@ export default function CreateClassModal({
       guardianId: '',
       studentId: ''
     },
-    duration: 60,
+    duration: 30,
     meetingLink: '',
     timezone: DEFAULT_TIMEZONE,
-    isRecurring: false,
+    isRecurring: true,
     recurrenceDetails: [
-      { dayOfWeek: 1, time: '18:00', duration: 60, timezone: DEFAULT_TIMEZONE }
+      { dayOfWeek: 1, time: '18:00', duration: 30, timezone: DEFAULT_TIMEZONE }
     ],
     scheduledDate: '',
     generationPeriodMonths: 3
@@ -75,17 +75,18 @@ export default function CreateClassModal({
       guardianId: '',
       studentId: ''
     },
-    duration: 60,
+    duration: 30,
     meetingLink: '',
     timezone: adminTimezone,
-    isRecurring: false,
+    isRecurring: true,
     recurrenceDetails: [
-      { dayOfWeek: 1, time: '18:00', duration: 60, timezone: adminTimezone }
+      { dayOfWeek: 1, time: '18:00', duration: 30, timezone: adminTimezone }
     ],
     scheduledDate: '',
     generationPeriodMonths: 3
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   const [availabilityWarning, setAvailabilityWarning] = useState(null);
   const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
 
@@ -107,6 +108,12 @@ export default function CreateClassModal({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSuccessMessage('');
+    }
+  }, [isOpen]);
   
   // Use local state if no external state is provided (standalone mode)
   // NOTE: Never rely on Function#toString() for behavior; prod builds can minify it.
@@ -271,13 +278,16 @@ export default function CreateClassModal({
     return false;
   };
 
-  const handleFormSubmit = (event) => {
+  const handleFormSubmit = async (event) => {
     event.preventDefault();
     if (!validateParticipants()) return;
     if (isStandalone) {
-      handleLocalCreateClass();
+      await handleLocalCreateClass();
     } else {
-      handleCreateClass?.();
+      const result = await handleCreateClass?.();
+      if (result?.success) {
+        setSuccessMessage(result.message || 'Class created successfully!');
+      }
     }
   };
 
@@ -465,8 +475,7 @@ export default function CreateClassModal({
       }
 
       await axios.post('/classes', payload);
-      alert(currentNewClass?.isRecurring ? 'Recurring classes created successfully!' : 'Class created successfully!');
-      handleClose();
+      setSuccessMessage(currentNewClass?.isRecurring ? 'Recurring classes created successfully!' : 'Class created successfully!');
     } catch (error) {
       try {
         if (!(import.meta?.env?.PROD)) {
@@ -492,8 +501,7 @@ export default function CreateClassModal({
           try {
             const payload = { ...buildPayload(), overrideDuplicateSeries: true };
             await axios.post('/classes', payload);
-            alert('Recurring classes created successfully!');
-            handleClose();
+            setSuccessMessage('Recurring classes created successfully!');
             return;
           } catch (overrideErr) {
             try {
@@ -522,12 +530,17 @@ export default function CreateClassModal({
       ...prev,
       recurrenceDetails: [
         ...(prev.recurrenceDetails || []),
-        {
-          dayOfWeek: 1,
-          time: '18:00',
-          duration: prev.duration || 60,
-          timezone: prev.timezone || DEFAULT_TIMEZONE
-        }
+        (() => {
+          const lastSlot = (prev.recurrenceDetails || [])[prev.recurrenceDetails.length - 1] || {};
+          const lastDay = Number.isInteger(Number(lastSlot.dayOfWeek)) ? Number(lastSlot.dayOfWeek) : 1;
+          const nextDay = (lastDay + 1) % 7;
+          return {
+            dayOfWeek: nextDay,
+            time: lastSlot.time || '18:00',
+            duration: 30,
+            timezone: lastSlot.timezone || prev.timezone || DEFAULT_TIMEZONE
+          };
+        })()
       ]
     }));
   };
@@ -641,6 +654,12 @@ export default function CreateClassModal({
                         <div className="font-medium">Other suggested slots:</div>
                         <div className="mt-1 whitespace-pre-wrap">
                           {availabilityWarning.suggested.map((s) => `• ${s}`).join('\n')}
+
+                    {successMessage && (
+                      <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-md text-sm text-emerald-800">
+                        {successMessage}
+                      </div>
+                    )}
                         </div>
                       </div>
                     )}
@@ -717,23 +736,21 @@ export default function CreateClassModal({
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Duration (minutes) *
                   </label>
-                  <select
+                  <input
+                    type="number"
+                    min="10"
+                    step="10"
                     required
-                    value={currentNewClass.duration}
+                    value={currentNewClass.duration || ''}
                     onChange={(e) =>
                       currentSetNewClass((prev) => ({
                         ...prev,
-                        duration: parseInt(e.target.value),
+                        duration: e.target.value === '' ? '' : Number(e.target.value),
                       }))
                     }
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                  >
-                    <option value={30}>30 minutes</option>
-                    <option value={45}>45 minutes</option>
-                    <option value={60}>60 minutes</option>
-                    <option value={90}>90 minutes</option>
-                    <option value={120}>120 minutes</option>
-                  </select>
+                    placeholder="Duration (minutes)"
+                  />
                 </div>
               </div>
             )}
@@ -819,8 +836,8 @@ export default function CreateClassModal({
                       <div className="min-w-0">
                         <input
                           type="number"
-                          min="15"
-                          step="5"
+                          min="10"
+                          step="10"
                           value={slot.duration || ''}
                           onChange={(e) =>
                             (isStandalone ? updateLocalRecurrenceSlot : updateRecurrenceSlot)?.(

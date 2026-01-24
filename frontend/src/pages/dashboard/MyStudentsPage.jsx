@@ -13,6 +13,7 @@ import { formatDateDDMMMYYYY } from '../../utils/date';
 import AddStudentModal from '../../components/dashboard/AddStudentModal';
 import EditStudentModal from '../../components/students/EditStudentModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
 import { deleteStudent as deleteStandaloneStudent } from '../../api/students';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
@@ -88,6 +89,9 @@ const MyStudentsPage = () => {
   const [, setGuardiansList] = useState([]);
   const [classesHoursMap, setClassesHoursMap] = useState({});
   const [subjectsLoading, setSubjectsLoading] = useState(false);
+  const classesHoursAbortRef = useRef(null);
+  const hoursFetchKeyRef = useRef('');
+  const subjectsFetchKeyRef = useRef('');
   const [sortBy] = useState('firstName');
   const [sortOrder] = useState('asc');
   const [statusFilter, setStatusFilter] = useState('active');
@@ -148,6 +152,10 @@ const fetchStudents = async () => {
     page: currentPage,
   });
 
+  if (fetchStudentsKeyRef.current === requestSignature && (studentsRef.current || []).length > 0 && !localLoading) {
+    return;
+  }
+
   if (fetchStudentsInFlightRef.current && fetchStudentsKeyRef.current === requestSignature) {
     return;
   }
@@ -173,14 +181,7 @@ const fetchStudents = async () => {
   const hasExisting = (studentsRef.current || []).length > 0;
   setLocalLoading(!hasExisting);
   setError('');
-  console.log('[MyStudentsPage] fetchStudents() start', {
-    role: user?.role,
-    userId: user?.id || user?._id,
-    guardianFilter,
-    search: debouncedSearch,
-    sortBy,
-    sortOrder
-  });
+  // debug logs removed
 
   try {
   let response;
@@ -207,15 +208,7 @@ const fetchStudents = async () => {
         setStudents(withTZ);
         setTotalHours(response.data.totalHours || 0);
       }
-      try {
-        const miss = (Array.isArray(guardianStudentsArr) ? guardianStudentsArr : []).filter(s => !s || !(s.firstName || '').trim() || !(s.lastName || '').trim());
-        console.log('[MyStudentsPage] guardian students fetched', {
-          guardianId: guardianFilter,
-          count: (Array.isArray(guardianStudentsArr) ? guardianStudentsArr.length : 0),
-          missingNames: miss.length,
-          samplesMissing: (Array.isArray(guardianStudentsArr) ? guardianStudentsArr : []).slice(0, 3).map(s => ({ id: s?._id || s?.id, firstName: s?.firstName, lastName: s?.lastName }))
-        });
-      } catch (_) {}
+      // debug logs removed
       return;
     }
 
@@ -275,7 +268,7 @@ const fetchStudents = async () => {
         const classesRes = await api.get('/classes', { params: { filter: 'upcoming', teacher: teacherId, limit: 2000 }, signal: controller.signal });
         const classesArr = classesRes.data.classes || [];
         const upcomingNonCancelled = classesArr.filter((cls) => !isCancelledClassStatus(cls?.status));
-        console.log('[MyStudentsPage] fetched upcoming classes for teacher', { count: upcomingNonCancelled.length, teacher: teacherId });
+        // debug logs removed
 
         // Collect guardian ids and build a unique student key map
         const guardianIdsSet = new Set();
@@ -498,87 +491,7 @@ const fetchStudents = async () => {
     } else {
       throw new Error('Unauthorized role');
     }
-    try {
-      const summaryArr = fetchedArr || [];
-      const miss = summaryArr.filter(s => !s || !(s.firstName || '').trim() || !(s.lastName || '').trim());
-      console.log('[MyStudentsPage] fetched students summary', {
-        role: user?.role,
-        count: summaryArr.length,
-  totalHours: response?.data?.totalHours || 0,
-        missingNames: miss.length,
-        samplesMissing: summaryArr.slice(0, 3).map(s => ({ id: s?._id || s?.id, firstName: s?.firstName, lastName: s?.lastName, guardianId: s?.guardianId }))
-      });
-    } catch (_) {}
-    // After students fetched, compute real hours from past classes for each student (never negative)
-    try {
-      const map = {};
-      const studentIds = (fetchedArr || []).map(s => String(s._id));
-      const countableStatuses = ['attended', 'missed_by_student']; // classes that count towards consumed/billed hours
-      if (studentIds.length) {
-        if (isGuardian && isGuardian()) {
-          // For guardians, fetch all past classes related to this guardian once and sum durations per student
-          try {
-            const classesRes = await api.get('/classes', { params: { filter: 'past', guardian: user._id, limit: 1000 }, signal: controller.signal });
-            const classesArr = classesRes.data.classes || [];
-            classesArr.forEach(cls => {
-              if (!countableStatuses.includes(cls.status)) return;
-              const s = cls.student || {};
-              const sid = String(s.studentId || s._id || '');
-              if (!sid) return;
-              map[sid] = (map[sid] || 0) + (Number(cls.duration) || 0); // minutes
-            });
-          } catch (err) {
-            console.warn('Failed to fetch past classes for guardian to compute hours', err?.message || err);
-          }
-        } else {
-          // For teachers/admins, batch past classes by studentIds to avoid 1 request per student.
-          const ids = (fetchedArr || []).map((st) => String(st._id)).filter(Boolean);
-          const chunkSize = 50;
-          const chunks = [];
-          for (let i = 0; i < ids.length; i += chunkSize) {
-            chunks.push(ids.slice(i, i + chunkSize));
-          }
-
-          for (const chunk of chunks) {
-            if (!chunk.length) continue;
-            try {
-              const res = await api.get('/classes', {
-                params: {
-                  filter: 'past',
-                  studentIds: chunk.join(','),
-                  limit: 1000,
-                },
-                signal: controller.signal
-              });
-              const classesArr = res.data.classes || [];
-              classesArr.forEach((c) => {
-                if (!countableStatuses.includes(c.status)) return;
-                const sid = String(c?.student?.studentId || c?.student?._id || '');
-                if (!sid) return;
-                map[sid] = (map[sid] || 0) + (Number(c.duration) || 0);
-              });
-            } catch (err) {
-              console.warn('Failed to fetch past classes batch for students', err?.message || err);
-              // Ensure these students don't get stuck without a value
-              chunk.forEach((sid) => { map[String(sid)] = map[String(sid)] || 0; });
-            }
-          }
-        }
-      }
-      // Ensure all students have at least 0 minutes
-      (fetchedArr || []).forEach(s => { map[String(s._id)] = map[String(s._id)] || 0; });
-      // Convert minutes to hours (decimal) rounded to 1 decimal place
-      const hoursMap = {};
-      Object.keys(map).forEach(k => {
-        const mins = Number(map[k]) || 0;
-        const hrs = Math.round((mins / 60) * 10) / 10;
-        hoursMap[k] = hrs >= 0 ? hrs : 0;
-      });
-      setClassesHoursMap(hoursMap);
-    } catch (countErr) {
-      console.warn('Failed to compute classes hours map', countErr?.message || countErr);
-      setClassesHoursMap({});
-    }
+    // hours map computation moved to paginated effect
   } catch (error) {
     const isCanceled = error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError';
     if (!isCanceled) {
@@ -636,13 +549,7 @@ const fetchGuardiansList = async () => {
       result = result.filter((student) => isStudentActive(student) === desiredActive);
     }
 
-    try {
-      console.log('[MyStudentsPage] filtering', {
-        incoming: (students || []).length,
-        useGlobalSearch,
-        effectiveSearchTerm
-      });
-    } catch(_) {}
+    // debug logs removed
 
     const trimmedTerm = (effectiveSearchTerm || '').trim().toLowerCase();
     if (trimmedTerm) {
@@ -684,13 +591,7 @@ const fetchGuardiansList = async () => {
       }
     }
     
-    try {
-      const miss = (result || []).filter(s => !s || !(s.firstName || '').trim() || !(s.lastName || '').trim());
-      console.log('[MyStudentsPage] filtered result', {
-        out: (result || []).length,
-        missingNames: miss.length
-      });
-    } catch(_) {}
+    // debug logs removed
     
     return result;
   }, [students, effectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter]);
@@ -737,18 +638,89 @@ const fetchGuardiansList = async () => {
     return sortedStudents.slice(start, start + STUDENTS_PER_PAGE);
   }, [sortedStudents, currentPage]);
 
+  const visibleStudentIds = useMemo(() => (
+    (paginatedStudents || [])
+      .map((s) => s && (s._id || s.id))
+      .filter(Boolean)
+      .map(String)
+  ), [paginatedStudents]);
+
+  const visibleIdsKey = useMemo(() => (
+    visibleStudentIds.length ? visibleStudentIds.join(',') : ''
+  ), [visibleStudentIds]);
+
+  // Fetch hours only for visible students (smart fetching)
+  useEffect(() => {
+    const run = async () => {
+      if (!user || loading) return;
+      if (!visibleIdsKey) {
+        setClassesHoursMap({});
+        return;
+      }
+
+      if (hoursFetchKeyRef.current === visibleIdsKey) {
+        return;
+      }
+      hoursFetchKeyRef.current = visibleIdsKey;
+
+      if (classesHoursAbortRef.current) {
+        try { classesHoursAbortRef.current.abort(); } catch (_) {}
+      }
+      const controller = new AbortController();
+      classesHoursAbortRef.current = controller;
+
+      try {
+        const res = await api.get('/classes', {
+          params: {
+            filter: 'past',
+            studentIds: visibleIdsKey,
+            limit: 1000,
+          },
+          signal: controller.signal
+        });
+        const classesArr = res.data.classes || [];
+        const countableStatuses = ['attended', 'missed_by_student'];
+        const map = {};
+        classesArr.forEach((c) => {
+          if (!countableStatuses.includes(c.status)) return;
+          const sid = String(c?.student?.studentId || c?.student?._id || '');
+          if (!sid) return;
+          map[sid] = (map[sid] || 0) + (Number(c.duration) || 0);
+        });
+        visibleStudentIds.forEach((sid) => { map[sid] = map[sid] || 0; });
+        const hoursMap = {};
+        Object.keys(map).forEach((k) => {
+          const mins = Number(map[k]) || 0;
+          const hrs = Math.round((mins / 60) * 10) / 10;
+          hoursMap[k] = hrs >= 0 ? hrs : 0;
+        });
+        setClassesHoursMap(hoursMap);
+      } catch (err) {
+        const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+        if (!isCanceled) {
+          console.warn('Failed to fetch past classes for visible students', err?.message || err);
+          setClassesHoursMap({});
+        }
+      }
+    };
+
+    run();
+    return () => {
+      if (classesHoursAbortRef.current) {
+        try { classesHoursAbortRef.current.abort(); } catch (_) {}
+      }
+    };
+  }, [visibleIdsKey, visibleStudentIds, user, loading]);
+
   // Fetch subjects only for currently visible page (admin & teacher).
   useEffect(() => {
     const run = async () => {
       if (!user || loading) return;
       if (!(isAdmin && isAdmin()) && !(isTeacher && isTeacher())) return;
-      if (!Array.isArray(paginatedStudents) || paginatedStudents.length === 0) return;
+      if (!visibleIdsKey) return;
 
-      const ids = paginatedStudents
-        .map((s) => s && (s._id || s.id))
-        .filter(Boolean)
-        .map(String);
-      if (!ids.length) return;
+      if (subjectsFetchKeyRef.current === visibleIdsKey) return;
+      subjectsFetchKeyRef.current = visibleIdsKey;
 
       // Only fetch if at least one visible student is missing subjects.
       const missing = paginatedStudents.some((s) => !Array.isArray(s?.subjects) || s.subjects.length === 0);
@@ -758,7 +730,7 @@ const fetchGuardiansList = async () => {
         setSubjectsLoading(true);
         const params = {
           filter: 'upcoming',
-          studentIds: ids.join(','),
+          studentIds: visibleIdsKey,
           limit: 2000,
         };
         // For teachers, keep teacher restriction.
@@ -910,6 +882,7 @@ const fetchGuardiansList = async () => {
   // Do not early-return while loading so the search and filters stay mounted (prevents focus loss)
 
   const isPageLoading = Boolean(loading || localLoading);
+  const showLoading = useMinLoading(isPageLoading);
 
   // Derived student counts for header counters
   const totalStudents = (students || []).length;
@@ -963,14 +936,14 @@ const fetchGuardiansList = async () => {
       </div>
       
       {/* Students List */}
-      {isPageLoading && sortedStudents.length === 0 ? (
+      {showLoading && sortedStudents.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12">
-          <LoadingSpinner text="Loading students…" />
+          <LoadingSpinner />
           {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
         </div>
       ) : null}
 
-      {sortedStudents.length === 0 ? (
+      {!showLoading && sortedStudents.length === 0 ? (
         <div className="text-center py-10">
           <div className="text-muted-foreground mb-4">
             <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">

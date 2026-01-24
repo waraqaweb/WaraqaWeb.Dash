@@ -25,11 +25,14 @@ import {
   UserX, 
   UserCheck, 
   LogIn,
+  DownloadCloud,
+  X,
   Baby,
   Edit
 } from 'lucide-react';
 import ProfileEditModal from '../../components/dashboard/ProfileEditModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
@@ -71,6 +74,21 @@ const GuardiansPage = () => {
   const itemsPerPage = 30;
   const [statusCounts, setStatusCounts] = useState({ active: 0, inactive: 0, all: 0 });
   const [hoursAdjustments, setHoursAdjustments] = useState({});
+  const [legacyDrafts, setLegacyDrafts] = useState({});
+  const [showQuickActions, setShowQuickActions] = useState(false);
+  const [showLegacyQuick, setShowLegacyQuick] = useState(false);
+  const [legacyQuickSearch, setLegacyQuickSearch] = useState('');
+  const [legacyQuickGuardianId, setLegacyQuickGuardianId] = useState('');
+  const [showLegacyOptions, setShowLegacyOptions] = useState(false);
+  const [showAccountLogs, setShowAccountLogs] = useState(false);
+  const [accountLogSearch, setAccountLogSearch] = useState('');
+  const [accountLogGuardianId, setAccountLogGuardianId] = useState('');
+  const [accountLogQuery, setAccountLogQuery] = useState('');
+  const [showAccountOptions, setShowAccountOptions] = useState(false);
+  const [accountLogs, setAccountLogs] = useState([]);
+  const [accountLogsLoading, setAccountLogsLoading] = useState(false);
+  const [accountLogsError, setAccountLogsError] = useState('');
+  const showLoading = useMinLoading(loading);
 
   const fetchStatusCounts = useCallback(async () => {
     try {
@@ -302,6 +320,212 @@ const GuardiansPage = () => {
     }
   };
 
+  const setLegacyDraftValue = (guardianId, patch) => {
+    setLegacyDrafts((prev) => {
+      const existing = prev[guardianId] || { legacyHours: '', legacyStart: '', legacyEnd: '', preview: null, loading: false, creating: false };
+      return { ...prev, [guardianId]: { ...existing, ...patch } };
+    });
+  };
+
+  const handlePreviewLegacyInvoice = async (guardian) => {
+    if (!guardian?._id) return;
+    const draft = legacyDrafts[guardian._id] || {};
+    const legacyHoursRaw = draft.legacyHours;
+    const legacyHours = legacyHoursRaw === '' || legacyHoursRaw === null || typeof legacyHoursRaw === 'undefined'
+      ? undefined
+      : Number(legacyHoursRaw);
+    if (legacyHoursRaw !== '' && !Number.isFinite(legacyHours)) {
+      setError('Please enter a valid legacy hours number');
+      return;
+    }
+
+    setLegacyDraftValue(guardian._id, { loading: true, preview: null });
+    try {
+      const { data } = await api.post('/invoices/admin/legacy-balance/preview', {
+        guardianId: guardian._id,
+        guardianEmail: guardian.email,
+        legacyHours: legacyHoursRaw === '' ? undefined : legacyHours,
+      });
+      if (data?.success) {
+        setLegacyDraftValue(guardian._id, { preview: data });
+      } else {
+        setError(data?.message || 'Failed to preview legacy invoice');
+      }
+    } catch (err) {
+      console.error('Legacy balance preview failed', err);
+      setError(err?.response?.data?.message || 'Failed to preview legacy invoice');
+    } finally {
+      setLegacyDraftValue(guardian._id, { loading: false });
+    }
+  };
+
+  const handleCreateLegacyInvoice = async (guardian) => {
+    if (!guardian?._id) return;
+    const draft = legacyDrafts[guardian._id] || {};
+    const legacyHoursRaw = draft.legacyHours;
+    const legacyHours = legacyHoursRaw === '' || legacyHoursRaw === null || typeof legacyHoursRaw === 'undefined'
+      ? undefined
+      : Number(legacyHoursRaw);
+    if (legacyHoursRaw !== '' && !Number.isFinite(legacyHours)) {
+      setError('Please enter a valid legacy hours number');
+      return;
+    }
+
+    setLegacyDraftValue(guardian._id, { creating: true });
+    try {
+      const { data } = await api.post('/invoices/admin/legacy-balance/create', {
+        guardianId: guardian._id,
+        guardianEmail: guardian.email,
+        legacyHours: legacyHoursRaw === '' ? undefined : legacyHours,
+        legacyStart: draft.legacyStart || undefined,
+        legacyEnd: draft.legacyEnd || undefined,
+      });
+      if (data?.success) {
+        alert(data?.message || 'Legacy balance invoice created');
+        setLegacyDraftValue(guardian._id, { preview: data, legacyHours: '', legacyStart: '', legacyEnd: '' });
+        await fetchGuardians();
+      } else {
+        setError(data?.message || 'Failed to create legacy invoice');
+      }
+    } catch (err) {
+      console.error('Legacy balance create failed', err);
+      setError(err?.response?.data?.message || 'Failed to create legacy invoice');
+    } finally {
+      setLegacyDraftValue(guardian._id, { creating: false });
+    }
+  };
+
+  const guardianOptionLabel = (g) => `${g.firstName || ''} ${g.lastName || ''}`.trim();
+  const guardianOptionValue = (g) => `${guardianOptionLabel(g)} | ${g.email || '-'} | ${g._id}`;
+  const resolveGuardianIdFromInput = (value, list = []) => {
+    const trimmed = String(value || '').trim();
+    if (!trimmed) return '';
+    const direct = list.find((g) => String(g._id) === trimmed);
+    if (direct) return String(direct._id);
+    const match = list.find((g) => guardianOptionValue(g) === trimmed);
+    if (match) return String(match._id);
+    const lower = trimmed.toLowerCase();
+    const fallback = list.find((g) => {
+      const name = guardianOptionLabel(g).toLowerCase();
+      const email = (g.email || '').toLowerCase();
+      const id = String(g._id || '').toLowerCase();
+      return name.includes(lower) || email === lower || id === lower;
+    });
+    return fallback ? String(fallback._id) : '';
+  };
+
+  const filteredLegacyGuardians = useMemo(() => {
+    const needle = (legacyQuickSearch || '').trim().toLowerCase();
+    if (!needle) return guardians || [];
+    return (guardians || []).filter((g) => {
+      const name = guardianOptionLabel(g).toLowerCase();
+      const email = (g.email || '').toLowerCase();
+      const id = String(g._id || '').toLowerCase();
+      return name.includes(needle) || email.includes(needle) || id.includes(needle);
+    });
+  }, [guardians, legacyQuickSearch]);
+
+  const filteredAccountGuardians = useMemo(() => {
+    const needle = (accountLogSearch || '').trim().toLowerCase();
+    if (!needle) return guardians || [];
+    return (guardians || []).filter((g) => {
+      const name = guardianOptionLabel(g).toLowerCase();
+      const email = (g.email || '').toLowerCase();
+      const id = String(g._id || '').toLowerCase();
+      return name.includes(needle) || email.includes(needle) || id.includes(needle);
+    });
+  }, [guardians, accountLogSearch]);
+
+  const selectedLegacyGuardian = useMemo(() => {
+    if (!legacyQuickGuardianId) return null;
+    return (guardians || []).find((g) => String(g._id) === String(legacyQuickGuardianId)) || null;
+  }, [guardians, legacyQuickGuardianId]);
+
+  const selectedAccountGuardian = useMemo(() => {
+    if (!accountLogGuardianId) return null;
+    return (guardians || []).find((g) => String(g._id) === String(accountLogGuardianId)) || null;
+  }, [guardians, accountLogGuardianId]);
+
+  const loadAccountLogs = async () => {
+    const query = (accountLogQuery || accountLogSearch || '').trim();
+    if (!selectedAccountGuardian?._id && !query) {
+      setAccountLogsError('Please select a guardian or enter an email/ID');
+      return;
+    }
+    setAccountLogsError('');
+    setAccountLogsLoading(true);
+    try {
+      const { data } = await api.post('/users/admin/account-logs', {
+        userId: selectedAccountGuardian?._id,
+        email: query && query.includes('@') ? query : (selectedAccountGuardian?.email || undefined),
+        userIdOrEmail: query && !query.includes('@') ? query : undefined,
+        limit: 500,
+        includeClasses: true,
+        classLimit: 200,
+      });
+      setAccountLogs(Array.isArray(data?.logs) ? data.logs : []);
+    } catch (err) {
+      console.error('Failed to load account logs', err);
+      setAccountLogsError(err?.response?.data?.message || 'Failed to load account logs');
+    } finally {
+      setAccountLogsLoading(false);
+    }
+  };
+
+  const downloadAccountLogs = () => {
+    if (!accountLogs || accountLogs.length === 0) return;
+    const rows = [
+      [
+        'timestamp',
+        'source',
+        'action',
+        'invoiceNumber',
+        'amount',
+        'hours',
+        'success',
+        'message',
+        'reason',
+        'actorName',
+        'balanceBefore',
+        'balanceAfter',
+        'billingStart',
+        'billingEnd',
+        'classCount',
+        'generationSource'
+      ]
+    ];
+    accountLogs.forEach((log) => {
+      rows.push([
+        log.timestamp ? new Date(log.timestamp).toISOString() : '',
+        log.source || '',
+        log.action || '',
+        log.invoiceNumber || '',
+        log.amount ?? '',
+        log.hours ?? '',
+        log.success === false ? 'false' : 'true',
+        (log.message || '').replace(/\n/g, ' '),
+        (log.reason || '').replace(/\n/g, ' '),
+        (log.actorName || '').replace(/\n/g, ' '),
+        log.balanceBefore ?? '',
+        log.balanceAfter ?? '',
+        log.billingPeriod?.startDate ? new Date(log.billingPeriod.startDate).toISOString() : '',
+        log.billingPeriod?.endDate ? new Date(log.billingPeriod.endDate).toISOString() : '',
+        log.classCount ?? '',
+        log.generationSource || ''
+      ]);
+    });
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `account-logs-${selectedAccountGuardian?._id || 'guardian'}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const handleStatusChange = async (guardianId, newStatus) => {
     try {
   await api.put(`/users/${guardianId}/status`, { isActive: newStatus });
@@ -426,7 +650,7 @@ const GuardiansPage = () => {
           </div>
         )}
 
-        <div className="flex flex-wrap gap-2 mb-6">
+        <div className="flex flex-wrap items-center gap-2 mb-6">
           {GUARDIAN_STATUS_TABS.map((tab) => {
             const isSelected = statusFilter === tab.id;
             const count = tab.id === 'all' ? statusCounts.all : (statusCounts[tab.id] || 0);
@@ -452,7 +676,7 @@ const GuardiansPage = () => {
         </div>
 
         {/* Guardians List */}
-        {loading && sortedGuardians.length === 0 ? (
+        {showLoading && sortedGuardians.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
             <LoadingSpinner text="Loading guardians…" />
           </div>
@@ -493,6 +717,15 @@ const GuardiansPage = () => {
                           <Clock className="h-3 w-3 mr-1" />
                           {guardian.guardianInfo?.totalHours || 0} hours left
                         </span>
+                        {guardian.email && (
+                          <span className="flex items-center">
+                            <Mail className="h-3 w-3 mr-1" />
+                            {guardian.email}
+                          </span>
+                        )}
+                        {guardian._id && (
+                          <span className="text-xs text-muted-foreground">ID: {guardian._id}</span>
+                        )}
                         <span className="flex items-center">
                           <Globe className="h-3 w-3 mr-1" />
                           {guardian.timezone || guardian.guardianInfo?.timezone || 'UTC'}
@@ -644,6 +877,9 @@ const GuardiansPage = () => {
               </button>
             </div>
           )}
+          {isAdmin() && (
+            null
+          )}
           <div className="flex items-center space-x-2">
             <CreditCard className="h-4 w-4 text-muted-foreground" />
             <span>
@@ -698,7 +934,9 @@ const GuardiansPage = () => {
         return (
           <div>
             <h4 className="font-semibold text-foreground mb-3">Linked Students</h4>
-            <div className="text-sm text-muted-foreground">Loading students…</div>
+            <div className="flex items-center justify-center py-4">
+              <LoadingSpinner />
+            </div>
           </div>
         );
       }
@@ -774,7 +1012,7 @@ const GuardiansPage = () => {
         )}
 
         {/* Empty State */}
-        {!loading && sortedGuardians.length === 0 && (
+        {!showLoading && sortedGuardians.length === 0 && (
           <div className="text-center py-12">
             <Baby className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No guardians found</h3>
@@ -793,6 +1031,323 @@ const GuardiansPage = () => {
           />
         )}
       </div>
+
+      {isAdmin() && (
+        <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2">
+          {showQuickActions && (
+            <div className="rounded-lg border border-border bg-card shadow-lg overflow-hidden">
+              <button
+                onClick={() => {
+                  setShowLegacyQuick(true);
+                  setShowQuickActions(false);
+                }}
+                className="block w-full px-4 py-2 text-left text-sm text-foreground hover:bg-muted"
+              >
+                Legacy balance
+              </button>
+              <button
+                onClick={() => {
+                  setShowAccountLogs(true);
+                  setAccountLogs([]);
+                  setAccountLogsError('');
+                  setShowQuickActions(false);
+                }}
+                className="block w-full px-4 py-2 text-left text-sm text-foreground hover:bg-muted"
+              >
+                Account history
+              </button>
+            </div>
+          )}
+          <button
+            onClick={() => setShowQuickActions((prev) => !prev)}
+            className="h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 flex items-center justify-center text-2xl"
+            title="Quick actions"
+          >
+            +
+          </button>
+        </div>
+      )}
+
+      {isAdmin() && showLegacyQuick && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-lg border border-border bg-card p-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-foreground">Legacy balance invoice</h3>
+              <button
+                onClick={() => setShowLegacyQuick(false)}
+                className="icon-button icon-button--muted"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={legacyQuickSearch}
+                  onFocus={() => setShowLegacyOptions(true)}
+                  onBlur={() => setTimeout(() => setShowLegacyOptions(false), 120)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setLegacyQuickSearch(value);
+                    const resolved = resolveGuardianIdFromInput(value, guardians || []);
+                    if (resolved) setLegacyQuickGuardianId(resolved);
+                    setShowLegacyOptions(true);
+                  }}
+                  placeholder="Search or select guardian (name, email, ID)"
+                  className="h-9 w-full rounded-md border border-border bg-input px-3 text-sm text-foreground"
+                />
+                {showLegacyOptions && filteredLegacyGuardians.length > 0 && (
+                  <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-card shadow-lg">
+                    {filteredLegacyGuardians.map((g) => (
+                      <button
+                        key={g._id}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setLegacyQuickGuardianId(g._id);
+                          setLegacyQuickSearch(guardianOptionValue(g));
+                          setShowLegacyOptions(false);
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm text-foreground hover:bg-muted"
+                      >
+                        {guardianOptionValue(g)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {selectedLegacyGuardian && (() => {
+                const legacyDraft = legacyDrafts[selectedLegacyGuardian._id] || {};
+                const preview = legacyDraft.preview;
+                return (
+                  <div className="rounded-md border border-border bg-muted/30 p-3">
+                    <div className="text-sm font-medium text-foreground">
+                      {selectedLegacyGuardian.firstName} {selectedLegacyGuardian.lastName}
+                    </div>
+                    <div className="text-xs text-muted-foreground">{selectedLegacyGuardian.email}</div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <input
+                        type="number"
+                        step="0.25"
+                        value={legacyDraft.legacyHours ?? ''}
+                        onChange={(e) => setLegacyDraftValue(selectedLegacyGuardian._id, { legacyHours: e.target.value })}
+                        placeholder="Legacy hours (e.g. -2.5)"
+                        className="h-8 w-44 rounded-md border border-border bg-input px-2 text-xs text-foreground"
+                      />
+                      <input
+                        type="date"
+                        value={legacyDraft.legacyStart ?? ''}
+                        onChange={(e) => setLegacyDraftValue(selectedLegacyGuardian._id, { legacyStart: e.target.value })}
+                        className="h-8 rounded-md border border-border bg-input px-2 text-xs text-foreground"
+                      />
+                      <input
+                        type="date"
+                        value={legacyDraft.legacyEnd ?? ''}
+                        onChange={(e) => setLegacyDraftValue(selectedLegacyGuardian._id, { legacyEnd: e.target.value })}
+                        className="h-8 rounded-md border border-border bg-input px-2 text-xs text-foreground"
+                      />
+                      <button
+                        onClick={() => handlePreviewLegacyInvoice(selectedLegacyGuardian)}
+                        disabled={legacyDraft.loading}
+                        className="h-8 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-60"
+                      >
+                        {legacyDraft.loading ? 'Previewing...' : 'Preview invoice'}
+                      </button>
+                      <button
+                        onClick={() => handleCreateLegacyInvoice(selectedLegacyGuardian)}
+                        disabled={legacyDraft.creating}
+                        className="h-8 rounded-md border border-border bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                      >
+                        {legacyDraft.creating ? 'Creating...' : 'Apply & create invoice'}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Leave hours empty if already applied. Dates optional (defaults to pre-migration period).
+                    </p>
+                    {preview && (
+                      <div className="mt-2 text-xs text-foreground">
+                        <span className="font-medium">Preview:</span>{' '}
+                        current {preview.currentHours ?? 0}h → projected {preview.projectedHours ?? preview.currentHours}h, owed {preview.owedHours ?? 0}h, amount ${preview.amount ?? 0}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isAdmin() && showAccountLogs && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-2xl rounded-lg border border-border bg-card p-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-foreground">Account history</h3>
+              <button
+                onClick={() => setShowAccountLogs(false)}
+                className="icon-button icon-button--muted"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={accountLogSearch}
+                  onFocus={() => setShowAccountOptions(true)}
+                  onBlur={() => setTimeout(() => setShowAccountOptions(false), 120)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setAccountLogSearch(value);
+                    setAccountLogQuery(value);
+                    const resolved = resolveGuardianIdFromInput(value, guardians || []);
+                    if (resolved) setAccountLogGuardianId(resolved);
+                    setShowAccountOptions(true);
+                  }}
+                  placeholder="Search or select guardian (name, email, ID)"
+                  className="h-9 w-full rounded-md border border-border bg-input px-3 text-sm text-foreground"
+                />
+                {showAccountOptions && filteredAccountGuardians.length > 0 && (
+                  <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-card shadow-lg">
+                    {filteredAccountGuardians.map((g) => (
+                      <button
+                        key={g._id}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setAccountLogGuardianId(g._id);
+                          setAccountLogSearch(guardianOptionValue(g));
+                          setAccountLogQuery(guardianOptionValue(g));
+                          setShowAccountOptions(false);
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm text-foreground hover:bg-muted"
+                      >
+                        {guardianOptionValue(g)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+                {selectedAccountGuardian && (
+                <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-foreground">
+                  <div className="font-medium">
+                    {selectedAccountGuardian.firstName} {selectedAccountGuardian.lastName}
+                  </div>
+                  <div>{selectedAccountGuardian.email}</div>
+                  <div>ID: {selectedAccountGuardian._id}</div>
+                </div>
+              )}
+
+              {accountLogsError && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+                  {accountLogsError}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={loadAccountLogs}
+                  disabled={accountLogsLoading}
+                  className="h-8 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-60"
+                >
+                  {accountLogsLoading ? 'Loading…' : 'Load logs'}
+                </button>
+                <button
+                  onClick={downloadAccountLogs}
+                  disabled={!accountLogs || accountLogs.length === 0}
+                  className="h-8 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-60 inline-flex items-center gap-1"
+                >
+                  <DownloadCloud className="h-3.5 w-3.5" />
+                  Download CSV
+                </button>
+              </div>
+
+              <div className="max-h-[360px] overflow-auto rounded-md border border-border">
+                {accountLogsLoading && accountLogs.length === 0 ? (
+                  <div className="p-3 text-xs text-muted-foreground">Loading logs…</div>
+                ) : accountLogs.length === 0 ? (
+                  <div className="p-3 text-xs text-muted-foreground">No logs loaded yet.</div>
+                ) : (
+                  <ul className="divide-y divide-border">
+                    {accountLogs.map((log, idx) => (
+                      <li key={`${log.timestamp || 't'}-${idx}`} className="p-3 text-xs">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-foreground">
+                            {log.action || 'event'}
+                          </span>
+                          <span className="text-muted-foreground">{log.source || 'system'}</span>
+                          <span className="text-muted-foreground">
+                            {log.timestamp ? formatDateDDMMMYYYY(log.timestamp) : ''}
+                          </span>
+                          {log.invoiceNumber && (
+                            <span className="text-muted-foreground">Invoice {log.invoiceNumber}</span>
+                          )}
+                          {log.billingPeriod?.startDate && log.billingPeriod?.endDate && (
+                            <span className="text-muted-foreground">
+                              {formatDateDDMMMYYYY(log.billingPeriod.startDate)} → {formatDateDDMMMYYYY(log.billingPeriod.endDate)}
+                            </span>
+                          )}
+                        </div>
+                        {log.message && (
+                          <div className="mt-1 text-muted-foreground">{log.message}</div>
+                        )}
+                        {(log.amount || log.hours) && (
+                          <div className="mt-1 text-muted-foreground">
+                            {log.amount ? `Amount: ${log.amount}` : ''}
+                            {log.amount && log.hours ? ' • ' : ''}
+                            {log.hours ? `Hours: ${log.hours}` : ''}
+                          </div>
+                        )}
+                        {log.actorName && (
+                          <div className="mt-1 text-muted-foreground">By: {log.actorName}</div>
+                        )}
+                        {(log.balanceBefore !== undefined || log.balanceAfter !== undefined) && (
+                          <div className="mt-1 text-muted-foreground">
+                            Balance: {log.balanceBefore ?? '-'} → {log.balanceAfter ?? '-'} {log.balanceNote ? `(${log.balanceNote})` : ''}
+                          </div>
+                        )}
+                        {log.reason && (
+                          <div className="mt-1 text-muted-foreground">Reason: {log.reason}</div>
+                        )}
+                        {Array.isArray(log.classEntries) && log.classEntries.length > 0 && (
+                          <div className="mt-2 rounded-md border border-border bg-background/60 p-2 text-muted-foreground">
+                            <div className="text-[11px] font-medium uppercase tracking-wide text-foreground">
+                              Classes ({log.classEntries.length}
+                              {log.classCount && log.classCount > log.classEntries.length ? ` of ${log.classCount}` : ''})
+                            </div>
+                            <ul className="mt-1 space-y-1">
+                              {log.classEntries.map((entry, entryIndex) => (
+                                <li key={`${log.timestamp || 'log'}-class-${entryIndex}`} className="flex flex-wrap gap-2">
+                                  <span>{entry.date ? formatDateDDMMMYYYY(entry.date) : 'Date N/A'}</span>
+                                  {entry.studentName && <span>Student: {entry.studentName}</span>}
+                                  {entry.teacherName && <span>Teacher: {entry.teacherName}</span>}
+                                  {entry.hours ? <span>{entry.hours}h</span> : null}
+                                  {entry.status ? <span>Status: {entry.status}</span> : null}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {log.success === false && (
+                          <div className="mt-1 text-destructive">Failed</div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

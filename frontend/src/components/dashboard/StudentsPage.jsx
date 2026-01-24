@@ -37,6 +37,7 @@ import {
 import api from '../../api/axios';
 import EditStudentModal from '../students/EditStudentModal';
 import LoadingSpinner from '../ui/LoadingSpinner';
+import useMinLoading from '../ui/useMinLoading';
 
 const STUDENT_STATUS_TABS = [
   { id: 'active', label: 'Active' },
@@ -63,6 +64,7 @@ const StudentsPage = () => {
   const navigate = useNavigate();
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const showLoading = useMinLoading(loading);
   const [error, setError] = useState('');
   const location = useLocation();
 
@@ -771,9 +773,9 @@ const StudentsPage = () => {
         </div>
 
         {/* Students List */}
-        {loading && sortedStudents.length === 0 ? (
+        {showLoading && sortedStudents.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
-            <LoadingSpinner text="Loading students…" />
+            <LoadingSpinner />
             {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
           </div>
         ) : null}
@@ -1178,7 +1180,7 @@ const StudentsPage = () => {
         )}
 
         {/* Empty State */}
-        {!loading && sortedStudents.length === 0 && (
+        {!showLoading && sortedStudents.length === 0 && (
           <div className="text-center py-12">
             <Baby className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">No students found</h3>

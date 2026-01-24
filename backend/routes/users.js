@@ -600,6 +600,259 @@ router.post('/admin/guardians/:guardianId/recompute-hours', [
 });
 
 /**
+ * Admin: Fetch account audit logs (on-demand)
+ * POST /api/users/admin/account-logs
+ * Body: { userId?: string, email?: string, userIdOrEmail?: string, limit?: number, includeClasses?: boolean, classLimit?: number }
+ */
+router.post('/admin/account-logs', [
+  authenticateToken,
+  requireAdmin,
+], async (req, res) => {
+  try {
+    const { userId, email, userIdOrEmail, limit, includeClasses, classLimit } = req.body || {};
+    const maxLimit = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 1000);
+    const includeClassEntries = includeClasses === true || String(includeClasses).toLowerCase() === 'true';
+    const maxClassLimit = Math.min(Math.max(parseInt(classLimit, 10) || 50, 1), 500);
+
+    const normalizeName = (userLike = {}) => {
+      const name = `${userLike.firstName || ''} ${userLike.lastName || ''}`.trim();
+      if (name) return name;
+      return userLike.email || 'Unknown';
+    };
+
+    const buildClassEntries = (items = []) => {
+      if (!includeClassEntries || !Array.isArray(items) || items.length === 0) {
+        return { classEntries: [], classCount: Array.isArray(items) ? items.length : 0, classTruncated: false };
+      }
+      const limited = items.slice(0, maxClassLimit);
+      const classEntries = limited.map((item) => {
+        const studentName = item?.studentSnapshot
+          ? `${item.studentSnapshot.firstName || ''} ${item.studentSnapshot.lastName || ''}`.trim()
+          : '';
+        const teacherName = item?.teacherSnapshot
+          ? `${item.teacherSnapshot.firstName || ''} ${item.teacherSnapshot.lastName || ''}`.trim()
+          : '';
+        const durationMinutes = Number(item?.duration || 0) || 0;
+        const hours = Math.round((durationMinutes / 60) * 1000) / 1000;
+
+        return {
+          date: item?.date || null,
+          status: item?.status || item?.attendanceStatus || null,
+          duration: durationMinutes,
+          hours,
+          description: item?.description || null,
+          studentName: studentName || null,
+          teacherName: teacherName || null,
+        };
+      });
+      return {
+        classEntries,
+        classCount: items.length,
+        classTruncated: items.length > limited.length
+      };
+    };
+
+    let user = null;
+    const resolveUserIdOrEmail = async (value) => {
+      if (!value) return null;
+      const trimmed = String(value).trim();
+      if (!trimmed) return null;
+      if (mongoose.Types.ObjectId.isValid(trimmed)) {
+        return await User.findById(trimmed).select('firstName lastName email role');
+      }
+      if (trimmed.includes('@')) {
+        return await User.findOne({ email: trimmed.toLowerCase() }).select('firstName lastName email role');
+      }
+      return null;
+    };
+
+    if (userIdOrEmail) {
+      user = await resolveUserIdOrEmail(userIdOrEmail);
+    }
+    if (!user && userId && mongoose.Types.ObjectId.isValid(String(userId))) {
+      user = await User.findById(userId).select('firstName lastName email role');
+    } else if (!user && email) {
+      user = await User.findOne({ email: String(email).trim().toLowerCase() }).select('firstName lastName email role');
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const logs = [];
+
+    // Manual hours audit logs (guardian hours)
+    const hoursLogs = await GuardianHoursAudit.find({ entityType: 'User', entityId: user._id })
+      .sort({ timestamp: -1 })
+      .limit(maxLimit)
+      .lean();
+
+    const actorIds = new Set();
+
+    (hoursLogs || []).forEach((entry) => {
+      const beforeHoursRaw = Number(entry?.before?.totalHours);
+      const afterHoursRaw = Number(entry?.after?.totalHours);
+      const beforeHours = Number.isFinite(beforeHoursRaw) ? Math.round(beforeHoursRaw * 1000) / 1000 : undefined;
+      const afterHours = Number.isFinite(afterHoursRaw) ? Math.round(afterHoursRaw * 1000) / 1000 : undefined;
+      if (entry.actor) actorIds.add(String(entry.actor));
+      logs.push({
+        timestamp: entry.timestamp || entry.createdAt || new Date(),
+        source: 'guardian-hours',
+        action: entry.action,
+        success: entry.success !== false,
+        reason: entry.reason || null,
+        before: entry.before || null,
+        after: entry.after || null,
+        balanceBefore: beforeHours,
+        balanceAfter: afterHours,
+        balanceNote: beforeHours !== undefined || afterHours !== undefined ? 'guardian hours' : undefined,
+        metadata: entry.metadata || null,
+        message: entry.reason || 'Manual hours adjustment',
+        actorId: entry.actor || null,
+      });
+    });
+
+    // Invoice-related logs for guardians and teachers
+    if (user.role === 'guardian' || user.role === 'teacher') {
+      const invoiceFilter = user.role === 'guardian'
+        ? { guardian: user._id, deleted: { $ne: true } }
+        : { teacher: user._id, deleted: { $ne: true } };
+
+      const invoiceSelect = [
+        'invoiceNumber',
+        'invoiceSlug',
+        'status',
+        'total',
+        'hoursCovered',
+        'createdAt',
+        'updatedAt',
+        'paidDate',
+        'paymentLogs',
+        'activityLog',
+        'billingPeriod',
+        'generationSource',
+        'notes',
+        'type',
+        'items'
+      ];
+
+      if (!includeClassEntries) {
+        const idx = invoiceSelect.indexOf('items');
+        if (idx >= 0) invoiceSelect.splice(idx, 1);
+      }
+
+      const invoices = await Invoice.find(invoiceFilter)
+        .select(invoiceSelect.join(' '))
+        .limit(maxLimit)
+        .lean();
+
+      (invoices || []).forEach((inv) => {
+        const classMeta = buildClassEntries(inv.items || []);
+        const hoursCoveredRaw = Number(inv.hoursCovered || 0);
+        const hoursCovered = Number.isFinite(hoursCoveredRaw) ? Math.round(hoursCoveredRaw * 1000) / 1000 : undefined;
+        const invoiceBase = {
+          invoiceNumber: inv.invoiceNumber,
+          amount: inv.total,
+          hours: hoursCovered,
+          billingPeriod: inv.billingPeriod || null,
+          generationSource: inv.generationSource || null,
+          reason: inv.generationSource === 'legacy-balance'
+            ? 'Legacy balance invoice'
+            : (inv.notes || null),
+          ...classMeta,
+        };
+
+        if (inv.createdAt) {
+          logs.push({
+            timestamp: inv.createdAt,
+            source: 'invoice',
+            action: 'invoice_created',
+            success: true,
+            message: inv.generationSource === 'legacy-balance'
+              ? `Legacy balance invoice ${inv.invoiceNumber} created`
+              : `Invoice ${inv.invoiceNumber} created`,
+            ...invoiceBase
+          });
+        }
+
+        const activityLog = Array.isArray(inv.activityLog) ? inv.activityLog : [];
+        activityLog.forEach((a) => {
+          if (a?.actor) actorIds.add(String(a.actor));
+          logs.push({
+            timestamp: a.at || inv.updatedAt || inv.createdAt,
+            source: 'invoice',
+            action: a.action || 'invoice_update',
+            success: true,
+            message: a.note || `Invoice ${inv.invoiceNumber} updated`,
+            actorId: a.actor || null,
+            ...invoiceBase
+          });
+        });
+
+        const paymentLogs = Array.isArray(inv.paymentLogs) ? inv.paymentLogs : [];
+        paymentLogs.forEach((p) => {
+          const balanceBefore = Number.isFinite(Number(p?.snapshot?.guardianBalanceBefore))
+            ? Math.round(Number(p.snapshot.guardianBalanceBefore) * 1000) / 1000
+            : undefined;
+          const balanceAfter = Number.isFinite(Number(p?.snapshot?.guardianBalanceAfter))
+            ? Math.round(Number(p.snapshot.guardianBalanceAfter) * 1000) / 1000
+            : undefined;
+          if (p?.processedBy) actorIds.add(String(p.processedBy));
+          logs.push({
+            timestamp: p.processedAt || inv.paidDate || inv.updatedAt || inv.createdAt,
+            source: 'payment',
+            action: p.method || 'payment',
+            success: true,
+            ...invoiceBase,
+            note: p.note || null,
+            message: `Payment ${p.amount} applied to ${inv.invoiceNumber}`,
+            actorId: p.processedBy || null,
+            amount: p.amount,
+            hours: p.paidHours,
+            balanceBefore,
+            balanceAfter,
+            balanceNote: balanceBefore !== undefined || balanceAfter !== undefined ? 'guardian hours' : undefined,
+            invoiceRemainingBefore: p?.snapshot?.invoiceRemainingBefore ?? undefined,
+            invoiceRemainingAfter: p?.snapshot?.invoiceRemainingAfter ?? undefined,
+          });
+        });
+      });
+    }
+
+    if (actorIds.size > 0) {
+      const actorDocs = await User.find({ _id: { $in: Array.from(actorIds) } })
+        .select('firstName lastName email')
+        .lean();
+      const actorMap = (actorDocs || []).reduce((acc, doc) => {
+        acc[String(doc._id)] = normalizeName(doc);
+        return acc;
+      }, {});
+      logs.forEach((log) => {
+        if (log.actorId && actorMap[log.actorId]) {
+          log.actorName = actorMap[log.actorId];
+        }
+        delete log.actorId;
+      });
+    }
+
+    logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    return res.json({
+      user: {
+        id: user._id,
+        name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+        email: user.email,
+        role: user.role
+      },
+      logs: logs.slice(0, maxLimit)
+    });
+  } catch (error) {
+    console.error('Account logs error:', error);
+    return res.status(500).json({ message: 'Failed to fetch account logs', error: error.message });
+  }
+});
+
+/**
  * Admin: Adjust guardian student hours reliably
  * POST /api/users/admin/guardians/:guardianId/students/:studentId/hours
  * Body: { action: 'add'|'subtract'|'set', hours: number }

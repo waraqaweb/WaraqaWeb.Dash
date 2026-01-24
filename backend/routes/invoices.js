@@ -10,11 +10,34 @@ const { buildGuardianFinancialSnapshot } = require('../utils/guardianFinancial')
 const { extractSequenceFromName, ensureSequenceAtLeast, formatSequence } = require('../utils/invoiceNaming');
 const { allocateNextSequence, buildInvoiceIdentifiers } = require('../utils/invoiceNaming');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const GuardianHoursAudit = require('../models/GuardianHoursAudit');
 
 const roundCurrency = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return 0;
   return Math.round(numeric * 100) / 100;
+};
+
+const roundHours = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.round(numeric * 1000) / 1000;
+};
+
+const parseLegacyDate = (value, fallback) => {
+  if (!value) return fallback;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? fallback : d;
+};
+
+const resolveGuardianByRef = async ({ guardianId, guardianEmail }) => {
+  if (guardianId && mongoose.Types.ObjectId.isValid(String(guardianId))) {
+    return await User.findById(guardianId);
+  }
+  if (guardianEmail) {
+    return await User.findOne({ email: String(guardianEmail).trim().toLowerCase(), role: 'guardian' });
+  }
+  return null;
 };
 
 // Ensure every invoice fetch returns consistent class metadata for filtering
@@ -711,6 +734,190 @@ router.get('/', authenticateToken, async (req, res) => {
       message: 'Failed to fetch invoices',
       error: err.message
     });
+  }
+});
+
+// -----------------------------
+// Legacy balance invoice (admin only)
+// Preview: calculates owed hours/amount without changes
+// Create: optional legacy hours add + create manual invoice (past period)
+// -----------------------------
+router.post('/admin/legacy-balance/preview', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { guardianId, guardianEmail, legacyHours } = req.body || {};
+
+    const guardian = await resolveGuardianByRef({ guardianId, guardianEmail });
+    if (!guardian || guardian.role !== 'guardian') {
+      return res.status(404).json({ success: false, message: 'Guardian not found' });
+    }
+
+    const currentHours = Number(guardian.guardianInfo?.totalHours || 0) || 0;
+    const legacyHoursValue = legacyHours === '' || legacyHours === null || typeof legacyHours === 'undefined'
+      ? 0
+      : Number(legacyHours);
+    if (!Number.isFinite(legacyHoursValue)) {
+      return res.status(400).json({ success: false, message: 'Invalid legacyHours value' });
+    }
+
+    const projectedHours = roundHours(currentHours + legacyHoursValue);
+    const owedHours = roundHours(Math.max(0, -projectedHours));
+    const rate = Number(guardian.guardianInfo?.hourlyRate || 10);
+    const amount = roundCurrency(owedHours * (Number.isFinite(rate) ? rate : 0));
+
+    return res.json({
+      success: true,
+      guardianId: guardian._id,
+      guardianEmail: guardian.email,
+      currentHours,
+      legacyHoursApplied: legacyHoursValue,
+      projectedHours,
+      owedHours,
+      rate: Number.isFinite(rate) ? rate : 0,
+      amount
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Preview failed', error: err.message });
+  }
+});
+
+router.post('/admin/legacy-balance/create', authenticateToken, requireAdmin, async (req, res) => {
+  let beforeSnapshot = null;
+  let afterSnapshot = null;
+  try {
+    const { guardianId, guardianEmail, legacyHours, legacyStart, legacyEnd } = req.body || {};
+
+    const guardian = await resolveGuardianByRef({ guardianId, guardianEmail });
+    if (!guardian || guardian.role !== 'guardian') {
+      return res.status(404).json({ success: false, message: 'Guardian not found' });
+    }
+
+    const legacyHoursValue = legacyHours === '' || legacyHours === null || typeof legacyHours === 'undefined'
+      ? 0
+      : Number(legacyHours);
+    if (!Number.isFinite(legacyHoursValue)) {
+      return res.status(400).json({ success: false, message: 'Invalid legacyHours value' });
+    }
+
+    // Optional: apply legacy hours directly to guardian balance (add only)
+    if (legacyHoursValue !== 0) {
+      const currentHours = Number(guardian.guardianInfo?.totalHours || 0) || 0;
+      beforeSnapshot = {
+        guardianId: guardian._id,
+        totalHours: roundHours(currentHours),
+        autoTotalHours: guardian.guardianInfo?.autoTotalHours ?? true,
+      };
+
+      guardian.guardianInfo = guardian.guardianInfo || {};
+      guardian.guardianInfo.autoTotalHours = false;
+      guardian.guardianInfo.totalHours = roundHours(currentHours + legacyHoursValue);
+      await guardian.save();
+
+      afterSnapshot = {
+        guardianId: guardian._id,
+        totalHours: guardian.guardianInfo.totalHours,
+        autoTotalHours: guardian.guardianInfo.autoTotalHours,
+      };
+
+      try {
+        const GuardianModel = require('../models/Guardian');
+        const guardianModel = await GuardianModel.findOne({ user: guardian._id });
+        if (guardianModel) {
+          guardianModel.totalRemainingMinutes = Math.max(0, Math.round((Number(guardian.guardianInfo.totalHours || 0) || 0) * 60));
+          await guardianModel.save();
+        }
+      } catch (syncErr) {
+        console.warn('Legacy balance: failed to sync Guardian model', syncErr && syncErr.message);
+      }
+
+      try {
+        await GuardianHoursAudit.logAction({
+          action: 'hours_manual_adjust',
+          entityType: 'User',
+          entityId: guardian._id,
+          actor: req.user?.id || null,
+          actorRole: 'admin',
+          actorIP: req.ip,
+          actorUserAgent: req.get('user-agent'),
+          before: beforeSnapshot,
+          after: afterSnapshot,
+          reason: 'Legacy hours import',
+          metadata: { requestedAction: 'add', requestedHours: legacyHoursValue, source: 'legacy-balance' },
+          success: true,
+        });
+      } catch (auditErr) {
+        console.warn('Legacy balance: audit log failed', auditErr && auditErr.message);
+      }
+    }
+
+    const currentHours = Number(guardian.guardianInfo?.totalHours || 0) || 0;
+    const owedHours = roundHours(Math.max(0, -currentHours));
+    if (owedHours <= 0) {
+      return res.json({ success: true, message: 'No owed hours, nothing created', owedHours, guardianId: guardian._id });
+    }
+
+    const defaultStart = new Date('2025-12-01T00:00:00Z');
+    const defaultEnd = new Date('2025-12-31T23:59:59Z');
+    const start = parseLegacyDate(legacyStart, defaultStart);
+    const end = parseLegacyDate(legacyEnd, defaultEnd);
+    const rate = Number(guardian.guardianInfo?.hourlyRate || 10);
+    const amount = roundCurrency(owedHours * (Number.isFinite(rate) ? rate : 0));
+
+    const existing = await Invoice.findOne({
+      guardian: guardian._id,
+      generationSource: 'legacy-balance',
+      deleted: { $ne: true },
+      'billingPeriod.endDate': end,
+    }).select('_id invoiceNumber status').lean();
+
+    if (existing) {
+      return res.json({
+        success: true,
+        message: 'Legacy invoice already exists for this period',
+        existingInvoiceId: existing._id,
+        owedHours,
+      });
+    }
+
+    const invoice = new Invoice({
+      type: 'guardian_invoice',
+      guardian: guardian._id,
+      billingType: 'manual',
+      generationSource: 'legacy-balance',
+      billingPeriod: {
+        startDate: start,
+        endDate: end,
+        month: start.getMonth() + 1,
+        year: start.getFullYear()
+      },
+      items: [{
+        lessonId: null,
+        class: null,
+        student: null,
+        studentSnapshot: {},
+        teacher: null,
+        description: `Legacy balance settlement: ${owedHours} hour(s)`,
+        date: end,
+        duration: Math.round(owedHours * 60),
+        rate: Number.isFinite(rate) ? rate : 0,
+        amount,
+        attended: false
+      }],
+      subtotal: amount,
+      total: amount,
+      adjustedTotal: amount,
+      status: 'sent',
+      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      notes: 'Legacy balance invoice (pre‑migration hours)',
+      guardianFinancial: buildGuardianFinancialSnapshot(guardian),
+      coverage: { strategy: 'full_period', endDate: end, waiveTransferFee: false }
+    });
+
+    await invoice.ensureIdentifiers({ forceNameRefresh: false });
+    await invoice.save();
+
+    return res.json({ success: true, invoiceId: invoice._id, owedHours, amount, guardianId: guardian._id });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Create failed', error: err.message });
   }
 });
 

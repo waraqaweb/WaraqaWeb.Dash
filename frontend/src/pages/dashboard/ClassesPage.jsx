@@ -15,6 +15,7 @@ import {
   Pencil, Copy, Repeat, Star, FileText, RotateCcw, Globe, MessageCircle, Image,
 } from "lucide-react";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
+import useMinLoading from "../../components/ui/useMinLoading";
 import CopyButton from "../../components/ui/CopyButton";
 import EditClassModal from "../../components/dashboard/EditClassModal";
 import CreateClassModal from "../../components/dashboard/CreateClassModal";
@@ -393,6 +394,7 @@ const ClassesPage = ({ isActive = true }) => {
   const [students, setStudents] = useState([]);
 
   const [loading, setLoading] = useState(true);
+  const showLoading = useMinLoading(loading);
   const [error, setError] = useState("");
   const [sortBy] = useState("scheduledDate");
   const [sortOrder] = useState("asc");
@@ -633,10 +635,10 @@ const ClassesPage = ({ isActive = true }) => {
     subject: "",
     teacher: "",
     student: { guardianId: "", studentId: "", studentName: "" },
-    isRecurring: false,
+    isRecurring: true,
     scheduledDate: "",
-    duration: 60,
-    recurrenceDetails: [{ dayOfWeek: 1, time: "18:00", duration: 60, timezone: adminTimezone }],
+    duration: 30,
+    recurrenceDetails: [{ dayOfWeek: 1, time: "18:00", duration: 30, timezone: adminTimezone }],
     generationPeriodMonths: 2,
     timezone: adminTimezone,
     meetingLink: ""
@@ -1868,13 +1870,18 @@ fetchClassesRef.current = fetchClasses;
     setNewClass(prev => ({
       ...prev,
       recurrenceDetails: [
-        ...prev.recurrenceDetails,
-        {
-          dayOfWeek: 1,
-          time: "18:00",
-          duration: 60,
-          timezone: prev.timezone || adminTimezone
-        }
+        ...(prev.recurrenceDetails || []),
+        (() => {
+          const lastSlot = (prev.recurrenceDetails || [])[prev.recurrenceDetails.length - 1] || {};
+          const lastDay = Number.isInteger(Number(lastSlot.dayOfWeek)) ? Number(lastSlot.dayOfWeek) : 1;
+          const nextDay = (lastDay + 1) % 7;
+          return {
+            dayOfWeek: nextDay,
+            time: lastSlot.time || "18:00",
+            duration: 30,
+            timezone: lastSlot.timezone || prev.timezone || adminTimezone
+          };
+        })()
       ]
     }));
   };
@@ -1939,20 +1946,22 @@ fetchClassesRef.current = fetchClasses;
     const submitPayload = async (payload) => {
       const res = await api.post("/classes", payload);
       if (res.data.message) {
-        setShowCreateModal(false);
-        resetNewClassForm();
         await fetchClasses();
-        alert(newClass.isRecurring ? "Recurring classes created successfully!" : "Class created successfully!");
+        return {
+          success: true,
+          message: newClass.isRecurring ? "Recurring classes created successfully!" : "Class created successfully!"
+        };
       }
+      return { success: false, message: "Failed to create class" };
     };
 
     try {
       const payload = buildPayload();
-      await submitPayload(payload);
+      return await submitPayload(payload);
     } catch (err) {
       if (err?.message === "Recurring classes need at least one weekday.") {
         alert("Recurring classes need at least one weekday.");
-        return;
+        return { success: false, message: "Recurring classes need at least one weekday." };
       }
       const duplicateInfo = err.response?.data?.duplicateSeries;
       if (err.response?.status === 409 && duplicateInfo && newClass.isRecurring) {
@@ -1965,19 +1974,19 @@ Would you like to create another series anyway?`
         if (confirmation) {
           try {
             const overridePayload = { ...buildPayload(), overrideDuplicateSeries: true };
-            await submitPayload(overridePayload);
-            return;
+            return await submitPayload(overridePayload);
           } catch (overrideErr) {
             alert(overrideErr.response?.data?.message || "Error creating class");
             console.error(overrideErr);
-            return;
+            return { success: false, message: overrideErr.response?.data?.message || "Error creating class" };
           }
         }
-        return;
+        return { success: false, message: "Duplicate recurring series" };
       }
 
       alert(err.response?.data?.message || "Error creating class");
       console.error(err);
+      return { success: false, message: err.response?.data?.message || "Error creating class" };
     }
   };
 
@@ -1988,10 +1997,10 @@ Would you like to create another series anyway?`
       subject: "",
       teacher: "",
       student: { guardianId: "", studentId: "", studentName: "" },
-      isRecurring: false,
+      isRecurring: true,
       scheduledDate: "",
-      duration: 60,
-      recurrenceDetails: [{ dayOfWeek: 1, time: "18:00", duration: 60, timezone: adminTimezone }],
+      duration: 30,
+      recurrenceDetails: [{ dayOfWeek: 1, time: "18:00", duration: 30, timezone: adminTimezone }],
       generationPeriodMonths: 2,
       timezone: adminTimezone,
       meetingLink: ""
@@ -2122,13 +2131,18 @@ Would you like to create another series anyway?`
     setEditClass(prev => ({
       ...prev,
       recurrenceDetails: [
-        ...prev.recurrenceDetails,
-        {
-          dayOfWeek: 1,
-          time: "18:00",
-          duration: 60,
-          timezone: prev.timezone || adminTimezone
-        }
+        ...(prev.recurrenceDetails || []),
+        (() => {
+          const lastSlot = (prev.recurrenceDetails || [])[prev.recurrenceDetails.length - 1] || {};
+          const lastDay = Number.isInteger(Number(lastSlot.dayOfWeek)) ? Number(lastSlot.dayOfWeek) : 1;
+          const nextDay = (lastDay + 1) % 7;
+          return {
+            dayOfWeek: nextDay,
+            time: lastSlot.time || "18:00",
+            duration: 30,
+            timezone: lastSlot.timezone || prev.timezone || adminTimezone
+          };
+        })()
       ]
     }));
   };
@@ -2785,7 +2799,13 @@ Would you like to create another series anyway?`
 
   const renderClassesList = () => (
     <div className="space-y-4">
-      {filteredClasses.length === 0 && !loading ? (
+      {showLoading && filteredClasses.length === 0 ? (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
+          <div className="flex items-center justify-center">
+            <LoadingSpinner />
+          </div>
+        </div>
+      ) : filteredClasses.length === 0 ? (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
           <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No classes found</h3>
@@ -3573,7 +3593,7 @@ Would you like to create another series anyway?`
   const canShareMessage = Boolean((shareMessage || "").trim());
   const canWhatsApp = canShareMessage && Boolean(formatPhoneForWhatsApp(recipientPhone));
 
-  if (loading) return <LoadingSpinner />;
+  if (showLoading) return <LoadingSpinner />;
 
 
   return (

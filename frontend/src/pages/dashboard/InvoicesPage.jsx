@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import useMinLoading from '../../components/ui/useMinLoading';
 import PrimaryButton from '../../components/ui/PrimaryButton';
 import Badge from '../../components/ui/Badge';
 import InvoiceViewModal from '../../components/invoices/InvoiceViewModal';
@@ -62,6 +63,7 @@ const InvoicesPage = ({ isActive = true }) => {
   const fetchInvoicesAbortRef = useRef(null);
   const fetchInvoicesRequestIdRef = useRef(0);
   const [loading, setLoading] = useState(true);
+  const showLoading = useMinLoading(loading);
   const [error, setError] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [expandedInvoice, setExpandedInvoice] = useState(null);
@@ -1314,7 +1316,7 @@ const InvoicesPage = ({ isActive = true }) => {
           )}
 
           <div className="mt-6 space-y-4">
-            {loading && displayedInvoices.length === 0 ? (
+            {showLoading && displayedInvoices.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 py-16 text-center text-slate-500">
                 <LoadingSpinner />
                 <p className="text-sm">Loading invoices…</p>

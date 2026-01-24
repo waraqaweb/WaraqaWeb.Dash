@@ -251,7 +251,7 @@ const invoiceSchema = new mongoose.Schema({
   },
   generationSource: {
     type: String,
-    enum: ['auto-monthly', 'auto-payg', 'manual', 'first-lesson'],
+    enum: ['auto-monthly', 'auto-payg', 'manual', 'first-lesson', 'legacy-balance'],
     default: 'manual'
   },
 

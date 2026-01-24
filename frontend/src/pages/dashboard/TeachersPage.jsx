@@ -32,10 +32,13 @@
 				UserCheck,
 				LogIn,
 				Copy,
-				Edit
+					Edit,
+					DownloadCloud,
+					X
 			} from 'lucide-react';
 			import api from '../../api/axios';
 			import LoadingSpinner from '../../components/ui/LoadingSpinner';
+			import useMinLoading from '../../components/ui/useMinLoading';
 			import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 			const TEACHER_STATUS_TABS = [
@@ -58,6 +61,7 @@
 
 			const [teachers, setTeachers] = useState([]);
 			const [loading, setLoading] = useState(true);
+			const showLoading = useMinLoading(loading);
 			const teachersRef = useRef([]);
 			const fetchTeachersInFlightRef = useRef(false);
 			const fetchTeachersKeyRef = useRef('');
@@ -74,6 +78,14 @@
 				const [totalPages, setTotalPages] = useState(1);
 				const itemsPerPage = 30;
 				const [statusCounts, setStatusCounts] = useState({ active: 0, inactive: 0, all: 0 });
+				const [showAccountLogs, setShowAccountLogs] = useState(false);
+				const [accountLogSearch, setAccountLogSearch] = useState('');
+				const [accountLogQuery, setAccountLogQuery] = useState('');
+				const [accountLogTeacherId, setAccountLogTeacherId] = useState('');
+				const [accountLogs, setAccountLogs] = useState([]);
+				const [accountLogsLoading, setAccountLogsLoading] = useState(false);
+				const [accountLogsError, setAccountLogsError] = useState('');
+				const [showAccountOptions, setShowAccountOptions] = useState(false);
 
 				const fetchStatusCounts = async () => {
 					try {
@@ -290,6 +302,121 @@
 					});
 				};
 
+				const teacherOptionLabel = (t) => `${t.firstName || ''} ${t.lastName || ''}`.trim();
+				const teacherOptionValue = (t) => `${teacherOptionLabel(t)} | ${t.email || '-'} | ${t._id}`;
+				const resolveTeacherIdFromInput = (value, list = []) => {
+					const trimmed = String(value || '').trim();
+					if (!trimmed) return '';
+					const direct = list.find((t) => String(t._id) === trimmed);
+					if (direct) return String(direct._id);
+					const match = list.find((t) => teacherOptionValue(t) === trimmed);
+					if (match) return String(match._id);
+					const lower = trimmed.toLowerCase();
+					const fallback = list.find((t) => {
+						const name = teacherOptionLabel(t).toLowerCase();
+						const email = (t.email || '').toLowerCase();
+						const id = String(t._id || '').toLowerCase();
+						return name.includes(lower) || email === lower || id === lower;
+					});
+					return fallback ? String(fallback._id) : '';
+				};
+
+				const filteredAccountTeachers = useMemo(() => {
+					const needle = (accountLogSearch || '').trim().toLowerCase();
+					if (!needle) return teachers || [];
+					return (teachers || []).filter((t) => {
+						const name = teacherOptionLabel(t).toLowerCase();
+						const email = (t.email || '').toLowerCase();
+						const id = String(t._id || '').toLowerCase();
+						return name.includes(needle) || email.includes(needle) || id.includes(needle);
+					});
+				}, [teachers, accountLogSearch]);
+
+				const selectedAccountTeacher = useMemo(() => {
+					if (!accountLogTeacherId) return null;
+					return (teachers || []).find((t) => String(t._id) === String(accountLogTeacherId)) || null;
+				}, [teachers, accountLogTeacherId]);
+
+				const loadAccountLogs = async () => {
+					const query = (accountLogQuery || accountLogSearch || '').trim();
+					if (!selectedAccountTeacher?._id && !query) {
+						setAccountLogsError('Please select a teacher or enter an email/ID');
+						return;
+					}
+					setAccountLogsError('');
+					setAccountLogsLoading(true);
+					try {
+						const { data } = await api.post('/users/admin/account-logs', {
+							userId: selectedAccountTeacher?._id,
+							email: query && query.includes('@') ? query : (selectedAccountTeacher?.email || undefined),
+							userIdOrEmail: query && !query.includes('@') ? query : undefined,
+							limit: 500,
+							includeClasses: true,
+							classLimit: 200,
+						});
+						setAccountLogs(Array.isArray(data?.logs) ? data.logs : []);
+					} catch (err) {
+						console.error('Failed to load account logs', err);
+						setAccountLogsError(err?.response?.data?.message || 'Failed to load account logs');
+					} finally {
+						setAccountLogsLoading(false);
+					}
+				};
+
+				const downloadAccountLogs = () => {
+					if (!accountLogs || accountLogs.length === 0) return;
+					const rows = [
+						[
+							'timestamp',
+							'source',
+							'action',
+							'invoiceNumber',
+							'amount',
+							'hours',
+							'success',
+							'message',
+							'reason',
+							'actorName',
+							'balanceBefore',
+							'balanceAfter',
+							'billingStart',
+							'billingEnd',
+							'classCount',
+							'generationSource'
+						]
+					];
+					accountLogs.forEach((log) => {
+						rows.push([
+							log.timestamp ? new Date(log.timestamp).toISOString() : '',
+							log.source || '',
+							log.action || '',
+							log.invoiceNumber || '',
+							log.amount ?? '',
+							log.hours ?? '',
+							log.success === false ? 'false' : 'true',
+							(log.message || '').replace(/\n/g, ' '),
+							(log.reason || '').replace(/\n/g, ' '),
+							(log.actorName || '').replace(/\n/g, ' '),
+							log.balanceBefore ?? '',
+							log.balanceAfter ?? '',
+							log.billingPeriod?.startDate ? new Date(log.billingPeriod.startDate).toISOString() : '',
+							log.billingPeriod?.endDate ? new Date(log.billingPeriod.endDate).toISOString() : '',
+							log.classCount ?? '',
+							log.generationSource || ''
+						]);
+					});
+					const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+					const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+					const url = URL.createObjectURL(blob);
+					const link = document.createElement('a');
+					link.href = url;
+					link.download = `account-logs-${selectedAccountTeacher?._id || 'teacher'}.csv`;
+					document.body.appendChild(link);
+					link.click();
+					document.body.removeChild(link);
+					URL.revokeObjectURL(url);
+				};
+
 				const filteredTeachers = useMemo(() => {
 					let result = teachers || [];
 
@@ -349,7 +476,7 @@
 					return list;
 				}, [filteredTeachers, sortBy, sortOrder]);
 
-				if (loading && !teachers.length) {
+				if (showLoading && !teachers.length) {
 					return <LoadingSpinner />;
 				}
 
@@ -649,13 +776,28 @@
 								</div>
 							)}
 
-						{!loading && sortedTeachers.length === 0 && (
+							{!showLoading && sortedTeachers.length === 0 && (
 							<div className="text-center py-12">
 								<User className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
 								<h3 className="text-lg font-semibold text-foreground mb-2">No teachers found</h3>
 								<p className="text-muted-foreground">
 									{searchTerm ? 'Try adjusting your search criteria.' : 'No teachers have been registered yet.'}
 								</p>
+							</div>
+						)}
+						{isAdmin() && (
+							<div className="fixed bottom-6 right-6 flex flex-col items-end gap-2">
+								<button
+									onClick={() => {
+										setShowAccountLogs(true);
+										setAccountLogs([]);
+										setAccountLogsError('');
+									}}
+									className="h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 flex items-center justify-center text-2xl"
+									title="Account history"
+								>
+									+
+								</button>
 							</div>
 						)}
 					</div>
@@ -670,6 +812,173 @@
 							setEditingTeacher(null);
 						}}
 					/>
+
+					{isAdmin() && showAccountLogs && (
+						<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+							<div className="w-full max-w-2xl rounded-lg border border-border bg-card p-4 shadow-xl">
+								<div className="flex items-center justify-between">
+									<h3 className="text-lg font-semibold text-foreground">Account history</h3>
+									<button
+										onClick={() => setShowAccountLogs(false)}
+										className="icon-button icon-button--muted"
+										title="Close"
+									>
+										<X className="h-4 w-4" />
+									</button>
+								</div>
+
+								<div className="mt-3 space-y-3">
+									<div className="relative">
+										<input
+											type="text"
+											value={accountLogSearch}
+											onFocus={() => setShowAccountOptions(true)}
+											onBlur={() => setTimeout(() => setShowAccountOptions(false), 120)}
+											onChange={(e) => {
+												const value = e.target.value;
+												setAccountLogSearch(value);
+												setAccountLogQuery(value);
+												const resolved = resolveTeacherIdFromInput(value, teachers || []);
+												if (resolved) setAccountLogTeacherId(resolved);
+												setShowAccountOptions(true);
+											}}
+											placeholder="Search or select teacher (name, email, ID)"
+											className="h-9 w-full rounded-md border border-border bg-input px-3 text-sm text-foreground"
+										/>
+										{showAccountOptions && filteredAccountTeachers.length > 0 && (
+											<div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-card shadow-lg">
+												{filteredAccountTeachers.map((t) => (
+													<button
+														key={t._id}
+														type="button"
+														onMouseDown={(e) => {
+															e.preventDefault();
+															setAccountLogTeacherId(t._id);
+															setAccountLogSearch(teacherOptionValue(t));
+															setAccountLogQuery(teacherOptionValue(t));
+															setShowAccountOptions(false);
+														}}
+														className="block w-full px-3 py-2 text-left text-sm text-foreground hover:bg-muted"
+													>
+														{teacherOptionValue(t)}
+													</button>
+												))}
+											</div>
+										)}
+									</div>
+
+									{selectedAccountTeacher && (
+										<div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-foreground">
+											<div className="font-medium">
+												{selectedAccountTeacher.firstName} {selectedAccountTeacher.lastName}
+											</div>
+											<div>{selectedAccountTeacher.email}</div>
+											<div>ID: {selectedAccountTeacher._id}</div>
+										</div>
+									)}
+
+									{accountLogsError && (
+										<div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+											{accountLogsError}
+										</div>
+									)}
+
+									<div className="flex flex-wrap items-center gap-2">
+										<button
+											onClick={loadAccountLogs}
+											disabled={accountLogsLoading}
+											className="h-8 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-60"
+										>
+											{accountLogsLoading ? 'Loading…' : 'Load logs'}
+										</button>
+										<button
+											onClick={downloadAccountLogs}
+											disabled={!accountLogs || accountLogs.length === 0}
+											className="h-8 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-60 inline-flex items-center gap-1"
+										>
+											<DownloadCloud className="h-3.5 w-3.5" />
+											Download CSV
+										</button>
+									</div>
+
+									<div className="max-h-[360px] overflow-auto rounded-md border border-border">
+										{accountLogsLoading && accountLogs.length === 0 ? (
+											<div className="p-3 text-xs text-muted-foreground">Loading logs…</div>
+										) : accountLogs.length === 0 ? (
+											<div className="p-3 text-xs text-muted-foreground">No logs loaded yet.</div>
+										) : (
+											<ul className="divide-y divide-border">
+												{accountLogs.map((log, idx) => (
+													<li key={`${log.timestamp || 't'}-${idx}`} className="p-3 text-xs">
+														<div className="flex flex-wrap items-center gap-2">
+															<span className="font-medium text-foreground">
+																{log.action || 'event'}
+															</span>
+															<span className="text-muted-foreground">{log.source || 'system'}</span>
+															<span className="text-muted-foreground">
+																{log.timestamp ? formatDateDDMMMYYYY(log.timestamp) : ''}
+															</span>
+															{log.invoiceNumber && (
+																<span className="text-muted-foreground">Invoice {log.invoiceNumber}</span>
+															)}
+															{log.billingPeriod?.startDate && log.billingPeriod?.endDate && (
+																<span className="text-muted-foreground">
+																	{formatDateDDMMMYYYY(log.billingPeriod.startDate)} → {formatDateDDMMMYYYY(log.billingPeriod.endDate)}
+																</span>
+															)}
+														</div>
+														{log.message && (
+															<div className="mt-1 text-muted-foreground">{log.message}</div>
+														)}
+														{(log.amount || log.hours) && (
+															<div className="mt-1 text-muted-foreground">
+																{log.amount ? `Amount: ${log.amount}` : ''}
+																{log.amount && log.hours ? ' • ' : ''}
+																{log.hours ? `Hours: ${log.hours}` : ''}
+															</div>
+														)}
+														{log.actorName && (
+															<div className="mt-1 text-muted-foreground">By: {log.actorName}</div>
+														)}
+														{(log.balanceBefore !== undefined || log.balanceAfter !== undefined) && (
+															<div className="mt-1 text-muted-foreground">
+																Balance: {log.balanceBefore ?? '-'} → {log.balanceAfter ?? '-'} {log.balanceNote ? `(${log.balanceNote})` : ''}
+															</div>
+														)}
+														{log.reason && (
+															<div className="mt-1 text-muted-foreground">Reason: {log.reason}</div>
+														)}
+														{Array.isArray(log.classEntries) && log.classEntries.length > 0 && (
+															<div className="mt-2 rounded-md border border-border bg-background/60 p-2 text-muted-foreground">
+																<div className="text-[11px] font-medium uppercase tracking-wide text-foreground">
+																	Classes ({log.classEntries.length}
+																	{log.classCount && log.classCount > log.classEntries.length ? ` of ${log.classCount}` : ''})
+																</div>
+																<ul className="mt-1 space-y-1">
+																	{log.classEntries.map((entry, entryIndex) => (
+																		<li key={`${log.timestamp || 'log'}-class-${entryIndex}`} className="flex flex-wrap gap-2">
+																			<span>{entry.date ? formatDateDDMMMYYYY(entry.date) : 'Date N/A'}</span>
+																			{entry.studentName && <span>Student: {entry.studentName}</span>}
+																			{entry.teacherName && <span>Teacher: {entry.teacherName}</span>}
+																			{entry.hours ? <span>{entry.hours}h</span> : null}
+																			{entry.status ? <span>Status: {entry.status}</span> : null}
+																		</li>
+																	))}
+																</ul>
+															</div>
+														)}
+														{log.success === false && (
+															<div className="mt-1 text-destructive">Failed</div>
+														)}
+													</li>
+												))}
+											</ul>
+										)}
+									</div>
+								</div>
+							</div>
+						</div>
+					)}
 				</div>
 			);
 		};			export default TeachersPage;

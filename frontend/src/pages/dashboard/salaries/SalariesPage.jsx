@@ -11,6 +11,7 @@ import SalaryEditModal from "./SalaryEditModal";
 import SalaryCreateModal from "./SalaryCreateModal";
 import PrimaryButton from '../../../components/ui/PrimaryButton';
 import LoadingSpinner from '../../../components/ui/LoadingSpinner';
+import useMinLoading from '../../../components/ui/useMinLoading';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
 const SalariesPage = () => {
@@ -21,6 +22,7 @@ const SalariesPage = () => {
   const [salaries, setSalaries] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const showLoading = useMinLoading(loading);
   const salariesRef = useRef([]);
   const fetchSalariesInFlightRef = useRef(false);
   const fetchSalariesKeyRef = useRef('');
@@ -266,7 +268,7 @@ const SalariesPage = () => {
 
         <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-black/5">
           <div className="mt-2 space-y-4">
-            {loading && visibleSalaries.length === 0 ? (
+            {showLoading && visibleSalaries.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 py-16 text-center text-slate-500">
                 <LoadingSpinner />
                 <p className="text-sm">Fetching salary records…</p>

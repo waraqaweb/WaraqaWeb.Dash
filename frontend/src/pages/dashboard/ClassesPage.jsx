@@ -3593,7 +3593,7 @@ Would you like to create another series anyway?`
   const canShareMessage = Boolean((shareMessage || "").trim());
   const canWhatsApp = canShareMessage && Boolean(formatPhoneForWhatsApp(recipientPhone));
 
-  if (showLoading) return <LoadingSpinner />;
+  // keep page chrome mounted; show loader inside content sections instead
 
 
   return (

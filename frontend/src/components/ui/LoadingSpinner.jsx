@@ -6,7 +6,7 @@
 
 import React from 'react';
 
-const LoadingSpinner = ({ size = 'md', text = 'Loading...', fullScreen = false }) => {
+const LoadingSpinner = ({ size = 'md',  fullScreen = false }) => {
   const sizeClasses = {
     sm: 'max-w-[180px]',
     md: 'max-w-[260px]',

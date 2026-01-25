@@ -88,6 +88,10 @@ const GuardiansPage = () => {
   const [accountLogs, setAccountLogs] = useState([]);
   const [accountLogsLoading, setAccountLogsLoading] = useState(false);
   const [accountLogsError, setAccountLogsError] = useState('');
+  const [expandedLogEntries, setExpandedLogEntries] = useState({});
+  const [logActionModal, setLogActionModal] = useState({ open: false, log: null, action: '' });
+  const [logActionConfirm, setLogActionConfirm] = useState('');
+  const [logActionLoading, setLogActionLoading] = useState(false);
   const showLoading = useMinLoading(loading);
 
   const fetchStatusCounts = useCallback(async () => {
@@ -461,7 +465,7 @@ const GuardiansPage = () => {
         userIdOrEmail: query && !query.includes('@') ? query : undefined,
         limit: 500,
         includeClasses: true,
-        classLimit: 200,
+        classLimit: 500,
       });
       setAccountLogs(Array.isArray(data?.logs) ? data.logs : []);
     } catch (err) {
@@ -469,6 +473,62 @@ const GuardiansPage = () => {
       setAccountLogsError(err?.response?.data?.message || 'Failed to load account logs');
     } finally {
       setAccountLogsLoading(false);
+    }
+  };
+
+  const buildLogKey = (log, idx) => String(log?.logId || `${log?.timestamp || 't'}-${idx}`);
+
+  const toggleLogClasses = (key) => {
+    setExpandedLogEntries((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const formatStatusLabel = (value) => {
+    if (value === true) return 'Active';
+    if (value === false) return 'Inactive';
+    return 'Unknown';
+  };
+
+  const getHoursDelta = (log) => {
+    const before = Number.isFinite(Number(log?.balanceBefore)) ? Number(log.balanceBefore) : null;
+    const after = Number.isFinite(Number(log?.balanceAfter)) ? Number(log.balanceAfter) : null;
+    if (before === null || after === null) return null;
+    const raw = Math.round((after - before) * 1000) / 1000;
+    if (!Number.isFinite(raw) || raw === 0) return null;
+    return {
+      value: raw,
+      label: `${raw > 0 ? '+' : ''}${raw}h`,
+      tone: raw > 0 ? 'text-emerald-600' : 'text-rose-600'
+    };
+  };
+
+  const openLogAction = (log, action) => {
+    if (!log?.logId) return;
+    setLogActionModal({ open: true, log, action });
+    setLogActionConfirm('');
+  };
+
+  const closeLogAction = () => {
+    setLogActionModal({ open: false, log: null, action: '' });
+    setLogActionConfirm('');
+    setLogActionLoading(false);
+  };
+
+  const handleLogAction = async () => {
+    const log = logActionModal.log;
+    if (!log?.logId) return;
+    setLogActionLoading(true);
+    try {
+      if (logActionModal.action === 'undo') {
+        await api.post(`/users/admin/account-logs/${log.logId}/undo`, { source: log.source });
+      } else if (logActionModal.action === 'delete') {
+        await api.delete(`/users/admin/account-logs/${log.logId}`, { params: { source: log.source } });
+      }
+      await loadAccountLogs();
+      closeLogAction();
+    } catch (err) {
+      console.error('Account log action failed', err);
+      setAccountLogsError(err?.response?.data?.message || 'Failed to update log');
+      setLogActionLoading(false);
     }
   };
 
@@ -488,10 +548,15 @@ const GuardiansPage = () => {
         'actorName',
         'balanceBefore',
         'balanceAfter',
+        'statusBefore',
+        'statusAfter',
+        'entityType',
+        'entityName',
         'billingStart',
         'billingEnd',
         'classCount',
-        'generationSource'
+        'generationSource',
+        'logId'
       ]
     ];
     accountLogs.forEach((log) => {
@@ -508,10 +573,15 @@ const GuardiansPage = () => {
         (log.actorName || '').replace(/\n/g, ' '),
         log.balanceBefore ?? '',
         log.balanceAfter ?? '',
+        log.statusBefore ?? '',
+        log.statusAfter ?? '',
+        log.entityType ?? '',
+        (log.entityName || '').replace(/\n/g, ' '),
         log.billingPeriod?.startDate ? new Date(log.billingPeriod.startDate).toISOString() : '',
         log.billingPeriod?.endDate ? new Date(log.billingPeriod.endDate).toISOString() : '',
         log.classCount ?? '',
-        log.generationSource || ''
+        log.generationSource || '',
+        log.logId || ''
       ]);
     });
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -638,6 +708,8 @@ const GuardiansPage = () => {
   }, [filteredGuardians, sortBy, sortOrder]);
 
   // keep the page UI mounted while loading so search inputs don't lose focus
+  const confirmToken = logActionModal.log?.action || 'action';
+  const isConfirmValid = logActionConfirm.trim() === confirmToken;
 
   return (
     <div className="p-6 bg-background min-h-screen">
@@ -1277,75 +1349,186 @@ const GuardiansPage = () => {
                   <div className="p-3 text-xs text-muted-foreground">No logs loaded yet.</div>
                 ) : (
                   <ul className="divide-y divide-border">
-                    {accountLogs.map((log, idx) => (
-                      <li key={`${log.timestamp || 't'}-${idx}`} className="p-3 text-xs">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-foreground">
-                            {log.action || 'event'}
-                          </span>
-                          <span className="text-muted-foreground">{log.source || 'system'}</span>
-                          <span className="text-muted-foreground">
-                            {log.timestamp ? formatDateDDMMMYYYY(log.timestamp) : ''}
-                          </span>
-                          {log.invoiceNumber && (
-                            <span className="text-muted-foreground">Invoice {log.invoiceNumber}</span>
-                          )}
-                          {log.billingPeriod?.startDate && log.billingPeriod?.endDate && (
-                            <span className="text-muted-foreground">
-                              {formatDateDDMMMYYYY(log.billingPeriod.startDate)} → {formatDateDDMMMYYYY(log.billingPeriod.endDate)}
-                            </span>
-                          )}
-                        </div>
-                        {log.message && (
-                          <div className="mt-1 text-muted-foreground">{log.message}</div>
-                        )}
-                        {(log.amount || log.hours) && (
-                          <div className="mt-1 text-muted-foreground">
-                            {log.amount ? `Amount: ${log.amount}` : ''}
-                            {log.amount && log.hours ? ' • ' : ''}
-                            {log.hours ? `Hours: ${log.hours}` : ''}
-                          </div>
-                        )}
-                        {log.actorName && (
-                          <div className="mt-1 text-muted-foreground">By: {log.actorName}</div>
-                        )}
-                        {(log.balanceBefore !== undefined || log.balanceAfter !== undefined) && (
-                          <div className="mt-1 text-muted-foreground">
-                            Balance: {log.balanceBefore ?? '-'} → {log.balanceAfter ?? '-'} {log.balanceNote ? `(${log.balanceNote})` : ''}
-                          </div>
-                        )}
-                        {log.reason && (
-                          <div className="mt-1 text-muted-foreground">Reason: {log.reason}</div>
-                        )}
-                        {Array.isArray(log.classEntries) && log.classEntries.length > 0 && (
-                          <div className="mt-2 rounded-md border border-border bg-background/60 p-2 text-muted-foreground">
-                            <div className="text-[11px] font-medium uppercase tracking-wide text-foreground">
-                              Classes ({log.classEntries.length}
-                              {log.classCount && log.classCount > log.classEntries.length ? ` of ${log.classCount}` : ''})
+                    {accountLogs.map((log, idx) => {
+                      const logKey = buildLogKey(log, idx);
+                      const hoursDelta = getHoursDelta(log);
+                      const statusSummary = (log.statusBefore !== undefined || log.statusAfter !== undefined)
+                        ? `${log.entityType === 'Student' ? 'Student' : 'User'}${log.entityName ? `: ${log.entityName}` : ''}${log.entityType === 'Student' && log.guardianName ? ` (Guardian: ${log.guardianName})` : ''} ${formatStatusLabel(log.statusBefore)} → ${formatStatusLabel(log.statusAfter)}`
+                        : null;
+                      const showClasses = !!expandedLogEntries[logKey];
+
+                      return (
+                        <li key={logKey} className="p-3 text-xs">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-foreground">
+                                {log.action || 'event'}
+                              </span>
+                              <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+                                {log.source || 'system'}
+                              </span>
+                              <span className="text-muted-foreground">
+                                {log.timestamp ? formatDateDDMMMYYYY(log.timestamp) : ''}
+                              </span>
+                              {log.invoiceNumber && (
+                                <span className="text-muted-foreground">Invoice {log.invoiceNumber}</span>
+                              )}
+                              {log.billingPeriod?.startDate && log.billingPeriod?.endDate && (
+                                <span className="text-muted-foreground">
+                                  {formatDateDDMMMYYYY(log.billingPeriod.startDate)} → {formatDateDDMMMYYYY(log.billingPeriod.endDate)}
+                                </span>
+                              )}
                             </div>
-                            <ul className="mt-1 space-y-1">
-                              {log.classEntries.map((entry, entryIndex) => (
-                                <li key={`${log.timestamp || 'log'}-class-${entryIndex}`} className="flex flex-wrap gap-2">
-                                  <span>{entry.date ? formatDateDDMMMYYYY(entry.date) : 'Date N/A'}</span>
-                                  {entry.studentName && <span>Student: {entry.studentName}</span>}
-                                  {entry.teacherName && <span>Teacher: {entry.teacherName}</span>}
-                                  {entry.hours ? <span>{entry.hours}h</span> : null}
-                                  {entry.status ? <span>Status: {entry.status}</span> : null}
-                                </li>
-                              ))}
-                            </ul>
+                            <div className="flex items-center gap-2">
+                              {log.canUndo && log.logId ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openLogAction(log, 'undo')}
+                                  className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
+                                >
+                                  Undo
+                                </button>
+                              ) : null}
+                              {log.canDelete && log.logId ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openLogAction(log, 'delete')}
+                                  className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10"
+                                >
+                                  Delete
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
-                        )}
-                        {log.success === false && (
-                          <div className="mt-1 text-destructive">Failed</div>
-                        )}
-                      </li>
-                    ))}
+
+                          {log.message && (
+                            <div className="mt-1 text-muted-foreground">{log.message}</div>
+                          )}
+
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-muted-foreground">
+                            {statusSummary ? (
+                              <span className="rounded-md bg-muted/50 px-2 py-0.5 text-[11px] text-foreground">
+                                {statusSummary}
+                              </span>
+                            ) : null}
+                            {hoursDelta ? (
+                              <span className={`rounded-md bg-muted/50 px-2 py-0.5 text-[11px] font-semibold ${hoursDelta.tone}`}>
+                                Hours {hoursDelta.label}
+                              </span>
+                            ) : null}
+                            {(log.amount || log.hours) ? (
+                              <span className="rounded-md bg-muted/50 px-2 py-0.5 text-[11px]">
+                                {log.amount ? `Amount: ${log.amount}` : ''}
+                                {log.amount && log.hours ? ' • ' : ''}
+                                {log.hours ? `Hours: ${log.hours}` : ''}
+                              </span>
+                            ) : null}
+                            {(log.balanceBefore !== undefined || log.balanceAfter !== undefined) ? (
+                              <span className="rounded-md bg-muted/50 px-2 py-0.5 text-[11px]">
+                                Balance: {log.balanceBefore ?? '-'} → {log.balanceAfter ?? '-'} {log.balanceNote ? `(${log.balanceNote})` : ''}
+                              </span>
+                            ) : null}
+                            {log.actorName ? (
+                              <span className="rounded-md bg-muted/50 px-2 py-0.5 text-[11px]">By: {log.actorName}</span>
+                            ) : null}
+                          </div>
+
+                          {log.reason && (
+                            <div className="mt-1 text-muted-foreground">Reason: {log.reason}</div>
+                          )}
+
+                          {Array.isArray(log.classEntries) && (log.classEntries.length > 0 || log.classCount > 0) && (
+                            <div className="mt-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleLogClasses(logKey)}
+                                className="text-[11px] font-medium text-primary hover:underline"
+                              >
+                                {showClasses ? 'Hide classes' : 'Show classes'} ({log.classEntries.length}
+                                {log.classCount && log.classCount > log.classEntries.length ? ` of ${log.classCount}` : ''})
+                              </button>
+                              {showClasses ? (
+                                <div className="mt-2 rounded-md border border-border bg-background/60 p-2 text-muted-foreground">
+                                  {log.classEntries.length === 0 ? (
+                                    <div className="text-[11px] text-muted-foreground">No class details available.</div>
+                                  ) : (
+                                    <ul className="space-y-1">
+                                      {log.classEntries.map((entry, entryIndex) => (
+                                        <li key={`${logKey}-class-${entryIndex}`} className="flex flex-wrap gap-2">
+                                          <span>{entry.date ? formatDateDDMMMYYYY(entry.date) : 'Date N/A'}</span>
+                                          {entry.studentName && <span>Student: {entry.studentName}</span>}
+                                          {entry.teacherName && <span>Teacher: {entry.teacherName}</span>}
+                                          {entry.hours !== null && entry.hours !== undefined ? <span>{entry.hours}h</span> : null}
+                                          {entry.status ? <span>Status: {entry.status}</span> : null}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
+
+                          {log.success === false && (
+                            <div className="mt-1 text-destructive">Failed</div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
             </div>
           </div>
+          {logActionModal.open && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+              <div className="w-full max-w-md rounded-lg border border-border bg-card p-4 shadow-xl">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h4 className="text-base font-semibold text-foreground">
+                      {logActionModal.action === 'delete' ? 'Delete log entry' : 'Undo log action'}
+                    </h4>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Copy and paste this process name to confirm:
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeLogAction}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="mt-3 rounded-md bg-muted/50 px-3 py-2 text-xs font-mono text-foreground">
+                  {confirmToken}
+                </div>
+                <input
+                  value={logActionConfirm}
+                  onChange={(e) => setLogActionConfirm(e.target.value)}
+                  placeholder="Paste the process name"
+                  className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground"
+                />
+                <div className="mt-4 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeLogAction}
+                    className="h-8 rounded-md border border-border px-3 text-xs font-medium text-foreground hover:bg-muted"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!isConfirmValid || logActionLoading}
+                    onClick={handleLogAction}
+                    className="h-8 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-60"
+                  >
+                    {logActionLoading ? 'Processing…' : 'Confirm'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

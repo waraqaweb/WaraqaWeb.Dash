@@ -18,6 +18,7 @@ const Guardian = require('../models/Guardian');
 const Student = require('../models/Student');
 const Invoice = require('../models/Invoice');
 const GuardianHoursAudit = require('../models/GuardianHoursAudit');
+const AccountStatusAudit = require('../models/AccountStatusAudit');
 const Notification = require('../models/Notification');
 const Class = require('../models/Class');
 const { isValidTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
@@ -633,12 +634,15 @@ router.post('/admin/account-logs', [
           ? `${item.teacherSnapshot.firstName || ''} ${item.teacherSnapshot.lastName || ''}`.trim()
           : '';
         const durationMinutes = Number(item?.duration || 0) || 0;
-        const hours = Math.round((durationMinutes / 60) * 1000) / 1000;
+        const quantityHoursRaw = Number(item?.quantityHours || 0);
+        const hours = Number.isFinite(quantityHoursRaw) && quantityHoursRaw > 0
+          ? Math.round(quantityHoursRaw * 1000) / 1000
+          : Math.round((durationMinutes / 60) * 1000) / 1000;
 
         return {
           date: item?.date || null,
           status: item?.status || item?.attendanceStatus || null,
-          duration: durationMinutes,
+          duration: durationMinutes || null,
           hours,
           description: item?.description || null,
           studentName: studentName || null,
@@ -696,6 +700,7 @@ router.post('/admin/account-logs', [
       const afterHours = Number.isFinite(afterHoursRaw) ? Math.round(afterHoursRaw * 1000) / 1000 : undefined;
       if (entry.actor) actorIds.add(String(entry.actor));
       logs.push({
+        logId: entry._id,
         timestamp: entry.timestamp || entry.createdAt || new Date(),
         source: 'guardian-hours',
         action: entry.action,
@@ -709,6 +714,53 @@ router.post('/admin/account-logs', [
         metadata: entry.metadata || null,
         message: entry.reason || 'Manual hours adjustment',
         actorId: entry.actor || null,
+        canUndo: false,
+        canDelete: false,
+      });
+    });
+
+    const statusFilters = [{ entityType: 'User', entityId: user._id }];
+    if (user.role === 'guardian') {
+      statusFilters.push({ entityType: 'Student', 'metadata.guardianId': user._id });
+    }
+
+    const statusLogs = await AccountStatusAudit.find({ $or: statusFilters })
+      .sort({ timestamp: -1 })
+      .limit(maxLimit)
+      .lean();
+
+    (statusLogs || []).forEach((entry) => {
+      if (entry.actor) actorIds.add(String(entry.actor));
+      const statusBefore = typeof entry?.before?.isActive === 'boolean' ? entry.before.isActive : undefined;
+      const statusAfter = typeof entry?.after?.isActive === 'boolean' ? entry.after.isActive : undefined;
+      const entityName = entry.entityName
+        || entry?.metadata?.studentName
+        || entry?.metadata?.guardianName
+        || null;
+      const isUndo = entry.action === 'status_undo';
+      const statusLabel = (value) => value === true ? 'active' : value === false ? 'inactive' : 'unknown';
+      const baseMessage = entry.entityType === 'Student'
+        ? `Student ${entityName || ''} status ${statusLabel(statusBefore)} → ${statusLabel(statusAfter)}`.trim()
+        : `User status ${statusLabel(statusBefore)} → ${statusLabel(statusAfter)}`;
+      logs.push({
+        logId: entry._id,
+        timestamp: entry.timestamp || entry.createdAt || new Date(),
+        source: 'account-status',
+        action: entry.action,
+        success: entry.success !== false,
+        reason: entry.reason || null,
+        message: entry.reason || baseMessage,
+        actorId: entry.actor || null,
+        statusBefore,
+        statusAfter,
+        entityType: entry.entityType,
+        entityName,
+        guardianId: entry?.metadata?.guardianId || null,
+        guardianName: entry?.metadata?.guardianName || null,
+        studentName: entry?.metadata?.studentName || null,
+        metadata: entry.metadata || null,
+        canUndo: !isUndo,
+        canDelete: true,
       });
     });
 
@@ -849,6 +901,130 @@ router.post('/admin/account-logs', [
   } catch (error) {
     console.error('Account logs error:', error);
     return res.status(500).json({ message: 'Failed to fetch account logs', error: error.message });
+  }
+});
+
+/**
+ * Admin: Undo account log action (limited to status change logs)
+ * POST /api/users/admin/account-logs/:logId/undo
+ * Body: { source?: 'account-status' }
+ */
+router.post('/admin/account-logs/:logId/undo', [
+  authenticateToken,
+  requireAdmin,
+], async (req, res) => {
+  const { logId } = req.params;
+  const { source } = req.body || {};
+  const resolvedSource = source || 'account-status';
+
+  if (resolvedSource !== 'account-status') {
+    return res.status(400).json({ message: 'Undo not supported for this log source' });
+  }
+
+  try {
+    const log = await AccountStatusAudit.findById(logId).lean();
+    if (!log) return res.status(404).json({ message: 'Log not found' });
+
+    const targetStatus = typeof log?.before?.isActive === 'boolean' ? log.before.isActive : null;
+    if (targetStatus === null) {
+      return res.status(400).json({ message: 'Log does not contain a reversible status value' });
+    }
+
+    if (log.entityType === 'User') {
+      const user = await User.findById(log.entityId);
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      const previous = user.isActive;
+      user.isActive = targetStatus;
+      await user.save();
+
+      await AccountStatusAudit.logAction({
+        action: 'status_undo',
+        entityType: 'User',
+        entityId: user._id,
+        entityName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+        actor: req.user?.id || req.user?._id || null,
+        actorRole: 'admin',
+        actorIP: req.ip,
+        actorUserAgent: req.get('user-agent'),
+        before: { isActive: previous },
+        after: { isActive: targetStatus },
+        metadata: { originalLogId: log._id, originalAction: log.action },
+        success: true,
+      });
+
+      return res.json({ message: 'Status reverted', user });
+    }
+
+    if (log.entityType === 'Student') {
+      const guardianId = log?.metadata?.guardianId;
+      if (!guardianId) {
+        return res.status(400).json({ message: 'Missing guardian reference for student log' });
+      }
+
+      const guardian = await User.findById(guardianId);
+      if (!guardian) return res.status(404).json({ message: 'Guardian not found' });
+      const student = guardian.guardianInfo?.students?.id(log.entityId);
+      if (!student) return res.status(404).json({ message: 'Student not found under guardian' });
+
+      const previous = student.isActive;
+      student.isActive = targetStatus;
+      guardian.markModified('guardianInfo.students');
+      await guardian.save();
+
+      await AccountStatusAudit.logAction({
+        action: 'status_undo',
+        entityType: 'Student',
+        entityId: student._id,
+        entityName: `${student.firstName || ''} ${student.lastName || ''}`.trim() || log.entityName || 'Student',
+        actor: req.user?.id || req.user?._id || null,
+        actorRole: 'admin',
+        actorIP: req.ip,
+        actorUserAgent: req.get('user-agent'),
+        before: { isActive: previous },
+        after: { isActive: targetStatus },
+        metadata: {
+          originalLogId: log._id,
+          originalAction: log.action,
+          guardianId: guardian._id,
+          guardianName: `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim() || guardian.email,
+          studentName: `${student.firstName || ''} ${student.lastName || ''}`.trim()
+        },
+        success: true,
+      });
+
+      return res.json({ message: 'Student status reverted', student });
+    }
+
+    return res.status(400).json({ message: 'Unsupported log entity type' });
+  } catch (error) {
+    console.error('Undo account log error:', error);
+    return res.status(500).json({ message: 'Failed to undo log action', error: error.message });
+  }
+});
+
+/**
+ * Admin: Delete account log entry (status logs only)
+ * DELETE /api/users/admin/account-logs/:logId
+ */
+router.delete('/admin/account-logs/:logId', [
+  authenticateToken,
+  requireAdmin,
+], async (req, res) => {
+  const { logId } = req.params;
+  const { source } = req.query || {};
+  const resolvedSource = source || 'account-status';
+
+  if (resolvedSource !== 'account-status') {
+    return res.status(400).json({ message: 'Delete not supported for this log source' });
+  }
+
+  try {
+    const deleted = await AccountStatusAudit.findByIdAndDelete(logId);
+    if (!deleted) return res.status(404).json({ message: 'Log not found' });
+    return res.json({ message: 'Log entry deleted' });
+  } catch (error) {
+    console.error('Delete account log error:', error);
+    return res.status(500).json({ message: 'Failed to delete log', error: error.message });
   }
 });
 
@@ -1464,6 +1640,9 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
         message: 'User is not a guardian'
       });
     }
+
+    const beforeStudent = guardian.guardianInfo?.students?.id(studentId);
+    const beforeStatus = typeof beforeStudent?.isActive === 'boolean' ? beforeStudent.isActive : undefined;
     
     const embedded = Array.isArray(guardian.guardianInfo?.students) ? guardian.guardianInfo.students : [];
 
@@ -2220,6 +2399,31 @@ router.put('/:guardianId/students/:studentId', [
     // Fetch the updated guardian to get the updated student
     const updatedGuardian = await User.findById(guardianId).select('-password');
     const updatedStudent = updatedGuardian.guardianInfo.students.id(studentId);
+
+    if (typeof updateData.isActive === 'boolean' && beforeStatus !== updateData.isActive) {
+      try {
+        await AccountStatusAudit.logAction({
+          action: 'student_status_change',
+          entityType: 'Student',
+          entityId: updatedStudent._id,
+          entityName: `${updatedStudent.firstName || ''} ${updatedStudent.lastName || ''}`.trim() || 'Student',
+          actor: req.user?.id || req.user?._id || null,
+          actorRole: req.user?.role === 'admin' ? 'admin' : 'system',
+          actorIP: req.ip,
+          actorUserAgent: req.get('user-agent'),
+          before: { isActive: beforeStatus },
+          after: { isActive: updateData.isActive },
+          metadata: {
+            guardianId: updatedGuardian._id,
+            guardianName: `${updatedGuardian.firstName || ''} ${updatedGuardian.lastName || ''}`.trim() || updatedGuardian.email,
+            studentName: `${updatedStudent.firstName || ''} ${updatedStudent.lastName || ''}`.trim()
+          },
+          success: true,
+        });
+      } catch (auditErr) {
+        console.warn('Student status audit failed', auditErr && auditErr.message);
+      }
+    }
     
     res.json({
       message: 'Student updated successfully',
@@ -2545,9 +2749,36 @@ router.put('/:id/status', authenticateToken, requireAdmin, async (req, res) => {
   const { isActive } = req.body;
 
   try {
+    const existing = await User.findById(id);
+    if (!existing) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const previous = existing.isActive;
     const user = await User.findByIdAndUpdate(id, { isActive }, { new: true });
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (typeof isActive === 'boolean' && previous !== isActive) {
+      try {
+        await AccountStatusAudit.logAction({
+          action: 'user_status_change',
+          entityType: 'User',
+          entityId: user._id,
+          entityName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+          actor: req.user?.id || req.user?._id || null,
+          actorRole: 'admin',
+          actorIP: req.ip,
+          actorUserAgent: req.get('user-agent'),
+          before: { isActive: previous },
+          after: { isActive },
+          metadata: { role: user.role },
+          success: true,
+        });
+      } catch (auditErr) {
+        console.warn('User status audit failed', auditErr && auditErr.message);
+      }
     }
 
     res.json({ message: 'User status updated successfully', user });

@@ -394,6 +394,7 @@ const ClassesPage = ({ isActive = true }) => {
   const [students, setStudents] = useState([]);
 
   const [loading, setLoading] = useState(true);
+  const [isFetching, setIsFetching] = useState(false);
   const showLoading = useMinLoading(loading);
   const [error, setError] = useState("");
   const [sortBy] = useState("scheduledDate");
@@ -1229,6 +1230,7 @@ const fetchClasses = useCallback(async () => {
 
     fetchClassesKeyRef.current = requestSignature;
     fetchClassesInFlightRef.current = true;
+    setIsFetching(true);
 
     const requestId = fetchClassesRequestIdRef.current + 1;
     fetchClassesRequestIdRef.current = requestId;
@@ -1256,6 +1258,7 @@ const fetchClasses = useCallback(async () => {
       // Background revalidate if cache is getting old (keeps data fresh without blocking UI)
       if (cached.ageMs < 60_000) {
         fetchClassesInFlightRef.current = false;
+        setIsFetching(false);
         return;
       }
     } else {
@@ -1328,6 +1331,7 @@ const fetchClasses = useCallback(async () => {
     }
   } finally {
     setLoading(false);
+    setIsFetching(false);
     fetchClassesInFlightRef.current = false;
   }
 }, [
@@ -2797,9 +2801,10 @@ Would you like to create another series anyway?`
     return icons[status] || <Clock className="h-4 w-4" />;
   };
 
+  const isListLoading = showLoading || isFetching;
   const renderClassesList = () => (
     <div className="space-y-4">
-      {showLoading && filteredClasses.length === 0 ? (
+      {isListLoading && filteredClasses.length === 0 ? (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
           <div className="flex items-center justify-center">
             <LoadingSpinner />
@@ -2810,7 +2815,7 @@ Would you like to create another series anyway?`
           <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No classes found</h3>
           <p className="text-gray-600 mb-4">
-            {searchTerm ? "No classes match your search criteria." : "Get started by creating your first class."}
+            {searchTerm ? "No classes match your search criteria." : (isAdminUser ? "Get started by creating your first class." : "Classes will appear here once they are scheduled.")}
           </p>
           {isAdmin() && (
             <button

@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "account history update"
+git commit -m "account history update 2"
 git push origin main
 
 ---

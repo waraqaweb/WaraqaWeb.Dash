@@ -19,6 +19,11 @@ const NotificationCenter = () => {
   const [rescheduleDetailsOpen, setRescheduleDetailsOpen] = useState(false);
   const [rescheduleDetailsNotification, setRescheduleDetailsNotification] = useState(null);
   const [deleteLoadingId, setDeleteLoadingId] = useState(null);
+  const [resolveUninvoicedState, setResolveUninvoicedState] = useState({
+    loading: false,
+    message: null,
+    error: null
+  });
   const [uninvoicedLessonsState, setUninvoicedLessonsState] = useState({
     loading: false,
     lessons: [],
@@ -174,6 +179,36 @@ const NotificationCenter = () => {
     }
   };
 
+  const handleResolveUninvoicedLessons = async (notification) => {
+    if (resolveUninvoicedState.loading) return;
+    setResolveUninvoicedState({ loading: true, message: null, error: null });
+    try {
+      const res = await api.post('/invoices/uninvoiced-lessons/resolve', {
+        sinceDays: uninvoicedLessonsState.sinceDays || 90,
+        includeCancelled: false
+      });
+
+      const summary = res.data?.summary;
+      const message = summary
+        ? `Attached ${summary.attached || 0} lesson(s), created ${summary.created || 0} invoice(s).`
+        : 'Uninvoiced lessons were handled.';
+
+      if (notification?._id && !notification.isRead) {
+        await markAsRead([notification._id]);
+      }
+
+      setResolveUninvoicedState({ loading: false, message, error: null });
+      await fetchUninvoicedLessons();
+      await fetchNotifications();
+    } catch (err) {
+      setResolveUninvoicedState({
+        loading: false,
+        message: null,
+        error: err.response?.data?.message || 'Failed to resolve uninvoiced lessons'
+      });
+    }
+  };
+
   const handleOpenActionLink = async (notification) => {
     const link = notification?.actionLink;
     if (!link) return;
@@ -248,6 +283,21 @@ const NotificationCenter = () => {
       case 'error': return 'text-red-600 bg-red-50 border-red-200';
       default: return 'text-blue-600 bg-blue-50 border-blue-200';
     }
+  };
+
+  const getActionLabel = (notification) => {
+    if (!notification) return 'Open';
+    if (notification.actionLabel) return notification.actionLabel;
+    const relatedTo = notification.relatedTo || notification?.metadata?.relatedTo;
+    const link = notification.actionLink || '';
+    if (/\/dashboard\/invoices/.test(link) || relatedTo === 'invoice') return 'Open invoice';
+    if (/\/dashboard\/salaries/.test(link) || relatedTo === 'teacher_invoice' || relatedTo === 'teacher_payment') return 'Open salary';
+    if (/\/dashboard\/users/.test(link) || relatedTo === 'user') return 'Open user';
+    if (/\/dashboard\/vacations/.test(link) || relatedTo === 'vacation') return 'Open vacation';
+    if (/\/dashboard\/library/.test(link) || relatedTo === 'library_share') return 'Open library';
+    if (/\/dashboard\/profile/.test(link) || relatedTo === 'profile') return 'Open profile';
+    if (relatedTo === 'class') return 'Open class';
+    return 'Open';
   };
 
   return (
@@ -399,6 +449,26 @@ const NotificationCenter = () => {
                                 </ul>
                               </div>
                             )}
+
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleResolveUninvoicedLessons(notification);
+                                }}
+                                disabled={resolveUninvoicedState.loading}
+                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground disabled:opacity-60"
+                              >
+                                {resolveUninvoicedState.loading ? 'Fixing…' : 'Fix now'}
+                              </button>
+                              {resolveUninvoicedState.message && (
+                                <span className="text-amber-900">{resolveUninvoicedState.message}</span>
+                              )}
+                              {resolveUninvoicedState.error && (
+                                <span className="text-red-700">{resolveUninvoicedState.error}</span>
+                              )}
+                            </div>
                           </div>
                         )}
 
@@ -453,7 +523,7 @@ const NotificationCenter = () => {
                               onClick={() => handleOpenActionLink(notification)}
                               className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground"
                             >
-                              Open class
+                              {getActionLabel(notification)}
                             </button>
                           </div>
                         )}

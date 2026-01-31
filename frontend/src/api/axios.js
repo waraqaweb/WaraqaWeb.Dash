@@ -13,6 +13,21 @@ const resolveApiBase = () => {
     return envApiBase;
   }
 
+  const upgradeSameHostToHttps = (url) => {
+    if (typeof url !== 'string') return url;
+    if (!window.location || window.location.protocol !== 'https:') return url;
+    if (!url.startsWith('http://')) return url;
+    try {
+      const parsed = new URL(url, window.location.origin);
+      if (parsed.host === window.location.host) {
+        return parsed.toString().replace(/^http:/, 'https:');
+      }
+    } catch (e) {
+      return url;
+    }
+    return url;
+  };
+
   const normalizeLocalhost = (url) => {
     if (typeof url !== 'string') return url;
     const origin = window.location?.origin || '';
@@ -34,7 +49,7 @@ const resolveApiBase = () => {
   };
 
   if (envApiBase) {
-    const normalized = normalizeLocalhost(envApiBase);
+    const normalized = normalizeLocalhost(upgradeSameHostToHttps(envApiBase));
     // Production safety: if the build accidentally bakes an internal/localhost URL,
     // ignore it and fall back to same-origin (/api) via nginx.
     if (isProductionHost && looksLikeInternalApiBase(normalized)) {
@@ -44,7 +59,7 @@ const resolveApiBase = () => {
   }
 
   if (window.__API_BASE__) {
-    return normalizeLocalhost(window.__API_BASE__);
+    return normalizeLocalhost(upgradeSameHostToHttps(window.__API_BASE__));
   }
 
   const origin = window.location?.origin;

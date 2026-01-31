@@ -8,6 +8,7 @@ require('../models/Student');
 const generateInvoiceDoc = require('../utils/generateInvoiceDoc');
 const { buildGuardianFinancialSnapshot } = require('../utils/guardianFinancial');
 const dayjs = require('dayjs');
+const notificationService = require('./notificationService');
 
 const roundCurrency = (value) => {
   const numeric = Number(value);
@@ -109,6 +110,54 @@ const toObjectId = (value) => {
   } catch (err) {
     return null;
   }
+};
+
+const getAdminRecipientIds = async () => {
+  try {
+    const admins = await User.find({ role: 'admin', isActive: true }).select('_id').lean();
+    return (admins || []).map((admin) => admin?._id).filter(Boolean);
+  } catch (err) {
+    console.warn('[InvoiceService] Failed to load admin recipients:', err?.message || err);
+    return [];
+  }
+};
+
+const getGuardianLabel = (guardian) => {
+  if (!guardian) return 'Guardian';
+  const fullName = [guardian.firstName, guardian.lastName].filter(Boolean).join(' ').trim();
+  return fullName || guardian.fullName || guardian.email || 'Guardian';
+};
+
+const notifyInvoiceSkipped = async ({ guardian, reasonCode, reasonLabel, details, actionLink, metadata = {} }) => {
+  if (!guardian?._id) return;
+  const adminIds = await getAdminRecipientIds();
+  if (!adminIds.length) return;
+
+  const guardianLabel = getGuardianLabel(guardian);
+  const baseReason = reasonLabel || 'Invoice was skipped.';
+  const infoLine = details ? ` ${details}` : '';
+  const message = `Invoice skipped for ${guardianLabel}. Reason: ${baseReason}.${infoLine} Open invoices to create one, or mark this as read to keep it skipped.`;
+
+  await Promise.allSettled(
+    adminIds.map((adminId) => notificationService.createNotification({
+      userId: adminId,
+      title: 'Invoice skipped',
+      message,
+      type: 'warning',
+      relatedTo: 'invoice',
+      relatedId: guardian._id,
+      metadata: {
+        kind: 'invoice_skipped',
+        guardianId: String(guardian._id),
+        guardianName: guardianLabel,
+        reasonCode,
+        reasonLabel,
+        ...metadata
+      },
+      actionRequired: false,
+      actionLink: actionLink || '/dashboard/invoices'
+    }))
+  );
 };
 
 const collectBilledClassIds = async (baseFilter = {}) => {
@@ -357,6 +406,12 @@ class InvoiceService {
         // If effective total is negative (guardian owes hours) and no future classes exist, create a due-only invoice.
         if (!hasFutureClasses && effectiveTotal === 0) {
           // Do not create invoices for guardians with ZERO balance and NO future classes
+          await notifyInvoiceSkipped({
+            guardian,
+            reasonCode: 'no_future_classes_zero_balance',
+            reasonLabel: 'No future classes and zero balance',
+            details: 'There are no upcoming lessons and the balance is 0.'
+          });
           continue;
         }
 
@@ -408,6 +463,14 @@ class InvoiceService {
           await InvoiceService.syncUnpaidInvoiceItems(existingUnpaidInvoice, {
             note: 'Synced unpaid invoice (auto-payg)'
           });
+          await notifyInvoiceSkipped({
+            guardian,
+            reasonCode: 'existing_unpaid_invoice',
+            reasonLabel: 'An unpaid invoice already exists',
+            details: existingUnpaidInvoice.invoiceNumber
+              ? `Existing invoice ${existingUnpaidInvoice.invoiceNumber} is still active.`
+              : 'An existing unpaid invoice is still active.'
+          });
           continue;
         }
 
@@ -425,6 +488,12 @@ class InvoiceService {
 
           if (remaining > 0.01 || createdWithin48h) {
             console.log(`⏭️  Skipping guardian ${guardian._id} — existing auto-payg invoice ${outstandingAutoInvoice.invoiceNumber} still active (remaining=${remaining})`);
+            await notifyInvoiceSkipped({
+              guardian,
+              reasonCode: 'existing_auto_payg_invoice',
+              reasonLabel: 'An auto-payg invoice is still active',
+              details: `${outstandingAutoInvoice.invoiceNumber ? `Invoice ${outstandingAutoInvoice.invoiceNumber} ` : ''}remaining ${roundCurrency(remaining)}${createdWithin48h ? '; created within 48 hours.' : '.'}`.trim()
+            });
             continue;
           }
         }
@@ -482,7 +551,15 @@ class InvoiceService {
           if (!shouldCreate) return null;
 
           // If no future classes and effective total is exactly zero -> skip
-          if (!hasFuture && effectiveTotal === 0) return null;
+          if (!hasFuture && effectiveTotal === 0) {
+            await notifyInvoiceSkipped({
+              guardian: guardianDoc,
+              reasonCode: 'no_future_classes_zero_balance',
+              reasonLabel: 'No future classes and zero balance',
+              details: 'There are no upcoming lessons and the balance is 0.'
+            });
+            return null;
+          }
 
           const createOpts = {
             reason: 'on_zero_trigger',

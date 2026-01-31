@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "account history update correction"
+git commit -m "student fetching issues in modals"
 git push origin main
 
 ---
@@ -13,7 +13,7 @@ git push origin main
 cd /opt/waraqa
 chmod +x deploy/scripts/deploy.sh
 ./deploy/scripts/deploy.sh pull
-
+./deploy/scripts/deploy.sh all
 ---
 
 ---

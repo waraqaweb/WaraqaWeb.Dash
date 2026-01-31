@@ -6,6 +6,7 @@ const Invoice = require('../models/Invoice');
 const Class = require('../models/Class');
 const User = require('../models/User');
 const InvoiceService = require('../services/invoiceService');
+const notificationService = require('../services/notificationService');
 const { buildGuardianFinancialSnapshot } = require('../utils/guardianFinancial');
 const { extractSequenceFromName, ensureSequenceAtLeast, formatSequence } = require('../utils/invoiceNaming');
 const { allocateNextSequence, buildInvoiceIdentifiers } = require('../utils/invoiceNaming');
@@ -1027,6 +1028,153 @@ router.get('/uninvoiced-lessons', authenticateToken, requireAdmin, async (req, r
   } catch (err) {
     console.error('List uninvoiced lessons error:', err);
     res.status(500).json({ success: false, message: 'Failed to list uninvoiced lessons', error: err.message });
+  }
+});
+
+// -----------------------------
+// Resolve uninvoiced lessons (admin)
+// -----------------------------
+router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { sinceDays, includeCancelled, limit } = req.body || {};
+    const audit = require('../services/invoiceAuditService');
+    const lessons = await audit.findUninvoicedLessons({ sinceDays, includeCancelled });
+    const capped = Number.isFinite(Number(limit)) && Number(limit) > 0
+      ? lessons.slice(0, Number(limit))
+      : lessons;
+
+    const summary = {
+      total: lessons.length,
+      processed: 0,
+      attached: 0,
+      created: 0,
+      skipped: 0,
+      errors: []
+    };
+
+    for (const lesson of capped) {
+      summary.processed += 1;
+      const classId = lesson?.classId || lesson?._id;
+      if (!classId) {
+        summary.skipped += 1;
+        continue;
+      }
+
+      try {
+        const classDoc = await Class.findById(classId);
+        if (!classDoc) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        if (classDoc.billedInInvoiceId) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        const alreadyInInvoice = await Invoice.findOne({
+          $or: [
+            { 'items.class': classDoc._id },
+            { 'items.lessonId': String(classDoc._id) }
+          ],
+          deleted: { $ne: true },
+          status: { $nin: ['cancelled', 'refunded'] }
+        });
+
+        if (alreadyInInvoice) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        const guardianId = classDoc.student?.guardianId;
+        if (!guardianId) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        const draftInvoice = await Invoice.findOne({
+          guardian: guardianId,
+          type: 'guardian_invoice',
+          status: 'draft',
+          deleted: { $ne: true }
+        }).sort({ createdAt: -1 });
+
+        if (draftInvoice) {
+          const guardian = await User.findById(guardianId).lean();
+          const rate = guardian?.guardianInfo?.hourlyRate || 10;
+          const duration = Number(classDoc.duration || 60);
+          const hours = duration / 60;
+          const amount = Math.round(hours * rate * 100) / 100;
+
+          const studentName = classDoc.student?.studentName || '';
+          const [firstName, ...rest] = String(studentName).trim().split(' ').filter(Boolean);
+          const lastName = rest.join(' ');
+
+          const result = await InvoiceService.updateInvoiceItems(
+            String(draftInvoice._id),
+            {
+              addItems: [{
+                lessonId: String(classDoc._id),
+                class: classDoc._id,
+                student: classDoc.student?.studentId || null,
+                studentSnapshot: { firstName: firstName || studentName, lastName: lastName || '', email: '' },
+                teacher: classDoc.teacher || null,
+                description: `${classDoc.subject || 'Class'}`,
+                date: classDoc.scheduledDate || new Date(),
+                duration,
+                rate,
+                amount,
+                attended: classDoc.status === 'attended',
+                status: classDoc.status || 'scheduled'
+              }],
+              note: 'Auto-attach uninvoiced lesson'
+            },
+            req.user._id
+          );
+
+          if (!result?.success) {
+            summary.errors.push({ classId: String(classDoc._id), error: result?.error || 'Failed to attach' });
+            continue;
+          }
+
+          summary.attached += 1;
+          continue;
+        }
+
+        const guardian = await User.findById(guardianId);
+        if (!guardian) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        await InvoiceService.createInvoiceForFirstLesson(guardian, classDoc, {
+          createdBy: req.user._id
+        });
+        summary.created += 1;
+      } catch (innerErr) {
+        summary.errors.push({ classId: String(classId), error: innerErr?.message || 'Failed to attach' });
+      }
+    }
+
+    if (summary.attached + summary.created > 0) {
+      try {
+        await notificationService.createNotification({
+          userId: req.user._id,
+          title: 'Uninvoiced lessons handled',
+          message: `Attached ${summary.attached} lesson(s) and created ${summary.created} invoice(s).`,
+          type: 'success',
+          relatedTo: 'system',
+          relatedId: 'uninvoiced-lessons'
+        });
+      } catch (notifyErr) {
+        console.warn('Failed to notify admin after uninvoiced resolve:', notifyErr?.message || notifyErr);
+      }
+    }
+
+    res.json({ success: true, summary });
+  } catch (err) {
+    console.error('Resolve uninvoiced lessons error:', err);
+    res.status(500).json({ success: false, message: 'Failed to resolve uninvoiced lessons', error: err.message });
   }
 });
 
@@ -2321,7 +2469,9 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
     const force = String(req.query.force || req.body?.force || '').toLowerCase() === 'true';
     const preserveHours = (() => {
       const raw = req.query.preserveHours ?? req.body?.preserveHours ?? req.headers['x-preserve-hours'];
-      if (raw === undefined || raw === null) return true;
+      if (raw === undefined || raw === null) {
+        return ['draft', 'pending'].includes(invoice.status) ? false : true;
+      }
       const normalized = String(raw).trim().toLowerCase();
       if (!normalized) return true; // treat ?preserveHours as truthy
       if (['0', 'false', 'no', 'n'].includes(normalized)) return false;

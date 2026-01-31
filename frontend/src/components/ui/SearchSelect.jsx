@@ -54,6 +54,39 @@ const filterOptionsByQuery = (options, query) => {
   return options.filter((option) => optionMatchesQuery(option, normalizedQuery));
 };
 
+const getOptionKey = (option = {}) => {
+  return (
+    option.id ||
+    option.value ||
+    option.key ||
+    option.raw?._id ||
+    option.raw?.id ||
+    option.raw?.studentId ||
+    option.raw?.standaloneStudentId ||
+    option.raw?.studentInfo?.standaloneStudentId ||
+    option.label ||
+    option.name ||
+    null
+  );
+};
+
+const dedupeOptions = (options = []) => {
+  const seen = new Set();
+  const out = [];
+  options.forEach((option) => {
+    const key = getOptionKey(option);
+    const normalizedKey = key ? String(key) : null;
+    if (!normalizedKey) {
+      out.push(option);
+      return;
+    }
+    if (seen.has(normalizedKey)) return;
+    seen.add(normalizedKey);
+    out.push(option);
+  });
+  return out;
+};
+
 const SearchSelect = ({
   label,
   value = "",
@@ -119,8 +152,9 @@ const SearchSelect = ({
           }
         }
 
-        setOptions(filtered);
-        setActiveIndex(filtered.length ? 0 : -1);
+        const unique = dedupeOptions(filtered);
+        setOptions(unique);
+        setActiveIndex(unique.length ? 0 : -1);
       } catch (err) {
         if (ignore) return;
         console.warn("SearchSelect options fetch failed", err?.message || err);

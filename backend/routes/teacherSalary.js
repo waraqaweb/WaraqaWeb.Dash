@@ -458,9 +458,16 @@ router.post('/admin/invoices/:id/bonuses', authenticateToken, requireAdmin, asyn
  */
 router.delete('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    const invoice = await TeacherInvoice.findById(req.params.id).select('status').lean();
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
     const preserveHours = (() => {
       const raw = req.query.preserveHours ?? req.body?.preserveHours ?? req.headers['x-preserve-hours'];
-      if (raw === undefined || raw === null) return true;
+      if (raw === undefined || raw === null) {
+        return ['draft', 'published'].includes(invoice.status) ? false : true;
+      }
       const normalized = String(raw).trim().toLowerCase();
       if (!normalized) return true;
       if (['0', 'false', 'no', 'n'].includes(normalized)) return false;

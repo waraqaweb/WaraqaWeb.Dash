@@ -65,7 +65,19 @@ async function notifyNewUser(user) {
     title: 'New user registered',
     message: `${user.fullName || user.email} created an account.`,
     type: 'user',
-    related: { user: user._id }
+    related: {
+      relatedTo: 'user',
+      relatedId: user._id,
+      metadata: {
+        kind: 'new_user',
+        userId: String(user._id),
+        email: user.email || '',
+        role: user.role || ''
+      },
+      actionLink: user.email
+        ? `/dashboard/users?search=${encodeURIComponent(user.email)}`
+        : '/dashboard/users'
+    }
   });
   // Notify user with onboarding tips
   await module.exports.createNotification({

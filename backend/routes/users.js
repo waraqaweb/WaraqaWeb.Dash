@@ -1641,9 +1641,6 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
       });
     }
 
-    const beforeStudent = guardian.guardianInfo?.students?.id(studentId);
-    const beforeStatus = typeof beforeStudent?.isActive === 'boolean' ? beforeStudent.isActive : undefined;
-    
     const embedded = Array.isArray(guardian.guardianInfo?.students) ? guardian.guardianInfo.students : [];
 
     // Reconcile embedded -> standalone (best effort):

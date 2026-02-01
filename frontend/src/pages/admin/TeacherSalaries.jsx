@@ -247,12 +247,12 @@ const TeacherSalaries = () => {
 
   // Delete invoice
   const handleDeleteInvoice = async (invoiceId) => {
-    if (!window.confirm('Delete this invoice? It will be removed from lists. Teacher hours will NOT be changed.')) {
+    if (!window.confirm('Delete this invoice? Unpaid invoices will release linked classes so they can be re-invoiced.')) {
       return;
     }
 
     try {
-      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`, { params: { preserveHours: true } });
+      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`);
       setInvoices((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
       setSuccessMessage('✓ Invoice deleted successfully');
       fetchInvoices();

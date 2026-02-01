@@ -23,6 +23,7 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
   const [teachers, setTeachers] = useState([]);
   const [loadingTeachers, setLoadingTeachers] = useState(true);
   const [error, setError] = useState(null);
+  const [runSummary, setRunSummary] = useState(null);
 
   // Form state
   const [selectedMonth, setSelectedMonth] = useState('');
@@ -130,6 +131,7 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
     try {
       setLoading(true);
       setError(null);
+      setRunSummary(null);
 
       const payload = {
         month: parseInt(selectedMonth),
@@ -137,13 +139,16 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
         teacherIds: generationType === 'specific' ? selectedTeachers : undefined
       };
 
-      const response = await api.post('/teacher-salary/admin/generate', payload);
+      const response = await api.post('/teacher-salary/admin/generate', payload, {
+        suppressErrorLog: true
+      });
 
-      const created = response.data.results?.summary?.created || 0;
-      const adjusted = response.data.results?.summary?.adjusted || 0;
-      const adjustmentsCreated = response.data.results?.summary?.adjustmentsCreated || 0;
-      const skipped = response.data.results?.summary?.skipped || 0;
-      const failed = response.data.results?.summary?.failed || 0;
+      const results = response.data.results || null;
+      const created = results?.summary?.created || 0;
+      const adjusted = results?.summary?.adjusted || 0;
+      const adjustmentsCreated = results?.summary?.adjustmentsCreated || 0;
+      const skipped = results?.summary?.skipped || 0;
+      const failed = results?.summary?.failed || 0;
 
       // Build success message
       let message = '';
@@ -169,9 +174,12 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
         onSuccess('Invoice generation completed.');
       }
 
-      onClose();
+      setRunSummary(results);
+
+      if (skipped === 0 && failed === 0) {
+        onClose();
+      }
     } catch (err) {
-      console.error('Error generating invoices:', err);
       setError(err.response?.data?.error || err.response?.data?.message || 'Failed to generate invoices');
     } finally {
       setLoading(false);
@@ -217,6 +225,41 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
               >
                 <X className="w-4 h-4" />
               </button>
+            </div>
+          )}
+
+          {runSummary && (
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+              <div className="flex items-center gap-2 text-sm text-slate-700">
+                <CheckSquare className="w-4 h-4 text-emerald-600" />
+                <span>
+                  Created {runSummary.summary?.created || 0}, adjusted {runSummary.summary?.adjusted || 0},
+                  adjustments {runSummary.summary?.adjustmentsCreated || 0},
+                  skipped {runSummary.summary?.skipped || 0}, failed {runSummary.summary?.failed || 0}.
+                </span>
+              </div>
+
+              {Array.isArray(runSummary.skipped) && runSummary.skipped.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Skipped</p>
+                  <ul className="space-y-1 text-sm text-slate-700">
+                    {runSummary.skipped.map((item) => (
+                      <li key={`${item.teacherId}-${item.reason}`} className="flex flex-col gap-1 rounded-md border border-slate-200 bg-white p-2">
+                        <span className="font-medium text-slate-800">{item.teacherName || 'Teacher'}</span>
+                        <span className="text-slate-600">{item.reason || 'Skipped'}</span>
+                        {item.details && (
+                          <span className="text-xs text-slate-500">
+                            {item.details.existingInvoice && `Invoice: ${item.details.existingInvoice}. `}
+                            {typeof item.details.totalCount === 'number' && `Classes: ${item.details.totalCount}. `}
+                            {typeof item.details.availableCount === 'number' && `Available: ${item.details.availableCount}. `}
+                            {typeof item.details.excludedCount === 'number' && `Linked: ${item.details.excludedCount}. `}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 

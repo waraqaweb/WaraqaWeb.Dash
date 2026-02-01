@@ -1905,7 +1905,7 @@ fetchClassesRef.current = fetchClasses;
       )
     }));
   };
-  const handleCreateClass = async () => {
+  const handleCreateClass = async (options = {}) => {
     const buildPayload = () => {
       const data = {
         title: newClass.title,
@@ -1915,7 +1915,8 @@ fetchClassesRef.current = fetchClasses;
         student: newClass.student,
         timezone: newClass.timezone,
         meetingLink: newClass.meetingLink,
-        isRecurring: newClass.isRecurring
+        isRecurring: newClass.isRecurring,
+        overrideDuplicateSeries: options.overrideDuplicateSeries || false
       };
 
       if (newClass.isRecurring) {
@@ -1968,24 +1969,13 @@ fetchClassesRef.current = fetchClasses;
         return { success: false, message: "Recurring classes need at least one weekday." };
       }
       const duplicateInfo = err.response?.data?.duplicateSeries;
-      if (err.response?.status === 409 && duplicateInfo && newClass.isRecurring) {
-        const { studentName, subject } = duplicateInfo;
-        const confirmation = window.confirm(
-          `A recurring series for ${studentName || "this student"} with subject "${subject}" already exists.
-Would you like to create another series anyway?`
-        );
-
-        if (confirmation) {
-          try {
-            const overridePayload = { ...buildPayload(), overrideDuplicateSeries: true };
-            return await submitPayload(overridePayload);
-          } catch (overrideErr) {
-            alert(overrideErr.response?.data?.message || "Error creating class");
-            console.error(overrideErr);
-            return { success: false, message: overrideErr.response?.data?.message || "Error creating class" };
-          }
-        }
-        return { success: false, message: "Duplicate recurring series" };
+      if (err.response?.status === 409 && newClass.isRecurring) {
+        return {
+          success: false,
+          code: 'duplicate',
+          message: err.response?.data?.message || 'Duplicate recurring series detected.',
+          duplicateSeries: duplicateInfo || null
+        };
       }
 
       alert(err.response?.data?.message || "Error creating class");

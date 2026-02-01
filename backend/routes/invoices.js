@@ -1097,7 +1097,7 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
           type: 'guardian_invoice',
           status: 'draft',
           deleted: { $ne: true }
-        }).sort({ createdAt: -1 });
+        }).sort({ createdAt: 1 });
 
         if (draftInvoice) {
           const guardian = await User.findById(guardianId).lean();
@@ -1229,7 +1229,7 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
       type: 'guardian_invoice',
       status: 'draft',
       deleted: { $ne: true }
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: 1 });
 
     if (draftInvoice) {
       const guardian = await User.findById(guardianId).lean();

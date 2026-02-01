@@ -285,6 +285,36 @@ const NotificationCenter = () => {
     }
   };
 
+  const normalizeNotificationText = (value) => (value || '').trim();
+
+  const getNotificationTitleText = (notification) => {
+    const title = normalizeNotificationText(notification?.title);
+    return title || 'Notification';
+  };
+
+  const getNotificationMessageText = (notification) => {
+    const title = normalizeNotificationText(notification?.title);
+    let message = normalizeNotificationText(notification?.message);
+    if (!message) return '';
+
+    if (title) {
+      const lowerTitle = title.toLowerCase();
+      const lowerMessage = message.toLowerCase();
+
+      if (lowerMessage === lowerTitle) return '';
+
+      if (lowerMessage.startsWith(lowerTitle)) {
+        message = message.slice(title.length).trim();
+        message = message.replace(/^[-:–—]+\s*/, '');
+        if (!message) return '';
+      } else if (lowerTitle.startsWith(lowerMessage)) {
+        return '';
+      }
+    }
+
+    return message;
+  };
+
   const getActionLabel = (notification) => {
     if (!notification) return 'Open';
     if (notification.actionLabel) return notification.actionLabel;
@@ -396,16 +426,18 @@ const NotificationCenter = () => {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between">
-                          <h4 className="text-sm font-medium text-gray-900 truncate">
-                            {notification.title}
+                          <h4 className="text-sm font-medium text-gray-900 whitespace-normal break-words">
+                            {getNotificationTitleText(notification)}
                           </h4>
                           {!notification.isRead && (
                             <div className="h-2 w-2 bg-blue-500 rounded-full flex-shrink-0 ml-2 mt-1"></div>
                           )}
                         </div>
-                        <p className="text-sm text-gray-600 mt-1 line-clamp-2">
-                          {notification.message}
-                        </p>
+                        {getNotificationMessageText(notification) && (
+                          <p className="text-sm text-gray-600 mt-1 whitespace-normal break-words">
+                            {getNotificationMessageText(notification)}
+                          </p>
+                        )}
 
                         {user?.role === 'admin' && isUninvoicedLessonsNotification(notification) && (
                           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">

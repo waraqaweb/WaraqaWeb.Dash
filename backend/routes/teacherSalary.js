@@ -135,7 +135,16 @@ router.post('/admin/generate', authenticateToken, requireAdmin, async (req, res)
     });
   } catch (error) {
     console.error('[POST /admin/generate] Error:', error);
-    res.status(500).json({ error: error.message });
+    const message = error?.message || 'Failed to generate invoices';
+    const lower = message.toLowerCase();
+    if (
+      lower.includes('exchange rate') ||
+      lower.includes('month') ||
+      lower.includes('year')
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    res.status(500).json({ error: message });
   }
 });
 
@@ -896,10 +905,36 @@ router.post('/admin/exchange-rates', authenticateToken, requireAdmin, async (req
       notes || ''
     );
 
+    const monthLabel = String(month).padStart(2, '0');
+    const updatedInvoices = [];
+    try {
+      const unpaidInvoices = await TeacherInvoice.find({
+        month: Number(month),
+        year: Number(year),
+        deleted: { $ne: true },
+        status: { $in: ['draft', 'published'] }
+      });
+
+      for (const invoice of unpaidInvoices) {
+        invoice.exchangeRateSnapshot = {
+          rate: record.rate,
+          source: `MonthlyExchangeRate ${year}-${monthLabel}`,
+          setBy: record.setBy,
+          setAt: record.setAt
+        };
+        invoice.calculateAmounts();
+        await invoice.save();
+        updatedInvoices.push(invoice._id);
+      }
+    } catch (updateErr) {
+      console.warn('[POST /admin/exchange-rates] Failed to refresh unpaid invoices:', updateErr?.message || updateErr);
+    }
+
     res.json({
       success: true,
       message: 'Exchange rate set successfully',
-      rate: record
+      rate: record,
+      updatedInvoices: updatedInvoices.length
     });
   } catch (error) {
     console.error('[POST /admin/exchange-rates] Error:', error);

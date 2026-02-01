@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "student fetching issues in modals"
+git commit -m "class creation and invoice fixes"
 git push origin main
 
 ---

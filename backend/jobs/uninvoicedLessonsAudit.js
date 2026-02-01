@@ -1,6 +1,8 @@
 // backend/jobs/uninvoicedLessonsAudit.js
 const { findUninvoicedLessons } = require('../services/invoiceAuditService');
 const notificationService = require('../services/notificationService');
+const Notification = require('../models/Notification');
+const User = require('../models/User');
 
 /**
  * Run an audit to find lessons that are not linked to any invoice.
@@ -51,18 +53,47 @@ async function runUninvoicedLessonsAudit(options = {}) {
 
     if (notifyAdmins && total > 0) {
       try {
-        await notificationService.notifyRole({
-          role: 'admin',
-          title: 'Uninvoiced lessons detected',
-          message: `There are ${total} lessons not attached to any invoice in the last ${sinceDays} days. Review and attach as needed.`,
-          type: 'warning',
-          // Use a valid relatedTo enum; include extra context via metadata
-          related: {
-            relatedTo: 'system',
-            relatedId: 'uninvoiced-lessons',
-            metadata: { category: 'audit', kind: 'uninvoiced_lessons', sinceDays, total }
-          }
-        });
+        const admins = await User.find({ role: 'admin', isActive: true }).select('_id').lean();
+        const adminIds = (admins || []).map((admin) => admin?._id).filter(Boolean);
+
+        const title = 'Uninvoiced lessons detected';
+        const message = `There are ${total} lessons not attached to any invoice in the last ${sinceDays} days. Review and attach as needed.`;
+        const relatedTo = 'system';
+        const relatedId = 'uninvoiced-lessons';
+        const metadata = { category: 'audit', kind: 'uninvoiced_lessons', sinceDays, total };
+
+        await Promise.allSettled(
+          adminIds.map(async (adminId) => {
+            const existing = await Notification.findOne({
+              user: adminId,
+              relatedTo,
+              relatedId,
+              isRead: false,
+              'metadata.kind': 'uninvoiced_lessons'
+            });
+
+            if (existing) {
+              existing.title = title;
+              existing.message = message;
+              existing.type = 'warning';
+              existing.metadata = metadata;
+              await existing.save();
+              return existing;
+            }
+
+            return notificationService.createNotification({
+              userId: adminId,
+              title,
+              message,
+              type: 'warning',
+              relatedTo,
+              relatedId,
+              metadata,
+              actionRequired: false,
+              actionLink: '/dashboard/invoices'
+            });
+          })
+        );
       } catch (notifyErr) {
         console.warn('[UninvoicedLessonsAudit] Failed to notify admins:', notifyErr && notifyErr.message);
       }

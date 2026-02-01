@@ -75,7 +75,12 @@ class TeacherSalaryService {
       return {
         totalHours: Math.round(totalHours * 1000) / 1000, // Round to 3 decimals
         classIds,
-        classes: availableClasses
+        classes: availableClasses,
+        meta: {
+          totalCount: classes.length,
+          excludedCount: excludedIds.length,
+          availableCount: availableClasses.length
+        }
       };
     } catch (error) {
       console.error('[aggregateTeacherHours] Error:', error);
@@ -441,6 +446,18 @@ class TeacherSalaryService {
         }
       };
 
+      const formatTeacherLabel = (teacherDoc) => {
+        const name = `${teacherDoc.firstName || ''} ${teacherDoc.lastName || ''}`.trim();
+        const email = teacherDoc.email ? ` <${teacherDoc.email}>` : '';
+        return `${name || 'Teacher'}${email}`;
+      };
+
+      const logSkip = (teacherDoc, reason, details = {}) => {
+        const label = formatTeacherLabel(teacherDoc);
+        const extra = Object.keys(details).length > 0 ? ` ${JSON.stringify(details)}` : '';
+        console.log(`[generateMonthlyInvoices] Skipped ${label} (${teacherDoc._id}) - ${reason}.${extra}`);
+      };
+
       for (const teacher of teachers) {
         try {
           // Check if invoice already exists
@@ -453,11 +470,13 @@ class TeacherSalaryService {
           });
 
           // Aggregate hours for this teacher
-          const { totalHours, classes } = await this.aggregateTeacherHours(teacher._id, month, year);
+          const { totalHours, classes, meta } = await this.aggregateTeacherHours(teacher._id, month, year);
 
           if (existing) {
             // Check if there are classes not included in any invoice
-            const existingClassIds = existing.classIds.map(id => id.toString());
+            const existingClassIds = Array.isArray(existing.classIds)
+              ? existing.classIds.map(id => id.toString())
+              : [];
             const missingClasses = classes.filter(cls => !existingClassIds.includes(cls._id.toString()));
 
             if (missingClasses.length > 0) {
@@ -474,7 +493,22 @@ class TeacherSalaryService {
                     .filter(id => !existing.classIds.some(existingId => existingId.toString() === id.toString()));
 
                   if (newClassIds.length === 0) {
+                    const reason = 'Missing classes already billed elsewhere';
                     console.log(`[generateMonthlyInvoices] All missing classes were already linked to invoices for teacher ${teacher._id}`);
+                    results.skipped.push({
+                      teacherId: teacher._id,
+                      teacherName: `${teacher.firstName} ${teacher.lastName}`,
+                      reason,
+                      details: {
+                        missingClasses: missingClasses.length,
+                        existingInvoice: existing.invoiceNumber || String(existing._id)
+                      }
+                    });
+                    results.summary.skipped++;
+                    logSkip(teacher, reason, {
+                      missingClasses: missingClasses.length,
+                      existingInvoice: existing.invoiceNumber || String(existing._id)
+                    });
                   } else {
                     const newClassIdSet = new Set(newClassIds.map(id => id.toString()));
                     const addedHours = missingClasses.reduce((sum, cls) => (
@@ -536,9 +570,17 @@ class TeacherSalaryService {
                     results.skipped.push({
                       teacherId: teacher._id,
                       teacherName: `${teacher.firstName} ${teacher.lastName}`,
-                      reason: 'Late-submission classes already billed'
+                      reason: 'Late-submission classes already billed',
+                      details: {
+                        missingClasses: missingClasses.length,
+                        existingInvoice: existing.invoiceNumber || String(existing._id)
+                      }
                     });
                     results.summary.skipped++;
+                    logSkip(teacher, 'Late-submission classes already billed', {
+                      missingClasses: missingClasses.length,
+                      existingInvoice: existing.invoiceNumber || String(existing._id)
+                    });
                   } else {
                     const newClassIdSet = new Set(newClassIds.map(id => id.toString()));
                     const addedHours = missingClasses.reduce((sum, cls) => (
@@ -588,19 +630,43 @@ class TeacherSalaryService {
               results.skipped.push({
                 teacherId: teacher._id,
                 teacherName: `${teacher.firstName} ${teacher.lastName}`,
-                reason: 'Invoice already exists'
+                reason: 'Invoice already exists',
+                details: {
+                  existingInvoice: existing.invoiceNumber || String(existing._id)
+                }
               });
               results.summary.skipped++;
+              logSkip(teacher, 'Invoice already exists', {
+                existingInvoice: existing.invoiceNumber || String(existing._id)
+              });
             }
           } else {
             // No existing invoice
             if (totalHours === 0) {
+              const totalCount = meta?.totalCount ?? 0;
+              const availableCount = meta?.availableCount ?? 0;
+              const excludedCount = meta?.excludedCount ?? 0;
+              let reason = 'Zero hours';
+              if (totalCount === 0) {
+                reason = 'No countable classes in period';
+              } else if (availableCount === 0 && excludedCount > 0) {
+                reason = 'All classes already linked to another invoice';
+              } else if (availableCount > 0) {
+                reason = 'Classes have zero duration';
+              }
+
               results.skipped.push({
                 teacherId: teacher._id,
                 teacherName: `${teacher.firstName} ${teacher.lastName}`,
-                reason: 'Zero hours'
+                reason,
+                details: {
+                  totalCount,
+                  availableCount,
+                  excludedCount
+                }
               });
               results.summary.skipped++;
+              logSkip(teacher, reason, { totalCount, availableCount, excludedCount });
               continue;
             }
 
@@ -684,6 +750,7 @@ class TeacherSalaryService {
                   reason: 'Zero hours'
                 });
                 results.summary.skipped++;
+                logSkip(teacher, 'Zero hours');
               }
             }
           }
@@ -755,7 +822,7 @@ class TeacherSalaryService {
     await invoice.save();
 
     if (!preserveHours) {
-      await this.unmarkClassesForInvoice(invoice._id);
+      await this.unmarkClassesForInvoice(invoice._id, invoice.classIds || []);
     }
 
     await TeacherSalaryAudit.logAction({
@@ -1225,11 +1292,17 @@ class TeacherSalaryService {
    * Clear teacher invoice linkage for classes tied to a given invoice
    * @param {ObjectId} invoiceId
    */
-  static async unmarkClassesForInvoice(invoiceId) {
-    if (!invoiceId) return;
+  static async unmarkClassesForInvoice(invoiceId, classIds = []) {
+    if (!invoiceId && (!Array.isArray(classIds) || classIds.length === 0)) return;
+
+    const filters = [];
+    if (invoiceId) filters.push({ billedInTeacherInvoiceId: invoiceId });
+    if (Array.isArray(classIds) && classIds.length > 0) {
+      filters.push({ _id: { $in: classIds } });
+    }
 
     await Class.updateMany(
-      { billedInTeacherInvoiceId: invoiceId },
+      { $or: filters },
       {
         $set: {
           billedInTeacherInvoiceId: null,

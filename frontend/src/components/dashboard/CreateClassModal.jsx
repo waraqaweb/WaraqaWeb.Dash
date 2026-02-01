@@ -26,6 +26,12 @@ function minutesToTime(minutes) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+const adjustDurationByStep = (rawValue, direction = 1, step = 10) => {
+  const current = Number.isFinite(Number(rawValue)) ? Number(rawValue) : 0;
+  const next = current + step * direction;
+  return Math.max(1, Math.round(next));
+};
+
 export default function CreateClassModal({
   isOpen,
   onClose,
@@ -87,8 +93,10 @@ export default function CreateClassModal({
   });
   const [isLoading, setIsLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [duplicatePrompt, setDuplicatePrompt] = useState(null);
   const [availabilityWarning, setAvailabilityWarning] = useState(null);
   const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
+  const duplicateActionRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -285,9 +293,49 @@ export default function CreateClassModal({
       await handleLocalCreateClass();
     } else {
       const result = await handleCreateClass?.();
+      if (result?.code === 'duplicate') {
+        const studentName = result?.duplicateSeries?.studentName || 'this student';
+        const subject = result?.duplicateSeries?.subject || currentNewClass.subject || 'this subject';
+        const message = result?.message || 'Duplicate recurring series detected.';
+        duplicateActionRef.current = { mode: 'parent' };
+        setDuplicatePrompt({
+          message,
+          details: `A recurring series for ${studentName} with subject "${subject}" already exists.`
+        });
+        return;
+      }
       if (result?.success) {
         setSuccessMessage(result.message || 'Class created successfully!');
       }
+    }
+  };
+
+  const handleDuplicateConfirm = async () => {
+    if (isLoading) return;
+    const action = duplicateActionRef.current || {};
+    setIsLoading(true);
+    setDuplicatePrompt(null);
+    try {
+      if (action.mode === 'standalone' && action.payload) {
+        const overridePayload = { ...action.payload, overrideDuplicateSeries: true };
+        await axios.post('/classes', overridePayload);
+        setSuccessMessage('Recurring classes created successfully!');
+        return;
+      }
+
+      if (action.mode === 'parent') {
+        const result = await handleCreateClass?.({ overrideDuplicateSeries: true });
+        if (result?.success) {
+          setSuccessMessage(result.message || 'Recurring classes created successfully!');
+        } else {
+          const errorMessage = result?.message || 'Error creating class. Please try again.';
+          alert(errorMessage);
+        }
+      }
+    } catch (err) {
+      alert(err?.response?.data?.message || err?.message || 'Error creating class. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -494,27 +542,15 @@ export default function CreateClassModal({
       }
 
       if (status === 409 && currentNewClass?.isRecurring) {
-        // Offer override even if backend didn't provide structured duplicate info
         const serverMessage = data?.message || 'A recurring series appears to exist for this student/subject.';
-        const confirmation = window.confirm(`${serverMessage}\nWould you like to create another series anyway?`);
-        if (confirmation) {
-          try {
-            const payload = { ...buildPayload(), overrideDuplicateSeries: true };
-            await axios.post('/classes', payload);
-            setSuccessMessage('Recurring classes created successfully!');
-            return;
-          } catch (overrideErr) {
-            try {
-              if (!(import.meta?.env?.PROD)) {
-                console.error('Override creation failed:', overrideErr);
-              }
-            } catch (e) {
-              // ignore
-            }
-            alert(overrideErr?.response?.data?.message || 'Error creating class. Please try again.');
-            return;
-          }
-        }
+        const studentName = data?.duplicateSeries?.studentName || 'this student';
+        const subject = data?.duplicateSeries?.subject || currentNewClass.subject || 'this subject';
+        duplicateActionRef.current = { mode: 'standalone', payload: buildPayload() };
+        setDuplicatePrompt({
+          message: serverMessage,
+          details: `A recurring series for ${studentName} with subject "${subject}" already exists.`
+        });
+        return;
       }
 
       alert(error?.response?.data?.message || error?.message || 'Error creating class. Please try again.');
@@ -602,7 +638,14 @@ export default function CreateClassModal({
           </div>
 
           {/* Form */}
-          <form onSubmit={handleFormSubmit} className="space-y-4">
+          <form
+            onSubmit={handleFormSubmit}
+            onFocusCapture={() => {
+              if (successMessage) setSuccessMessage('');
+              if (duplicatePrompt) setDuplicatePrompt(null);
+            }}
+            className="space-y-4"
+          >
             {/* Class Type Toggle as tabs */}
             <div className="rounded-lg bg-gray-100 p-1 inline-flex w-full">
               <button
@@ -655,11 +698,6 @@ export default function CreateClassModal({
                         <div className="mt-1 whitespace-pre-wrap">
                           {availabilityWarning.suggested.map((s) => `• ${s}`).join('\n')}
 
-                    {successMessage && (
-                      <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-md text-sm text-emerald-800">
-                        {successMessage}
-                      </div>
-                    )}
                         </div>
                       </div>
                     )}
@@ -673,6 +711,54 @@ export default function CreateClassModal({
                     <XCircle className="h-5 w-5" />
                   </button>
                 </div>
+              </div>
+            )}
+
+            {duplicatePrompt && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-md">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-amber-900">
+                      {duplicatePrompt.message || 'Duplicate recurring series detected.'}
+                    </div>
+                    {duplicatePrompt.details && (
+                      <div className="mt-1 text-xs text-amber-800 whitespace-pre-wrap">
+                        {duplicatePrompt.details}
+                      </div>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleDuplicateConfirm}
+                        className="px-3 py-1.5 rounded-md text-xs font-medium bg-amber-600 text-white"
+                        disabled={isLoading}
+                      >
+                        Create anyway
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDuplicatePrompt(null)}
+                        className="px-3 py-1.5 rounded-md text-xs font-medium border border-amber-300 text-amber-800"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDuplicatePrompt(null)}
+                    className="text-amber-700 hover:text-amber-900"
+                    aria-label="Dismiss duplicate series warning"
+                  >
+                    <XCircle className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {successMessage && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-md text-sm text-emerald-800">
+                {successMessage}
               </div>
             )}
            
@@ -738,8 +824,8 @@ export default function CreateClassModal({
                   </label>
                   <input
                     type="number"
-                    min="10"
-                    step="10"
+                    min="1"
+                    step="1"
                     required
                     value={currentNewClass.duration || ''}
                     onChange={(e) =>
@@ -748,6 +834,18 @@ export default function CreateClassModal({
                         duration: e.target.value === '' ? '' : Number(e.target.value),
                       }))
                     }
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        const direction = e.key === 'ArrowUp' ? 1 : -1;
+                        const next = adjustDurationByStep(currentNewClass.duration, direction, 10);
+                        currentSetNewClass((prev) => ({
+                          ...prev,
+                          duration: next
+                        }));
+                      }
+                    }}
+                    inputMode="numeric"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
                     placeholder="Duration (minutes)"
                   />
@@ -836,8 +934,8 @@ export default function CreateClassModal({
                       <div className="min-w-0">
                         <input
                           type="number"
-                          min="10"
-                          step="10"
+                          min="1"
+                          step="1"
                           value={slot.duration || ''}
                           onChange={(e) =>
                             (isStandalone ? updateLocalRecurrenceSlot : updateRecurrenceSlot)?.(
@@ -846,6 +944,19 @@ export default function CreateClassModal({
                               e.target.value === '' ? null : Number(e.target.value)
                             )
                           }
+                          onKeyDown={(e) => {
+                            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              const direction = e.key === 'ArrowUp' ? 1 : -1;
+                              const next = adjustDurationByStep(slot.duration, direction, 10);
+                              (isStandalone ? updateLocalRecurrenceSlot : updateRecurrenceSlot)?.(
+                                index,
+                                'duration',
+                                next
+                              );
+                            }
+                          }}
+                          inputMode="numeric"
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
                           placeholder="Duration (minutes)"
                         />

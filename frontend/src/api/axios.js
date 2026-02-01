@@ -193,11 +193,15 @@ instance.interceptors.response.use(
       data: responseData,
     };
 
+    const suppressErrorLog = Boolean(error.config?.suppressErrorLog || error.config?.meta?.suppressErrorLog);
+
     // Expected user-actionable errors (400/409/422) shouldn't spam the console as errors.
-    if (status === 400 || status === 409 || status === 422) {
-      console.warn(`[API ${status}] ${method} ${endpoint}: ${message}`, extra);
-    } else {
-      console.error(`[API ${status || 'ERR'}] ${method} ${endpoint}: ${message}`, extra);
+    if (!suppressErrorLog) {
+      if (status === 400 || status === 409 || status === 422) {
+        console.warn(`[API ${status}] ${method} ${endpoint}: ${message}`, extra);
+      } else {
+        console.error(`[API ${status || 'ERR'}] ${method} ${endpoint}: ${message}`, extra);
+      }
     }
 
     // Mark auth errors so higher-level code (AuthContext) can decide what to do

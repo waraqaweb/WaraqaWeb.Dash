@@ -20,6 +20,12 @@ import {
 } from "../../services/entitySearch";
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+const adjustDurationByStep = (rawValue, direction = 1, step = 10) => {
+  const current = Number.isFinite(Number(rawValue)) ? Number(rawValue) : 0;
+  const next = current + step * direction;
+  return Math.max(1, Math.round(next));
+};
 const CLASS_TYPE_OPTIONS = ['One on one', 'Group classes', 'Public lecture'];
 
 export default function EditClassModal({
@@ -399,8 +405,8 @@ export default function EditClassModal({
                   </label>
                   <input
                     type="number"
-                    min="10"
-                    step="10"
+                    min="1"
+                    step="1"
                     required
                     value={editClass.duration || ''}
                     onChange={(e) =>
@@ -409,6 +415,18 @@ export default function EditClassModal({
                         duration: e.target.value === '' ? '' : Number(e.target.value)
                       }))
                     }
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        const direction = e.key === 'ArrowUp' ? 1 : -1;
+                        const next = adjustDurationByStep(editClass.duration, direction, 10);
+                        setEditClass((prev) => ({
+                          ...prev,
+                          duration: next
+                        }));
+                      }
+                    }}
+                    inputMode="numeric"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
                     placeholder="Duration (minutes)"
                   />
@@ -479,10 +497,19 @@ export default function EditClassModal({
                       <div className="min-w-0">
                         <input
                           type="number"
-                          min="10"
-                          step="10"
+                          min="1"
+                          step="1"
                           value={slot.duration || ''}
                           onChange={(e) => updateRecurrenceSlot(index, 'duration', e.target.value === '' ? null : Number(e.target.value))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              const direction = e.key === 'ArrowUp' ? 1 : -1;
+                              const next = adjustDurationByStep(slot.duration, direction, 10);
+                              updateRecurrenceSlot(index, 'duration', next);
+                            }
+                          }}
+                          inputMode="numeric"
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
                           placeholder="Duration (minutes)"
                         />

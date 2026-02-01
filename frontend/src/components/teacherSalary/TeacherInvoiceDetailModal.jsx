@@ -221,14 +221,14 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
     if (!invoice) return;
 
     const confirmed = window.confirm(
-      `Delete invoice ${invoice.invoiceNumber || ''}?\n\nThis will remove the invoice from lists and keep teacher hours unchanged. This action cannot be undone.`
+      `Delete invoice ${invoice.invoiceNumber || ''}?\n\nUnpaid invoices will release linked classes so they can be re-invoiced. This action cannot be undone.`
     );
     if (!confirmed) return;
 
     try {
       setDeleting(true);
       setError(null);
-      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`, { params: { preserveHours: true } });
+      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`);
       if (onUpdate) onUpdate();
       onClose();
     } catch (err) {

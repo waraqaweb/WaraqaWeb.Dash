@@ -120,31 +120,38 @@ async function notifyClassEvent({
 
   const buildCopy = (timeLabel) => {
     const note = extraMsg ? ` ${extraMsg}` : '';
+    const subjectLabel = classObj?.subject ? `${classObj.subject}` : 'Class';
+    const studentLabel = classObj?.student?.studentName
+      || classObj?.studentSnapshot?.studentName
+      || classObj?.studentSnapshot?.firstName
+      || '';
+    const studentText = studentLabel ? ` for ${studentLabel}` : '';
+    const baseLine = `${subjectLabel}${studentText}`;
     switch (eventType) {
       case 'added':
         return {
           title: 'Class scheduled',
-          message: `Your class is scheduled for ${timeLabel}.${note}`
+          message: `${baseLine} is scheduled for ${timeLabel}.${note}`
         };
       case 'cancelled':
         return {
           title: 'Class cancelled',
-          message: `Your class scheduled for ${timeLabel} was cancelled.${note}`
+          message: `${baseLine} scheduled for ${timeLabel} was cancelled.${note}`
         };
       case 'rescheduled':
         return {
           title: 'Class rescheduled',
-          message: `Your class has been moved to ${timeLabel}.${note}`
+          message: `${baseLine} has been moved to ${timeLabel}.${note}`
         };
       case 'time_changed':
         return {
           title: 'Class time updated',
-          message: `Your class time is now ${timeLabel}.${note}`
+          message: `${baseLine} time is now ${timeLabel}.${note}`
         };
       default:
         return {
           title: 'Class updated',
-          message: `There’s an update to your class.${note}`
+          message: `There’s an update to ${baseLine}.${note}`
         };
     }
   };

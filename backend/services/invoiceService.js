@@ -2193,13 +2193,21 @@ class InvoiceService {
       const isUnpaid = ACTIVE_UNPAID_INVOICE_STATUSES.includes(String(invoiceDoc?.status || '').toLowerCase());
       const capMinutes = (!isUnpaid && coverageHours > EPSILON_HOURS) ? Math.round(coverageHours * 60) : null;
 
-      const billingStart = ensureDate(invoiceDoc?.billingPeriod?.startDate) || new Date(0);
+      const billingStart = ensureDate(invoiceDoc?.billingPeriod?.startDate)
+        || ensureDate(invoiceDoc?.createdAt)
+        || new Date();
       const billingEnd = ensureDate(invoiceDoc?.billingPeriod?.endDate);
       let coverageEnd = ensureDate(invoiceDoc?.coverage?.endDate) || billingEnd || null;
       if (coverageEnd) {
         coverageEnd.setHours(23, 59, 59, 999);
       } else if (billingStart) {
         coverageEnd = dayjs(billingStart).add(1, 'month').toDate();
+      }
+      if (isUnpaid && billingStart) {
+        const minEnd = dayjs(billingStart).add(1, 'month').endOf('day').toDate();
+        if (!coverageEnd || coverageEnd < minEnd) {
+          coverageEnd = minEnd;
+        }
       }
 
       const existingItems = Array.isArray(invoiceDoc.items) ? invoiceDoc.items : [];

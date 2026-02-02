@@ -2234,12 +2234,7 @@ class InvoiceService {
         'student.studentId': { $in: studentIds },
         hidden: { $ne: true },
         status: { $ne: 'pattern' },
-        paidByGuardian: { $ne: true },
-        $or: [
-          { billedInInvoiceId: null },
-          { billedInInvoiceId: invoiceDoc._id },
-          { billedInInvoiceId: { $exists: false } }
-        ]
+        paidByGuardian: { $ne: true }
       };
 
       if (Object.keys(scheduledFilter).length) {
@@ -2816,16 +2811,6 @@ class InvoiceService {
         }
       }
 
-      const paidIds = [];
-      const unpaidIds = [];
-      for (const objId of allClassIds) {
-        if (paidSet.has(objId.toString())) {
-          paidIds.push(objId);
-        } else {
-          unpaidIds.push(objId);
-        }
-      }
-
       const ops = [];
       if (paidIds.length) {
         ops.push(
@@ -2834,6 +2819,21 @@ class InvoiceService {
             { $set: { paidByGuardian: true, paidByGuardianAt: new Date() } }
           ).exec()
         );
+      }
+
+      if (unpaidIds.length) {
+        const baseUpdate = { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1 } };
+        const status = String(invoiceDoc?.status || '').toLowerCase();
+        if (status === 'paid' || status === 'refunded') {
+          baseUpdate.$unset = { ...baseUpdate.$unset, billedInInvoiceId: 1, billedAt: 1 };
+        }
+        ops.push(
+          Class.updateMany(
+            { _id: { $in: unpaidIds }, billedInInvoiceId: invoiceDoc._id },
+            baseUpdate
+          ).exec()
+        );
+      }
       }
       if (unpaidIds.length) {
         ops.push(

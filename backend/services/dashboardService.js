@@ -11,7 +11,9 @@ const Student = require('../models/Student');
 
 // safeRun will execute an async function (fn) and if it returns a promise
 // we'll bound it with a timeout so tests that stub mongoose methods won't hang.
-const safeRun = async (fn, fallback = null, ms = 400) => {
+const parsedTimeout = Number.parseInt(process.env.DASHBOARD_QUERY_TIMEOUT_MS || '4000', 10);
+const DEFAULT_TIMEOUT_MS = Number.isFinite(parsedTimeout) ? parsedTimeout : 4000;
+const safeRun = async (fn, fallback = null, ms = DEFAULT_TIMEOUT_MS) => {
   try {
     const resultOrPromise = (typeof fn === 'function') ? fn() : fn;
     if (!resultOrPromise || typeof resultOrPromise.then !== 'function') return resultOrPromise;

@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "socket issue https"
+git commit -m "dasbhaord numbers accuracy"
 git push origin main
 
 ---

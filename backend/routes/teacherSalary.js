@@ -149,6 +149,32 @@ router.post('/admin/generate', authenticateToken, requireAdmin, async (req, res)
 });
 
 /**
+ * Release linked classes for a teacher/month to allow regeneration
+ * POST /api/teacher-salary/admin/release-linked-classes
+ * Body: { teacherId, month, year }
+ */
+router.post('/admin/release-linked-classes', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { teacherId, month, year } = req.body || {};
+
+    if (!teacherId || !month || !year) {
+      return res.status(400).json({ error: 'teacherId, month, and year are required' });
+    }
+
+    const result = await TeacherSalaryService.releaseTeacherClassesForPeriod(teacherId, month, year);
+
+    res.json({
+      success: true,
+      message: 'Linked classes released',
+      result
+    });
+  } catch (error) {
+    console.error('[POST /admin/release-linked-classes] Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to release linked classes' });
+  }
+});
+
+/**
  * Get all invoices for a month
  * GET /api/teacher-salary/admin/invoices?month=10&year=2025&status=draft
  */

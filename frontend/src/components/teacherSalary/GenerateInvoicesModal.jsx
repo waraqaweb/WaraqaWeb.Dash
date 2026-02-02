@@ -31,6 +31,8 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
   const [generationType, setGenerationType] = useState('all'); // 'all' or 'specific'
   const [selectedTeachers, setSelectedTeachers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [releaseLoadingId, setReleaseLoadingId] = useState(null);
+  const [releaseMessage, setReleaseMessage] = useState(null);
 
   // Initialize with previous month
   useEffect(() => {
@@ -132,6 +134,7 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
       setLoading(true);
       setError(null);
       setRunSummary(null);
+      setReleaseMessage(null);
 
       const payload = {
         month: parseInt(selectedMonth),
@@ -183,6 +186,30 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
       setError(err.response?.data?.error || err.response?.data?.message || 'Failed to generate invoices');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleReleaseLinkedClasses = async (teacherId) => {
+    if (!teacherId || !selectedMonth || !selectedYear) return;
+    const month = parseInt(selectedMonth);
+    const year = parseInt(selectedYear);
+
+    const confirmMsg = 'Release linked classes for this teacher in the selected month?';
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setReleaseLoadingId(teacherId);
+      setReleaseMessage(null);
+      await api.post('/teacher-salary/admin/release-linked-classes', {
+        teacherId,
+        month,
+        year
+      });
+      setReleaseMessage('Linked classes released. You can generate invoices again.');
+    } catch (err) {
+      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to release linked classes');
+    } finally {
+      setReleaseLoadingId(null);
     }
   };
 
@@ -239,24 +266,48 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
                 </span>
               </div>
 
+              {releaseMessage && (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  {releaseMessage}
+                </div>
+              )}
+
               {Array.isArray(runSummary.skipped) && runSummary.skipped.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Skipped</p>
                   <ul className="space-y-1 text-sm text-slate-700">
-                    {runSummary.skipped.map((item) => (
-                      <li key={`${item.teacherId}-${item.reason}`} className="flex flex-col gap-1 rounded-md border border-slate-200 bg-white p-2">
-                        <span className="font-medium text-slate-800">{item.teacherName || 'Teacher'}</span>
-                        <span className="text-slate-600">{item.reason || 'Skipped'}</span>
-                        {item.details && (
-                          <span className="text-xs text-slate-500">
-                            {item.details.existingInvoice && `Invoice: ${item.details.existingInvoice}. `}
-                            {typeof item.details.totalCount === 'number' && `Classes: ${item.details.totalCount}. `}
-                            {typeof item.details.availableCount === 'number' && `Available: ${item.details.availableCount}. `}
-                            {typeof item.details.excludedCount === 'number' && `Linked: ${item.details.excludedCount}. `}
-                          </span>
-                        )}
-                      </li>
-                    ))}
+                    {runSummary.skipped.map((item) => {
+                      const reasonText = String(item.reason || '').toLowerCase();
+                      const canRelease = reasonText.includes('linked') || reasonText.includes('already linked');
+                      return (
+                        <li key={`${item.teacherId}-${item.reason}`} className="flex flex-col gap-2 rounded-md border border-slate-200 bg-white p-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-1">
+                              <span className="font-medium text-slate-800">{item.teacherName || 'Teacher'}</span>
+                              <span className="block text-slate-600">{item.reason || 'Skipped'}</span>
+                              {item.details && (
+                                <span className="block text-xs text-slate-500">
+                                  {item.details.existingInvoice && `Invoice: ${item.details.existingInvoice}. `}
+                                  {typeof item.details.totalCount === 'number' && `Classes: ${item.details.totalCount}. `}
+                                  {typeof item.details.availableCount === 'number' && `Available: ${item.details.availableCount}. `}
+                                  {typeof item.details.excludedCount === 'number' && `Linked: ${item.details.excludedCount}. `}
+                                </span>
+                              )}
+                            </div>
+                            {canRelease && item.teacherId && (
+                              <button
+                                type="button"
+                                onClick={() => handleReleaseLinkedClasses(item.teacherId)}
+                                disabled={releaseLoadingId === item.teacherId}
+                                className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                              >
+                                {releaseLoadingId === item.teacherId ? 'Releasing…' : 'Release classes'}
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}

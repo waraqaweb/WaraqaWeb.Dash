@@ -28,6 +28,30 @@ const resolveApiBase = () => {
     return url;
   };
 
+  const normalizeApiBase = (url) => {
+    if (typeof url !== 'string') return url;
+    const upgraded = upgradeSameHostToHttps(url);
+    const normalized = normalizeLocalhost(upgraded);
+
+    try {
+      const parsed = new URL(normalized, window.location.origin);
+      const origin = window.location?.origin || parsed.origin;
+      const path = parsed.pathname || '';
+
+      if (parsed.host === window.location.host) {
+        const hasApiPath = /(^|\/)api(\/|$)/.test(path);
+        const hasDashboardPath = /(^|\/)dashboard(\/|$)/.test(path);
+        if (hasDashboardPath && !hasApiPath) {
+          return `${origin.replace(/\/$/, '')}/api`;
+        }
+      }
+    } catch (e) {
+      return normalized;
+    }
+
+    return normalized;
+  };
+
   const normalizeLocalhost = (url) => {
     if (typeof url !== 'string') return url;
     const origin = window.location?.origin || '';
@@ -49,7 +73,7 @@ const resolveApiBase = () => {
   };
 
   if (envApiBase) {
-    const normalized = normalizeLocalhost(upgradeSameHostToHttps(envApiBase));
+    const normalized = normalizeApiBase(envApiBase);
     // Production safety: if the build accidentally bakes an internal/localhost URL,
     // ignore it and fall back to same-origin (/api) via nginx.
     if (isProductionHost && looksLikeInternalApiBase(normalized)) {
@@ -59,7 +83,7 @@ const resolveApiBase = () => {
   }
 
   if (window.__API_BASE__) {
-    return normalizeLocalhost(upgradeSameHostToHttps(window.__API_BASE__));
+    return normalizeApiBase(window.__API_BASE__);
   }
 
   const origin = window.location?.origin;

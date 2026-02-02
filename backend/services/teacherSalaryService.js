@@ -1311,6 +1311,41 @@ class TeacherSalaryService {
       }
     );
   }
+
+  /**
+   * Release invoice linkage for classes belonging to a teacher in a given month
+   * @param {ObjectId|String} teacherId
+   * @param {Number} month
+   * @param {Number} year
+   * @returns {Promise<{matched: number, modified: number}>}
+   */
+  static async releaseTeacherClassesForPeriod(teacherId, month, year) {
+    if (!teacherId || !month || !year) {
+      throw new Error('Teacher, month, and year are required');
+    }
+
+    const startDate = dayjs.utc(`${year}-${String(month).padStart(2, '0')}-01`).startOf('month').toDate();
+    const endDate = dayjs.utc(startDate).add(1, 'month').toDate();
+
+    const result = await Class.updateMany(
+      {
+        teacher: teacherId,
+        scheduledDate: { $gte: startDate, $lt: endDate },
+        billedInTeacherInvoiceId: { $ne: null }
+      },
+      {
+        $set: {
+          billedInTeacherInvoiceId: null,
+          teacherInvoiceBilledAt: null
+        }
+      }
+    );
+
+    return {
+      matched: result?.matchedCount ?? result?.n ?? 0,
+      modified: result?.modifiedCount ?? result?.nModified ?? 0
+    };
+  }
 }
 
 module.exports = TeacherSalaryService;

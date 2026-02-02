@@ -21,3 +21,4 @@ cd /opt/waraqa
 chmod +x deploy/scripts/deploy.sh
 ./deploy/scripts/deploy.sh pull
 ./deploy/scripts/deploy.sh all
+docker compose exec backend node scripts/sync_unpaid_invoices.js --sinceDays 120

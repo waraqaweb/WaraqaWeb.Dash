@@ -31,6 +31,7 @@ const ensureDate = (value) => {
 const EPSILON_HOURS = 0.0005;
 const EPSILON_CURRENCY = 0.05;
 const ACTIVE_UNPAID_INVOICE_STATUSES = ['draft', 'pending', 'sent', 'overdue', 'partially_paid'];
+const INVOICE_DEBUG = String(process.env.INVOICE_DEBUG || '').toLowerCase() === 'true';
 
 const resolveInvoiceHourlyRate = (invoice) => {
   const doc = invoice || {};
@@ -1201,10 +1202,23 @@ class InvoiceService {
           if (trackedStudentIds.length > 0) {
             allUnpaidQuery['student.studentId'] = { $in: trackedStudentIds };
           }
-          const allUnpaidClasses = await Class.find(allUnpaidQuery)
+          let allUnpaidClasses = await Class.find(allUnpaidQuery)
             .select('scheduledDate')
             .sort({ scheduledDate: 1 })
             .lean();
+
+          if (!allUnpaidClasses.length && trackedStudentIds.length > 0) {
+            if (INVOICE_DEBUG) {
+              console.log('🔎 [Zero-Hour PAYG Invoice] Fallback to guardian-only class lookup (studentId filter yielded 0).');
+            }
+            allUnpaidClasses = await Class.find({
+              'student.guardianId': guardian._id,
+              _id: { $nin: billedIds }
+            })
+              .select('scheduledDate')
+              .sort({ scheduledDate: 1 })
+              .lean();
+          }
 
           // Use the earliest unpaid class date as billing start, or today if no classes
           if (allUnpaidClasses.length > 0 && allUnpaidClasses[0].scheduledDate) {
@@ -1249,9 +1263,25 @@ class InvoiceService {
             upcomingQuery['student.studentId'] = { $in: trackedStudentIds };
           }
 
-          const upcoming = await Class.find(upcomingQuery)
+          let upcoming = await Class.find(upcomingQuery)
             .select('_id subject scheduledDate duration student teacher status reportSubmission')
             .lean();
+
+          if (!upcoming.length && trackedStudentIds.length > 0) {
+            if (INVOICE_DEBUG) {
+              console.log('🔎 [Zero-Hour PAYG Invoice] Fallback upcoming lookup without studentId filter.');
+            }
+            const fallbackUpcomingQuery = {
+              'student.guardianId': guardian._id,
+              scheduledDate: { $gte: billingStart, $lt: billingEnd },
+              _id: { $nin: billedIds },
+              paidByGuardian: { $ne: true },
+              $or: upcomingQuery.$or
+            };
+            upcoming = await Class.find(fallbackUpcomingQuery)
+              .select('_id subject scheduledDate duration student teacher status reportSubmission')
+              .lean();
+          }
 
           console.log(`🔍 [Zero-Hour PAYG Invoice] Found ${upcoming.length} classes in billing period`);
 
@@ -2250,6 +2280,32 @@ class InvoiceService {
         .limit(MAX_DYNAMIC_CLASS_RESULTS)
         .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId')
         .lean();
+
+      if (!classDocs.length && studentIds.length > 0) {
+        if (INVOICE_DEBUG) {
+          console.log('🔎 [Invoice dynamic] Fallback to guardian-only class query (studentId filter yielded 0).', {
+            guardianId: guardianId.toString(),
+            invoiceId: invoiceDoc?._id?.toString()
+          });
+        }
+        const fallbackQuery = {
+          'student.guardianId': guardianId,
+          hidden: { $ne: true },
+          status: { $ne: 'pattern' },
+          paidByGuardian: { $ne: true }
+        };
+        if (Object.keys(scheduledFilter).length) {
+          fallbackQuery.scheduledDate = scheduledFilter;
+        }
+        if (excludedObjectIds.length) {
+          fallbackQuery._id = { $nin: excludedObjectIds };
+        }
+        classDocs = await Class.find(fallbackQuery)
+          .sort({ scheduledDate: 1, createdAt: 1 })
+          .limit(MAX_DYNAMIC_CLASS_RESULTS)
+          .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId')
+          .lean();
+      }
 
       // Ensure classes already present on the invoice remain candidates even if they
       // fall outside the default scheduling window (e.g., rescheduled earlier).

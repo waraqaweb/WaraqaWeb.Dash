@@ -1327,12 +1327,36 @@ class TeacherSalaryService {
     const startDate = dayjs.utc(`${year}-${String(month).padStart(2, '0')}-01`).startOf('month').toDate();
     const endDate = dayjs.utc(startDate).add(1, 'month').toDate();
 
-    const result = await Class.updateMany(
+    const invoices = await TeacherInvoice.find({
+      teacher: teacherId,
+      month,
+      year,
+      deleted: { $ne: true }
+    })
+      .select('_id classIds')
+      .lean();
+
+    const invoiceIds = invoices.map((inv) => inv._id).filter(Boolean);
+    const invoiceClassIds = invoices.flatMap((inv) => Array.isArray(inv.classIds) ? inv.classIds : []);
+
+    const filters = [
       {
         teacher: teacherId,
         scheduledDate: { $gte: startDate, $lt: endDate },
         billedInTeacherInvoiceId: { $ne: null }
-      },
+      }
+    ];
+
+    if (invoiceIds.length) {
+      filters.push({ billedInTeacherInvoiceId: { $in: invoiceIds } });
+    }
+
+    if (invoiceClassIds.length) {
+      filters.push({ _id: { $in: invoiceClassIds } });
+    }
+
+    const result = await Class.updateMany(
+      { $or: filters },
       {
         $set: {
           billedInTeacherInvoiceId: null,

@@ -179,9 +179,7 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
 
       setRunSummary(results);
 
-      if (skipped === 0 && failed === 0) {
-        onClose();
-      }
+      // Keep modal open so admins can review results and use release actions if needed.
     } catch (err) {
       setError(err.response?.data?.error || err.response?.data?.message || 'Failed to generate invoices');
     } finally {

@@ -246,29 +246,6 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
     return { error: 'Guardian not found' };
   }
 
-  const studentIds = (() => {
-    const ids = new Set();
-    const add = (val) => {
-      if (!val) return;
-      try {
-        const str = String(val);
-        if (mongoose.Types.ObjectId.isValid(str)) ids.add(str);
-      } catch (_) {
-        // ignore
-      }
-    };
-    const embedded = Array.isArray(guardian.guardianInfo?.students)
-      ? guardian.guardianInfo.students
-      : [];
-    embedded.forEach((s) => {
-      add(s?._id || s?.id || s?.studentId);
-      add(s?.standaloneStudentId);
-      add(s?.studentInfo?.standaloneStudentId);
-      add(s?.studentInfo?.studentId);
-    });
-    return Array.from(ids).map((id) => new mongoose.Types.ObjectId(id));
-  })();
-
   const [invoicedClassIds, invoicedLessonIds] = await Promise.all([
     Invoice.distinct('items.class', {
       deleted: { $ne: true },
@@ -292,9 +269,6 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
     'student.guardianId': guardian._id,
     _id: { $nin: invoicedIds }
   };
-  if (studentIds.length > 0) {
-    unpaidQuery['student.studentId'] = { $in: studentIds };
-  }
   unpaidQuery.paidByGuardian = { $ne: true };
 
   let unpaidClasses = await Class.find(unpaidQuery)

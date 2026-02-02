@@ -659,15 +659,22 @@ class InvoiceService {
           deleted: { $ne: true },
           status: { $nin: ['cancelled', 'refunded'] }
         });
-        const studentIds = (guardian.guardianInfo?.students || []).map(s => s._id);
+        const studentIds = await getGuardianStudentIds(guardian, null);
 
-        // ✅ Query classes by student.guardianId and student.studentId for proper filtering
-        let unpaidClasses = await Class.find({
+        // ✅ Query classes by guardian id (studentId filter only when available)
+        const unpaidQuery = {
           'student.guardianId': guardian._id,
-          'student.studentId': { $in: studentIds },
+          hidden: { $ne: true },
+          status: { $ne: 'pattern' },
+          paidByGuardian: { $ne: true },
           // Exclude classes that are in active invoices
           _id: { $nin: invoicedClassIds }
-        })
+        };
+        if (studentIds.length > 0) {
+          unpaidQuery['student.studentId'] = { $in: studentIds };
+        }
+
+        let unpaidClasses = await Class.find(unpaidQuery)
           .populate("student.guardianId", "firstName lastName email")
           .populate("teacher")
           .lean();
@@ -717,12 +724,8 @@ class InvoiceService {
           return {
             lessonId: cls._id.toString(),
             class: cls._id,
-            student: cls.student?._id,
-            studentSnapshot: {
-              firstName: cls.student?.firstName,
-              lastName: cls.student?.lastName,
-              email: cls.student?.email || ""
-            },
+            student: cls.student?.studentId,
+            studentSnapshot: resolveStudentSnapshotFromClass(cls),
             teacher: cls.teacher?._id,
             description: `${cls.subject || "Class"} with ${cls.teacher?.firstName || ""}`,
             date: cls.scheduledDate || cls.date,

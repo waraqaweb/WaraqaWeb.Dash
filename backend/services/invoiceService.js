@@ -2160,7 +2160,8 @@ class InvoiceService {
       const coverageHours = Number.isFinite(coverageHoursRaw) && coverageHoursRaw > EPSILON_HOURS
         ? coverageHoursRaw
         : Math.max(0, invoiceItemHours);
-      const capMinutes = coverageHours > EPSILON_HOURS ? Math.round(coverageHours * 60) : null;
+      const isUnpaid = ACTIVE_UNPAID_INVOICE_STATUSES.includes(String(invoiceDoc?.status || '').toLowerCase());
+      const capMinutes = (!isUnpaid && coverageHours > EPSILON_HOURS) ? Math.round(coverageHours * 60) : null;
 
       const billingStart = ensureDate(invoiceDoc?.billingPeriod?.startDate) || new Date(0);
       const billingEnd = ensureDate(invoiceDoc?.billingPeriod?.endDate);

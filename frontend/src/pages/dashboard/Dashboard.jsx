@@ -33,6 +33,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import VacationManagementPage from './VacationManagementPage';
 import { DeleteClassCountdownProvider, useDeleteClassCountdown } from '../../contexts/DeleteClassCountdownContext';
 import DeleteCountdownToast from '../../components/ui/DeleteCountdownToast';
+import ToastHost from '../../components/ui/ToastHost';
+import { showToast } from '../../utils/toast';
 
 const DeleteCountdownHost = () => {
   const { isActive, secondsLeft, message, error, undo } = useDeleteClassCountdown();
@@ -101,6 +103,17 @@ const Dashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeView, setActiveView] = useState('home');
   const [mountedViews, setMountedViews] = useState(['home']);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const originalAlert = window.alert;
+    window.alert = (message) => {
+      showToast(message);
+    };
+    return () => {
+      window.alert = originalAlert;
+    };
+  }, []);
 
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -299,6 +312,7 @@ const Dashboard = () => {
   {/* ProfileModal removed - sidebar now navigates to the Profile page */}
     </div>
     <DeleteCountdownHost />
+    <ToastHost />
     </DeleteClassCountdownProvider>
     </SearchProvider>
   );

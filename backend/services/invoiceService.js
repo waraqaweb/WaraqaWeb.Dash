@@ -2868,6 +2868,9 @@ class InvoiceService {
         }
       }
 
+      const paidIds = allClassIds.filter((id) => paidSet.has(id.toString()));
+      const unpaidIds = allClassIds.filter((id) => !paidSet.has(id.toString()));
+
       const ops = [];
       if (paidIds.length) {
         ops.push(
@@ -2888,15 +2891,6 @@ class InvoiceService {
           Class.updateMany(
             { _id: { $in: unpaidIds }, billedInInvoiceId: invoiceDoc._id },
             baseUpdate
-          ).exec()
-        );
-      }
-      }
-      if (unpaidIds.length) {
-        ops.push(
-          Class.updateMany(
-            { _id: { $in: unpaidIds } },
-            { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1 } }
           ).exec()
         );
       }

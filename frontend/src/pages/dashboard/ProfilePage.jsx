@@ -128,22 +128,39 @@ export default function ProfilePage() {
         }
       }
 
-      const res = await api.get('/users', { signal: controller.signal });
-      if (requestId !== fetchAllUsersRequestIdRef.current) {
-        return;
+      const pageSize = 200;
+      const maxPages = 50;
+      let page = 1;
+      let totalPages = 1;
+      const collected = [];
+
+      while (page <= totalPages && page <= maxPages) {
+        const res = await api.get('/users', {
+          params: { page, limit: pageSize },
+          signal: controller.signal,
+        });
+        if (requestId !== fetchAllUsersRequestIdRef.current) {
+          return;
+        }
+        const list = res.data?.users || [];
+        collected.push(...list);
+        const pagination = res.data?.pagination || {};
+        totalPages = Number(pagination.pages || totalPages) || totalPages;
+        if (!list.length) break;
+        page += 1;
       }
-      const list = res.data.users || res.data || [];
-      setAllUsers(list);
-      writeCache(cacheKey, { users: list }, { ttlMs: 5 * 60_000, deps: ['users'] });
+
+      const byId = new Map();
+      collected.forEach((u) => {
+        if (!u?._id) return;
+        byId.set(String(u._id), u);
+      });
+      const finalList = Array.from(byId.values());
+      setAllUsers(finalList);
+      writeCache(cacheKey, { users: finalList }, { ttlMs: 5 * 60_000, deps: ['users'] });
     } catch (err) {
-      try {
-        const res2 = await api.get('/users/admin/all', { signal: fetchAllUsersAbortRef.current?.signal });
-        const list = res2.data.users || res2.data || [];
-        setAllUsers(list);
-      } catch (e) {
-        console.error('Failed to fetch users for admin', e);
-        setAllUsers([]);
-      }
+      console.error('Failed to fetch users for admin', err);
+      setAllUsers([]);
     } finally {
       fetchAllUsersInFlightRef.current = false;
     }
@@ -438,20 +455,20 @@ export default function ProfilePage() {
 
     return (
       <div className="flex flex-col mb-3 w-full relative">
-        <label className="text-base font-semibold text-gray-700 mb-1 flex items-center justify-between">
+        <label className="text-base font-semibold text-foreground mb-1 flex items-center justify-between">
           <span>{label}</span>
           {tooltip && fieldKey && !visibleTooltips?.[fieldKey] && (
-            <button type="button" onClick={handleShowTip} className="text-sm text-blue-600 underline">What is this?</button>
+            <button type="button" onClick={handleShowTip} className="text-sm text-primary underline">What is this?</button>
           )}
         </label>
         <input
-          className="border rounded-md px-3 py-2 text-base focus:ring-2 focus:ring-[var(--ring)] disabled:bg-gray-100"
+          className="border border-border rounded-md px-3 py-2 text-base bg-background focus:ring-2 focus:ring-[var(--ring)] disabled:bg-muted/40"
           value={(value !== undefined && value !== null) ? value : ""}
           onChange={(e) => onChange && onChange(e.target.value)}
           disabled={disabled}
         />
         {showLocalTip && tooltip && (
-          <div className="absolute right-0 top-full mt-2 bg-white border rounded p-2 text-xs shadow z-50 w-64">
+          <div className="absolute right-0 top-full mt-2 bg-popover text-popover-foreground border border-border rounded p-2 text-xs shadow z-50 w-64">
             {tooltip}
           </div>
         )}
@@ -462,32 +479,32 @@ export default function ProfilePage() {
   // Small Toggle switch component (local, avoids adding extra files)
   const ToggleSwitch = ({ checked, onChange, disabled, label }) => (
     <div className="flex items-center justify-between mb-3">
-      {label && <div className="text-sm font-semibold text-gray-700 mr-3">{label}</div>}
+      {label && <div className="text-sm font-semibold text-foreground mr-3">{label}</div>}
       <button
         type="button"
         role="switch"
         aria-checked={!!checked}
         disabled={disabled}
         onClick={() => !disabled && onChange && onChange(!checked)}
-        className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none ${checked ? 'bg-custom-teal' : 'bg-gray-300'} ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+        className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none ${checked ? 'bg-primary' : 'bg-muted'} ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
       >
-        <span className={`transform transition-transform inline-block w-4 h-4 bg-white rounded-full ml-1 ${checked ? 'translate-x-5' : ''}`} />
+        <span className={`transform transition-transform inline-block w-4 h-4 bg-background rounded-full ml-1 ${checked ? 'translate-x-5' : ''}`} />
       </button>
     </div>
   );
 
   return (
-    <div className="p-4 min-h-screen bg-gray-50">
+    <div className="p-5 min-h-screen bg-background text-foreground">
       <div className="max-w-6xl mx-auto">
         {/* Onboarding helper banner for new users */}
         {!onboardingDismissed && missingFields.length > 0 && (
-          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded mb-4">
+          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded mb-4 text-yellow-900">
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="font-semibold text-yellow-800">Complete your profile</div>
-                    <div className="text-sm text-yellow-700">We noticed some missing information — completing your profile helps us personalize your experience.</div>
+                    <div className="font-semibold">Complete your profile</div>
+                    <div className="text-sm text-yellow-800">We noticed some missing information — completing your profile helps us personalize your experience.</div>
                   </div>
                   <div className="text-sm text-yellow-800">{completedCount} of {requiredKeys.length} complete</div>
                 </div>
@@ -501,7 +518,7 @@ export default function ProfilePage() {
                   {['phone','timezone','dateOfBirth','gender','profilePicture'].map((k) => {
                     const mf = missingFields.find(m => m.key === k);
                     return mf ? (
-                      <button key={k} onClick={() => { setActiveTab(mf.tab); sendOnboardingEvent('tip_clicked', { field: k }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded text-sm">Add {mf.label}</button>
+                      <button key={k} onClick={() => { setActiveTab(mf.tab); sendOnboardingEvent('tip_clicked', { field: k }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="px-3 py-1 bg-yellow-100 text-yellow-900 rounded text-sm">Add {mf.label}</button>
                     ) : (
                       <div key={k} className="px-3 py-1 bg-green-50 text-green-800 rounded text-sm">{k} ✓</div>
                     );
@@ -509,8 +526,8 @@ export default function ProfilePage() {
                 </div>
               </div>
               <div className="ml-4 flex-shrink-0 flex flex-col items-end gap-2">
-                <button onClick={async () => { try { await api.post('/onboarding/dismiss'); } catch(e){} dismissOnboarding(); }} className="text-sm text-yellow-800 underline">Dismiss</button>
-                <button onClick={() => sendOnboardingEvent('banner_shown', { missing: missingFields.map(m => m.key) })} className="text-sm text-yellow-700">Help</button>
+                <button onClick={async () => { try { await api.post('/onboarding/dismiss'); } catch(e){} dismissOnboarding(); }} className="text-sm text-yellow-900 underline">Dismiss</button>
+                <button onClick={() => sendOnboardingEvent('banner_shown', { missing: missingFields.map(m => m.key) })} className="text-sm text-yellow-800">Help</button>
               </div>
             </div>
           </div>
@@ -519,10 +536,10 @@ export default function ProfilePage() {
         {/* Completion modal when profile becomes complete */}
         {completedCount === requiredKeys.length && !onboardingDismissed && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="fixed inset-0 bg-black bg-opacity-40" onClick={() => dismissOnboarding()} />
-            <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-6 z-50">
+            <div className="fixed inset-0 bg-black/40" onClick={() => dismissOnboarding()} />
+            <div className="relative bg-card text-foreground rounded-lg shadow-lg w-full max-w-md p-6 z-50 border border-border">
               <h3 className="text-lg font-semibold mb-2">Profile complete</h3>
-              <p className="text-sm text-gray-700 mb-4">Your profile is complete.</p>
+              <p className="text-sm text-muted-foreground mb-4">Your profile is complete.</p>
               <div className="flex justify-end gap-2">
                 <button onClick={() => { dismissOnboarding(); sendOnboardingEvent('completed_modal_ok'); }} className="px-4 py-2 bg-primary text-white rounded">Done</button>
               </div>
@@ -541,32 +558,32 @@ export default function ProfilePage() {
         )}
 
         {/* Profile Card (hidden when admin selects Manage Users) */}
-        <div className={`bg-white shadow rounded-lg p-4 border ${isAdmin && mainTab === 'manage' ? 'hidden' : ''}`}>
+        <div className={`bg-card shadow-sm rounded-lg p-4 border border-border ${isAdmin && mainTab === 'manage' ? 'hidden' : ''}`}>
           <div className="flex items-center justify-between">
             <div>
                 <div className="flex items-center gap-2">
                   <div className="relative">
-                  <div onClick={() => setEditModalUser(profile)} title="Edit profile" className="h-12 w-12 rounded-full overflow-hidden bg-gray-100 border cursor-pointer">
+                  <div onClick={() => setEditModalUser(profile)} title="Edit profile" className="h-12 w-12 rounded-full overflow-hidden bg-muted border border-border cursor-pointer">
                     {profile.profilePicture ? (
                       <img src={profile.profilePicture} alt="avatar" className="h-full w-full object-cover" />
                     ) : (
-                      <div className="h-full w-full flex items-center justify-center text-gray-400">👤</div>
+                      <div className="h-full w-full flex items-center justify-center text-muted-foreground">👤</div>
                     )}
                   </div>
                   {!visibleTooltips?.profilePicture && (
-                    <button type="button" onClick={() => { markTooltipSeen('profilePicture'); sendOnboardingEvent('tooltip_clicked', { field: 'profilePicture' }); setEditModalUser(profile); }} className="absolute -right-1 -bottom-1 bg-white border rounded-full p-1 text-xs">?</button>
+                    <button type="button" onClick={() => { markTooltipSeen('profilePicture'); sendOnboardingEvent('tooltip_clicked', { field: 'profilePicture' }); setEditModalUser(profile); }} className="absolute -right-1 -bottom-1 bg-card border border-border rounded-full p-1 text-xs">?</button>
                   )}
                   
                 </div>
                 <div>
-                  <h2 className="text-2xl font-semibold text-gray-800">My Profile</h2>
-                  <p className="text-base text-gray-600 mt-0">Manage your personal information and account settings</p>
+                  <h2 className="text-2xl font-semibold text-foreground">My Profile</h2>
+                  <p className="text-base text-muted-foreground mt-0">Manage your personal information and account settings</p>
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => setEditModalUser(profile)} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">Edit</button>
-              <button onClick={() => setShowChangePwd(true)} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">Password</button>
+              <button onClick={() => setEditModalUser(profile)} className="btn-secondary text-sm">Edit</button>
+              <button onClick={() => setShowChangePwd(true)} className="btn-secondary text-sm">Password</button>
               {/* Preview triggers for feedback modals (dev/testing) */}
               <button
                 onClick={async () => {
@@ -599,7 +616,7 @@ export default function ProfilePage() {
                   setProfileMonthlyPrompt(null);
                   setPreviewMonthlyOpen(true);
                 }}
-                className="text-sm px-3 py-2 bg-purple-50 text-purple-700 border border-purple-100 rounded"
+                className="text-sm px-3 py-2 bg-primary/10 text-primary border border-primary/20 rounded"
               >
                 Share your feedback
               </button>
@@ -620,7 +637,7 @@ export default function ProfilePage() {
               className="border-b pb-2"
             />
 
-            <div className="bg-white border p-4">
+            <div className="bg-card border border-border p-4 rounded-lg">
               {activeTab === 'personal' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <InputField label="Full Name" value={profile.fullName} disabled />
@@ -631,19 +648,19 @@ export default function ProfilePage() {
                     (profile.guardianInfo?.dateOfBirth ? formatDateDDMMMYYYY(profile.guardianInfo.dateOfBirth) : '')
                   } disabled />
                   <div className="flex flex-col mb-2 w-full">
-                    <label className="text-base font-semibold text-gray-700 mb-1">Gender</label>
-                    <input className="border rounded-md px-3 py-2 text-base bg-gray-50" value={profile.gender || 'Not specified'} disabled />
+                    <label className="text-base font-semibold text-foreground mb-1">Gender</label>
+                    <input className="border border-border rounded-md px-3 py-2 text-base bg-muted/40" value={profile.gender || 'Not specified'} disabled />
                   </div>
                   {profile.role === 'teacher' && (
                     <div className="col-span-1 md:col-span-2">
-                      <label className="text-base font-semibold text-gray-700 mb-1 block">Bio</label>
+                      <label className="text-base font-semibold text-foreground mb-1 block">Bio</label>
                       {console.log('ProfilePage rendering bio: teacherInfo.bio:', profile.teacherInfo?.bio)}
-                      <textarea className="w-full border rounded-lg px-3 py-3 text-base bg-gray-50" value={profile.teacherInfo?.bio || ''} disabled />
+                      <textarea className="w-full border border-border rounded-lg px-3 py-3 text-base bg-muted/40" value={profile.teacherInfo?.bio || ''} disabled />
                     </div>
                   )}
                   <div className="col-span-1 md:col-span-2">
-                    <label className="text-base font-semibold text-gray-700 mb-1 block">Spoken Languages</label>
-                    <div className="w-full border rounded-lg px-3 py-2 text-base bg-gray-50">
+                    <label className="text-base font-semibold text-foreground mb-1 block">Spoken Languages</label>
+                    <div className="w-full border border-border rounded-lg px-3 py-2 text-base bg-muted/40">
                       {(
                         (profile.role === 'teacher' ? (profile.teacherInfo?.spokenLanguages || profile.spokenLanguages) : (profile.guardianInfo?.spokenLanguages || profile.spokenLanguages)) || []
                       ).join(', ')}
@@ -662,13 +679,13 @@ export default function ProfilePage() {
                   <InputField label="Country" value={profile?.address?.country} disabled />
                   <InputField label="Zip Code" value={profile?.address?.zipCode} disabled />
                   <div className="mb-2">
-                    <label className="block text-base font-medium text-gray-700 mb-1">Timezone</label>
+                    <label className="block text-base font-medium text-foreground mb-1">Timezone</label>
                     {/* Show empty when not chosen to encourage selection */}
-                    <input className="w-full border rounded-md px-3 py-2 text-base bg-gray-50" value={profile.timezone || ''} disabled />
+                    <input className="w-full border border-border rounded-md px-3 py-2 text-base bg-muted/40" value={profile.timezone || ''} disabled />
                     {profile.timezone ? (
-                      <div className="mt-1 text-sm text-gray-600">Current time: {formatTimeInTimezone(new Date(), profile.timezone)}</div>
+                      <div className="mt-1 text-sm text-muted-foreground">Current time: {formatTimeInTimezone(new Date(), profile.timezone)}</div>
                     ) : (
-                      <div className="mt-1 text-sm text-red-600">Please select your timezone</div>
+                      <div className="mt-1 text-sm text-destructive">Please select your timezone</div>
                     )}
                   </div>
                 </div>
@@ -677,12 +694,12 @@ export default function ProfilePage() {
               {activeTab === 'system' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="flex flex-col gap-2">
-                    <div className="flex justify-between items-center"><div className="text-base font-semibold text-gray-700">Active</div><ToggleSwitch checked={!!profile.isActive} disabled={true} onChange={() => {}} /></div>
-                    <div className="flex justify-between items-center"><div className="text-base font-semibold text-gray-700">Locked</div><ToggleSwitch checked={!!profile.isLocked} disabled={true} onChange={() => {}} /></div>
+                    <div className="flex justify-between items-center"><div className="text-base font-semibold text-foreground">Active</div><ToggleSwitch checked={!!profile.isActive} disabled={true} onChange={() => {}} /></div>
+                    <div className="flex justify-between items-center"><div className="text-base font-semibold text-foreground">Locked</div><ToggleSwitch checked={!!profile.isLocked} disabled={true} onChange={() => {}} /></div>
                     <InputField label="Last Login" value={profile.lastLogin ? new Date(profile.lastLogin).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never'} disabled />
                     <InputField label="Login Attempts" value={profile.loginAttempts} disabled />
                     <div>
-                      <h4 className="font-semibold mb-2">Notifications</h4>
+                      <h4 className="font-semibold mb-2 text-foreground">Notifications</h4>
                       <div className="grid grid-cols-3 gap-2">
                         <ToggleSwitch label="Email" checked={!!profile?.notifications?.email} disabled={true} onChange={() => {}} />
                         <ToggleSwitch label="SMS" checked={!!profile?.notifications?.sms} disabled={true} onChange={() => {}} />
@@ -741,10 +758,10 @@ export default function ProfilePage() {
 
                   {profile.role === 'teacher' && profile?.teacherInfo?.qualifications && profile.teacherInfo.qualifications.length > 0 && (
                     <div className="col-span-1 md:col-span-2">
-                      <h4 className="font-semibold mb-2">Qualifications</h4>
+                      <h4 className="font-semibold mb-2 text-foreground">Qualifications</h4>
                       <div className="space-y-2">
                         {profile.teacherInfo.qualifications.map((q, i) => (
-                          <div key={i} className="bg-gray-50 border rounded p-2 text-sm">{q.degree} - {q.institution} {q.year ? `(${q.year})` : ''}</div>
+                          <div key={i} className="bg-muted/40 border border-border rounded p-2 text-sm text-foreground">{q.degree} - {q.institution} {q.year ? `(${q.year})` : ''}</div>
                         ))}
                       </div>
                     </div>
@@ -752,10 +769,10 @@ export default function ProfilePage() {
 
                   {profile.role === 'teacher' && profile?.teacherInfo?.subjects && profile.teacherInfo.subjects.length > 0 && (
                     <div className="col-span-1 md:col-span-2">
-                      <h4 className="font-semibold mb-2">Courses</h4>
+                      <h4 className="font-semibold mb-2 text-foreground">Courses</h4>
                       <div className="flex flex-wrap gap-2">
                         {profile.teacherInfo.subjects.map((course, i) => (
-                          <div key={i} className="bg-gray-50 border rounded px-2 py-1 text-sm">{course}</div>
+                          <div key={i} className="bg-muted/40 border border-border rounded px-2 py-1 text-sm text-foreground">{course}</div>
                         ))}
                       </div>
                     </div>
@@ -769,8 +786,8 @@ export default function ProfilePage() {
         {/* Change Password Modal */}
         {showChangePwd && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="fixed inset-0 bg-black bg-opacity-40 z-40" onClick={() => setShowChangePwd(false)} />
-            <div className="relative bg-white rounded-lg shadow-lg w-full max-w-md p-4 z-50">
+            <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setShowChangePwd(false)} />
+            <div className="relative bg-card text-foreground rounded-lg shadow-lg w-full max-w-md p-4 z-50 border border-border">
               <h3 className="text-lg font-semibold mb-3">Change Password</h3>
               <ChangePasswordForm onClose={() => setShowChangePwd(false)} />
             </div>
@@ -779,9 +796,9 @@ export default function ProfilePage() {
 
         {/* Admin Manage Users: visible when admin selects Manage Users tab */}
         {isAdmin && mainTab === 'manage' && (
-          <div className="bg-white shadow rounded-lg p-6 border mt-8">
+          <div className="bg-card shadow-sm rounded-lg p-6 border border-border mt-8">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-gray-800">Manage Users</h2>
+              <h2 className="text-xl font-bold text-foreground">Manage Users</h2>
               {/* small tabs for user types */}
               <div>
                 <Tabs
@@ -799,31 +816,35 @@ export default function ProfilePage() {
             {/* Using global search bar and filter; local search controls removed */}
 
             <div className="overflow-x-auto">
-              <table className="w-full border">
-                <thead className="bg-gray-100">
+              <table className="w-full border border-border rounded-lg">
+                <thead className="bg-muted/50">
                   <tr>
-                    <th className="text-left p-2 text-base">Name</th>
-                    <th className="text-left p-2 text-base">Email</th>
-                    <th className="text-left p-2 text-base">Role</th>
-                    <th className="text-left p-2 text-base">Status</th>
-                    <th className="text-left p-2 text-base">Actions</th>
+                    <th className="text-left p-2 text-sm font-semibold text-foreground">Name</th>
+                    <th className="text-left p-2 text-sm font-semibold text-foreground">Email</th>
+                    <th className="text-left p-2 text-sm font-semibold text-foreground">Role</th>
+                    <th className="text-left p-2 text-sm font-semibold text-foreground">Status</th>
+                    <th className="text-left p-2 text-sm font-semibold text-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pagedManageUsers.map((u) => (
-                      <tr key={u._id} className="border-t">
-                      <td className="p-2 text-base">{u.firstName} {u.lastName}</td>
-                      <td className="p-2 text-base">{u.email}</td>
-                      <td className="p-2 text-base">{u.role}</td>
-                      <td className="p-2 text-base">{u.isActive ? 'Active' : 'Inactive'}</td>
-                      <td className="p-2 flex gap-2">
-                        <button onClick={() => { setEditModalUser({ ...u }); }} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">Edit</button>
-                        <button onClick={() => toggleActive(u)} className={`text-sm px-3 py-2 rounded ${u.isActive ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{u.isActive ? 'Deactivate' : 'Activate'}</button>
-                        <button onClick={() => openInfoModal(u)} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">Info</button>
+                      <tr key={u._id} className="border-t border-border">
+                      <td className="p-2 text-sm text-foreground">{u.firstName} {u.lastName}</td>
+                      <td className="p-2 text-sm text-foreground">{u.email}</td>
+                      <td className="p-2 text-sm text-foreground capitalize">{u.role}</td>
+                      <td className="p-2 text-sm">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${u.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-muted text-muted-foreground'}`}>
+                          {u.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="p-2 flex flex-wrap gap-2">
+                        <button onClick={() => { setEditModalUser({ ...u }); }} className="btn-secondary text-xs">Edit</button>
+                        <button onClick={() => toggleActive(u)} className={`text-xs px-3 py-2 rounded ${u.isActive ? 'bg-destructive/10 text-destructive border border-destructive/20' : 'bg-emerald-50 text-emerald-700 border border-emerald-100'}`}>{u.isActive ? 'Deactivate' : 'Activate'}</button>
+                        <button onClick={() => openInfoModal(u)} className="btn-secondary text-xs">Info</button>
                         <button
                           onClick={() => openDeleteModal(u)}
                           disabled={String(u._id) === String(user?._id)}
-                          className={`text-sm px-3 py-2 rounded border ${String(u._id) === String(user?._id) ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-red-600 text-white border-red-600'}`}
+                          className={`text-xs px-3 py-2 rounded border ${String(u._id) === String(user?._id) ? 'bg-muted text-muted-foreground border-border cursor-not-allowed' : 'bg-destructive text-destructive-foreground border-destructive'}`}
                           title={String(u._id) === String(user?._id) ? 'You cannot delete your own account' : 'Delete user'}
                         >
                           Delete
@@ -833,7 +854,7 @@ export default function ProfilePage() {
                   ))}
                   {pagedManageUsers.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="p-4 text-center text-sm text-gray-500">
+                      <td colSpan={5} className="p-4 text-center text-sm text-muted-foreground">
                         No users found.
                       </td>
                     </tr>
@@ -843,22 +864,22 @@ export default function ProfilePage() {
             </div>
 
             <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-sm text-gray-600">
+              <div className="text-sm text-muted-foreground">
                 Showing {totalManageUsers === 0 ? 0 : manageUsersStartIndex + 1}–{manageUsersEndIndex} of {totalManageUsers}
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setManageUsersPage((p) => Math.max(1, p - 1))}
                   disabled={safeManageUsersPage <= 1}
-                  className={`px-3 py-1 rounded border text-sm ${safeManageUsersPage <= 1 ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                  className={`px-3 py-1 rounded border text-sm ${safeManageUsersPage <= 1 ? 'bg-muted text-muted-foreground border-border cursor-not-allowed' : 'bg-card text-foreground border-border hover:bg-muted'}`}
                 >
                   Prev
                 </button>
-                <span className="text-sm text-gray-600">Page {safeManageUsersPage} of {totalManageUserPages}</span>
+                <span className="text-sm text-muted-foreground">Page {safeManageUsersPage} of {totalManageUserPages}</span>
                 <button
                   onClick={() => setManageUsersPage((p) => Math.min(totalManageUserPages, p + 1))}
                   disabled={safeManageUsersPage >= totalManageUserPages}
-                  className={`px-3 py-1 rounded border text-sm ${safeManageUsersPage >= totalManageUserPages ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                  className={`px-3 py-1 rounded border text-sm ${safeManageUsersPage >= totalManageUserPages ? 'bg-muted text-muted-foreground border-border cursor-not-allowed' : 'bg-card text-foreground border-border hover:bg-muted'}`}
                 >
                   Next
                 </button>
@@ -868,19 +889,19 @@ export default function ProfilePage() {
             {/* Info flying modal */}
             {showInfoModal && infoModalUser && (
               <div className="fixed right-6 top-20 w-96 z-50">
-                <div className="bg-white shadow-lg rounded-lg p-4 border">
+                <div className="bg-card text-foreground shadow-lg rounded-lg p-4 border border-border">
                   <div className="flex justify-between items-start">
                     <div>
                       <h4 className="font-bold">{infoModalUser.firstName} {infoModalUser.lastName}</h4>
-                      <div className="text-sm text-gray-600">{infoModalUser.email}</div>
-                      <div className="text-sm text-gray-600 mt-2">Role: {infoModalUser.role}</div>
-                      <div className="text-sm text-gray-600">Status: {infoModalUser.isActive ? 'Active' : 'Inactive'}</div>
+                      <div className="text-sm text-muted-foreground">{infoModalUser.email}</div>
+                      <div className="text-sm text-muted-foreground mt-2">Role: {infoModalUser.role}</div>
+                      <div className="text-sm text-muted-foreground">Status: {infoModalUser.isActive ? 'Active' : 'Inactive'}</div>
                     </div>
                     <div className="ml-2 flex flex-col gap-2">
-                      <button className="text-sm text-gray-500" onClick={() => setShowInfoModal(false)}>Close</button>
+                      <button className="text-sm text-muted-foreground" onClick={() => setShowInfoModal(false)}>Close</button>
                     </div>
                   </div>
-                  <div className="mt-3 text-sm">
+                  <div className="mt-3 text-sm text-foreground">
                     <div><strong>Phone:</strong> {infoModalUser.phone}</div>
                     <div><strong>Timezone:</strong> {infoModalUser.timezone}</div>
                     <div><strong>Created:</strong> {infoModalUser.createdAt}</div>
@@ -892,26 +913,26 @@ export default function ProfilePage() {
             {/* Delete confirmation modal */}
             {deleteModalUser && (
               <div className="fixed inset-0 z-50 flex items-center justify-center">
-                <div className="fixed inset-0 bg-black bg-opacity-40 z-40" onClick={closeDeleteModal} />
-                <div className="relative bg-white rounded-lg shadow-lg w-full max-w-lg p-4 z-50">
+                <div className="fixed inset-0 bg-black/40 z-40" onClick={closeDeleteModal} />
+                <div className="relative bg-card text-foreground rounded-lg shadow-lg w-full max-w-lg p-4 z-50 border border-border">
                   <h3 className="text-lg font-semibold mb-2">Delete user</h3>
-                  <div className="text-sm text-gray-700">
+                  <div className="text-sm text-muted-foreground">
                     <div className="mb-2">
                       This will permanently delete the user from the database. The only way to restore access is to create a new account.
                     </div>
                     <div className="mb-2">
                       <div className="font-semibold">User</div>
                       <div>{deleteModalUser.firstName} {deleteModalUser.lastName}</div>
-                      <div className="text-gray-600">{deleteModalUser.email}</div>
+                      <div className="text-muted-foreground">{deleteModalUser.email}</div>
                     </div>
 
                     <div className="mb-2">
                       <div className="font-semibold">To confirm, copy and paste this value:</div>
                       <div className="mt-1 flex items-center gap-2">
-                        <div className="flex-1 px-3 py-2 rounded border bg-gray-50 text-gray-900 text-sm break-all">
+                        <div className="flex-1 px-3 py-2 rounded border border-border bg-muted/40 text-foreground text-sm break-all">
                           {getDeleteConfirmationKey(deleteModalUser)}
                         </div>
-                        <button onClick={copyDeleteKey} className="text-sm px-3 py-2 bg-gray-100 text-gray-800 border border-gray-200 rounded">
+                        <button onClick={copyDeleteKey} className="btn-secondary text-sm">
                           Copy
                         </button>
                       </div>
@@ -921,12 +942,12 @@ export default function ProfilePage() {
                       value={deleteConfirmText}
                       onChange={(e) => setDeleteConfirmText(e.target.value)}
                       placeholder="Paste here to confirm"
-                      className="w-full px-3 py-2 border rounded"
+                      className="w-full px-3 py-2 border border-border rounded bg-background"
                       autoFocus
                     />
 
                     {deleteError && (
-                      <div className="mt-2 p-2 rounded bg-red-50 text-red-700 text-sm">{deleteError}</div>
+                      <div className="mt-2 p-2 rounded bg-destructive/10 text-destructive text-sm">{deleteError}</div>
                     )}
                   </div>
 

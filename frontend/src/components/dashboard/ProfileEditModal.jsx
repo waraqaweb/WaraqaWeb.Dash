@@ -372,12 +372,15 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
   const CoursesSelect = ({ value = [], onChange }) => {
     const [input, setInput] = useState('');
     const [filtered, setFiltered] = useState([]);
+    const [showList, setShowList] = useState(false);
 
     useEffect(() => {
-      const f = input.trim().length > 0
-        ? subjectOptions.filter(s => s.toLowerCase().includes(input.toLowerCase()) && !value.includes(s))
-        : [];
-      setFiltered(f.slice(0, 30));
+      const needle = input.trim().toLowerCase();
+      const available = subjectOptions.filter(s => !value.includes(s));
+      const f = needle.length > 0
+        ? available.filter(s => s.toLowerCase().includes(needle))
+        : available;
+      setFiltered(f.slice(0, 50));
     }, [input, value, subjectOptions]);
 
     const add = (s) => { onChange([...(value||[]), s]); setInput(''); };
@@ -413,8 +416,16 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
           ))}
         </div>
         <div className="relative">
-          <input value={input} onChange={(e)=>setInput(e.target.value)} placeholder="Add course (type to search)..." className="w-full border rounded px-2 py-1" onKeyDown={handleKeyDown} onBlur={() => setTimeout(() => setInput(''), 150)} />
-          {input.trim().length > 0 && (
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Add course (type to search)..."
+            className="w-full border rounded px-2 py-1"
+            onKeyDown={handleKeyDown}
+            onFocus={() => setShowList(true)}
+            onBlur={() => setTimeout(() => setShowList(false), 150)}
+          />
+          {showList && (
             <div ref={listRef} className="absolute left-0 right-0 top-full mt-1 bg-white border rounded shadow max-h-40 overflow-auto z-50">
               {filtered.map((s,i) => (
                 <div key={i} className={`p-2 cursor-pointer ${i === highlight ? 'bg-gray-100' : ''}`} onMouseDown={(e)=>{ e.preventDefault(); add(s); }}>{s}</div>

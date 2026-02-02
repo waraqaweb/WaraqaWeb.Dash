@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "invoice classes release button 2"
+git commit -m "profile page restyling and fixes"
 git push origin main
 
 ---

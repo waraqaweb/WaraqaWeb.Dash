@@ -6,10 +6,12 @@
  */
 const mongoose = require("mongoose");
 const User = require("../models/User");
+const Student = require("../models/Student");
 
 const UPCOMING_CLASS_STATUS_EXCLUSIONS = [
   "cancelled_by_teacher",
   "cancelled_by_guardian",
+  "cancelled_by_student",
   "cancelled_by_admin",
   "cancelled",
   "pattern",
@@ -23,10 +25,30 @@ function getClassModel() {
 }
 
 function buildUpcomingClassQuery(filters = {}, referenceDate = new Date()) {
+  const durationMsExpr = { $multiply: [{ $ifNull: ["$duration", 0] }, 60000] };
+  const endsAtExpr = { $add: ["$scheduledDate", durationMsExpr] };
+
+  const timeFilter = {
+    $or: [
+      { endsAt: { $gte: referenceDate } },
+      {
+        endsAt: { $exists: false },
+        scheduledDate: { $exists: true, $ne: null },
+        $expr: { $gte: [endsAtExpr, referenceDate] },
+      },
+      {
+        endsAt: null,
+        scheduledDate: { $exists: true, $ne: null },
+        $expr: { $gte: [endsAtExpr, referenceDate] },
+      },
+      { scheduledDate: { $gte: referenceDate } },
+    ],
+  };
+
   const query = {
-    scheduledDate: { $gte: referenceDate },
     status: { $nin: UPCOMING_CLASS_STATUS_EXCLUSIONS },
     hidden: { $ne: true },
+    $and: [timeFilter],
   };
 
   if (filters.teacherId) {
@@ -100,6 +122,23 @@ async function setStudentActiveFlag(guardianId, studentId, isActive) {
     { _id: guardianId, role: "guardian", "guardianInfo.students._id": studentId },
     { $set: { "guardianInfo.students.$.isActive": Boolean(isActive) } }
   );
+  try {
+    const guardianDoc = await User.findOne(
+      { _id: guardianId, role: "guardian", "guardianInfo.students._id": studentId },
+      { "guardianInfo.students.$": 1 }
+    ).lean();
+    const embeddedStudent = guardianDoc?.guardianInfo?.students?.[0];
+    const standaloneId = embeddedStudent?.standaloneStudentId || embeddedStudent?.studentInfo?.standaloneStudentId;
+    const targetId = standaloneId || studentId;
+    if (targetId) {
+      await Student.updateOne(
+        { _id: targetId, isActive: { $ne: Boolean(isActive) } },
+        { isActive: Boolean(isActive) }
+      );
+    }
+  } catch (err) {
+    console.warn("Failed to update standalone student active flag", err?.message || err);
+  }
   if (isActive) {
     await setGuardianActiveFlag(guardianId, true);
   } else {

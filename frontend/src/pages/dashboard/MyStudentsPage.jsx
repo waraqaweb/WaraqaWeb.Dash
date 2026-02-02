@@ -46,7 +46,7 @@ const isCancelledClassStatus = (status) => {
   return normalized === 'canceled' || normalized.startsWith('cancelled');
 };
 
-const buildUpcomingSubjectsByStudentId = (classesArr = []) => {
+const buildSubjectsByStudentId = (classesArr = []) => {
   const map = new Map();
   (Array.isArray(classesArr) ? classesArr : []).forEach((cls) => {
     if (!cls || isCancelledClassStatus(cls.status)) return;
@@ -581,10 +581,10 @@ const fetchGuardiansList = async () => {
     if (useGlobalSearch && globalFilter && globalFilter !== 'all') {
       switch (globalFilter) {
         case 'active':
-          result = result.filter(s => s.isActive === true);
+          result = result.filter(s => isStudentActive(s));
           break;
         case 'inactive':
-          result = result.filter(s => s.isActive === false);
+          result = result.filter(s => !isStudentActive(s));
           break;
         default:
           break;
@@ -672,14 +672,14 @@ const fetchGuardiansList = async () => {
       try {
         const res = await api.get('/classes', {
           params: {
-            filter: 'past',
+            filter: 'previous',
             studentIds: visibleIdsKey,
             limit: 1000,
           },
           signal: controller.signal
         });
         const classesArr = res.data.classes || [];
-        const countableStatuses = ['attended', 'missed_by_student'];
+        const countableStatuses = ['attended', 'missed_by_student', 'absent', 'completed', 'no_show_both'];
         const map = {};
         classesArr.forEach((c) => {
           if (!countableStatuses.includes(c.status)) return;
@@ -728,19 +728,20 @@ const fetchGuardiansList = async () => {
 
       try {
         setSubjectsLoading(true);
-        const params = {
-          filter: 'upcoming',
+        const baseParams = {
           studentIds: visibleIdsKey,
           limit: 2000,
         };
-        // For teachers, keep teacher restriction.
         if (isTeacher && isTeacher()) {
-          params.teacher = user._id || user.id;
+          baseParams.teacher = user._id || user.id;
         }
 
-        const classesRes = await api.get('/classes', { params });
-        const classesArr = classesRes.data.classes || [];
-        const subjectsById = buildUpcomingSubjectsByStudentId(classesArr);
+        const [upcomingRes, previousRes] = await Promise.all([
+          api.get('/classes', { params: { ...baseParams, filter: 'upcoming' } }),
+          api.get('/classes', { params: { ...baseParams, filter: 'previous' } })
+        ]);
+        const classesArr = [...(upcomingRes.data.classes || []), ...(previousRes.data.classes || [])];
+        const subjectsById = buildSubjectsByStudentId(classesArr);
 
         setStudents((prev) => (Array.isArray(prev) ? prev.map((st) => {
           const sid = String(st?._id || st?.id || '');
@@ -1027,8 +1028,8 @@ const fetchGuardiansList = async () => {
                         <span className="font-medium text-foreground">
                           { (classesHoursMap[String(student._id)] ?? 0) } hours
                         </span>
-                        <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(student.isActive !== false)}`}>
-                          {student.isActive !== false ? 'Active' : 'Inactive'}
+                        <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(isStudentActive(student))}`}>
+                          {isStudentActive(student) ? 'Active' : 'Inactive'}
                         </span>
                         <p><span className="font-medium">Timezone:</span> {deriveStudentTimezone(student)}</p>
                       </div>

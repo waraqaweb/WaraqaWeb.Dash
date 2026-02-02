@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "relase classes fix"
+git commit -m "invoice total issue fix"
 git push origin main
 
 ---

@@ -269,6 +269,17 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
   const totalHours = invoice.totalHours || 0;
   const hourlyRate = invoice.rateSnapshot?.rate || 0;
   const classes = invoice.classes || [];
+  const classesTotals = (classes || []).reduce(
+    (acc, cls) => {
+      const durationMinutes = Number.isFinite(Number(cls?.duration)) ? Number(cls.duration) : null;
+      const hours = Number.isFinite(Number(cls?.hours)) ? Number(cls.hours) : (durationMinutes !== null ? durationMinutes / 60 : 0);
+      const safeHours = Number.isFinite(hours) ? hours : 0;
+      acc.hours += safeHours;
+      acc.amount += safeHours * hourlyRate;
+      return acc;
+    },
+    { hours: 0, amount: 0 }
+  );
   
   // Format student display name defensively to avoid showing "undefined undefined"
   const formatStudentName = (cls) => {
@@ -680,7 +691,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                 </div>
                 <div>
                   <h3 className="text-base font-semibold text-slate-900">Classes</h3>
-                  <p className="text-xs text-slate-500">{classes.length} classes • {totalHours.toFixed(2)} hrs</p>
+                  <p className="text-xs text-slate-500">{classes.length} classes • {classesTotals.hours.toFixed(2)} hrs</p>
                 </div>
               </div>
             </div>
@@ -700,8 +711,10 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {classes.map((cls, index) => {
-                      const hours = cls.hours || 0;
-                      const amount = hours * hourlyRate;
+                      const durationMinutes = Number.isFinite(Number(cls?.duration)) ? Number(cls.duration) : null;
+                      const hours = Number.isFinite(Number(cls?.hours)) ? Number(cls.hours) : (durationMinutes !== null ? durationMinutes / 60 : 0);
+                      const safeHours = Number.isFinite(hours) ? hours : 0;
+                      const amount = safeHours * hourlyRate;
                       return (
                         <tr key={cls._id || index} className="hover:bg-slate-50 transition-colors">
                           <td className="px-2 py-2 text-sm text-slate-700 whitespace-nowrap">{formatDateWithDay(cls.date)}</td>
@@ -716,7 +729,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                               {cls.status || 'scheduled'}
                             </span>
                           </td>
-                          <td className="px-2 py-2 text-right text-sm text-slate-700 whitespace-nowrap">{hours.toFixed(2)} hrs</td>
+                          <td className="px-2 py-2 text-right text-sm text-slate-700 whitespace-nowrap">{safeHours.toFixed(2)} hrs</td>
                           <td className="px-2 py-2 text-right text-sm font-semibold text-slate-900 whitespace-nowrap">${amount.toFixed(2)}</td>
                         </tr>
                       );
@@ -725,8 +738,8 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                   <tfoot className="bg-slate-50 border-t border-slate-300">
                     <tr>
                       <td colSpan="4" className="px-2 py-2 text-sm font-bold text-slate-900 text-right">Total</td>
-                      <td className="px-2 py-2 text-right text-sm font-bold text-slate-900 whitespace-nowrap">{totalHours.toFixed(2)} hrs</td>
-                      <td className="px-2 py-2 text-right text-sm font-bold text-slate-900 whitespace-nowrap">${(totalHours * hourlyRate).toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right text-sm font-bold text-slate-900 whitespace-nowrap">{classesTotals.hours.toFixed(2)} hrs</td>
+                      <td className="px-2 py-2 text-right text-sm font-bold text-slate-900 whitespace-nowrap">${classesTotals.amount.toFixed(2)}</td>
                     </tr>
                   </tfoot>
                 </table>

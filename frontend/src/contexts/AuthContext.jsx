@@ -132,11 +132,44 @@ export const AuthProvider = ({ children }) => {
         // Vite exposes CRA-prefixed env vars on `import.meta.env.REACT_APP_*`.
         const viteEnv = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
 
-        const explicitApiBase =
+        const normalizeApiBaseForSocket = (url) => {
+          if (typeof url !== 'string') return url;
+          let next = url;
+          if (typeof window !== 'undefined' && window.location) {
+            if (window.location.protocol === 'https:' && next.startsWith('http://')) {
+              try {
+                const parsed = new URL(next, window.location.origin);
+                if (parsed.host === window.location.host) {
+                  next = next.replace(/^http:/, 'https:');
+                }
+              } catch (e) {
+                // ignore URL parse errors
+              }
+            }
+
+            try {
+              const parsed = new URL(next, window.location.origin);
+              const origin = window.location.origin;
+              const path = parsed.pathname || '';
+              const hasDashboardPath = /(^|\/)+dashboard(\/|$)/.test(path);
+              const hasApiPath = /(^|\/)+api(\/|$)/.test(path);
+              if (parsed.host === window.location.host && hasDashboardPath && !hasApiPath) {
+                next = `${origin.replace(/\/$/, '')}/api`;
+              }
+            } catch (e) {
+              // ignore URL parse errors
+            }
+          }
+          return next;
+        };
+
+        const explicitApiBaseRaw =
           (viteEnv && viteEnv.REACT_APP_API_URL) ||
           (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL) ||
           (typeof window !== 'undefined' && window.__API_BASE__) ||
           null;
+
+        const explicitApiBase = normalizeApiBaseForSocket(explicitApiBaseRaw);
 
         // Use the configured axios baseURL if present (this already falls back to `window.location.origin + /api`).
         const axiosBase = api?.defaults?.baseURL;

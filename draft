@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "invoice total issue fix"
+git commit -m "socket issue https"
 git push origin main
 
 ---

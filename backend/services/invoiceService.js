@@ -30,6 +30,7 @@ const ensureDate = (value) => {
 
 const EPSILON_HOURS = 0.0005;
 const EPSILON_CURRENCY = 0.05;
+const ACTIVE_UNPAID_INVOICE_STATUSES = ['draft', 'pending', 'sent', 'overdue', 'partially_paid'];
 
 const resolveInvoiceHourlyRate = (invoice) => {
   const doc = invoice || {};
@@ -893,7 +894,7 @@ class InvoiceService {
           // ✅ Exclude classes already in any invoice (not just paid ones)
           const billedIds = await collectBilledClassIds({
             deleted: { $ne: true },
-            status: { $nin: ['cancelled', 'refunded'] }
+            status: { $in: ACTIVE_UNPAID_INVOICE_STATUSES }
           });
           
           console.log(`[First-Lesson Invoice] Excluded billed class IDs: ${billedIds.length} classes`);
@@ -1221,6 +1222,7 @@ class InvoiceService {
             scheduledDate: { $gte: billingStart, $lt: billingEnd },
             // Exclude classes in active invoices
             _id: { $nin: billedIds },
+            paidByGuardian: { $ne: true },
             // Include classes that are:
             // - Attended/absent (has report)
             // - Scheduled and within submission window (reportSubmission.status: 'open' or 'admin_extended')
@@ -2209,7 +2211,7 @@ class InvoiceService {
         guardian: guardianId,
         _id: { $ne: invoiceDoc._id },
         deleted: { $ne: true },
-        status: { $nin: ['cancelled', 'refunded'] }
+        status: { $in: ACTIVE_UNPAID_INVOICE_STATUSES }
       });
       for (const cid of billedElsewhere) {
         if (cid) excludedIds.add(String(cid));
@@ -2232,6 +2234,7 @@ class InvoiceService {
         'student.studentId': { $in: studentIds },
         hidden: { $ne: true },
         status: { $ne: 'pattern' },
+        paidByGuardian: { $ne: true },
         $or: [
           { billedInInvoiceId: null },
           { billedInInvoiceId: invoiceDoc._id },

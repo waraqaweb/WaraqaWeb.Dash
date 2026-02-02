@@ -1098,15 +1098,27 @@ router.get("/series", authenticateToken, requireRole(["admin"]), async (req, res
     const normalizedSearch = typeof search === 'string' ? search.trim() : '';
     if (normalizedSearch) {
       const regex = new RegExp(escapeRegExp(normalizedSearch), 'i');
+      const nameParts = normalizedSearch.split(/\s+/).filter(Boolean).slice(0, 4);
+      const namePartRegexes = nameParts.map((p) => new RegExp(escapeRegExp(p), 'i'));
+
+      const buildUserNameOr = () => {
+        const baseOr = [{ firstName: regex }, { lastName: regex }, { email: regex }, { phone: regex }];
+        if (namePartRegexes.length >= 2) {
+          baseOr.push({
+            $and: namePartRegexes.map((r) => ({ $or: [{ firstName: r }, { lastName: r }] }))
+          });
+        }
+        return baseOr;
+      };
 
       const [teacherMatches, guardianMatches] = await Promise.all([
         User.find({
           role: 'teacher',
-          $or: [{ firstName: regex }, { lastName: regex }, { email: regex }, { phone: regex }],
+          $or: buildUserNameOr(),
         }).select('_id').lean(),
         User.find({
           role: 'guardian',
-          $or: [{ firstName: regex }, { lastName: regex }, { email: regex }, { phone: regex }],
+          $or: buildUserNameOr(),
         }).select('_id').lean(),
       ]);
 

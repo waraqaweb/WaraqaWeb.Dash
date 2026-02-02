@@ -1441,12 +1441,13 @@ const DashboardHome = ({ isActive = true }) => {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+          <StatCard title="Remaining hours" value={`${(data.guardianHours ?? data.guardianInfo?.totalHours ?? 0)} hrs`} Icon={Clock} color="bg-primary/10 text-primary" />
           <StatCard title="My Students" value={myChildrenCount} Icon={Users} color="bg-sidebar-accent/25 text-sidebar-accent-foreground" />
           {/* Combined Hours card: total hours + small per-student list */}
           <div className="bg-gradient-to-br from-primary/5 via-card to-card rounded-lg border border-primary/15 p-4">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Hours (Thirty days)</p>
+                <p className="text-sm font-medium text-muted-foreground">Consumed hours (last 30 days)</p>
                 <p className="text-lg sm:text-xl font-semibold text-foreground">{(data.totalHoursLast30 ?? 0)} hrs</p>
                 {/* small per-student list inside the same card (full list, small font) */}
                 {Array.isArray(data.recentStudentHours) && data.recentStudentHours.length > 0 ? (
@@ -1490,7 +1491,6 @@ const DashboardHome = ({ isActive = true }) => {
               <div className="mt-2 text-xs text-muted-foreground">No paid hours yet</div>
             )}
           </div>
-          <StatCard title="Remaining hours" value={`${(data.guardianHours ?? data.guardianInfo?.totalHours ?? 0)} hrs`} Icon={Clock} color="bg-primary/10 text-primary" />
         </div>
         {/* per-student list merged into the Hours card above */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

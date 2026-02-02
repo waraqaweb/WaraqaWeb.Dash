@@ -112,6 +112,40 @@ const toObjectId = (value) => {
   }
 };
 
+const collectGuardianStudentIds = (guardianDoc, fallbackStudents = []) => {
+  const ids = new Set();
+  const add = (val) => {
+    if (!val) return;
+    try {
+      ids.add(String(val));
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  const embedded = Array.isArray(guardianDoc?.guardianInfo?.students)
+    ? guardianDoc.guardianInfo.students
+    : [];
+
+  embedded.forEach((s) => {
+    add(s?._id || s?.id || s?.studentId);
+    add(s?.standaloneStudentId);
+    add(s?.studentInfo?.standaloneStudentId);
+    add(s?.studentInfo?.studentId);
+  });
+
+  (Array.isArray(fallbackStudents) ? fallbackStudents : []).forEach((s) => {
+    add(s?._id || s?.id || s?.studentId);
+    add(s?.standaloneStudentId);
+    add(s?.studentInfo?.standaloneStudentId);
+    add(s?.studentInfo?.studentId);
+  });
+
+  return Array.from(ids)
+    .map((id) => toObjectId(id))
+    .filter(Boolean);
+};
+
 const getAdminRecipientIds = async () => {
   try {
     const admins = await User.find({ role: 'admin', isActive: true }).select('_id').lean();
@@ -375,18 +409,17 @@ class InvoiceService {
         // Check if guardian has any future scheduled classes for their students
         let hasFutureClasses = false;
         try {
-          const studentIds = Array.isArray(guardian.guardianInfo?.students)
-            ? guardian.guardianInfo.students.map((s) => s && (s._id || s.id)).filter(Boolean)
-            : [];
+          const studentIds = collectGuardianStudentIds(guardian);
+          const futureQuery = {
+            'student.guardianId': guardian._id,
+            scheduledDate: { $gt: now },
+            status: { $ne: 'cancelled' }
+          };
           if (studentIds.length > 0) {
-            const futureCount = await Class.countDocuments({
-              'student.guardianId': guardian._id,
-              'student.studentId': { $in: studentIds },
-              scheduledDate: { $gt: now },
-              status: { $ne: 'cancelled' }
-            }).exec();
-            hasFutureClasses = futureCount > 0;
+            futureQuery['student.studentId'] = { $in: studentIds };
           }
+          const futureCount = await Class.countDocuments(futureQuery).exec();
+          hasFutureClasses = futureCount > 0;
         } catch (fErr) {
           console.warn('Failed to check future classes for guardian', guardian._id, fErr && fErr.message);
         }
@@ -528,21 +561,19 @@ class InvoiceService {
           // Re-check for future classes inside the transaction to avoid race
           let hasFuture = false;
           try {
-            const studentIds = Array.isArray(guardianDoc.guardianInfo?.students)
-              ? guardianDoc.guardianInfo.students.map((s) => s && (s._id || s.id)).filter(Boolean)
-              : [];
+            const studentIds = collectGuardianStudentIds(guardianDoc, zeroStudents);
+            const futureCountQuery = {
+              'student.guardianId': guardianDoc._id,
+              scheduledDate: { $gt: new Date() },
+              status: { $ne: 'cancelled' }
+            };
             if (studentIds.length > 0) {
-              const futureCountQuery = {
-                'student.guardianId': guardianDoc._id,
-                'student.studentId': { $in: studentIds },
-                scheduledDate: { $gt: new Date() },
-                status: { $ne: 'cancelled' }
-              };
-              const futureCount = sessionArg
-                ? await Class.countDocuments(futureCountQuery).session(sessionArg).exec()
-                : await Class.countDocuments(futureCountQuery).exec();
-              hasFuture = futureCount > 0;
+              futureCountQuery['student.studentId'] = { $in: studentIds };
             }
+            const futureCount = sessionArg
+              ? await Class.countDocuments(futureCountQuery).session(sessionArg).exec()
+              : await Class.countDocuments(futureCountQuery).exec();
+            hasFuture = futureCount > 0;
           } catch (err) {
             console.warn('Failed to check future classes inside transaction for guardian', guardianDoc._id, err && err.message);
           }
@@ -1152,13 +1183,9 @@ class InvoiceService {
       // Predictive coverage: Find ALL unpaid classes first to determine billing start date
       // from the earliest unpaid class, then include all classes within one month from that date
       try {
-        const studentIds = Array.isArray(guardian.guardianInfo?.students)
-          ? guardian.guardianInfo.students.map((s) => s && (s._id || s.id)).filter(Boolean)
-          : [];
+        const trackedStudentIds = collectGuardianStudentIds(guardian, zeroHourStudents);
 
-        const trackedStudentIds = (studentIds && studentIds.length) ? studentIds : (zeroHourStudents || []).map((s) => s && s._id).filter(Boolean);
-
-        if (trackedStudentIds.length > 0) {
+        if (trackedStudentIds.length >= 0) {
           // ✅ Exclude classes already in any active invoice
           const billedIds = await collectBilledClassIds({
             deleted: { $ne: true },
@@ -1166,11 +1193,14 @@ class InvoiceService {
           });
 
           // ✅ FIRST: Find ALL unpaid classes to determine the billing start date
-          const allUnpaidClasses = await Class.find({
+          const allUnpaidQuery = {
             'student.guardianId': guardian._id,
-            'student.studentId': { $in: trackedStudentIds },
             _id: { $nin: billedIds }
-          })
+          };
+          if (trackedStudentIds.length > 0) {
+            allUnpaidQuery['student.studentId'] = { $in: trackedStudentIds };
+          }
+          const allUnpaidClasses = await Class.find(allUnpaidQuery)
             .select('scheduledDate')
             .sort({ scheduledDate: 1 })
             .lean();
@@ -1186,9 +1216,8 @@ class InvoiceService {
           console.log(`🔍 [Zero-Hour PAYG Invoice] Billing period: ${billingStart.toISOString()} → ${billingEnd.toISOString()}`);
           
           // ✅ Include ALL classes (scheduled, attended, missed, AND pending report submission) within billing period
-          const upcoming = await Class.find({
+          const upcomingQuery = {
             'student.guardianId': guardian._id,
-            'student.studentId': { $in: trackedStudentIds },
             scheduledDate: { $gte: billingStart, $lt: billingEnd },
             // Exclude classes in active invoices
             _id: { $nin: billedIds },
@@ -1213,7 +1242,12 @@ class InvoiceService {
               { status: 'attended' },
               { status: 'missed_by_student' }
             ]
-          })
+          };
+          if (trackedStudentIds.length > 0) {
+            upcomingQuery['student.studentId'] = { $in: trackedStudentIds };
+          }
+
+          const upcoming = await Class.find(upcomingQuery)
             .select('_id subject scheduledDate duration student teacher status reportSubmission')
             .lean();
 
@@ -2127,11 +2161,12 @@ class InvoiceService {
       const capMinutes = coverageHours > EPSILON_HOURS ? Math.round(coverageHours * 60) : null;
 
       const billingStart = ensureDate(invoiceDoc?.billingPeriod?.startDate) || new Date(0);
-      let coverageEnd = ensureDate(invoiceDoc?.coverage?.endDate);
+      const billingEnd = ensureDate(invoiceDoc?.billingPeriod?.endDate);
+      let coverageEnd = ensureDate(invoiceDoc?.coverage?.endDate) || billingEnd || null;
       if (coverageEnd) {
         coverageEnd.setHours(23, 59, 59, 999);
       } else if (billingStart) {
-        coverageEnd = dayjs(billingStart).add(DEFAULT_DYNAMIC_LOOKAHEAD_MONTHS, 'month').toDate();
+        coverageEnd = dayjs(billingStart).add(1, 'month').toDate();
       }
 
       const existingItems = Array.isArray(invoiceDoc.items) ? invoiceDoc.items : [];

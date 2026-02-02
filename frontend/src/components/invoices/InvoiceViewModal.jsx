@@ -1493,9 +1493,41 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                               <span>Tip</span>
                               <span className="text-slate-900">${tipAmount.toFixed(2)}</span>
                             </div>
-                            <p className="text-xs text-slate-500">
-                              Tip will be distributed equally between teachers after applicable transfer fees.
-                            </p>
+                            {(() => {
+                              const items = Array.isArray(invoice?.items) ? invoice.items : [];
+                              const names = [];
+                              const seen = new Set();
+                              items.forEach((it) => {
+                                if (it?.excludeFromTeacherPayment) return;
+                                const t = it?.teacherSnapshot || it?.teacher || {};
+                                const first = (t.firstName || t.first || '').toString().trim();
+                                const last = (t.lastName || t.last || '').toString().trim();
+                                const full = `${first} ${last}`.trim();
+                                if (full && !seen.has(full)) {
+                                  seen.add(full);
+                                  names.push(full);
+                                }
+                              });
+
+                              if (!names.length) return null;
+
+                              const perTeacher = tipAmount / names.length;
+                              if (names.length === 1) {
+                                return (
+                                  <p className="text-xs text-slate-500">
+                                    {names[0]} receives ${perTeacher.toFixed(2)}
+                                  </p>
+                                );
+                              }
+
+                              const [firstName, secondName] = names;
+                              return (
+                                <p className="text-xs text-slate-500">
+                                  {firstName} and {secondName} split ${perTeacher.toFixed(2)} each
+                                  {names.length > 2 ? ' (and others)' : ''}
+                                </p>
+                              );
+                            })()}
                           </>
                         )}
                         <div className="flex justify-between pt-2">

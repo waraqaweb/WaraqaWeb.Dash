@@ -51,6 +51,104 @@ const normalizeDate = (value) => {
   return date.toISOString().slice(0, 10);
 };
 
+const UPCOMING_STUDENT_STATUS_EXCLUSIONS = [
+  'cancelled_by_teacher',
+  'cancelled_by_guardian',
+  'cancelled_by_student',
+  'cancelled_by_admin',
+  'cancelled',
+  'pattern',
+  'no_show_both',
+  'on_hold',
+];
+
+const buildUpcomingTimeFilter = (referenceDate = new Date()) => {
+  const durationMsExpr = { $multiply: [{ $ifNull: ['$duration', 0] }, 60000] };
+  const endsAtExpr = { $add: ['$scheduledDate', durationMsExpr] };
+  return {
+    $or: [
+      { endsAt: { $gte: referenceDate } },
+      {
+        endsAt: { $exists: false },
+        scheduledDate: { $exists: true, $ne: null },
+        $expr: { $gte: [endsAtExpr, referenceDate] },
+      },
+      {
+        endsAt: null,
+        scheduledDate: { $exists: true, $ne: null },
+        $expr: { $gte: [endsAtExpr, referenceDate] },
+      },
+      { scheduledDate: { $gte: referenceDate } },
+    ],
+  };
+};
+
+const extractScheduleIds = (student = {}) => {
+  const ids = new Set();
+  const candidates = [
+    student._id,
+    student.id,
+    student.studentId,
+    student.standaloneStudentId,
+    student.studentInfo?.standaloneStudentId,
+    student.studentInfo?.studentId,
+    student.studentInfo?._id,
+  ];
+  candidates.filter(Boolean).forEach((id) => ids.add(String(id)));
+  return Array.from(ids);
+};
+
+const attachScheduleActiveFlags = async (students = []) => {
+  if (!Array.isArray(students) || students.length === 0) return;
+  const studentIds = new Set();
+  const scheduleIdsByIndex = new Map();
+
+  students.forEach((student, idx) => {
+    const scheduleIds = extractScheduleIds(student);
+    scheduleIdsByIndex.set(idx, scheduleIds);
+    scheduleIds.forEach((id) => studentIds.add(id));
+  });
+
+  const objectIds = Array.from(studentIds)
+    .map((id) => toObjectId(id))
+    .filter(Boolean);
+
+  if (!objectIds.length) return;
+
+  const now = new Date();
+  const timeFilter = buildUpcomingTimeFilter(now);
+  const match = {
+    'student.studentId': { $in: objectIds },
+    status: { $nin: UPCOMING_STUDENT_STATUS_EXCLUSIONS },
+    hidden: { $ne: true },
+    deleted: { $ne: true },
+    $and: [timeFilter],
+  };
+
+  let upcomingRows = [];
+  try {
+    upcomingRows = await Class.aggregate([
+      { $match: match },
+      { $group: { _id: '$student.studentId' } },
+    ]);
+  } catch (err) {
+    console.warn('Failed to compute upcoming student activity', err?.message || err);
+  }
+
+  const upcomingSet = new Set((upcomingRows || []).map((row) => String(row._id)));
+
+  students.forEach((student, idx) => {
+    const scheduleIds = scheduleIdsByIndex.get(idx) || [];
+    const hasUpcoming = scheduleIds.some((id) => upcomingSet.has(String(id)));
+    student.isActive = Boolean(hasUpcoming);
+    const info = student.studentInfo && typeof student.studentInfo === 'object'
+      ? student.studentInfo
+      : {};
+    info.status = hasUpcoming ? 'active' : 'inactive';
+    student.studentInfo = info;
+  });
+};
+
 const makeStudentKey = (student = {}) => {
   const guardianId = String(student.guardianId || student.guardian || '');
   if (!guardianId) return null;
@@ -1839,6 +1937,8 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
     const totalHours = combinedStudents.reduce((sum, s) => sum + (Number(s.hoursRemaining) || 0), 0);
     const cumulativeConsumedHours = Number(guardian.guardianInfo?.cumulativeConsumedHours || 0);
 
+    await attachScheduleActiveFlags(combinedStudents);
+
     const trimmedSearch = (req.query.search || '').trim().toLowerCase();
     let students = combinedStudents;
     if (trimmedSearch) {
@@ -2019,6 +2119,7 @@ router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, r
         students = students.slice(0, effectiveLimit);
       }
 
+      await attachScheduleActiveFlags(students);
       students = sanitizeStudentHours(students);
 
       return res.json({ students });
@@ -2064,6 +2165,7 @@ router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, r
     }
 
     let students = dedupeStudents([...embeddedAll, ...standaloneAll]);
+    await attachScheduleActiveFlags(students);
     students = sanitizeStudentHours(students);
 
     try {

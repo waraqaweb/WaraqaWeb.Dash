@@ -22,6 +22,27 @@ function timeToMinutes(timeStr) {
   return hours * 60 + minutes;
 }
 
+function splitOverMidnightSlot(dayOfWeek, startTime, endTime) {
+  const startMin = timeToMinutes(startTime);
+  const endMin = timeToMinutes(endTime);
+  if (!Number.isFinite(startMin) || !Number.isFinite(endMin)) return null;
+  if (endMin > startMin) return null;
+
+  const nextDay = (Number(dayOfWeek) + 1) % 7;
+  const endOfDay = '23:59';
+  const endOfDayMin = timeToMinutes(endOfDay);
+
+  const firstSlot = startMin < endOfDayMin
+    ? { dayOfWeek: Number(dayOfWeek), startTime, endTime: endOfDay }
+    : null;
+
+  const secondSlot = endMin > 0
+    ? { dayOfWeek: nextDay, startTime: '00:00', endTime }
+    : null;
+
+  return { firstSlot, secondSlot, nextDay };
+}
+
 // Helper function to check if time range fits within availability slot
 function canFitInSlot(slotStart, slotEnd, requestedStart, requestedEnd) {
   const slotStartMin = timeToMinutes(slotStart);
@@ -117,34 +138,74 @@ router.post('/slots', authenticateToken, async (req, res) => {
       });
     }
     
-    // Check for overlapping slots
+    const overnight = splitOverMidnightSlot(dayOfWeek, startTime, endTime);
+    let primarySlot = overnight?.firstSlot || null;
+    let spilloverSlot = overnight?.secondSlot || null;
+    if (!primarySlot && spilloverSlot) {
+      primarySlot = spilloverSlot;
+      spilloverSlot = null;
+    }
+    if (!primarySlot) {
+      primarySlot = { dayOfWeek, startTime, endTime };
+    }
+
     const existingSlots = await AvailabilitySlot.find({
       teacherId,
-      dayOfWeek,
+      dayOfWeek: primarySlot.dayOfWeek,
       isActive: true
     });
-    
+
     const hasOverlap = existingSlots.some(slot => 
-      slot.hasTimeConflict(startTime, endTime)
+      slot.hasTimeConflict(primarySlot.startTime, primarySlot.endTime)
     );
-    
+
     if (hasOverlap) {
       return res.status(400).json({ 
         message: 'Time slot conflicts with existing availability' 
       });
     }
-    
+
+    let spilloverDoc = null;
+    if (spilloverSlot) {
+      const existingNextDay = await AvailabilitySlot.find({
+        teacherId,
+        dayOfWeek: spilloverSlot.dayOfWeek,
+        isActive: true
+      });
+      const hasNextOverlap = existingNextDay.some(slot => 
+        slot.hasTimeConflict(spilloverSlot.startTime, spilloverSlot.endTime)
+      );
+      if (hasNextOverlap) {
+        return res.status(400).json({
+          message: 'Time slot conflicts with existing availability on the next day'
+        });
+      }
+    }
+
     const newSlot = new AvailabilitySlot({
       teacherId,
-      dayOfWeek,
-      startTime,
-      endTime,
+      dayOfWeek: primarySlot.dayOfWeek,
+      startTime: primarySlot.startTime,
+      endTime: primarySlot.endTime,
       timezone: timezone || 'Africa/Cairo',
       effectiveFrom: effectiveFrom || new Date(),
       effectiveTo: effectiveTo || null
     });
-    
+
     await newSlot.save();
+
+    if (spilloverSlot) {
+      spilloverDoc = new AvailabilitySlot({
+        teacherId,
+        dayOfWeek: spilloverSlot.dayOfWeek,
+        startTime: spilloverSlot.startTime,
+        endTime: spilloverSlot.endTime,
+        timezone: timezone || 'Africa/Cairo',
+        effectiveFrom: effectiveFrom || new Date(),
+        effectiveTo: effectiveTo || null
+      });
+      await spilloverDoc.save();
+    }
     
     // Update teacher's availability status
     await User.findByIdAndUpdate(teacherId, {
@@ -152,8 +213,9 @@ router.post('/slots', authenticateToken, async (req, res) => {
     });
     
     res.status(201).json({
-      message: 'Availability slot created successfully',
-      slot: newSlot
+      message: overnight ? 'Availability slot created (end time assumed next day)' : 'Availability slot created successfully',
+      slot: newSlot,
+      spilloverSlot: spilloverDoc
     });
   } catch (error) {
     console.error('Error creating availability slot:', error);
@@ -177,35 +239,87 @@ router.put('/slots/:slotId', authenticateToken, async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
     
-    // Check for overlaps if time is being changed
-    if (updates.startTime || updates.endTime) {
+    let spilloverDoc = null;
+
+    // Check for overlaps if time/day is being changed
+    if (updates.startTime || updates.endTime || updates.dayOfWeek) {
       const startTime = updates.startTime || slot.startTime;
       const endTime = updates.endTime || slot.endTime;
-      
+      const parsedDay = Number(updates.dayOfWeek);
+      const dayOfWeek = Number.isFinite(parsedDay) ? parsedDay : slot.dayOfWeek;
+
+      const overnight = splitOverMidnightSlot(dayOfWeek, startTime, endTime);
+      let primarySlot = overnight?.firstSlot || null;
+      let spilloverSlot = overnight?.secondSlot || null;
+      if (!primarySlot && spilloverSlot) {
+        primarySlot = spilloverSlot;
+        spilloverSlot = null;
+      }
+      if (!primarySlot) {
+        primarySlot = { dayOfWeek, startTime, endTime };
+      }
+
       const existingSlots = await AvailabilitySlot.find({
         _id: { $ne: slotId },
         teacherId: slot.teacherId,
-        dayOfWeek: updates.dayOfWeek || slot.dayOfWeek,
+        dayOfWeek: primarySlot.dayOfWeek,
         isActive: true
       });
-      
+
       const hasOverlap = existingSlots.some(existingSlot => 
-        existingSlot.hasTimeConflict(startTime, endTime)
+        existingSlot.hasTimeConflict(primarySlot.startTime, primarySlot.endTime)
       );
-      
+
       if (hasOverlap) {
         return res.status(400).json({ 
           message: 'Updated time slot conflicts with existing availability' 
         });
       }
+
+      if (spilloverSlot) {
+        const existingNextDay = await AvailabilitySlot.find({
+          teacherId: slot.teacherId,
+          dayOfWeek: spilloverSlot.dayOfWeek,
+          isActive: true
+        });
+        const hasNextOverlap = existingNextDay.some(existingSlot =>
+          existingSlot.hasTimeConflict(spilloverSlot.startTime, spilloverSlot.endTime)
+        );
+        if (hasNextOverlap) {
+          return res.status(400).json({
+            message: 'Updated time slot conflicts with existing availability on the next day'
+          });
+        }
+      }
+
+      Object.assign(slot, updates, {
+        dayOfWeek: primarySlot.dayOfWeek,
+        startTime: primarySlot.startTime,
+        endTime: primarySlot.endTime,
+      });
+
+      if (spilloverSlot) {
+        spilloverDoc = new AvailabilitySlot({
+          teacherId: slot.teacherId,
+          dayOfWeek: spilloverSlot.dayOfWeek,
+          startTime: spilloverSlot.startTime,
+          endTime: spilloverSlot.endTime,
+          timezone: slot.timezone || updates.timezone || 'Africa/Cairo',
+          effectiveFrom: updates.effectiveFrom || new Date(),
+          effectiveTo: updates.effectiveTo || null
+        });
+        await spilloverDoc.save();
+      }
+    } else {
+      Object.assign(slot, updates);
     }
-    
-    Object.assign(slot, updates);
+
     await slot.save();
     
     res.json({
-      message: 'Availability slot updated successfully',
-      slot
+      message: spilloverDoc ? 'Availability slot updated (end time assumed next day)' : 'Availability slot updated successfully',
+      slot,
+      spilloverSlot: spilloverDoc
     });
   } catch (error) {
     console.error('Error updating availability slot:', error);

@@ -246,13 +246,28 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
     return { error: 'Guardian not found' };
   }
 
-  const studentIds = Array.isArray(guardian.guardianInfo?.students)
-    ? guardian.guardianInfo.students.map((s) => s && (s._id || s.id)).filter(Boolean)
-    : [];
-
-  if (!studentIds.length) {
-    return { error: 'Guardian has no students' };
-  }
+  const studentIds = (() => {
+    const ids = new Set();
+    const add = (val) => {
+      if (!val) return;
+      try {
+        const str = String(val);
+        if (mongoose.Types.ObjectId.isValid(str)) ids.add(str);
+      } catch (_) {
+        // ignore
+      }
+    };
+    const embedded = Array.isArray(guardian.guardianInfo?.students)
+      ? guardian.guardianInfo.students
+      : [];
+    embedded.forEach((s) => {
+      add(s?._id || s?.id || s?.studentId);
+      add(s?.standaloneStudentId);
+      add(s?.studentInfo?.standaloneStudentId);
+      add(s?.studentInfo?.studentId);
+    });
+    return Array.from(ids).map((id) => new mongoose.Types.ObjectId(id));
+  })();
 
   const [invoicedClassIds, invoicedLessonIds] = await Promise.all([
     Invoice.distinct('items.class', {
@@ -273,11 +288,15 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
     .map((id) => (mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : null))
     .filter(Boolean);
 
-  let unpaidClasses = await Class.find({
+  const unpaidQuery = {
     'student.guardianId': guardian._id,
-    'student.studentId': { $in: studentIds },
     _id: { $nin: invoicedIds }
-  })
+  };
+  if (studentIds.length > 0) {
+    unpaidQuery['student.studentId'] = { $in: studentIds };
+  }
+
+  let unpaidClasses = await Class.find(unpaidQuery)
     .populate('student.guardianId', 'firstName lastName email')
     .populate('teacher', 'firstName lastName email')
     .lean();

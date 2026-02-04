@@ -2253,7 +2253,7 @@ class InvoiceService {
         guardian: guardianId,
         _id: { $ne: invoiceDoc._id },
         deleted: { $ne: true },
-        status: { $in: ACTIVE_UNPAID_INVOICE_STATUSES }
+        status: { $nin: ['cancelled', 'refunded'] }
       });
       for (const cid of billedElsewhere) {
         if (cid) excludedIds.add(String(cid));
@@ -3450,8 +3450,10 @@ class InvoiceService {
             : await Invoice.findOne(conflictQuery);
 
           if (conflict) {
+            const conflictStatus = String(conflict.status || '').toLowerCase();
+            const isLocked = conflictStatus === 'paid' || conflictStatus === 'refunded';
             // If client allows transfer, remove from conflicting invoice and proceed
-            if (updates.transferOnDuplicate === true) {
+            if (updates.transferOnDuplicate === true && !isLocked) {
               const conflictingLessonIds = new Set(newLessonIds);
               const conflictingClassIds = new Set(newClassIds.map(id => String(id)));
               const beforeCount = conflict.items?.length || 0;

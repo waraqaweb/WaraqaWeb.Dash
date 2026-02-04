@@ -2574,6 +2574,46 @@ router.put('/:guardianId/students/:studentId', [
     const updatedGuardian = await User.findById(guardianId).select('-password');
     const updatedStudent = updatedGuardian.guardianInfo.students.id(studentId);
 
+    const nameWasUpdated = typeof updateData.firstName !== 'undefined' || typeof updateData.lastName !== 'undefined';
+    if (updatedStudent && nameWasUpdated) {
+      const updatedName = `${updatedStudent.firstName || ''} ${updatedStudent.lastName || ''}`.trim();
+      const studentIdCandidates = new Set();
+      if (updatedStudent._id) studentIdCandidates.add(String(updatedStudent._id));
+      if (updatedStudent.standaloneStudentId) studentIdCandidates.add(String(updatedStudent.standaloneStudentId));
+      if (updatedStudent.studentId) studentIdCandidates.add(String(updatedStudent.studentId));
+      if (updatedStudent.studentInfo?.standaloneStudentId) studentIdCandidates.add(String(updatedStudent.studentInfo.standaloneStudentId));
+      if (updatedStudent.studentInfo?.studentId) studentIdCandidates.add(String(updatedStudent.studentInfo.studentId));
+
+      const studentObjectIds = Array.from(studentIdCandidates)
+        .map((id) => (mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : null))
+        .filter(Boolean);
+
+      if (studentObjectIds.length && updatedName) {
+        try {
+          await Class.updateMany(
+            {
+              'student.guardianId': updatedGuardian._id,
+              'student.studentId': { $in: studentObjectIds }
+            },
+            { $set: { 'student.studentName': updatedName } }
+          );
+        } catch (classErr) {
+          console.warn('Failed to propagate student name to classes', classErr?.message || classErr);
+        }
+      }
+
+      if (updatedStudent.standaloneStudentId) {
+        try {
+          await Student.updateOne(
+            { _id: updatedStudent.standaloneStudentId },
+            { $set: { firstName: updatedStudent.firstName, lastName: updatedStudent.lastName } }
+          );
+        } catch (standaloneErr) {
+          console.warn('Failed to propagate student name to standalone record', standaloneErr?.message || standaloneErr);
+        }
+      }
+    }
+
     if (typeof updateData.isActive === 'boolean' && beforeStatus !== updateData.isActive) {
       try {
         await AccountStatusAudit.logAction({

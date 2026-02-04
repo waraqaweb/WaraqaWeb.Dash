@@ -10,6 +10,7 @@ const { body, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Student = require('../models/Student');
+const Class = require('../models/Class');
 const Guardian = require('../models/Guardian');
 const {
   authenticateToken,
@@ -453,6 +454,47 @@ router.put('/:id', authenticateToken, [
 
     if (!updatedStudent) {
       return res.status(404).json({ message: 'Student not found' });
+    }
+
+    const nameWasUpdated = typeof filteredUpdates.firstName !== 'undefined' || typeof filteredUpdates.lastName !== 'undefined';
+    if (nameWasUpdated) {
+      const updatedName = `${updatedStudent.firstName || ''} ${updatedStudent.lastName || ''}`.trim();
+      const guardianId = updatedStudent.guardian?._id || updatedStudent.guardian;
+
+      if (guardianId) {
+        try {
+          const guardianDoc = await User.findById(guardianId);
+          if (guardianDoc && Array.isArray(guardianDoc.guardianInfo?.students)) {
+            guardianDoc.guardianInfo.students.forEach((student) => {
+              const standaloneId = student.standaloneStudentId || student.studentInfo?.standaloneStudentId;
+              const matchesStandalone = standaloneId && String(standaloneId) === String(updatedStudent._id);
+              const matchesId = student._id && String(student._id) === String(updatedStudent._id);
+              const matchesStudentId = student.studentId && String(student.studentId) === String(updatedStudent._id);
+              if (matchesStandalone || matchesId || matchesStudentId) {
+                student.firstName = updatedStudent.firstName;
+                student.lastName = updatedStudent.lastName;
+              }
+            });
+            await guardianDoc.save();
+          }
+        } catch (guardianErr) {
+          console.warn('Failed to propagate student name to embedded guardian record', guardianErr?.message || guardianErr);
+        }
+      }
+
+      if (updatedName && guardianId) {
+        try {
+          await Class.updateMany(
+            {
+              'student.guardianId': guardianId,
+              'student.studentId': updatedStudent._id
+            },
+            { $set: { 'student.studentName': updatedName } }
+          );
+        } catch (classErr) {
+          console.warn('Failed to propagate student name to classes', classErr?.message || classErr);
+        }
+      }
     }
 
     res.json({

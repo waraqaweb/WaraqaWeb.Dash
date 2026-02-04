@@ -249,11 +249,11 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
   const [invoicedClassIds, invoicedLessonIds] = await Promise.all([
     Invoice.distinct('items.class', {
       deleted: { $ne: true },
-      status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] }
+      status: { $nin: ['cancelled', 'refunded'] }
     }),
     Invoice.distinct('items.lessonId', {
       deleted: { $ne: true },
-      status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] }
+      status: { $nin: ['cancelled', 'refunded'] }
     })
   ]);
   const invoicedIdsSet = new Set(

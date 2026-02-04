@@ -215,8 +215,8 @@ export function computeInvoiceTotals(invoice = {}) {
   const lateFeeAmount = roundCurrency(Math.max(0, Number(inv.lateFee) || 0));
   const tipAmount = roundCurrency(Math.max(0, Number(inv.tip) || 0));
 
-  const transferFeeSource = inv?.guardian?.guardianInfo?.transferFee
-    || inv?.guardianFinancial?.transferFee
+  const transferFeeSource = inv?.guardianFinancial?.transferFee
+    || inv?.guardian?.guardianInfo?.transferFee
     || {};
   const transferFeeAmount = computeTransferFeeAmount(transferFeeSource, subtotal);
   const transferFeeWaived = Boolean(coverage.waiveTransferFee || transferFeeSource.waived);

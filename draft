@@ -9,11 +9,22 @@ git push origin main
 ---
 
 ---
+10:00 am
+Wed, 11 Feb 26
+Noura Old Account
+Scheduled
+Recurring
+30 min
+samah khalifa
+Subject:
+Hafez Program
 
-cd /opt/waraqa
-chmod +x deploy/scripts/deploy.sh
-./deploy/scripts/deploy.sh pull
-./deploy/scripts/deploy.sh auto
+
+
+
+
+
+
 
 
 -----------------------------------

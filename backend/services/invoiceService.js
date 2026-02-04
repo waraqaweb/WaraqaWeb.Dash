@@ -2489,7 +2489,7 @@ class InvoiceService {
 
   static async syncUnpaidInvoiceItems(invoiceDocOrId, opts = {}) {
     try {
-      const { adminUserId = null, note = 'Synced unpaid invoice classes', cleanupDuplicates = true } = opts || {};
+      const { adminUserId = null, note = 'Synced unpaid invoice classes', cleanupDuplicates = true, transferOnDuplicate = true } = opts || {};
       const invoice = invoiceDocOrId && invoiceDocOrId._id
         ? invoiceDocOrId
         : await Invoice.findById(invoiceDocOrId);
@@ -2583,7 +2583,7 @@ class InvoiceService {
         ? { success: true, noChanges: true, invoice }
         : await InvoiceService.updateInvoiceItems(
             String(invoice._id),
-            { addItems, removeItemIds, note },
+        { addItems, removeItemIds, note, transferOnDuplicate },
             adminUserId
           );
 

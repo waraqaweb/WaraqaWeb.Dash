@@ -98,48 +98,108 @@ const extractScheduleIds = (student = {}) => {
   return Array.from(ids);
 };
 
+const normalizeStudentNameKey = (value = '') => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/\s+/g, ' ');
+
 const attachScheduleActiveFlags = async (students = []) => {
   if (!Array.isArray(students) || students.length === 0) return;
   const studentIds = new Set();
   const scheduleIdsByIndex = new Map();
+  const nameFallbackKeysByIndex = new Map();
+  const guardianIdsForNameFallback = new Set();
 
   students.forEach((student, idx) => {
     const scheduleIds = extractScheduleIds(student);
     scheduleIdsByIndex.set(idx, scheduleIds);
     scheduleIds.forEach((id) => studentIds.add(id));
+
+    const guardianId = student.guardianId || student.guardian;
+    const studentName = student.studentName || `${student.firstName || ''} ${student.lastName || ''}`.trim();
+    const normalizedName = normalizeStudentNameKey(studentName);
+    if (guardianId && normalizedName) {
+      const key = `${String(guardianId)}|${normalizedName}`;
+      nameFallbackKeysByIndex.set(idx, key);
+      guardianIdsForNameFallback.add(String(guardianId));
+    }
   });
 
   const objectIds = Array.from(studentIds)
     .map((id) => toObjectId(id))
     .filter(Boolean);
 
-  if (!objectIds.length) return;
+  const hasObjectIds = objectIds.length > 0;
 
   const now = new Date();
   const timeFilter = buildUpcomingTimeFilter(now);
-  const match = {
-    'student.studentId': { $in: objectIds },
-    status: { $nin: UPCOMING_STUDENT_STATUS_EXCLUSIONS },
-    hidden: { $ne: true },
-    deleted: { $ne: true },
-    $and: [timeFilter],
-  };
+  let upcomingSet = new Set();
+  if (hasObjectIds) {
+    const match = {
+      'student.studentId': { $in: objectIds },
+      status: { $nin: UPCOMING_STUDENT_STATUS_EXCLUSIONS },
+      hidden: { $ne: true },
+      deleted: { $ne: true },
+      $and: [timeFilter],
+    };
 
-  let upcomingRows = [];
-  try {
-    upcomingRows = await Class.aggregate([
-      { $match: match },
-      { $group: { _id: '$student.studentId' } },
-    ]);
-  } catch (err) {
-    console.warn('Failed to compute upcoming student activity', err?.message || err);
+    try {
+      const upcomingRows = await Class.aggregate([
+        { $match: match },
+        { $group: { _id: '$student.studentId' } },
+      ]);
+      upcomingSet = new Set((upcomingRows || []).map((row) => String(row._id)));
+    } catch (err) {
+      console.warn('Failed to compute upcoming student activity', err?.message || err);
+    }
   }
 
-  const upcomingSet = new Set((upcomingRows || []).map((row) => String(row._id)));
+  let upcomingNameSet = new Set();
+  if (guardianIdsForNameFallback.size) {
+    try {
+      const guardianObjectIds = Array.from(guardianIdsForNameFallback)
+        .map((id) => toObjectId(id))
+        .filter(Boolean);
+      if (guardianObjectIds.length) {
+        const nameRows = await Class.aggregate([
+          {
+            $match: {
+              'student.guardianId': { $in: guardianObjectIds },
+              status: { $nin: UPCOMING_STUDENT_STATUS_EXCLUSIONS },
+              hidden: { $ne: true },
+              deleted: { $ne: true },
+              $and: [timeFilter],
+            },
+          },
+          {
+            $project: {
+              guardianId: '$student.guardianId',
+              studentName: '$student.studentName',
+            },
+          },
+        ]);
+
+        upcomingNameSet = new Set(
+          (nameRows || [])
+            .map((row) => {
+              const g = row?.guardianId ? String(row.guardianId) : null;
+              const n = normalizeStudentNameKey(row?.studentName || '');
+              return g && n ? `${g}|${n}` : null;
+            })
+            .filter(Boolean)
+        );
+      }
+    } catch (err) {
+      console.warn('Failed to compute upcoming student activity (name fallback)', err?.message || err);
+    }
+  }
 
   students.forEach((student, idx) => {
     const scheduleIds = scheduleIdsByIndex.get(idx) || [];
-    const hasUpcoming = scheduleIds.some((id) => upcomingSet.has(String(id)));
+    const hasUpcomingById = scheduleIds.some((id) => upcomingSet.has(String(id)));
+    const nameKey = nameFallbackKeysByIndex.get(idx);
+    const hasUpcomingByName = nameKey ? upcomingNameSet.has(nameKey) : false;
+    const hasUpcoming = hasUpcomingById || hasUpcomingByName;
     student.isActive = Boolean(hasUpcoming);
     const info = student.studentInfo && typeof student.studentInfo === 'object'
       ? student.studentInfo
@@ -1999,8 +2059,9 @@ router.post('/students/batch', authenticateToken, async (req, res) => {
  */
 router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { search = '', limit, guardianId, studentId } = req.query;
+    const { search = '', limit, guardianId, studentId, light } = req.query;
     const trimmedSearch = (search || '').trim();
+    const lightMode = ['true', '1', 'yes'].includes(String(light || '').toLowerCase());
     const guardianObjectId = guardianId ? toObjectId(guardianId) : null;
     const studentObjectId = studentId ? toObjectId(studentId) : null;
 
@@ -2119,7 +2180,14 @@ router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, r
         students = students.slice(0, effectiveLimit);
       }
 
-      await attachScheduleActiveFlags(students);
+      if (!lightMode) {
+        await attachScheduleActiveFlags(students);
+      } else {
+        students = students.map((student) => ({
+          ...student,
+          activityState: 'loading'
+        }));
+      }
       students = sanitizeStudentHours(students);
 
       return res.json({ students });
@@ -2165,7 +2233,14 @@ router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, r
     }
 
     let students = dedupeStudents([...embeddedAll, ...standaloneAll]);
-    await attachScheduleActiveFlags(students);
+    if (!lightMode) {
+      await attachScheduleActiveFlags(students);
+    } else {
+      students = students.map((student) => ({
+        ...student,
+        activityState: 'loading'
+      }));
+    }
     students = sanitizeStudentHours(students);
 
     try {

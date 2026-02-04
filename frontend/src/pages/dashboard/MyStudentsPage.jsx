@@ -74,11 +74,13 @@ const MyStudentsPage = () => {
   const [, setTotalHours] = useState(0);
   const [localLoading, setLocalLoading] = useState(true);
   const [error, setError] = useState('');
+  const [isHydrated, setIsHydrated] = useState(false);
   const studentsRef = useRef([]);
   const fetchStudentsInFlightRef = useRef(false);
   const fetchStudentsKeyRef = useRef('');
   const fetchStudentsAbortRef = useRef(null);
   const fetchStudentsRequestIdRef = useRef(0);
+  const hydratingStudentIdsRef = useRef(new Set());
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState(null);
   const [expandedStudent, setExpandedStudent] = useState(null);
@@ -104,7 +106,10 @@ const MyStudentsPage = () => {
     return s?.guardianTimezone || s?.timezone || s?.studentInfo?.guardianTimezone || s?.studentInfo?.timezone || 'UTC';
   };
 
-  const getStatusColor = (isActive) => {
+  const getStatusColor = (isActive, activityState) => {
+    if (activityState === 'loading') {
+      return 'bg-slate-100 text-slate-600';
+    }
     return isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
   };
 
@@ -229,6 +234,7 @@ const fetchStudents = async () => {
     if (cached.hit && cached.value) {
       setStudents(cached.value.students || []);
       setTotalHours(cached.value.totalHours || 0);
+      setIsHydrated(true);
       setLocalLoading(false);
       if (cached.ageMs < 60_000) {
         fetchStudentsInFlightRef.current = false;
@@ -239,10 +245,12 @@ const fetchStudents = async () => {
     if (isAdmin && isAdmin()) {
       // Fast first paint: ask for a limited list first (uses the optimized filtered flow).
       // Then, if needed, the user can refine search/filters; we also cache the result.
+      setIsHydrated(false);
       response = await api.get('/users/admin/all-students', {
         params: {
           search: (effectiveSearchTerm || '').trim() || undefined,
           limit: 400,
+          light: true,
         },
         signal: controller.signal
       });
@@ -255,12 +263,39 @@ const fetchStudents = async () => {
       fetchedArr = withTZ;
       setStudents(withTZ);
       setTotalHours(response.data.totalHours || 0);
+      setLocalLoading(false);
 
-      writeCache(
-        cacheKey,
-        { students: withTZ, totalHours: response.data.totalHours || 0 },
-        { ttlMs: 5 * 60_000, deps: ['users', 'students', 'classes'] }
-      );
+      (async () => {
+        try {
+          const fullRes = await api.get('/users/admin/all-students', {
+            params: {
+              search: (effectiveSearchTerm || '').trim() || undefined,
+              limit: 400,
+            },
+            signal: controller.signal
+          });
+          if (controller.signal.aborted) return;
+          const fullArr = fullRes.data.students || [];
+          const fullWithTZ = fullArr.map((st) => ({
+            ...st,
+            timezone: deriveStudentTimezone(st),
+            subjects: Array.isArray(st.subjects) ? st.subjects : [],
+          }));
+          setStudents(fullWithTZ);
+          setTotalHours(fullRes.data.totalHours || 0);
+          setIsHydrated(true);
+
+          writeCache(
+            cacheKey,
+            { students: fullWithTZ, totalHours: fullRes.data.totalHours || 0 },
+            { ttlMs: 5 * 60_000, deps: ['users', 'students', 'classes'] }
+          );
+        } catch (fullErr) {
+          if (fullErr?.code !== 'ERR_CANCELED' && fullErr?.name !== 'CanceledError') {
+            console.error('Failed to hydrate full students list', fullErr);
+          }
+        }
+      })();
   } else if (isTeacher && isTeacher()) {
       // For teachers show only students who have upcoming classes with this teacher.
       try {
@@ -477,6 +512,7 @@ const fetchStudents = async () => {
         const withTZ = visibleStudents.map(st => ({ ...st, timezone: deriveStudentTimezone(st) }));
         setStudents(withTZ);
         setTotalHours(0);
+        setIsHydrated(true);
       } catch (err) {
         console.error('Failed to fetch classes for teacher view', err);
         setError('Failed to fetch students');
@@ -488,6 +524,7 @@ const fetchStudents = async () => {
       fetchedArr = withTZ;
       setStudents(withTZ);
       setTotalHours(response.data.totalHours || 0);
+      setIsHydrated(true);
     } else {
       throw new Error('Unauthorized role');
     }
@@ -544,7 +581,7 @@ const fetchGuardiansList = async () => {
   const filteredStudents = useMemo(() => {
     let result = students || [];
 
-    if (statusFilter !== 'all') {
+    if (isHydrated && statusFilter !== 'all') {
       const desiredActive = statusFilter === 'active';
       result = result.filter((student) => isStudentActive(student) === desiredActive);
     }
@@ -594,7 +631,7 @@ const fetchGuardiansList = async () => {
     // debug logs removed
     
     return result;
-  }, [students, effectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter]);
+  }, [students, effectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter, isHydrated]);
 
   const sortedStudents = useMemo(() => {
     const list = [...(filteredStudents || [])];
@@ -848,6 +885,29 @@ const fetchGuardiansList = async () => {
 
   const toggleStudentDetails = (studentId) => {
     setExpandedStudent(expandedStudent === studentId ? null : studentId);
+
+    if (!(isAdmin && isAdmin()) || !studentId) return;
+    const key = String(studentId);
+    if (hydratingStudentIdsRef.current.has(key)) return;
+    hydratingStudentIdsRef.current.add(key);
+
+    (async () => {
+      try {
+        const res = await api.get('/users/admin/all-students', { params: { studentId } });
+        const found = (res.data.students || [])[0];
+        if (!found) return;
+        const withTZ = {
+          ...found,
+          timezone: deriveStudentTimezone(found),
+          subjects: Array.isArray(found.subjects) ? found.subjects : [],
+        };
+        setStudents((prev) => (prev || []).map((s) => (String(s._id || s.id) === key ? { ...s, ...withTZ } : s)));
+      } catch (err) {
+        console.error('Failed to hydrate student details', err);
+      } finally {
+        hydratingStudentIdsRef.current.delete(key);
+      }
+    })();
   };
 
   const formatDate = (dateString) => {
@@ -887,11 +947,13 @@ const fetchGuardiansList = async () => {
 
   // Derived student counts for header counters
   const totalStudents = (students || []).length;
-  const activeStudents = (students || []).filter((student) => isStudentActive(student)).length;
-  const inactiveStudents = totalStudents - activeStudents;
+  const activeStudents = isHydrated
+    ? (students || []).filter((student) => isStudentActive(student)).length
+    : 0;
+  const inactiveStudents = isHydrated ? (totalStudents - activeStudents) : 0;
   const statusCounts = {
-    active: activeStudents,
-    inactive: inactiveStudents,
+    active: isHydrated ? activeStudents : '…',
+    inactive: isHydrated ? inactiveStudents : '…',
     all: totalStudents
   };
 
@@ -1028,8 +1090,8 @@ const fetchGuardiansList = async () => {
                         <span className="font-medium text-foreground">
                           { (classesHoursMap[String(student._id)] ?? 0) } hours
                         </span>
-                        <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(isStudentActive(student))}`}>
-                          {isStudentActive(student) ? 'Active' : 'Inactive'}
+                        <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(isStudentActive(student), student.activityState)}`}>
+                          {student.activityState === 'loading' ? 'Loading' : (isStudentActive(student) ? 'Active' : 'Inactive')}
                         </span>
                         <p><span className="font-medium">Timezone:</span> {deriveStudentTimezone(student)}</p>
                       </div>

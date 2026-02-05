@@ -2856,6 +2856,10 @@ class InvoiceService {
       if (!allClassIds.length) return;
 
       const coverageHours = Number(invoiceDoc.coverage?.maxHours || 0) || 0;
+      const coverageEndRaw = invoiceDoc.coverage?.endDate ? new Date(invoiceDoc.coverage.endDate) : null;
+      const coverageEnd = coverageEndRaw && !Number.isNaN(coverageEndRaw.getTime())
+        ? new Date(coverageEndRaw.setHours(23, 59, 59, 999))
+        : null;
 
       if (coverageHours <= EPSILON_HOURS) {
         await Class.updateMany(
@@ -2871,6 +2875,12 @@ class InvoiceService {
       for (const item of sorted) {
         const normalized = normalizeId(item.class);
         if (!normalized) continue;
+        if (coverageEnd) {
+          const itemDate = new Date(item?.date || item?.scheduledDate || 0);
+          if (Number.isNaN(itemDate.getTime()) || itemDate > coverageEnd) {
+            continue;
+          }
+        }
         const itemHours = Math.max(0, Number(item.duration || 0) / 60);
         if (itemHours <= 0) continue;
         if (remaining >= itemHours - EPSILON_HOURS) {

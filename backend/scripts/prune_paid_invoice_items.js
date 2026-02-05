@@ -81,16 +81,22 @@ async function run() {
 
     const classMap = new Map(classDocs.map((cls) => [String(cls._id), cls]));
 
+    const maxHours = Number(invoice?.coverage?.maxHours || 0) || 0;
+    const coverageEnd = invoice?.coverage?.endDate ? toDate(invoice.coverage.endDate) : null;
+
     const eligible = items.filter((it) => {
       const id = normalizeId(it.class || it.lessonId);
       if (!id) return true; // keep non-class items
       const cls = classMap.get(id);
       if (!cls) return false;
       const status = String(cls.status || '').toLowerCase();
-      return ELIGIBLE_STATUSES.has(status);
+      if (!ELIGIBLE_STATUSES.has(status)) return false;
+      if (coverageEnd && (!maxHours || maxHours <= 0)) {
+        const itemDate = toDate(it.date || it.scheduledDate || cls?.scheduledDate);
+        if (!itemDate || itemDate > coverageEnd) return false;
+      }
+      return true;
     });
-
-    const maxHours = Number(invoice?.coverage?.maxHours || 0) || 0;
     let kept = eligible;
     if (maxHours > 0) {
       const sorted = eligible

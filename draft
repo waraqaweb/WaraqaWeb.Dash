@@ -21,6 +21,5 @@ cd /opt/waraqa
 chmod +x deploy/scripts/deploy.sh
 ./deploy/scripts/deploy.sh pull
 ./deploy/scripts/deploy.sh all
-docker compose exec backend node scripts/cleanup_paid_invoice_duplicates.js --sinceDays 120
-docker compose exec backend node scripts/sync_unpaid_invoices.js --sinceDays 120
+
 

@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "class marks reprort from invoices"
+git commit -m "prune_paid_invoice_items"
 git push origin main
 
 ---

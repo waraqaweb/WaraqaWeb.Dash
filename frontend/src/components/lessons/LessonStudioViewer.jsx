@@ -69,7 +69,8 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
   const lastPointRef = useRef(null);
 
   if (!lesson) return null;
-  const meta = lesson.metadata?.lessonStudio || {};
+  const meta = lesson.metadata?.lessonStudio || lesson.metadata?.testStudio || {};
+  const isTest = Boolean(lesson.metadata?.testStudio);
   const sections = Array.isArray(meta.sections) ? meta.sections : [];
   const current = sections[activeSection] || {};
   const filteredStudents = useMemo(() => {
@@ -349,6 +350,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
     : 'border-amber-300';
 
   const selectedExplanationParts = getExplanationParts(audience, level);
+  const definitionText = current?.definition || '';
   const explanationParts = selectedExplanationParts.length
     ? selectedExplanationParts
     : [{ text: '—', mediaUrl: '' }];
@@ -528,6 +530,23 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
   const isCorrect = Number.isFinite(correctIndex) && selectedIndex === correctIndex;
   const isWrong = Number.isFinite(correctIndex) && selectedIndex != null && selectedIndex !== correctIndex;
   const teacherMark = teacherMarks[answerKey];
+  const questionPoints = (question) => {
+    const value = Number(question?.points);
+    return Number.isFinite(value) ? value : 0;
+  };
+  const totalPoints = isTest
+    ? questions.reduce((sum, q) => sum + questionPoints(q), 0)
+    : 0;
+  const earnedPoints = isTest
+    ? questions.reduce((sum, q, idx) => {
+        const key = `${activeSection}-${idx}`;
+        const correctIdx = resolveCorrectIndex(q);
+        const selected = answers[key];
+        const correct = Number.isFinite(correctIdx) && selected === correctIdx;
+        const markedCorrect = teacherMarks[key] === 'correct';
+        return sum + ((correct || markedCorrect) ? questionPoints(q) : 0);
+      }, 0)
+    : 0;
 
   return (
     <div ref={wrapperRef} className={`relative flex h-full min-h-full flex-col overflow-hidden rounded-3xl border ${stageTheme.border} bg-gradient-to-br ${stageTheme.gradient} p-6 shadow-xl ring-1 ${stageTheme.ring}`}>
@@ -869,6 +888,19 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                         </p>
                         <span className="text-[11px] font-semibold text-slate-500">{level}</span>
                       </div>
+                      {definitionText && (
+                        (() => {
+                          const defDirection = getDirectionFromFirstWord(definitionText);
+                          return (
+                            <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
+                              <p className="text-[11px] font-semibold uppercase text-slate-500">Definition</p>
+                              <div className={`mt-2 text-base text-slate-800 ${defDirection.align}`} dir={defDirection.dir}>
+                                <span dangerouslySetInnerHTML={renderRichText(definitionText)} />
+                              </div>
+                            </div>
+                          );
+                        })()
+                      )}
                       {explanationParts.map((part, idx) => (
                         <div key={`explanation-part-${idx}`}>
                           {(() => {
@@ -944,6 +976,11 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                       <div className="rounded-2xl border border-rose-200 bg-slate-50/90 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="text-xs font-semibold uppercase text-slate-500">Question {questionIndex + 1} of {questions.length}</p>
+                          {isTest && (
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">
+                              Score: {earnedPoints}/{totalPoints}
+                            </span>
+                          )}
                           <span
                             className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-all ${
                               isCorrect || teacherMark === 'correct'

@@ -38,6 +38,7 @@ const defaultExplanation = () => ({
 const defaultSection = (index) => ({
   id: `section-${Date.now()}-${index}`,
   title: `Section ${index + 1}`,
+  definition: '',
   explanation: defaultExplanation(),
   examples: [''],
   notes: [''],
@@ -448,6 +449,23 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                   onChange={(event) => updateSection({ title: event.target.value })}
                   placeholder="Section title"
                 />
+              </div>
+
+              <div className="mt-4 rounded-2xl bg-white p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <span className="text-xs font-semibold uppercase text-slate-500">Definition</span>
+                </div>
+                <div className="mt-2">
+                  <RichTextEditor
+                    value={current?.definition || ''}
+                    onChange={(value) => updateSection({ definition: value })}
+                    minHeight={90}
+                    compact
+                    showToolbar={false}
+                    onFocus={setActiveEditorRef}
+                    placeholder="Add a short definition (optional)"
+                  />
+                </div>
               </div>
 
               <div className="mt-6 grid gap-4 lg:grid-cols-[1.1fr,0.9fr]">

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import LessonStudio from '../../components/lessons/LessonStudio';
+import TestStudio from '../../components/lessons/TestStudio';
 import LessonStudioViewer from '../../components/lessons/LessonStudioViewer';
 import { createLibraryFolder, createLibraryItem, deleteLibraryItem, fetchFolderContents, fetchTree, updateLibraryItem } from '../../api/library';
 import { Plus, Folder, Settings, Link2 } from 'lucide-react';
@@ -8,18 +9,27 @@ import { useSearch } from '../../contexts/SearchContext';
 import { useAuth } from '../../contexts/AuthContext';
 
 const LESSONS_FOLDER_NAME = 'Lessons';
+const TESTS_FOLDER_NAME = 'Tests';
 
 const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => {
   const { isAdmin } = useAuth();
   const [lessonsFolderId, setLessonsFolderId] = useState(null);
   const [lessons, setLessons] = useState([]);
   const [selectedLesson, setSelectedLesson] = useState(null);
+  const [testsFolderId, setTestsFolderId] = useState(null);
+  const [tests, setTests] = useState([]);
+  const [selectedTest, setSelectedTest] = useState(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
+  const [testSubjectFilter, setTestSubjectFilter] = useState('');
+  const [activeTab, setActiveTab] = useState('lessons');
   const [addLessonOpen, setAddLessonOpen] = useState(false);
   const [editLessonOpen, setEditLessonOpen] = useState(false);
   const [lessonToEdit, setLessonToEdit] = useState(null);
+  const [addTestOpen, setAddTestOpen] = useState(false);
+  const [editTestOpen, setEditTestOpen] = useState(false);
+  const [testToEdit, setTestToEdit] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accessScope, setAccessScope] = useState('admin');
   const [publicLink, setPublicLink] = useState('');
@@ -51,6 +61,24 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     return created?.id || created?._id || null;
   }, []);
 
+  const resolveTestsFolder = useCallback(async () => {
+    const { tree } = await fetchTree();
+    const locate = (nodes) => {
+      for (const node of nodes || []) {
+        if ((node.displayName || '').toLowerCase() === TESTS_FOLDER_NAME.toLowerCase()) return node;
+        if (node.children?.length) {
+          const found = locate(node.children);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    const existing = locate(tree || []);
+    if (existing) return existing.id || existing._id;
+    const created = await createLibraryFolder({ displayName: TESTS_FOLDER_NAME, parentFolder: null });
+    return created?.id || created?._id || null;
+  }, []);
+
   const loadLessons = useCallback(async () => {
     const folderId = await resolveLessonsFolder();
     setLessonsFolderId(folderId);
@@ -63,10 +91,23 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     setLessons(items);
   }, [resolveLessonsFolder]);
 
+  const loadTests = useCallback(async () => {
+    const folderId = await resolveTestsFolder();
+    setTestsFolderId(folderId);
+    if (!folderId) {
+      setTests([]);
+      return;
+    }
+    const payload = await fetchFolderContents(folderId, { limit: 200 });
+    const items = (payload?.items || []).filter((item) => item.contentType === 'test');
+    setTests(items);
+  }, [resolveTestsFolder]);
+
   useEffect(() => {
     if (!isActive) return;
     loadLessons();
-  }, [isActive, loadLessons]);
+    loadTests();
+  }, [isActive, loadLessons, loadTests]);
 
   const subjects = useMemo(() => {
     const counts = new Map();
@@ -78,6 +119,17 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([name, count]) => ({ name, count }));
   }, [lessons]);
+
+  const testSubjects = useMemo(() => {
+    const counts = new Map();
+    tests.forEach((test) => {
+      const subject = test.subject || test.metadata?.testStudio?.subject || 'General';
+      counts.set(subject, (counts.get(subject) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ name, count }));
+  }, [tests]);
 
   const allowedSubjectSet = useMemo(() =>
     new Set((allowedSubjects || []).map((s) => String(s || '').toLowerCase().trim()).filter(Boolean)),
@@ -99,6 +151,21 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     });
   }, [lessons, globalSearchTerm, subjectFilter, isPublic, allowedSubjectSet]);
 
+  const filteredTests = useMemo(() => {
+    const q = (globalSearchTerm || '').trim().toLowerCase();
+    return tests.filter((test) => {
+      const subject = test.subject || test.metadata?.testStudio?.subject || 'General';
+      if (isPublic) {
+        if (!allowedSubjectSet.size) return false;
+        if (!allowedSubjectSet.has(String(subject).toLowerCase().trim())) return false;
+      }
+      if (testSubjectFilter && subject !== testSubjectFilter) return false;
+      if (!q) return true;
+      const haystack = `${test.displayName || ''} ${test.description || ''}`.toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [tests, globalSearchTerm, testSubjectFilter, isPublic, allowedSubjectSet]);
+
   const lessonsBySubject = useMemo(() => {
     const map = new Map();
     lessons.forEach((lesson) => {
@@ -113,6 +180,20 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     return map;
   }, [lessons, isPublic, allowedSubjectSet]);
 
+  const testsBySubject = useMemo(() => {
+    const map = new Map();
+    tests.forEach((test) => {
+      const subject = test.subject || test.metadata?.testStudio?.subject || 'General';
+      if (isPublic) {
+        if (!allowedSubjectSet.size) return;
+        if (!allowedSubjectSet.has(String(subject).toLowerCase().trim())) return;
+      }
+      if (!map.has(subject)) map.set(subject, []);
+      map.get(subject).push(test);
+    });
+    return map;
+  }, [tests, isPublic, allowedSubjectSet]);
+
   useEffect(() => {
     if (!isActive) return;
     try {
@@ -126,10 +207,12 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     }
   }, [isActive]);
 
-  const subjectOptions = useMemo(() =>
-    (subjects || []).map((item) => ({ id: item.name, label: item.name })),
-    [subjects]
-  );
+  const subjectOptions = useMemo(() => {
+    const combined = new Map();
+    subjects.forEach((item) => combined.set(item.name, item.name));
+    testSubjects.forEach((item) => combined.set(item.name, item.name));
+    return Array.from(combined.values()).map((name) => ({ id: name, label: name }));
+  }, [subjects, testSubjects]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -238,6 +321,67 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     }
   };
 
+  const handleSaveTest = async (payload) => {
+    setSaving(true);
+    setStatus('');
+    try {
+      const folderId = testsFolderId || (await resolveTestsFolder());
+      if (!folderId) throw new Error('Tests folder unavailable');
+      const testData = {
+        subject: payload.subject,
+        title: payload.title,
+        subtitle: payload.subtitle,
+        instructions: payload.instructions,
+        sections: payload.sections
+      };
+      const created = await createLibraryItem({
+        folder: folderId,
+        displayName: payload.title || 'Untitled assessment',
+        description: payload.instructions,
+        subject: payload.subject,
+        contentType: 'test',
+        allowDownload: false,
+        isSecret: false,
+        inheritsSecret: true,
+        metadata: { testStudio: testData }
+      });
+      await loadTests();
+      setSelectedTest(created || null);
+      setStatus('Assessment saved successfully.');
+    } catch (error) {
+      setStatus(error?.response?.data?.message || error.message || 'Unable to save assessment.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdateTest = async (payload) => {
+    if (!testToEdit) return;
+    setSaving(true);
+    setStatus('');
+    try {
+      const testData = {
+        subject: payload.subject,
+        title: payload.title,
+        subtitle: payload.subtitle,
+        instructions: payload.instructions,
+        sections: payload.sections
+      };
+      await updateLibraryItem(testToEdit.id || testToEdit._id, {
+        displayName: payload.title || 'Untitled assessment',
+        description: payload.instructions,
+        subject: payload.subject,
+        metadata: { testStudio: testData }
+      });
+      await loadTests();
+      setStatus('Assessment updated successfully.');
+    } catch (error) {
+      setStatus(error?.response?.data?.message || error.message || 'Unable to update assessment.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDeleteLesson = async (lesson) => {
     if (!lesson) return;
     if (!window.confirm('Delete this lesson?')) return;
@@ -247,6 +391,21 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
       await loadLessons();
       if (selectedLesson && (selectedLesson.id || selectedLesson._id) === (lesson.id || lesson._id)) {
         setSelectedLesson(null);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteTest = async (test) => {
+    if (!test) return;
+    if (!window.confirm('Delete this assessment?')) return;
+    setSaving(true);
+    try {
+      await deleteLibraryItem(test.id || test._id);
+      await loadTests();
+      if (selectedTest && (selectedTest.id || selectedTest._id) === (test.id || test._id)) {
+        setSelectedTest(null);
       }
     } finally {
       setSaving(false);
@@ -267,6 +426,20 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     }
   };
 
+  const handleDeleteSubjectTests = async (subjectName) => {
+    if (!subjectName) return;
+    if (!window.confirm(`Delete all assessments under "${subjectName}"?`)) return;
+    setSaving(true);
+    try {
+      const subjectTests = testsBySubject.get(subjectName) || [];
+      await Promise.all(subjectTests.map((test) => deleteLibraryItem(test.id || test._id)));
+      await loadTests();
+      if (testSubjectFilter === subjectName) setTestSubjectFilter('');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!isActive) return null;
 
   return (
@@ -278,141 +451,301 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
             <h1 className="text-2xl font-semibold text-foreground">Interactive learning</h1>
           </div>
           <div className="flex items-center gap-3">
-            <button type="button" onClick={loadLessons} className="text-xs text-[#2C736C]">Refresh</button>
+            <button
+              type="button"
+              onClick={() => {
+                loadLessons();
+                loadTests();
+              }}
+              className="text-xs text-[#2C736C]"
+            >
+              Refresh
+            </button>
           </div>
         </div>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[1.4fr,0.8fr]">
-          <div className="space-y-4">
-            {subjects.map((subject) => {
-              const isActive = subjectFilter === subject.name;
-              return (
-                <div
-                  key={subject.name}
-                  className={`rounded-3xl border bg-white p-5 shadow-sm transition ${
-                    isActive ? 'border-[#2C736C]/40 bg-[#2C736C]/10 ring-1 ring-[#2C736C]/20' : 'border-slate-100'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-4">
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {['lessons', 'tests'].map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${
+                activeTab === tab
+                  ? 'border-[#2C736C]/40 bg-[#2C736C]/10 text-[#2C736C]'
+                  : 'border-slate-200 text-slate-600'
+              }`}
+            >
+              {tab === 'lessons' ? 'Lessons' : 'Tests'}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'lessons' ? (
+          <div className="mt-6 grid gap-6 lg:grid-cols-[1.4fr,0.8fr]">
+            <div className="space-y-4">
+              {subjects.map((subject) => {
+                const isActive = subjectFilter === subject.name;
+                return (
+                  <div
+                    key={subject.name}
+                    className={`rounded-3xl border bg-white p-5 shadow-sm transition ${
+                      isActive ? 'border-[#2C736C]/40 bg-[#2C736C]/10 ring-1 ring-[#2C736C]/20' : 'border-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <button
+                        type="button"
+                        onClick={() => setSubjectFilter(isActive ? '' : subject.name)}
+                        className="flex flex-1 items-center justify-between gap-4 text-left"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#2C736C]/10 text-[#2C736C]">
+                            <Folder className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-foreground">{subject.name}</p>
+                            <p className="text-xs text-muted-foreground">{subject.count} lessons</p>
+                          </div>
+                        </div>
+                        <span className="text-xs text-[#2C736C]">{isActive ? 'Selected' : 'Open'}</span>
+                      </button>
+                      {isAdmin && !isPublic && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSubjectMaterials(subject.name)}
+                          className="rounded-full border border-rose-200 px-3 py-1 text-[10px] font-semibold text-rose-700"
+                        >
+                          Delete materials
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#2C736C]">Lessons</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {subjectFilter ? `Showing lessons for ${subjectFilter}.` : 'Select a subject to view lessons.'}
+              </p>
+              <div className="mt-4 space-y-2">
+                {(subjectFilter ? (lessonsBySubject.get(subjectFilter) || []) : []).map((lesson) => (
+                  <div
+                    key={lesson.id || lesson._id}
+                    className="flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C]"
+                  >
                     <button
                       type="button"
-                      onClick={() => setSubjectFilter(isActive ? '' : subject.name)}
-                      className="flex flex-1 items-center justify-between gap-4 text-left"
+                      onClick={() => setSelectedLesson(lesson)}
+                      className="flex-1 text-left"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#2C736C]/10 text-[#2C736C]">
-                          <Folder className="h-5 w-5" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-foreground">{subject.name}</p>
-                          <p className="text-xs text-muted-foreground">{subject.count} lessons</p>
-                        </div>
-                      </div>
-                      <span className="text-xs text-[#2C736C]">{isActive ? 'Selected' : 'Open'}</span>
+                      <p>{lesson.displayName}</p>
+                      <p className="text-[10px] text-[#2C736C]/80">{lesson.metadata?.lessonStudio?.subtitle || 'Lesson'}</p>
                     </button>
                     {isAdmin && !isPublic && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteSubjectMaterials(subject.name)}
-                        className="rounded-full border border-rose-200 px-3 py-1 text-[10px] font-semibold text-rose-700"
-                      >
-                        Delete materials
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLessonToEdit(lesson);
+                            setEditLessonOpen(true);
+                          }}
+                          className="rounded-full border border-[#2C736C]/30 px-2 py-1 text-[10px] text-[#2C736C]"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteLesson(lesson)}
+                          className="rounded-full border border-rose-200 px-2 py-1 text-[10px] text-rose-700"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     )}
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                ))}
+                {!subjectFilter && (
+                  <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-xs text-slate-500">
+                    Choose a folder on the left to display its lessons.
+                  </div>
+                )}
+              </div>
+            </div>
 
-          <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#2C736C]">Lessons</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {subjectFilter ? `Showing lessons for ${subjectFilter}.` : 'Select a subject to view lessons.'}
-            </p>
-            <div className="mt-4 space-y-2">
-              {(subjectFilter ? (lessonsBySubject.get(subjectFilter) || []) : []).map((lesson) => (
-                <div
-                  key={lesson.id || lesson._id}
-                  className="flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C]"
-                >
-                  <button
-                    type="button"
-                    onClick={() => setSelectedLesson(lesson)}
-                    className="flex-1 text-left"
+            {addLessonOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
+                  <LessonStudio
+                    onSave={async (payload) => {
+                      await handleSaveLesson(payload);
+                      setAddLessonOpen(false);
+                    }}
+                    saving={saving}
+                    status={status}
+                    onClose={() => setAddLessonOpen(false)}
+                    title="Add lesson"
+                  />
+                </div>
+              </div>
+            )}
+            {editLessonOpen && lessonToEdit && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
+                  <LessonStudio
+                    initialLesson={lessonToEdit}
+                    onSave={async (payload) => {
+                      await handleUpdateLesson(payload);
+                      setEditLessonOpen(false);
+                      setLessonToEdit(null);
+                    }}
+                    saving={saving}
+                    status={status}
+                    onClose={() => {
+                      setEditLessonOpen(false);
+                      setLessonToEdit(null);
+                    }}
+                    title="Edit lesson"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-6 grid gap-6 lg:grid-cols-[1.4fr,0.8fr]">
+            <div className="space-y-4">
+              {testSubjects.map((subject) => {
+                const isActive = testSubjectFilter === subject.name;
+                return (
+                  <div
+                    key={subject.name}
+                    className={`rounded-3xl border bg-white p-5 shadow-sm transition ${
+                      isActive ? 'border-[#2C736C]/40 bg-[#2C736C]/10 ring-1 ring-[#2C736C]/20' : 'border-slate-100'
+                    }`}
                   >
-                    <p>{lesson.displayName}</p>
-                    <p className="text-[10px] text-[#2C736C]/80">{lesson.metadata?.lessonStudio?.subtitle || 'Lesson'}</p>
-                  </button>
-                  {isAdmin && !isPublic && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between gap-4">
                       <button
                         type="button"
-                        onClick={() => {
-                          setLessonToEdit(lesson);
-                          setEditLessonOpen(true);
-                        }}
-                        className="rounded-full border border-[#2C736C]/30 px-2 py-1 text-[10px] text-[#2C736C]"
+                        onClick={() => setTestSubjectFilter(isActive ? '' : subject.name)}
+                        className="flex flex-1 items-center justify-between gap-4 text-left"
                       >
-                        Edit
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#2C736C]/10 text-[#2C736C]">
+                            <Folder className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-foreground">{subject.name}</p>
+                            <p className="text-xs text-muted-foreground">{subject.count} tests</p>
+                          </div>
+                        </div>
+                        <span className="text-xs text-[#2C736C]">{isActive ? 'Selected' : 'Open'}</span>
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteLesson(lesson)}
-                        className="rounded-full border border-rose-200 px-2 py-1 text-[10px] text-rose-700"
-                      >
-                        Delete
-                      </button>
+                      {isAdmin && !isPublic && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSubjectTests(subject.name)}
+                          className="rounded-full border border-rose-200 px-3 py-1 text-[10px] font-semibold text-rose-700"
+                        >
+                          Delete materials
+                        </button>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
-              {!subjectFilter && (
-                <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-xs text-slate-500">
-                  Choose a folder on the left to display its lessons.
-                </div>
-              )}
+                  </div>
+                );
+              })}
             </div>
-          </div>
 
-          {addLessonOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-              <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
-                <LessonStudio
-                  onSave={async (payload) => {
-                    await handleSaveLesson(payload);
-                    setAddLessonOpen(false);
-                  }}
-                  saving={saving}
-                  status={status}
-                  onClose={() => setAddLessonOpen(false)}
-                  title="Add lesson"
-                />
+            <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#2C736C]">Tests</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {testSubjectFilter ? `Showing tests for ${testSubjectFilter}.` : 'Select a subject to view tests.'}
+              </p>
+              <div className="mt-4 space-y-2">
+                {(testSubjectFilter ? (testsBySubject.get(testSubjectFilter) || []) : []).map((test) => (
+                  <div
+                    key={test.id || test._id}
+                    className="flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C]"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTest(test)}
+                      className="flex-1 text-left"
+                    >
+                      <p>{test.displayName}</p>
+                      <p className="text-[10px] text-[#2C736C]/80">{test.metadata?.testStudio?.subtitle || 'Assessment'}</p>
+                    </button>
+                    {isAdmin && !isPublic && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTestToEdit(test);
+                            setEditTestOpen(true);
+                          }}
+                          className="rounded-full border border-[#2C736C]/30 px-2 py-1 text-[10px] text-[#2C736C]"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTest(test)}
+                          className="rounded-full border border-rose-200 px-2 py-1 text-[10px] text-rose-700"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {!testSubjectFilter && (
+                  <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-xs text-slate-500">
+                    Choose a folder on the left to display its tests.
+                  </div>
+                )}
               </div>
             </div>
-          )}
-          {editLessonOpen && lessonToEdit && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-              <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
-                <LessonStudio
-                  initialLesson={lessonToEdit}
-                  onSave={async (payload) => {
-                    await handleUpdateLesson(payload);
-                    setEditLessonOpen(false);
-                    setLessonToEdit(null);
-                  }}
-                  saving={saving}
-                  status={status}
-                  onClose={() => {
-                    setEditLessonOpen(false);
-                    setLessonToEdit(null);
-                  }}
-                  title="Edit lesson"
-                />
+
+            {addTestOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
+                  <TestStudio
+                    onSave={async (payload) => {
+                      await handleSaveTest(payload);
+                      setAddTestOpen(false);
+                    }}
+                    saving={saving}
+                    status={status}
+                    onClose={() => setAddTestOpen(false)}
+                    title="Add assessment"
+                  />
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+            {editTestOpen && testToEdit && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
+                  <TestStudio
+                    initialTest={testToEdit}
+                    onSave={async (payload) => {
+                      await handleUpdateTest(payload);
+                      setEditTestOpen(false);
+                      setTestToEdit(null);
+                    }}
+                    saving={saving}
+                    status={status}
+                    onClose={() => {
+                      setEditTestOpen(false);
+                      setTestToEdit(null);
+                    }}
+                    title="Edit assessment"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {isAdmin && !isPublic && (
@@ -429,7 +762,13 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
           </button>
           <button
             type="button"
-            onClick={() => setAddLessonOpen(true)}
+            onClick={() => {
+              if (activeTab === 'tests') {
+                setAddTestOpen(true);
+              } else {
+                setAddLessonOpen(true);
+              }
+            }}
             className="flex flex-col items-center gap-1 text-[#2C736C]"
           >
             <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#2C736C] text-white shadow-sm hover:bg-[#245b56]">
@@ -445,6 +784,16 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
           <div className="h-full w-full overflow-hidden rounded-3xl bg-white shadow-2xl">
             <div className="h-full w-full overflow-hidden">
               <LessonStudioViewer lesson={selectedLesson} onClose={() => setSelectedLesson(null)} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedTest && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm p-2 sm:p-4">
+          <div className="h-full w-full overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="h-full w-full overflow-hidden">
+              <LessonStudioViewer lesson={selectedTest} onClose={() => setSelectedTest(null)} />
             </div>
           </div>
         </div>

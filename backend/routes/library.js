@@ -311,7 +311,15 @@ router.post(
   requireAdmin,
   body('folder').isString(),
   body('displayName').isString().trim().notEmpty(),
-  body('storage').isObject(),
+  body('storage').custom((value, { req }) => {
+    if (['code', 'lesson'].includes(req.body?.contentType)) {
+      return true;
+    }
+    if (!value || typeof value !== 'object') {
+      throw new Error('Storage details are required');
+    }
+    return true;
+  }),
   validate,
   async (req, res, next) => {
     try {

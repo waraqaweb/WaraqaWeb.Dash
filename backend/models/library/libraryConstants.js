@@ -7,7 +7,9 @@ const LIBRARY_CONTENT_TYPES = Object.freeze([
   'interactive',
   'link',
   'archive',
-  'other'
+  'other',
+  'code',
+  'lesson'
 ]);
 
 const LIBRARY_ITEM_STATUSES = Object.freeze(['draft', 'ready', 'archived']);

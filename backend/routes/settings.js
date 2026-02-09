@@ -118,6 +118,21 @@ router.post('/branding/logo', authenticateToken, requireAdmin, upload.single('fi
   }
 });
 
+// Getter for presenter access (authenticated users)
+// Used by sidebar to show/hide the Presenter menu item
+router.get('/presenterAccess', authenticateToken, async (req, res) => {
+  try {
+    const key = 'presenterAccess';
+    const s = await Setting.findOne({ key });
+    // Default to 'admin' if not set
+    const value = s?.value || 'admin';
+    res.json({ success: true, setting: { key, value } });
+  } catch (err) {
+    console.error('Failed to fetch presenterAccess', err);
+    res.status(500).json({ message: 'Failed to fetch presenter access' });
+  }
+});
+
 // Get a setting by key
 router.get('/:key', authenticateToken, requireAdmin, async (req, res) => {
   try {

@@ -43,6 +43,7 @@ import SalaryCreateModal from './pages/dashboard/salaries/SalaryCreateModal';
 import TeacherSalaries from './pages/admin/TeacherSalaries';
 import TeacherSalaryDashboard from './pages/teacher/SalaryDashboard';
 import LibraryDashboard from './pages/library/LibraryDashboard';
+import PresenterPublicPage from './pages/PresenterPublicPage';
 
 /**
  * Protected Route Component
@@ -227,6 +228,11 @@ const AppRoutes = () => {
         element={<PublicEvaluationBookingPage />}
       />
 
+      <Route
+        path="/interactive-learning"
+        element={<PresenterPublicPage />}
+      />
+
       {/* Protected routes */}
       <Route 
         path="/dashboard" 
@@ -307,6 +313,18 @@ const AppRoutes = () => {
             <Dashboard />
           </ProtectedRoute>
         }
+      />
+      <Route
+        path="/dashboard/interactive-learning"
+        element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboard/presenter"
+        element={<Navigate to="/dashboard/interactive-learning" replace />}
       />
       <Route
         path="/dashboard/salaries"
@@ -724,6 +742,7 @@ function App() {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname || '/';
       if (path.startsWith('/public')) return '/';
+      if (path.startsWith('/interactive-learning')) return '/';
       if (publicUrl !== '/' && path.startsWith(publicUrl)) return publicUrl;
     }
 

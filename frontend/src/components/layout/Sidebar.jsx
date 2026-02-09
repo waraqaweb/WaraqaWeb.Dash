@@ -23,18 +23,25 @@ import {
   DollarSign,
   Clock,
   BookOpen,
-  X
+  X,
+  Monitor
 } from 'lucide-react';
 
 const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
   const { user, logout, isAdmin } = useAuth();
   const [branding, setBranding] = useState({ logo: null, title: 'Waraqa', slogan: '' });
+  const [presenterGlobal, setPresenterGlobal] = useState(false);
 
   // Define navigation items based on user role
   const getNavigationItems = () => {
     // Ordered navigation as requested:
     // Dashboard, Classes, Teachers, Guardians, Students, Vacations, Invoices, Salaries, Feedbacks
     const salariesLink = isAdmin() ? '/admin/teacher-salaries' : '/teacher/salary';
+    
+    // Presenter roles: always admin, plus teacher/student/guardian if global setting enabled
+    const presenterRoles = ['admin'];
+    if (presenterGlobal) presenterRoles.push('teacher', 'student', 'guardian');
+
     const ordered = [
       { id: 'home', label: 'Dashboard', icon: Home, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/home' },
       { id: 'classes', label: 'Classes', icon: Calendar, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/classes' },
@@ -47,6 +54,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
       { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
       { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },
+      { id: 'presenter', label: 'Curricula', icon: Monitor, roles: presenterRoles, link: '/dashboard/interactive-learning' },
     ];
 
     // Filter by current user's role
@@ -101,6 +109,26 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       } catch (e) {
         // ignore branding load errors
       }
+    })();
+
+    // fetch presenter access
+    (async () => {
+        try {
+            const cacheKey = makeCacheKey('settings:presenterAccess');
+            const cached = readCache(cacheKey, { deps: ['settings'] });
+            if (cached.hit && cached.value) {
+                if (mounted) setPresenterGlobal(cached.value.value === 'all');
+                if (cached.ageMs < 60_000) return;
+            }
+            
+            const res = await api.get('/settings/presenterAccess').catch(() => ({ data: { setting: { value: 'admin' } } })); 
+            
+            if (mounted && res.data && res.data.setting) {
+                const isAll = res.data.setting.value === 'all';
+                setPresenterGlobal(isAll);
+                writeCache(cacheKey, { value: res.data.setting.value }, { ttlMs: 60_000, deps: ['settings'] });
+            }
+        } catch (err) { }
     })();
 
     return () => { mounted = false; };

@@ -9,6 +9,7 @@ const Class = require('../models/Class');
 const { getUserAccessContext } = require('./libraryPermissionsService');
 const { buildSignedDownloadUrl, deleteLibraryAsset } = require('./libraryStorageService');
 const { normalizeUtf8FromLatin1 } = require('../utils/textEncoding');
+const { slugify } = require('../utils/slug');
 
 const DOWNLOAD_TOKEN_SECRET = process.env.LIBRARY_DOWNLOAD_SECRET || process.env.JWT_SECRET || 'library-download-secret';
 const DOWNLOAD_TOKEN_TTL_SECONDS = Number(process.env.LIBRARY_DOWNLOAD_TTL_SECONDS || 600);
@@ -225,6 +226,7 @@ function serializeItem(item, { includeStorageSecrets = false, folder, permission
     inheritsSecret: item.inheritsSecret,
     language: item.language,
     seriesKey: item.seriesKey,
+    metadata: item.metadata,
     downloadCount: item.downloadCount,
     lastOpenedAt: item.lastOpenedAt,
     publishedAt: item.publishedAt,
@@ -428,8 +430,11 @@ async function createFolder({ payload, user }) {
     }
   }
 
+  const computedSlug = slugify(payload.displayName, { fallbackPrefix: 'folder' });
+
   const folder = new LibraryFolder({
     displayName: payload.displayName,
+    slug: computedSlug,
     description: payload.description,
     subject: payload.subject,
     level: payload.level,
@@ -446,7 +451,20 @@ async function createFolder({ payload, user }) {
     updatedBy: user?._id
   });
 
-  await folder.save();
+  try {
+    await folder.save();
+  } catch (error) {
+    if (error?.code === 11000) {
+      const existing = await LibraryFolder.findOne({
+        parentFolder: parentFolder ? parentFolder._id : null,
+        slug: computedSlug
+      });
+      if (existing) {
+        return serializeFolder(existing, { includeSecretMeta: true });
+      }
+    }
+    throw error;
+  }
 
   if (parentFolder) {
     await LibraryFolder.findByIdAndUpdate(parentFolder._id, {
@@ -540,9 +558,23 @@ async function createItem({ payload, user }) {
   if (!folder) {
     throw httpError(404, 'Folder not found', 'FOLDER_NOT_FOUND');
   }
-  if (!payload.storage || !payload.storage.publicId) {
+  const isDocless = ['code', 'lesson'].includes(payload.contentType);
+  if (!isDocless && (!payload.storage || !payload.storage.publicId)) {
     throw httpError(400, 'Storage details are required', 'STORAGE_REQUIRED');
   }
+
+  const resolvedStorage = isDocless
+    ? payload.storage || {
+        provider: 'local',
+        resourceType: payload.contentType || 'lesson',
+        publicId: null,
+        folderPath: folder._id.toString(),
+        fileName: payload.displayName || payload.contentType || 'lesson',
+        format: payload.contentType || 'lesson',
+        bytes: 0,
+        metadata: { source: payload.contentType || 'lesson' }
+      }
+    : payload.storage;
 
   const item = new LibraryItem({
     folder: folder._id,
@@ -553,7 +585,7 @@ async function createItem({ payload, user }) {
     tags: sanitizeTags(payload.tags),
     orderIndex: payload.orderIndex || 0,
     previewAsset: payload.previewAsset,
-    storage: payload.storage,
+    storage: resolvedStorage,
     contentType: payload.contentType,
     mimeType: payload.mimeType,
     pageCount: payload.pageCount,
@@ -572,7 +604,7 @@ async function createItem({ payload, user }) {
   await item.save();
 
   await LibraryFolder.findByIdAndUpdate(folder._id, {
-    $inc: { 'stats.items': 1, 'stats.sizeBytes': payload.storage.bytes || 0 },
+    $inc: { 'stats.items': 1, 'stats.sizeBytes': resolvedStorage?.bytes || 0 },
     lastActivityAt: new Date(),
     updatedBy: user?._id
   });

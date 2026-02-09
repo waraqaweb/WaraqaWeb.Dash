@@ -60,6 +60,28 @@ const Settings = () => {
   const [teacherReportWindowHours, setTeacherReportWindowHours] = useState(72);
   const [adminExtensionHours, setAdminExtensionHours] = useState(24);
   const [savingReportWindow, setSavingReportWindow] = useState(false);
+  const [presenterAccess, setPresenterAccess] = useState('admin');
+  const [savingPresenterAccess, setSavingPresenterAccess] = useState(false);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchPresenterAccess = async () => {
+        try {
+            const cacheKey = makeCacheKey('settings:presenterAccess');
+            const cached = readCache(cacheKey, { deps: ['settings'] });
+            if (cached.hit && cached.value) {
+                setPresenterAccess(cached.value.value || 'admin');
+                if (cached.ageMs < 60_000) return;
+            }
+            const res = await api.get('/settings/presenterAccess').catch(() => null);
+            if (res?.data?.setting) {
+                setPresenterAccess(res.data.setting.value || 'admin');
+                writeCache(cacheKey, { value: res.data.setting.value }, { ttlMs: 60_000, deps: ['settings'] });
+            }
+        } catch (err) { }
+    };
+    fetchPresenterAccess();
+  }, [user?.role]);
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
@@ -552,6 +574,44 @@ const Settings = () => {
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={()=>setConfirmOpen(true)} className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingWindow ? 'opacity-70' : ''}`}>Save</button>
+              </div>
+            </div>
+
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+              <div>
+                <div className="font-medium mb-2">Presenter Platform Access</div>
+                <div className="flex items-center space-x-3">
+                  <select
+                       value={presenterAccess}
+                       onChange={(e) => setPresenterAccess(e.target.value)}
+                       className="px-3 py-2 border rounded w-48 bg-white"
+                  >
+                      <option value="admin">Admin Only</option>
+                      <option value="all">Everyone (Beta)</option>
+                  </select>
+                  <div className="text-sm text-muted">Control who can access the Learning Platform from sidebar.</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                    disabled={savingPresenterAccess} 
+                    onClick={async () => {
+                        try {
+                            setSavingPresenterAccess(true);
+                            const res = await api.put('/settings/presenterAccess', { value: presenterAccess });
+                            if (res.data?.success) {
+                                const cacheKey = makeCacheKey('settings:presenterAccess');
+                                writeCache(cacheKey, { value: presenterAccess }, { ttlMs: 60_000, deps: ['settings'] });
+                                setToast({ type: 'success', message: 'Presenter access saved' });
+                            }
+                        } catch(e) {
+                            setToast({ type: 'error', message: 'Failed to save' });
+                        } finally {
+                            setSavingPresenterAccess(false);
+                        }
+                    }}
+                    className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingPresenterAccess ? 'opacity-70' : ''}`}
+                >Save</button>
               </div>
             </div>
 

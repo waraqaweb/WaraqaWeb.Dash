@@ -222,13 +222,14 @@ const SalaryDashboard = () => {
 
   // Get tier info
   const getTierInfo = (partition) => {
-    const tiers = {
-      '0-50h': { name: 'Beginner', color: 'text-gray-700', bgColor: 'bg-gray-100' },
-      '51-100h': { name: 'Intermediate', color: 'text-blue-700', bgColor: 'bg-blue-100' },
-      '101-200h': { name: 'Advanced', color: 'text-purple-700', bgColor: 'bg-purple-100' },
-      '200+h': { name: 'Expert', color: 'text-amber-700', bgColor: 'bg-amber-100' }
-    };
-    return tiers[partition] || tiers['0-50h'];
+    if (!partition) {
+      return { label: '—', color: 'text-gray-700', bgColor: 'bg-gray-100' };
+    }
+    const normalized = String(partition).toLowerCase();
+    if (normalized.includes('custom')) {
+      return { label: 'Custom', color: 'text-purple-700', bgColor: 'bg-purple-100' };
+    }
+    return { label: partition, color: 'text-indigo-700', bgColor: 'bg-indigo-100' };
   };
 
   const orderedInvoices = useMemo(() => {
@@ -242,6 +243,9 @@ const SalaryDashboard = () => {
   if (!isTeacher) {
     return null;
   }
+
+  const currentPartition = ytdSummary?.currentRatePartition || ytdSummary?.ratePartition || '';
+  const tierInfo = getTierInfo(currentPartition);
 
   if (loading) {
     return (
@@ -307,12 +311,12 @@ const SalaryDashboard = () => {
               </div>
               <h3 className="text-sm font-medium text-gray-600 mb-1">Rate Tier</h3>
               <div className="flex items-center gap-2">
-                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium ${getTierInfo(ytdSummary.currentRatePartition || ytdSummary.ratePartition || '0-50h').bgColor} ${getTierInfo(ytdSummary.currentRatePartition || ytdSummary.ratePartition || '0-50h').color}`}>
+                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium ${tierInfo.bgColor} ${tierInfo.color}`}>
                   <Sparkles className="w-3 h-3" />
-                  {getTierInfo(ytdSummary.currentRatePartition || ytdSummary.ratePartition || '0-50h').name}
+                  {tierInfo.label}
                 </span>
               </div>
-              <p className="text-xs text-gray-500 mt-2">{ytdSummary.currentRatePartition || ytdSummary.ratePartition || '—'}</p>
+              <p className="text-xs text-gray-500 mt-2">{currentPartition || '—'}</p>
             </div>
 
             {/* Current Hourly Rate */}

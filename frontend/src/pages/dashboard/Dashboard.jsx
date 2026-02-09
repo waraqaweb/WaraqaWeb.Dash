@@ -24,6 +24,7 @@ import LibraryDashboard from '../library/LibraryDashboard';
 import TeacherAvailabilityPage from './TeacherAvailabilityPage';
 import MeetingAvailabilityAdminPage from './MeetingAvailabilityAdminPage';
 import Settings from "./Settings";
+import PresenterPage from "./PresenterPage";
 import ImpersonationBanner from '../../components/ui/ImpersonationBanner';
 import SystemVacationBanner from '../../components/ui/SystemVacationBanner';
 import NotificationCenter from '../../components/ui/NotificationCenter';
@@ -154,6 +155,9 @@ const Dashboard = () => {
     switch (viewKey) {
       case 'home':
         return <DashboardHome isActive={isActive} />;
+      case 'presenter':
+      case 'interactive-learning':
+        return <PresenterPage isActive={isActive} />;
       case 'profile':
         return <ProfilePage isActive={isActive} />;
       case 'teachers':
@@ -213,6 +217,9 @@ const Dashboard = () => {
     switch (activeView) {
       case 'home':
         return 'Dashboard';
+      case 'presenter':
+      case 'interactive-learning':
+        return 'Waraqa Curricula';
       case 'my-students':
         return 'My Students';
       case 'salaries':

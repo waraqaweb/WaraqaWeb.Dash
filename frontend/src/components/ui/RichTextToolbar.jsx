@@ -11,8 +11,6 @@ const FONT_FAMILIES = [
 
 const FONT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32];
 
-const ARABIC_MARKS = ['َ', 'ً', 'ُ', 'ٌ', 'ِ', 'ٍ', 'ْ', 'ّ', 'ۡ', '۝'];
-const ARABIC_SYMBOLS = ['ء', 'ؤ', 'ئ', 'ة', 'ى', 'ـ', 'ۥ', 'ۦ'];
 const COLOR_SWATCHES = ['#0f172a', '#1f2937', '#334155', '#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#a855f7'];
 
 const sizeToCommand = (size) => {
@@ -54,14 +52,15 @@ const RichTextToolbar = ({ activeRef, compact = false }) => {
 
   const toolbarClass = useMemo(
     () =>
-      `flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-border bg-white/95 px-3 py-3 shadow-sm ${
+      `inline-flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-slate-200/90 px-3 py-2 shadow-sm ${
         compact ? 'text-xs' : 'text-sm'
       }`,
     [compact]
   );
 
   return (
-    <div className={toolbarClass}>
+    <div className="mx-auto w-fit">
+      <div className={toolbarClass}>
       <select
         className="rounded-lg border border-border bg-white px-2 py-1"
         value={currentFont}
@@ -157,19 +156,6 @@ const RichTextToolbar = ({ activeRef, compact = false }) => {
       >
         LTR
       </button>
-      <div className="flex flex-wrap items-center gap-1">
-        {ARABIC_MARKS.map((mark) => (
-          <button key={mark} type="button" onClick={() => insertText(mark)} className="rounded-md border border-border px-2 py-1 text-xs">
-            {mark}
-          </button>
-        ))}
-      </div>
-      <div className="flex flex-wrap items-center gap-1">
-        {ARABIC_SYMBOLS.map((symbol) => (
-          <button key={symbol} type="button" onClick={() => insertText(symbol)} className="rounded-md border border-border px-2 py-1 text-xs">
-            {symbol}
-          </button>
-        ))}
       </div>
     </div>
   );

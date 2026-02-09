@@ -285,6 +285,17 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
 
   const getExplanationValue = (audienceKey, levelKey) => current.explanation?.[audienceKey]?.[levelKey];
 
+  const normalizeExplanationBlocks = (value) => {
+    if (!Array.isArray(value)) return [];
+    return value.map((block, index) => ({
+      id: block?.id || `block-${Date.now()}-${index}`,
+      title: block?.title || 'Explanation',
+      style: block?.style || 'sky',
+      content: block?.content || block?.text || '',
+      mediaUrl: block?.mediaUrl || ''
+    }));
+  };
+
   const normalizeExplanationParts = (value) => {
     if (Array.isArray(value)) {
       return value.map((part) => ({
@@ -349,11 +360,17 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
       : 'border-rose-300'
     : 'border-amber-300';
 
+  const explanationBlocks = normalizeExplanationBlocks(
+    audience === 'kids'
+      ? (current?.explanationBlocksKids || current?.explanationBlocks)
+      : (current?.explanationBlocksStandard || current?.explanationBlocks)
+  );
   const selectedExplanationParts = getExplanationParts(audience, level);
   const definitionText = current?.definition || '';
   const explanationParts = selectedExplanationParts.length
     ? selectedExplanationParts
     : [{ text: '—', mediaUrl: '' }];
+  const hasBlocks = explanationBlocks.length > 0;
   const showObjective = Boolean(meta.objective);
     const renderRichText = (value) => ({ __html: value || '' });
   const objectiveList = useMemo(() => {
@@ -387,7 +404,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
   };
 
   const contentSample = [
-    ...explanationParts.map((part) => part?.text || ''),
+    ...(hasBlocks ? explanationBlocks.map((block) => block?.content || '') : explanationParts.map((part) => part?.text || '')),
     ...(examples || []),
     ...(notes || [])
   ].join(' ');
@@ -762,7 +779,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                             </div>
                           </div>
 
-                          <div className="w-full max-w-sm">
+                          <div className="w-full max-w-sm relative">
                             <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Search student</label>
                             <div className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
                               <Search className="h-4 w-4 text-slate-400" />
@@ -794,36 +811,38 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                                 </button>
                               )}
                             </div>
-                            <div className="mt-2 space-y-2">
-                              {studentsLoading && (
-                                <div className="text-xs text-slate-500">Loading students...</div>
-                              )}
-                              {studentsError && (
-                                <div className="text-xs text-rose-500">{studentsError}</div>
-                              )}
-                              {!studentsLoading && !studentsError && studentQuery.trim().length >= 3 && filteredStudents.length === 0 && (
-                                <div className="text-xs text-slate-500">No students found.</div>
-                              )}
-                              {filteredStudents.map((student) => (
-                                <button
-                                  key={student.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedStudent(student);
-                                    setStudentQuery('');
-                                    studentInputRef.current?.focus();
-                                  }}
-                                  className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm transition ${
-                                    selectedStudent?.id === student.id
-                                      ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
-                                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                                  }`}
-                                >
-                                  <UserCircle2 className="h-4 w-4 text-emerald-500" />
-                                  <span className="font-semibold">{student.name}</span>
-                                </button>
-                              ))}
-                            </div>
+                            {(studentsLoading || studentsError || studentQuery.trim().length >= 3) && (
+                              <div className="absolute left-0 right-0 mt-2 max-h-64 overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl z-50">
+                                {studentsLoading && (
+                                  <div className="px-2 py-2 text-xs text-slate-500">Loading students...</div>
+                                )}
+                                {studentsError && (
+                                  <div className="px-2 py-2 text-xs text-rose-500">{studentsError}</div>
+                                )}
+                                {!studentsLoading && !studentsError && studentQuery.trim().length >= 3 && filteredStudents.length === 0 && (
+                                  <div className="px-2 py-2 text-xs text-slate-500">No students found.</div>
+                                )}
+                                {!studentsLoading && !studentsError && filteredStudents.map((student) => (
+                                  <button
+                                    key={student.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedStudent(student);
+                                      setStudentQuery('');
+                                      studentInputRef.current?.focus();
+                                    }}
+                                    className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm transition ${
+                                      selectedStudent?.id === student.id
+                                        ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    <UserCircle2 className="h-4 w-4 text-emerald-500" />
+                                    <span className="font-semibold">{student.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -901,32 +920,71 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                           );
                         })()
                       )}
-                      {explanationParts.map((part, idx) => (
-                        <div key={`explanation-part-${idx}`}>
-                          {(() => {
-                            const partDirection = getDirectionFromFirstWord(part?.text || '');
-                            return (
-                          <div className={`rounded-2xl border bg-slate-50/90 p-4 ${explanationBorder}`}>
-                            <div className={`text-base text-slate-800 ${partDirection.align}`} dir={partDirection.dir}>
-                              {audience === 'kids' && idx === 0 ? <span>{`${kidTone.tone} will love this:`} </span> : null}
-                              <span dangerouslySetInnerHTML={renderRichText(part?.text || '—')} />
+                      {hasBlocks ? (
+                        explanationBlocks.map((block) => {
+                          const stylePreset = {
+                            sky: { card: 'border-sky-200 bg-sky-50/90', pill: 'bg-sky-100 text-sky-700' },
+                            amber: { card: 'border-amber-200 bg-amber-50/90', pill: 'bg-amber-100 text-amber-800' },
+                            emerald: { card: 'border-emerald-200 bg-emerald-50/90', pill: 'bg-emerald-100 text-emerald-700' },
+                            rose: { card: 'border-rose-200 bg-rose-50/90', pill: 'bg-rose-100 text-rose-700' },
+                            indigo: { card: 'border-indigo-200 bg-indigo-50/90', pill: 'bg-indigo-100 text-indigo-700' },
+                            slate: { card: 'border-slate-200 bg-slate-50/90', pill: 'bg-slate-200 text-slate-700' }
+                          }[block.style] || { card: 'border-slate-200 bg-slate-50/90', pill: 'bg-slate-200 text-slate-700' };
+                          const blockDirection = getDirectionFromFirstWord(block?.content || '');
+                          return (
+                            <div key={block.id}>
+                              <div className={`rounded-2xl border p-4 ${stylePreset.card}`}>
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                  <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${stylePreset.pill}`}>
+                                    {block.title || 'Explanation'}
+                                  </span>
+                                </div>
+                                <div className={`text-base text-slate-800 ${blockDirection.align}`} dir={blockDirection.dir}>
+                                  <span dangerouslySetInnerHTML={renderRichText(block?.content || '—')} />
+                                </div>
+                              </div>
+                              {block?.mediaUrl && (
+                                <div className="mt-3 flex justify-center">
+                                  <div className="inline-block max-w-full overflow-hidden rounded-xl border border-slate-200 bg-transparent p-0 leading-none">
+                                    <img
+                                      src={block.mediaUrl}
+                                      alt="Explanation media"
+                                      className="block h-auto max-h-80 w-auto max-w-full object-contain"
+                                    />
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          </div>
-                            );
-                          })()}
-                          {part?.mediaUrl && (
-                            <div className="mt-3 flex justify-center">
-                              <div className="inline-block max-w-full overflow-hidden rounded-xl border border-slate-200 bg-transparent p-0 leading-none">
-                                <img
-                                  src={part.mediaUrl}
-                                  alt="Explanation media"
-                                  className="block h-auto max-h-80 w-auto max-w-full object-contain"
-                                />
+                          );
+                        })
+                      ) : (
+                        explanationParts.map((part, idx) => (
+                          <div key={`explanation-part-${idx}`}>
+                            {(() => {
+                              const partDirection = getDirectionFromFirstWord(part?.text || '');
+                              return (
+                            <div className={`rounded-2xl border bg-slate-50/90 p-4 ${explanationBorder}`}>
+                              <div className={`text-base text-slate-800 ${partDirection.align}`} dir={partDirection.dir}>
+                                {audience === 'kids' && idx === 0 ? <span>{`${kidTone.tone} will love this:`} </span> : null}
+                                <span dangerouslySetInnerHTML={renderRichText(part?.text || '—')} />
                               </div>
                             </div>
-                          )}
-                        </div>
-                      ))}
+                              );
+                            })()}
+                            {part?.mediaUrl && (
+                              <div className="mt-3 flex justify-center">
+                                <div className="inline-block max-w-full overflow-hidden rounded-xl border border-slate-200 bg-transparent p-0 leading-none">
+                                  <img
+                                    src={part.mediaUrl}
+                                    alt="Explanation media"
+                                    className="block h-auto max-h-80 w-auto max-w-full object-contain"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
                     </div>
 
                     {notes.length > 0 && (

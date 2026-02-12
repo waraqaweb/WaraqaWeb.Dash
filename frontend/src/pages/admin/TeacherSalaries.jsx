@@ -217,7 +217,10 @@ const TeacherSalaries = () => {
       const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
       if (!isCanceled) {
         console.error('Error fetching invoices:', err);
-        setError(err.response?.data?.message || 'Failed to load invoices');
+        const isNetwork = !err?.response;
+        const msg = err?.response?.data?.message
+          || (isNetwork ? 'Backend not reachable. Start the API server on port 5000 (or check REACT_APP_API_URL).' : 'Failed to load invoices');
+        setError(msg);
         setSummary(null);
       }
     } finally {

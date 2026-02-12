@@ -5,7 +5,7 @@
  * Displays student list with details and provides actions for adding/editing students.
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Users, MessageCircle, Mail, ChevronDown, UserX, UserCheck } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
@@ -97,6 +97,44 @@ const MyStudentsPage = () => {
   const [sortOrder] = useState('asc');
   const [statusFilter, setStatusFilter] = useState('active');
   const [currentPage, setCurrentPage] = useState(1);
+
+  const getStudentRenderKey = useCallback((student) => {
+    const id = student && (student._id || student.id);
+    const guardianId = student && (student.guardianId || student.guardian?._id || student.guardian);
+    const source = student && student._source;
+    const base = id ? String(id) : `${String(student?.firstName || '').trim()}|${String(student?.lastName || '').trim()}`;
+    return `${base}|g:${guardianId ? String(guardianId) : 'none'}|s:${source ? String(source) : 'unknown'}`;
+  }, []);
+
+  const scoreStudentForDedupe = useCallback((student) => {
+    if (!student || typeof student !== 'object') return 0;
+    let score = 0;
+    if (student._source === 'standalone') score += 10;
+    if (student.lastName) score += 2;
+    if (student.email) score += 2;
+    if (student.phone || student.whatsapp) score += 1;
+    if (student.profilePicture || student.profilePictureThumbnail) score += 1;
+    if (student.studentInfo && typeof student.studentInfo === 'object') score += 1;
+    return score;
+  }, []);
+
+  const dedupeStudents = useCallback((list = []) => {
+    const map = new Map();
+    (Array.isArray(list) ? list : []).forEach((student) => {
+      const id = student && (student._id || student.id);
+      if (!id) return;
+      const key = String(id);
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, student);
+        return;
+      }
+      const prevScore = scoreStudentForDedupe(prev);
+      const nextScore = scoreStudentForDedupe(student);
+      map.set(key, nextScore >= prevScore ? student : prev);
+    });
+    return Array.from(map.values());
+  }, [scoreStudentForDedupe]);
 
   const fetchStudentsRef = React.useRef(null);
   const fetchGuardiansListRef = React.useRef(null);
@@ -571,7 +609,7 @@ const fetchGuardiansList = async () => {
   fetchGuardiansListRef.current = fetchGuardiansList;
 
   const filteredStudents = useMemo(() => {
-    let result = students || [];
+    let result = dedupeStudents(students || []);
 
     if (isHydrated && statusFilter !== 'all') {
       const desiredActive = statusFilter === 'active';
@@ -632,7 +670,7 @@ const fetchGuardiansList = async () => {
     // debug logs removed
     
     return result;
-  }, [students, debouncedEffectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter, isHydrated]);
+  }, [students, dedupeStudents, debouncedEffectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter, isHydrated]);
 
   const sortedStudents = useMemo(() => {
     const list = [...(filteredStudents || [])];
@@ -1036,7 +1074,7 @@ const fetchGuardiansList = async () => {
       ) : (
         <div className="space-y-3">
           {paginatedStudents.map((student) => (
-            <div key={student._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+            <div key={getStudentRenderKey(student)} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
               {/* Student Header */}
               <div className="p-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

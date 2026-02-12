@@ -32,6 +32,9 @@ import FeedbacksAdmin from './FeedbacksAdmin';
 import { Menu, X } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import VacationManagementPage from './VacationManagementPage';
+import RequestsPage from './RequestsPage';
+import api from '../../api/axios';
+import { canRoleAccessRequests } from '../../utils/requestsVisibility';
 import { DeleteClassCountdownProvider, useDeleteClassCountdown } from '../../contexts/DeleteClassCountdownContext';
 import DeleteCountdownToast from '../../components/ui/DeleteCountdownToast';
 import ToastHost from '../../components/ui/ToastHost';
@@ -104,6 +107,22 @@ const Dashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeView, setActiveView] = useState('home');
   const [mountedViews, setMountedViews] = useState(['home']);
+  const [requestsVisibility, setRequestsVisibility] = useState('all_users');
+  const canAccessRequests = canRoleAccessRequests(user?.role, requestsVisibility);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await api.get('/settings/requestsVisibility');
+        const value = res?.data?.setting?.value || 'all_users';
+        if (mounted) setRequestsVisibility(value);
+      } catch (err) {
+        if (mounted) setRequestsVisibility('all_users');
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -145,6 +164,12 @@ const Dashboard = () => {
     }
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (activeView !== 'requests') return;
+    if (canAccessRequests) return;
+    navigate('/dashboard/home', { replace: true });
+  }, [activeView, canAccessRequests, navigate]);
+
   // Keep visited views mounted so lists don't reload on every tab switch.
   useEffect(() => {
     if (!activeView) return;
@@ -185,6 +210,8 @@ const Dashboard = () => {
         return <ClassReportPage isActive={isActive} />;
       case 'vacation-management':
         return <VacationManagementPage isActive={isActive} />;
+      case 'requests':
+        return canAccessRequests ? <RequestsPage isActive={isActive} /> : <DashboardHome isActive={isActive} />;
       /* Removed 'reports' and 'users' pages from the dashboard: these pages are intentionally
          not rendered here so they are not accessible via direct URL anymore. */
       case "settings":
@@ -228,6 +255,8 @@ const Dashboard = () => {
         return user?.role === 'admin' ? 'Meeting Availability' : 'My Availability';
       case 'library':
         return 'Library';
+      case 'requests':
+        return 'Requests Hub';
       default:
         return activeView.charAt(0).toUpperCase() + activeView.slice(1);
     }
@@ -277,6 +306,14 @@ const Dashboard = () => {
 
           {/* User info and Notifications */}
           <div className="flex items-center space-x-4">
+            {canAccessRequests && (
+              <button
+                onClick={() => navigate('/dashboard/requests')}
+                className="hidden rounded-md border border-border bg-input px-3 py-1.5 text-sm text-foreground hover:bg-muted md:inline-flex"
+              >
+                Requests
+              </button>
+            )}
             <NotificationCenter />
             <div className="flex items-center space-x-3">
               <div className="text-right hidden sm:block">

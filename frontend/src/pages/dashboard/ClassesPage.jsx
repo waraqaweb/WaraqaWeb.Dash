@@ -1241,12 +1241,15 @@ const ClassesPage = ({ isActive = true }) => {
 // Fetch classes with filter
 const fetchClasses = useCallback(async () => {
   try {
+    const searchMode = Boolean((normalizedSearchTerm || '').trim());
+    const fetchPage = searchMode ? 1 : currentPage;
+    const fetchLimit = searchMode ? 1000 : 30;
     const cacheKey = makeCacheKey(
       'classes:list',
       user?._id,
       {
-        page: currentPage,
-        limit: 30,
+        page: fetchPage,
+        limit: fetchLimit,
         filter: tabFilter,
         status: statusFilter !== 'all' ? statusFilter : undefined,
         teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
@@ -1256,8 +1259,8 @@ const fetchClasses = useCallback(async () => {
     );
 
     const requestSignature = JSON.stringify({
-      page: currentPage,
-      limit: 30,
+      page: fetchPage,
+      limit: fetchLimit,
       filter: tabFilter,
       status: statusFilter !== 'all' ? statusFilter : undefined,
       teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
@@ -1308,11 +1311,13 @@ const fetchClasses = useCallback(async () => {
     }
 
     const params = {
-      page: currentPage,
-      limit: 30,
+      page: fetchPage,
+      limit: fetchLimit,
       filter: tabFilter, // "upcoming" or "previous"
       sortBy: "scheduledDate",
       order: "asc",
+      includeTotal: !searchMode,
+      populate: true,
     };
 
     if (statusFilter !== "all") params.status = statusFilter;
@@ -1333,7 +1338,7 @@ const fetchClasses = useCallback(async () => {
 
     // Backend already sorts by scheduledDate, so no need to sort again
     setClasses(fetchedClasses);
-    loadedClassPagesRef.current.add(currentPage);
+    loadedClassPagesRef.current.add(fetchPage);
     setClassesCorpus((prev) => {
       const map = new Map();
       (prev || []).forEach((c) => {
@@ -1349,14 +1354,14 @@ const fetchClasses = useCallback(async () => {
       return merged;
     });
     const apiTotalPages = Number(res.data?.pagination?.totalPages);
-    setTotalPages(Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1);
+    setTotalPages(searchMode ? 1 : (Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1));
     setError("");
 
     writeCache(
       cacheKey,
       {
         classes: fetchedClasses,
-        totalPages: Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1,
+        totalPages: searchMode ? 1 : (Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1),
       },
       { ttlMs: 5 * 60_000, deps: ['classes'] }
     );
@@ -1375,6 +1380,7 @@ const fetchClasses = useCallback(async () => {
   currentPage,
   globalFilter,
   guardianFilter,
+  normalizedSearchTerm,
   statusFilter,
   tabFilter,
   teacherFilter,

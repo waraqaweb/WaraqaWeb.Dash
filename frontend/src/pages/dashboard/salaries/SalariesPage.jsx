@@ -64,11 +64,14 @@ const SalariesPage = () => {
 
   const fetchSalaries = async () => {
     try {
+      const searchMode = Boolean((debouncedSearch || '').trim());
+      const fetchPage = searchMode ? 1 : currentPage;
+      const fetchLimit = searchMode ? 500 : itemsPerPage;
       const requestSignature = JSON.stringify({
-        page: currentPage,
-        limit: itemsPerPage,
+        page: fetchPage,
+        limit: fetchLimit,
         search: (debouncedSearch || '').trim() || undefined,
-        status: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+        status: searchMode ? undefined : (globalFilter && globalFilter !== 'all' ? globalFilter : undefined),
       });
 
       if (fetchSalariesInFlightRef.current && fetchSalariesKeyRef.current === requestSignature) {
@@ -96,10 +99,10 @@ const SalariesPage = () => {
         'salaries:list',
         user?._id,
         {
-          page: currentPage,
-          limit: itemsPerPage,
+          page: fetchPage,
+          limit: fetchLimit,
           search: (debouncedSearch || '').trim() || undefined,
-          status: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+          status: searchMode ? undefined : (globalFilter && globalFilter !== 'all' ? globalFilter : undefined),
         }
       );
 
@@ -118,15 +121,15 @@ const SalariesPage = () => {
       setLoading(!hasExisting);
       const params = {
         type: 'teacher_payment',
-        page: currentPage,
-        limit: itemsPerPage,
+        page: fetchPage,
+        limit: fetchLimit,
         search: (debouncedSearch || '').trim() || undefined,
         sortBy: 'createdAt',
         order: 'desc',
         light: true,
       };
 
-      if (globalFilter && globalFilter !== 'all') {
+      if (!searchMode && globalFilter && globalFilter !== 'all') {
         params.status = globalFilter;
       }
 
@@ -141,13 +144,13 @@ const SalariesPage = () => {
         return;
       }
       setSalaries(res.data.invoices || []);
-      setTotalPages(res.data.pagination?.pages || 1);
+      setTotalPages(searchMode ? 1 : (res.data.pagination?.pages || 1));
 
       writeCache(
         cacheKey,
         {
           salaries: res.data.invoices || [],
-          totalPages: res.data.pagination?.pages || 1,
+          totalPages: searchMode ? 1 : (res.data.pagination?.pages || 1),
         },
         { ttlMs: 5 * 60_000, deps: ['invoices'] }
       );
@@ -202,7 +205,16 @@ const SalariesPage = () => {
     }
   };
 
-  const visibleSalaries = useMemo(() => salaries, [salaries]);
+  const visibleSalaries = useMemo(() => {
+    const list = [...(salaries || [])];
+    list.sort((a, b) => {
+      const aPaid = ['paid', 'refunded'].includes(String(a?.status || '').toLowerCase());
+      const bPaid = ['paid', 'refunded'].includes(String(b?.status || '').toLowerCase());
+      if (aPaid !== bPaid) return aPaid ? 1 : -1;
+      return new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0);
+    });
+    return list;
+  }, [salaries]);
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
   const formatDate = (d) => d ? formatDateDDMMMYYYY(d) : '—';

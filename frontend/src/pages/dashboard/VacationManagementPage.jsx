@@ -103,7 +103,8 @@ const VacationManagementPage = () => {
   }, [availableTabs, activeTab]);
 
   const fetchData = useCallback(async () => {
-    const requestSignature = JSON.stringify({ tab: activeTab, role: user?.role, userId: user?._id || user?.id });
+    const searchMode = Boolean((searchTerm || '').trim());
+    const requestSignature = JSON.stringify({ tab: activeTab, role: user?.role, userId: user?._id || user?.id, search: searchMode ? searchTerm : undefined });
     if (fetchDataInFlightRef.current && fetchDataKeyRef.current === requestSignature) {
       return;
     }
@@ -125,25 +126,69 @@ const VacationManagementPage = () => {
     const controller = new AbortController();
     fetchDataAbortRef.current = controller;
 
-    const hasExisting =
-      (activeTab === 'individual' && (individualVacations || []).length > 0) ||
-      (activeTab === 'system' && (systemVacations || []).length > 0) ||
-      (activeTab === 'my-vacations' && (myVacations || []).length > 0);
+    const hasExisting = searchMode
+      ? ((individualVacations || []).length > 0 || (systemVacations || []).length > 0 || (myVacations || []).length > 0)
+      : (
+          (activeTab === 'individual' && (individualVacations || []).length > 0) ||
+          (activeTab === 'system' && (systemVacations || []).length > 0) ||
+          (activeTab === 'my-vacations' && (myVacations || []).length > 0)
+        );
 
     setLoading(!hasExisting);
     try {
       const cacheKey = makeCacheKey('vacations:management', user?._id || 'anon', {
-        tab: activeTab,
+        tab: searchMode ? 'all' : activeTab,
         role: user?.role || 'anon'
       });
       const cached = readCache(cacheKey, { deps: ['vacations'] });
       if (cached.hit && cached.value) {
-        if (activeTab === 'individual') setIndividualVacations(cached.value || []);
-        if (activeTab === 'system') setSystemVacations(cached.value || []);
-        if (activeTab === 'my-vacations') setMyVacations(cached.value || []);
+        if (searchMode) {
+          setIndividualVacations(cached.value.individual || []);
+          setSystemVacations(cached.value.system || []);
+          setMyVacations(cached.value.mine || []);
+        } else {
+          if (activeTab === 'individual') setIndividualVacations(cached.value || []);
+          if (activeTab === 'system') setSystemVacations(cached.value || []);
+          if (activeTab === 'my-vacations') setMyVacations(cached.value || []);
+        }
         setLoading(false);
         if (cached.ageMs < 60_000) {
           fetchDataInFlightRef.current = false;
+          return;
+        }
+      }
+
+      if (searchMode) {
+        if (user?.role === 'admin') {
+          const [individualRes, systemRes] = await Promise.all([
+            api.get('/vacations', { signal: controller.signal }),
+            api.get('/system-vacations', { signal: controller.signal })
+          ]);
+          if (requestId !== fetchDataRequestIdRef.current) return;
+          const individual = individualRes.data.vacations || [];
+          const system = systemRes.data.systemVacations || systemRes.data || [];
+          setIndividualVacations(individual);
+          setSystemVacations(system);
+          writeCache(cacheKey, { individual, system, mine: [] }, { ttlMs: 5 * 60_000, deps: ['vacations'] });
+          return;
+        }
+
+        if (user?.role === 'teacher') {
+          const teacherId = user?._id || user?.id;
+          const res = await api.get(`/vacations/user/${teacherId}`, { signal: controller.signal });
+          if (requestId !== fetchDataRequestIdRef.current) return;
+          const mine = res.data.vacations || [];
+          setMyVacations(mine);
+          writeCache(cacheKey, { individual: [], system: [], mine }, { ttlMs: 5 * 60_000, deps: ['vacations'] });
+          return;
+        }
+
+        if (user?.role === 'guardian') {
+          const res = await api.get('/vacations/guardian', { signal: controller.signal });
+          if (requestId !== fetchDataRequestIdRef.current) return;
+          const mine = res.data.vacations || [];
+          setMyVacations(mine);
+          writeCache(cacheKey, { individual: [], system: [], mine }, { ttlMs: 5 * 60_000, deps: ['vacations'] });
           return;
         }
       }
@@ -183,7 +228,7 @@ const VacationManagementPage = () => {
       setLoading(false);
       fetchDataInFlightRef.current = false;
     }
-  }, [activeTab, user?.role, user?._id, user?.id]);
+  }, [activeTab, user?.role, user?._id, user?.id, searchTerm]);
 
   useEffect(() => {
     fetchData();

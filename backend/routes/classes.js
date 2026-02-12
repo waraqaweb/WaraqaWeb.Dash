@@ -910,9 +910,9 @@ router.get("/", authenticateToken, async (req, res) => {
       
       // Check if teacher is on vacation and filter classes accordingly
       const teacherDoc = await User.findById(req.user._id)
-        .select('vacationStartDate vacationEndDate')
+        .select('isActive vacationStartDate vacationEndDate')
         .lean();
-      if (teacherDoc && teacherDoc.vacationStartDate && teacherDoc.vacationEndDate) {
+      if (teacherDoc && teacherDoc.isActive === false && teacherDoc.vacationStartDate && teacherDoc.vacationEndDate) {
         const vacationStart = new Date(teacherDoc.vacationStartDate);
         const vacationEnd = new Date(teacherDoc.vacationEndDate);
         const firstDayAfterVacation = new Date(vacationEnd.getTime() + 24 * 60 * 60 * 1000);
@@ -943,7 +943,7 @@ router.get("/", authenticateToken, async (req, res) => {
 
     const pageNum = Math.max(1, Number.parseInt(page, 10) || 1);
     const limitNumRaw = Number.parseInt(limit, 10);
-    const limitNum = Math.min(100, Math.max(1, Number.isFinite(limitNumRaw) ? limitNumRaw : 20));
+    const limitNum = Math.min(1000, Math.max(1, Number.isFinite(limitNumRaw) ? limitNumRaw : 20));
     const skip = (pageNum - 1) * limitNum;
 
     // List endpoints can be called in two very different modes:

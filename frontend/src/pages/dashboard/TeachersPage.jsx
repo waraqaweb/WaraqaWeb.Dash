@@ -54,6 +54,11 @@
 				return true;
 			};
 
+			const formatHours = (value) => {
+				const numeric = Number(value);
+				return Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00';
+			};
+
 			const TeachersPage = () => {
 				const { isAdmin, loginAsUser } = useAuth();
 				const { searchTerm, globalFilter } = useSearch();
@@ -131,7 +136,7 @@
 				useEffect(() => {
 					fetchTeachers();
 					// eslint-disable-next-line react-hooks/exhaustive-deps
-				}, [sortBy, sortOrder, statusFilter, currentPage]);
+				}, [sortBy, sortOrder, statusFilter, currentPage, debouncedSearch]);
 
 				useEffect(() => {
 					teachersRef.current = teachers || [];
@@ -139,12 +144,16 @@
 
 				const fetchTeachers = async () => {
 					try {
+						const searchMode = Boolean((debouncedSearch || '').trim());
+						const fetchPage = searchMode ? 1 : currentPage;
+						const fetchLimit = searchMode ? 1000 : itemsPerPage;
 						const requestSignature = JSON.stringify({
-							page: currentPage,
-							limit: itemsPerPage,
+							page: fetchPage,
+							limit: fetchLimit,
 							sortBy,
 							order: sortOrder,
-							statusFilter,
+							statusFilter: searchMode ? 'all' : statusFilter,
+							search: searchMode ? debouncedSearch : undefined,
 						});
 
 						if (fetchTeachersInFlightRef.current && fetchTeachersKeyRef.current === requestSignature) {
@@ -169,11 +178,12 @@
 						fetchTeachersAbortRef.current = controller;
 
 						const cacheKey = makeCacheKey('teachers:list', 'admin', {
-							page: currentPage,
-							limit: itemsPerPage,
+							page: fetchPage,
+							limit: fetchLimit,
 							sortBy,
 							order: sortOrder,
-							statusFilter,
+							statusFilter: searchMode ? 'all' : statusFilter,
+							search: searchMode ? debouncedSearch : undefined,
 						});
 
 						const cached = readCache(cacheKey, { deps: ['users', 'classes'] });
@@ -194,14 +204,19 @@
 						setLoading(!hasExisting);
 						const params = {
 							role: 'teacher',
-							page: currentPage,
-							limit: itemsPerPage,
+							page: fetchPage,
+							limit: fetchLimit,
 							sortBy,
 							order: sortOrder,
+							light: true,
+							includeTotal: !searchMode,
 						};
 
-						if (statusFilter !== 'all') {
+						if (!searchMode && statusFilter !== 'all') {
 							params.isActive = statusFilter === 'active';
+						}
+						if (searchMode) {
+							params.search = debouncedSearch;
 						}
 
 						const response = await api.get('/users', { params, signal: controller.signal });
@@ -474,8 +489,9 @@
 
 				const filteredTeachers = useMemo(() => {
 					let result = teachers || [];
+					const searchActive = Boolean((searchTerm || '').trim());
 
-					if (statusFilter !== 'all') {
+					if (!searchActive && statusFilter !== 'all') {
 						const desired = statusFilter === 'active';
 						result = result.filter((t) => isTeacherActive(t) === desired);
 					}
@@ -493,7 +509,7 @@
 						});
 					}
 
-					if (globalFilter && globalFilter !== 'all') {
+					if (!searchActive && globalFilter && globalFilter !== 'all') {
 						if (globalFilter === 'active') {
 							result = result.filter((t) => t.isActive === true);
 						} else if (globalFilter === 'inactive') {
@@ -516,6 +532,8 @@
 					};
 
 					list.sort((a, b) => {
+						const activeDiff = (isTeacherActive(b) ? 1 : 0) - (isTeacherActive(a) ? 1 : 0);
+						if (activeDiff !== 0) return activeDiff;
 						const nameA = buildNameKey(a);
 						const nameB = buildNameKey(b);
 						if (nameA === nameB) {
@@ -600,10 +618,10 @@
 															<span className="flex items-center">
 																<Clock className="h-3 w-3 mr-1" />
 																{/* Prefer the server-computed aggregation for this month when present. */}
-																{ (teacher.teacherInfo && (teacher.teacherInfo._computedMonthlyHours !== undefined && teacher.teacherInfo._computedMonthlyHours !== null))
+																{formatHours((teacher.teacherInfo && (teacher.teacherInfo._computedMonthlyHours !== undefined && teacher.teacherInfo._computedMonthlyHours !== null))
 																	? Number(teacher.teacherInfo._computedMonthlyHours) || 0
 																	: Number(teacher.teacherInfo?.monthlyHours ?? 0) || 0
-																} hours this month
+																)} hours this month
 															</span>
 															<span className="text-[11px] text-muted-foreground">(unbilled)</span>
 														</div>
@@ -793,20 +811,22 @@
 												<p className="text-sm text-muted-foreground">{teacher.teacherInfo.bio}</p>
 											</div>
 										)}
+												{teacher.teacherInfo?.subjects?.length > 0 && (
+													<div className="mt-4 p-3">
+														<h4 className="font-semibold text-foreground mb-2">Subjects</h4>
+														<div className="flex flex-wrap gap-2">
+															{teacher.teacherInfo.subjects.map((subject, index) => (
+																<span key={index} className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full">
+																	{subject}
+																</span>
+															))}
+														</div>
+													</div>
+												)}
 											</div>
 										)}
 										
 										
-
-										<div className="mt-3 p-3">
-											<div className="flex flex-wrap gap-2">
-												{teacher.teacherInfo?.subjects?.map((subject, index) => (
-													<span key={index} className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full">
-														{subject}
-													</span>
-												))}
-											</div>
-										</div>
 									</div>
 								))}
 							</div>
@@ -1036,7 +1056,7 @@
 																	<span className="rounded-md bg-muted/50 px-2 py-0.5 text-[11px]">
 																		{log.amount ? `Amount: ${log.amount}` : ''}
 																		{log.amount && log.hours ? ' • ' : ''}
-																		{log.hours ? `Hours: ${log.hours}` : ''}
+																		{log.hours ? `Hours: ${formatHours(log.hours)}` : ''}
 																	</span>
 																) : null}
 																{(log.balanceBefore !== undefined || log.balanceAfter !== undefined) ? (
@@ -1074,7 +1094,7 @@
 																							<span>{entry.date ? formatDateDDMMMYYYY(entry.date) : 'Date N/A'}</span>
 																							{entry.studentName && <span>Student: {entry.studentName}</span>}
 																							{entry.teacherName && <span>Teacher: {entry.teacherName}</span>}
-																							{entry.hours !== null && entry.hours !== undefined ? <span>{entry.hours}h</span> : null}
+																							{entry.hours !== null && entry.hours !== undefined ? <span>{formatHours(entry.hours)}h</span> : null}
 																							{entry.status ? <span>Status: {entry.status}</span> : null}
 																						</li>
 																					))}

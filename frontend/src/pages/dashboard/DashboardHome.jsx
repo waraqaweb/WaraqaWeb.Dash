@@ -331,7 +331,8 @@ const HijriDateCard = ({ variant = 'card', timeZone, locale }) => {
 const DashboardHome = ({ isActive = true }) => {
   const { user, isAdmin, isTeacher, isGuardian, isStudent } = useAuth();
   const [compactAdmin, setCompactAdmin] = React.useState(false);
-  const [requestsTab, setRequestsTab] = React.useState('teachers');
+  const [requestSummary, setRequestSummary] = React.useState({ pending: 0, delayed: 0, done: 0, rejected: 0, doneToday: 0 });
+  const [requestSummaryLoading, setRequestSummaryLoading] = React.useState(false);
 
   const userRole = user?.role;
 
@@ -416,6 +417,24 @@ const DashboardHome = ({ isActive = true }) => {
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
+
+  const fetchRequestSummary = React.useCallback(async () => {
+    if (!isAdmin || !isAdmin()) return;
+    try {
+      setRequestSummaryLoading(true);
+      const res = await api.get('/requests/summary');
+      setRequestSummary(res.data?.summary || { pending: 0, delayed: 0, done: 0, rejected: 0, doneToday: 0 });
+    } catch (err) {
+      // ignore summary errors to keep dashboard lightweight
+    } finally {
+      setRequestSummaryLoading(false);
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    fetchRequestSummary();
+  }, [fetchRequestSummary, isActive]);
 
   // Refresh dashboard stats when other screens (e.g., Class Report modal) signal an update
   useEffect(() => {
@@ -1061,36 +1080,39 @@ const DashboardHome = ({ isActive = true }) => {
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <h3 className="text-sm font-semibold text-foreground">Requests inbox</h3>
-                        <p className="text-xs text-muted-foreground">Centralized messages for admins</p>
+                        <p className="text-xs text-muted-foreground">Centralized requests replacing WhatsApp</p>
                       </div>
-                      <div className="flex items-center gap-1 text-[11px]">
-                        <button
-                          type="button"
-                          onClick={() => setRequestsTab('teachers')}
-                          className={`px-2 py-0.5 rounded-full border ${requestsTab === 'teachers' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted/40 text-muted-foreground border-border'}`}
-                        >
-                          Teachers
-                          <span className={`ml-1 font-semibold ${teacherRequestsUnopened > 0 ? 'text-rose-600' : 'text-muted-foreground'}`}>
-                            ({teacherRequestsUnopened})
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setRequestsTab('guardians')}
-                          className={`px-2 py-0.5 rounded-full border ${requestsTab === 'guardians' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted/40 text-muted-foreground border-border'}`}
-                        >
-                          Guardians
-                          <span className={`ml-1 font-semibold ${guardianRequestsUnopened > 0 ? 'text-rose-600' : 'text-muted-foreground'}`}>
-                            ({guardianRequestsUnopened})
-                          </span>
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/dashboard/requests')}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] text-foreground hover:bg-muted"
+                      >
+                        Open Hub
+                      </button>
                     </div>
-                    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground flex-1 overflow-y-auto text-center">
-                      <div className="min-h-[160px] flex items-center justify-center">
-                        {requestsTab === 'teachers'
-                          ? 'Teacher requests will appear here. This will replace WhatsApp with a structured request flow.'
-                          : 'Guardian requests will appear here. This will replace WhatsApp with a structured request flow.'}
+                    <div className="rounded-lg border border-border p-3 text-sm text-muted-foreground flex-1 overflow-y-auto">
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-md border border-border bg-muted/20 p-2">
+                          <div className="text-muted-foreground">Pending</div>
+                          <div className="text-base font-semibold text-foreground">{requestSummary.pending || 0}</div>
+                        </div>
+                        <div className="rounded-md border border-border bg-muted/20 p-2">
+                          <div className="text-muted-foreground">Delayed</div>
+                          <div className="text-base font-semibold text-foreground">{requestSummary.delayed || 0}</div>
+                        </div>
+                        <div className="rounded-md border border-border bg-muted/20 p-2">
+                          <div className="text-muted-foreground">Done</div>
+                          <div className="text-base font-semibold text-foreground">{requestSummary.done || 0}</div>
+                        </div>
+                        <div className="rounded-md border border-border bg-muted/20 p-2">
+                          <div className="text-muted-foreground">Done today</div>
+                          <div className="text-base font-semibold text-foreground">{requestSummary.doneToday || 0}</div>
+                        </div>
+                      </div>
+                      <div className="mt-3 text-xs text-muted-foreground">
+                        {requestSummaryLoading
+                          ? 'Loading request summary...'
+                          : `Teacher unopened: ${teacherRequestsUnopened || 0} • Guardian unopened: ${guardianRequestsUnopened || 0}`}
                       </div>
                     </div>
                   </div>

@@ -18,7 +18,15 @@ const KNOWN_DEFAULTS = {
   teacher_report_window_hours: 72,
   admin_extension_hours: 24,
   whiteboardScreenshotRetentionDays: 90,
+  requestsVisibility: 'all_users',
   // add other well-known setting defaults here as needed
+};
+
+const REQUESTS_VISIBILITY_KEY = 'requestsVisibility';
+const REQUESTS_VISIBILITY_ALLOWED = ['admin_only', 'admin_teacher', 'all_users'];
+const normalizeRequestsVisibility = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return REQUESTS_VISIBILITY_ALLOWED.includes(normalized) ? normalized : 'all_users';
 };
 
 // Public branding info (logo, title, slogan) — accessible without admin auth so UI can show branding
@@ -130,6 +138,41 @@ router.get('/presenterAccess', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('Failed to fetch presenterAccess', err);
     res.status(500).json({ message: 'Failed to fetch presenter access' });
+  }
+});
+
+// Getter for requests visibility (authenticated users)
+// Controls who can access /dashboard/requests and /api/requests.
+router.get('/requestsVisibility', authenticateToken, async (req, res) => {
+  try {
+    const s = await Setting.findOne({ key: REQUESTS_VISIBILITY_KEY }).lean();
+    const value = normalizeRequestsVisibility(s?.value);
+    return res.json({
+      success: true,
+      setting: {
+        key: REQUESTS_VISIBILITY_KEY,
+        value,
+      },
+    });
+  } catch (err) {
+    console.error('Failed to fetch requests visibility', err);
+    return res.status(500).json({ message: 'Failed to fetch requests visibility' });
+  }
+});
+
+// Update requests visibility (admin only)
+router.put('/requestsVisibility', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const value = normalizeRequestsVisibility(req.body?.value);
+    const s = await Setting.findOneAndUpdate(
+      { key: REQUESTS_VISIBILITY_KEY },
+      { value, description: 'Who can access Requests section' },
+      { upsert: true, new: true }
+    );
+    return res.json({ success: true, setting: s });
+  } catch (err) {
+    console.error('Failed to update requests visibility', err);
+    return res.status(500).json({ message: 'Failed to update requests visibility' });
   }
 });
 

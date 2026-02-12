@@ -7,6 +7,7 @@ import Toast from '../../components/ui/Toast';
 import { fetchLibraryStorageUsage } from '../../api/library';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { getSubjectsCatalogCached, saveSubjectsCatalog } from '../../services/subjectsCatalog';
+import { REQUESTS_VISIBILITY_OPTIONS } from '../../utils/requestsVisibility';
 
 const parseLinesOrComma = (text) => {
   if (!text) return [];
@@ -62,6 +63,8 @@ const Settings = () => {
   const [savingReportWindow, setSavingReportWindow] = useState(false);
   const [presenterAccess, setPresenterAccess] = useState('admin');
   const [savingPresenterAccess, setSavingPresenterAccess] = useState(false);
+  const [requestsVisibility, setRequestsVisibility] = useState('all_users');
+  const [savingRequestsVisibility, setSavingRequestsVisibility] = useState(false);
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
@@ -81,6 +84,27 @@ const Settings = () => {
         } catch (err) { }
     };
     fetchPresenterAccess();
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchRequestsVisibility = async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:requestsVisibility');
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          setRequestsVisibility(cached.value.value || 'all_users');
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/requestsVisibility');
+        const value = res?.data?.setting?.value || 'all_users';
+        setRequestsVisibility(value);
+        writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+      } catch (err) {
+        setRequestsVisibility('all_users');
+      }
+    };
+    fetchRequestsVisibility();
   }, [user?.role]);
 
   useEffect(() => {
@@ -612,6 +636,47 @@ const Settings = () => {
                     }}
                     className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingPresenterAccess ? 'opacity-70' : ''}`}
                 >Save</button>
+              </div>
+            </div>
+
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+              <div>
+                <div className="font-medium mb-2">Requests Section Visibility</div>
+                <div className="flex items-center space-x-3">
+                  <select
+                    value={requestsVisibility}
+                    onChange={(e) => setRequestsVisibility(e.target.value)}
+                    className="px-3 py-2 border rounded w-48 bg-white"
+                  >
+                    {REQUESTS_VISIBILITY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <div className="text-sm text-muted">Choose who can access Requests in dashboard.</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={savingRequestsVisibility}
+                  onClick={async () => {
+                    try {
+                      setSavingRequestsVisibility(true);
+                      const res = await api.put('/settings/requestsVisibility', { value: requestsVisibility });
+                      if (res.data?.success) {
+                        const cacheKey = makeCacheKey('settings:requestsVisibility');
+                        writeCache(cacheKey, { value: requestsVisibility }, { ttlMs: 60_000, deps: ['settings'] });
+                        setToast({ type: 'success', message: 'Requests visibility saved' });
+                      }
+                    } catch (err) {
+                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save requests visibility' });
+                    } finally {
+                      setSavingRequestsVisibility(false);
+                    }
+                  }}
+                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingRequestsVisibility ? 'opacity-70' : ''}`}
+                >
+                  Save
+                </button>
               </div>
             </div>
 

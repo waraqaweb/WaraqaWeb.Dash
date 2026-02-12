@@ -169,7 +169,7 @@ const InvoicesPage = ({ isActive = true }) => {
     fetchInvoices();
     if (isAdmin()) fetchStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab]);
+  }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, normalizedSearchTerm]);
 
   useEffect(() => {
     invoicesRef.current = invoices || [];
@@ -177,13 +177,17 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const fetchInvoices = async () => {
     try {
+      const searchMode = Boolean(normalizedSearchTerm);
+      const fetchPage = searchMode ? 1 : currentPage;
+      const fetchLimit = searchMode ? 500 : itemsPerPage;
       const requestSignature = JSON.stringify({
-        page: currentPage,
-        limit: itemsPerPage,
-        activeTab,
-        statusFilter,
+        page: fetchPage,
+        limit: fetchLimit,
+        activeTab: searchMode ? 'all' : activeTab,
+        statusFilter: searchMode ? 'all' : statusFilter,
         typeFilter,
         segmentFilter,
+        search: normalizedSearchTerm || undefined,
       });
 
       if (fetchInvoicesInFlightRef.current && fetchInvoicesKeyRef.current === requestSignature) {
@@ -211,12 +215,13 @@ const InvoicesPage = ({ isActive = true }) => {
         'invoices:list',
         user?._id,
         {
-          page: currentPage,
-          limit: itemsPerPage,
-          activeTab,
-          statusFilter,
+          page: fetchPage,
+          limit: fetchLimit,
+          activeTab: searchMode ? 'all' : activeTab,
+          statusFilter: searchMode ? 'all' : statusFilter,
           typeFilter,
           segmentFilter,
+          search: normalizedSearchTerm || undefined,
         }
       );
 
@@ -237,15 +242,19 @@ const InvoicesPage = ({ isActive = true }) => {
         setLoading(!hasExisting);
       }
       const params = {
-        page: currentPage,
-        limit: itemsPerPage,
+        page: fetchPage,
+        limit: fetchLimit,
       };
+
+      if (searchMode) {
+        params.search = normalizedSearchTerm;
+      }
 
       // Active tab controls the primary status filter and desired ordering.
       // - Unpaid tab: show oldest created invoices first (createdAt asc)
       // - Paid tab: show latest paid invoices first (paidAt desc)
       // - All tab (or none): show invoices by latest payment (paidAt desc, fallback createdAt)
-      if (activeTab && activeTab !== 'all') {
+      if (!searchMode && activeTab && activeTab !== 'all') {
         params.status = activeTab;
         if (activeTab === 'unpaid') {
           params.sortBy = 'createdAt';
@@ -254,7 +263,7 @@ const InvoicesPage = ({ isActive = true }) => {
           params.sortBy = 'paidAt';
           params.order = 'desc';
         }
-      } else if (statusFilter !== 'all') {
+      } else if (!searchMode && statusFilter !== 'all') {
         params.status = statusFilter;
         if (statusFilter === 'unpaid') {
           params.sortBy = 'createdAt';
@@ -279,7 +288,7 @@ const InvoicesPage = ({ isActive = true }) => {
       const invoiceList = data.invoices || [];
       setInvoices(invoiceList);
       
-      setTotalPages(data.pagination?.pages || 1);
+      setTotalPages(searchMode ? 1 : (data.pagination?.pages || 1));
 
       const guardianIds = [...new Set(invoiceList.map(inv => inv.guardian?._id).filter(Boolean))];
       let nextGuardianStudentsMap = {};
@@ -306,7 +315,7 @@ const InvoicesPage = ({ isActive = true }) => {
         cacheKey,
         {
           invoices: invoiceList,
-          totalPages: data.pagination?.pages || 1,
+          totalPages: searchMode ? 1 : (data.pagination?.pages || 1),
           guardianStudentsMap: nextGuardianStudentsMap,
         },
         { ttlMs: 5 * 60_000, deps: ['invoices'] }
@@ -1063,7 +1072,7 @@ const InvoicesPage = ({ isActive = true }) => {
     let result = (invoices || []);
 
     // Apply the effective status filter: the active tab takes precedence.
-    const effectiveStatus = activeTab !== 'unpaid' ? activeTab : statusFilter;
+    const effectiveStatus = normalizedSearchTerm ? 'all' : (activeTab !== 'unpaid' ? activeTab : statusFilter);
     if (effectiveStatus !== 'all') {
       if (effectiveStatus === 'paid') {
         result = result.filter((inv) => ['paid', 'refunded'].includes(inv.status));
@@ -1115,7 +1124,14 @@ const InvoicesPage = ({ isActive = true }) => {
   const displayedInvoices = useMemo(() => {
     const list = (filteredInvoices || []).slice();
 
-    if (activeTab === 'unpaid') {
+    if (normalizedSearchTerm) {
+      list.sort((a, b) => {
+        const aPaid = ['paid', 'refunded'].includes(String(a?.status || '').toLowerCase());
+        const bPaid = ['paid', 'refunded'].includes(String(b?.status || '').toLowerCase());
+        if (aPaid !== bPaid) return aPaid ? 1 : -1;
+        return getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a);
+      });
+    } else if (activeTab === 'unpaid') {
       list.sort((a, b) => {
         const weightDiff = getUnpaidSortWeight(a) - getUnpaidSortWeight(b);
         if (weightDiff !== 0) return weightDiff;
@@ -1125,7 +1141,7 @@ const InvoicesPage = ({ isActive = true }) => {
       list.sort((a, b) => getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a));
     }
     return list;
-  }, [filteredInvoices, activeTab]);
+  }, [filteredInvoices, activeTab, normalizedSearchTerm]);
 
 
   const getChannelInfo = (invoice, channel) => (invoice?.delivery?.channels || []).find((entry) => entry.channel === channel);

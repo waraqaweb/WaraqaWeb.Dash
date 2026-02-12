@@ -213,7 +213,13 @@ const FeedbacksAdmin = () => {
 
   const fetchList = useCallback(async () => {
     try {
-      const requestSignature = JSON.stringify({ q: debouncedQ, page, limit, archived: false });
+      const globalQuery = (searchTerm || '').trim();
+      const qUsed = globalQuery || debouncedQ;
+      const searchMode = Boolean(qUsed);
+      const fetchPage = searchMode ? 1 : page;
+      const fetchLimit = searchMode ? 500 : limit;
+
+      const requestSignature = JSON.stringify({ q: qUsed, page: fetchPage, limit: fetchLimit, archived: false });
       if (fetchListInFlightRef.current && fetchListKeyRef.current === requestSignature) {
         return;
       }
@@ -235,7 +241,7 @@ const FeedbacksAdmin = () => {
       const controller = new AbortController();
       fetchListAbortRef.current = controller;
 
-      const cacheKey = makeCacheKey('feedbacks:list', 'admin', { q: debouncedQ, page, limit, archived: false });
+      const cacheKey = makeCacheKey('feedbacks:list', 'admin', { q: qUsed, page: fetchPage, limit: fetchLimit, archived: false });
       const cached = readCache(cacheKey, { deps: ['feedbacks'] });
       if (cached.hit && cached.value) {
         setFeedbacks(cached.value.feedbacks || []);
@@ -248,7 +254,7 @@ const FeedbacksAdmin = () => {
 
       const hasExisting = (feedbacksRef.current || []).length > 0;
       setLoading(!hasExisting);
-      const res = await api.get('/feedbacks', { params: { q: debouncedQ, page, limit, archived: false }, signal: controller.signal });
+      const res = await api.get('/feedbacks', { params: { q: qUsed, page: fetchPage, limit: fetchLimit, archived: false }, signal: controller.signal });
       if (requestId !== fetchListRequestIdRef.current) {
         return;
       }
@@ -270,7 +276,7 @@ const FeedbacksAdmin = () => {
       setLoading(false);
       fetchListInFlightRef.current = false;
     }
-  }, [debouncedQ, page, limit]);
+  }, [debouncedQ, searchTerm, page, limit]);
 
   useEffect(() => {
     fetchList();
@@ -324,9 +330,12 @@ const FeedbacksAdmin = () => {
 
   const filteredFeedbacks = useMemo(() => {
     let result = feedbacks || [];
+    const searchActive = Boolean((searchTerm || '').trim());
 
-    if (activeTab === 'unread') result = result.filter((f) => !(f.read ?? f.isRead));
-    if (activeTab === 'read') result = result.filter((f) => f.read ?? f.isRead);
+    if (!searchActive) {
+      if (activeTab === 'unread') result = result.filter((f) => !(f.read ?? f.isRead));
+      if (activeTab === 'read') result = result.filter((f) => f.read ?? f.isRead);
+    }
 
     if (searchTerm && searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
@@ -345,6 +354,15 @@ const FeedbacksAdmin = () => {
           date.includes(term) ||
           String(feedback._id).includes(term)
         );
+      });
+    }
+
+    if (searchActive) {
+      result = [...result].sort((a, b) => {
+        const aRead = Boolean(a?.read ?? a?.isRead);
+        const bRead = Boolean(b?.read ?? b?.isRead);
+        if (aRead !== bRead) return aRead ? 1 : -1;
+        return new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0);
       });
     }
 

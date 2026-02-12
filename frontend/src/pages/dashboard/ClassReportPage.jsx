@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import api from '../../api/axios';
 import Select from "react-select";
 import { XCircle, Loader2, Star } from "lucide-react";
+import { useNavigate } from 'react-router-dom';
 import topicsMap, { subjects, surahs } from "../../constants/reportTopicsConfig";
 import Toast from "../../components/ui/Toast";
 import { saveDraft, loadDraft, clearDraft } from "../../utils/localStorageUtils";
@@ -10,7 +11,24 @@ import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 import { useAuth } from "../../contexts/AuthContext";
 import { makeCacheKey, readCache, writeCache } from "../../utils/sessionCache";
 
+const normalizeAttendance = (attendance) => {
+  if (attendance === "missed_by_student") return "absent";
+  if (String(attendance || "").startsWith("cancelled")) return "cancelled";
+  return "attended";
+};
+
+const deriveCancelledBy = (attendance) => {
+  return attendance === "cancelled_by_student" ? "student" : "teacher";
+};
+
+const toApiAttendance = (attendance, cancelledBy) => {
+  if (attendance === "absent") return "missed_by_student";
+  if (attendance === "cancelled") return cancelledBy === "student" ? "cancelled_by_student" : "cancelled_by_teacher";
+  return "attended";
+};
+
 const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => {
+  const navigate = useNavigate();
   const derivedClassId = reportClass?._id || reportClassId;
   const [classData, setClassData] = useState(reportClass || null);
   const [classLoadError, setClassLoadError] = useState(null);
@@ -49,7 +67,10 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     };
   }, []);
   const defaultReportState = (baseClass) => ({
-    attendance: baseClass?.classReport?.attendance || "attended",
+    attendance: normalizeAttendance(baseClass?.classReport?.attendance || "attended"),
+    cancelledBy: String(baseClass?.classReport?.attendance || "").startsWith("cancelled")
+      ? deriveCancelledBy(baseClass?.classReport?.attendance)
+      : "teacher",
     countAbsentForBilling:
       typeof baseClass?.classReport?.countAbsentForBilling === "boolean"
         ? baseClass.classReport.countAbsentForBilling
@@ -82,7 +103,15 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const [classReport, setClassReport] = useState(() => {
     const base = defaultReportState(reportClass || null);
     const draft = derivedClassId ? loadDraft(derivedClassId) : null;
-    if (draft) return { ...base, ...draft };
+    if (draft) {
+      const normalizedAttendance = normalizeAttendance(draft.attendance || base.attendance);
+      return {
+        ...base,
+        ...draft,
+        attendance: normalizedAttendance,
+        cancelledBy: draft.cancelledBy || (normalizedAttendance === "cancelled" ? deriveCancelledBy(draft.attendance) : "teacher"),
+      };
+    }
     return base;
   });
 
@@ -222,7 +251,13 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
     const draft = loadDraft(derivedClassId);
     if (draft) {
-      setClassReport({ ...defaultReportState(classData), ...draft });
+      const normalizedAttendance = normalizeAttendance(draft.attendance || classData?.classReport?.attendance);
+      setClassReport({
+        ...defaultReportState(classData),
+        ...draft,
+        attendance: normalizedAttendance,
+        cancelledBy: draft.cancelledBy || (normalizedAttendance === "cancelled" ? deriveCancelledBy(draft.attendance) : "teacher"),
+      });
       hasInitializedState.current = true;
       return;
     }
@@ -314,18 +349,20 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         customLessonTopic,
         previousAssignment,
         subjects,
+        cancelledBy,
         ...rest
       } = classReport;
 
       const attendance = rest.attendance || "attended";
+      const apiAttendance = toApiAttendance(attendance, cancelledBy);
       const cancellationReason = (classReport.cancellationReason || "").trim();
 
-      let sanitizedPayload = { attendance };
+      let sanitizedPayload = { attendance: apiAttendance };
 
-      if (attendance === "missed_by_student") {
+      if (attendance === "absent") {
         sanitizedPayload.countAbsentForBilling = Boolean(rest.countAbsentForBilling);
         sanitizedPayload.absenceExcused = Boolean(rest.absenceExcused);
-      } else if (attendance === "cancelled_by_teacher" || attendance === "cancelled_by_student") {
+      } else if (attendance === "cancelled") {
         if (!cancellationReason) {
           setShowToast({ show: true, type: "error", message: "Please provide a cancellation reason." });
           setLoading(false);
@@ -354,7 +391,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
             : [];
 
         const detailPayload = {
-          attendance,
+          attendance: apiAttendance,
           absenceExcused: Boolean(rest.absenceExcused),
           countAbsentForBilling: false,
           classScore: Number.isFinite(Number(rest.classScore)) ? Number(rest.classScore) : 5,
@@ -433,8 +470,21 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const hasTopicOptions = Array.isArray(topicOptions) && topicOptions.length > 0;
 
   const isAttended = classReport.attendance === "attended";
-  const isAbsent = classReport.attendance === "missed_by_student";
-  const isCancelled = classReport.attendance === "cancelled_by_teacher" || classReport.attendance === "cancelled_by_student";
+  const isAbsent = classReport.attendance === "absent";
+  const isCancelled = classReport.attendance === "cancelled";
+
+  const handleOpenExtendReportRequest = () => {
+    const params = new URLSearchParams();
+    params.set('requestType', 'extend_class_report');
+    if (derivedClassId) params.set('classId', String(derivedClassId));
+    const studentId = classData?.student?.studentId?._id || classData?.student?.studentId;
+    const studentName = classData?.student?.studentName || classData?.studentSnapshot?.studentName;
+    if (studentId) params.set('studentId', String(studentId));
+    if (studentName) params.set('studentName', String(studentName));
+
+    onClose?.();
+    navigate(`/dashboard/requests?${params.toString()}`);
+  };
 
   if (!derivedClassId) {
     return (
@@ -543,15 +593,27 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
             </div>
           )}
 
+          {userRole === 'teacher' && (
+            <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
+              <p className="text-foreground font-medium">Need more time or admin support for this report?</p>
+              <button
+                type="button"
+                onClick={handleOpenExtendReportRequest}
+                className="mt-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+              >
+                Send “Extend Class Report” Request
+              </button>
+            </div>
+          )}
+
           {/* === First Row: Attendance + Billing === */}
           <div className="space-y-2">
             <label className="block font-semibold">Attendance</label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
                 { key: "attended", label: "Attended" },
-                { key: "missed_by_student", label: "Absent" },
-                { key: "cancelled_by_teacher", label: "Cancelled by teacher" },
-                { key: "cancelled_by_student", label: "Cancelled by student" }
+                { key: "absent", label: "Absent" },
+                { key: "cancelled", label: "Cancelled" }
               ].map(({ key, label }) => (
                 <button
                   key={key}
@@ -561,10 +623,11 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                       ...prev,
                       attendance: key,
                       countAbsentForBilling:
-                        key === "missed_by_student"
+                        key === "absent"
                           ? (typeof prev.countAbsentForBilling === "boolean" ? prev.countAbsentForBilling : true)
                           : false,
-                      cancellationReason: (key === "cancelled_by_teacher" || key === "cancelled_by_student") ? prev.cancellationReason : "",
+                      cancellationReason: key === "cancelled" ? prev.cancellationReason : "",
+                      cancelledBy: key === "cancelled" ? (prev.cancelledBy || "teacher") : "teacher",
                     }))
                   }
                   className={`recite-toggle w-full ${
@@ -577,7 +640,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
             </div>
 
             {/* Show Count for Billing toggle ONLY if absent */}
-            {classReport.attendance === "missed_by_student" && (
+            {classReport.attendance === "absent" && (
               <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -620,6 +683,22 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
           {isCancelled && (
             <div className="space-y-2">
+              <label className="block text-sm font-semibold text-gray-700">Cancelled by</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {[
+                  { key: "student", label: "Student" },
+                  { key: "teacher", label: "Teacher" },
+                ].map(({ key, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setClassReport((prev) => ({ ...prev, cancelledBy: key }))}
+                    className={`recite-toggle w-full ${classReport.cancelledBy === key ? "active" : ""}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <label className="block text-sm font-semibold text-gray-700" htmlFor="cancellationReason">
                 Cancellation reason (visible to admins only)
               </label>

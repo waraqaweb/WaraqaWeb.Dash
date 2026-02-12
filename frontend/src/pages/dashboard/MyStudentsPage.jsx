@@ -46,6 +46,11 @@ const isCancelledClassStatus = (status) => {
   return normalized === 'canceled' || normalized.startsWith('cancelled');
 };
 
+const formatHours = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00';
+};
+
 const buildSubjectsByStudentId = (classesArr = []) => {
   const map = new Map();
   (Array.isArray(classesArr) ? classesArr : []).forEach((cls) => {
@@ -610,8 +615,9 @@ const fetchGuardiansList = async () => {
 
   const filteredStudents = useMemo(() => {
     let result = dedupeStudents(students || []);
+    const searchActive = Boolean((debouncedEffectiveSearchTerm || '').trim());
 
-    if (isHydrated && statusFilter !== 'all') {
+    if (!searchActive && isHydrated && statusFilter !== 'all') {
       const desiredActive = statusFilter === 'active';
       result = result.filter((student) => isStudentActive(student) === desiredActive);
     }
@@ -654,7 +660,7 @@ const fetchGuardiansList = async () => {
     }
 
     // Apply global filter (only when using global search)
-    if (useGlobalSearch && globalFilter && globalFilter !== 'all') {
+    if (!searchActive && useGlobalSearch && globalFilter && globalFilter !== 'all') {
       switch (globalFilter) {
         case 'active':
           result = result.filter(s => isStudentActive(s));
@@ -684,6 +690,8 @@ const fetchGuardiansList = async () => {
     };
 
     list.sort((a, b) => {
+      const activeDiff = (isStudentActive(b) ? 1 : 0) - (isStudentActive(a) ? 1 : 0);
+      if (activeDiff !== 0) return activeDiff;
       const keyA = buildNameKey(a);
       const keyB = buildNameKey(b);
       if (keyA === keyB) {
@@ -1133,7 +1141,7 @@ const fetchGuardiansList = async () => {
                       ) : null}
                         {/* Show real hours (computed from past classes durations) in My Students page */}
                         <span className="font-medium text-foreground">
-                          { (classesHoursMap[String(student._id)] ?? 0) } hours
+                          {formatHours(classesHoursMap[String(student._id)] ?? 0)} hours
                         </span>
                         <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(isStudentActive(student), student.activityState)}`}>
                           {student.activityState === 'loading' ? 'Loading' : (isStudentActive(student) ? 'Active' : 'Inactive')}

@@ -120,15 +120,37 @@ async function updateTeacherVacationStatuses() {
     const endedVacations = await Vacation.find({
       role: 'teacher',
       approvalStatus: 'approved',
-      status: { $in: ['approved', 'active'] },
+      status: { $in: ['approved', 'active', 'ended'] },
       $expr: {
         $lt: [ { $ifNull: ['$actualEndDate', '$endDate'] }, now ]
       }
     }).populate('user');
 
     for (const vacation of endedVacations) {
-      if (vacation.user && !vacation.user.isActive) {
-        await reactivateTeacher(vacation.user._id);
+      const teacherUserId = vacation.user?._id || vacation.user;
+      if (teacherUserId) {
+        // Always clear vacation flags once a vacation is ended.
+        // This prevents stale vacation window fields from hiding upcoming classes.
+        await User.findByIdAndUpdate(teacherUserId, {
+          isActive: true,
+          $unset: { vacationStartDate: "", vacationEndDate: "" }
+        });
+
+        // Safety net: restore future classes that were temporarily put on hold/cancelled
+        // because of this vacation but never restored due prior workflow gaps.
+        await Class.updateMany(
+          {
+            teacher: teacherUserId,
+            scheduledDate: { $gte: now },
+            status: { $in: ['on_hold', 'cancelled'] },
+            'cancellation.vacationId': vacation._id,
+            'cancellation.isTemporary': true,
+          },
+          {
+            $set: { status: 'scheduled', hidden: false },
+            $unset: { cancellation: "" },
+          }
+        );
       }
       if (vacation.status !== 'ended') {
         vacation.status = 'ended';

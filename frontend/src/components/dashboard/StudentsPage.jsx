@@ -217,7 +217,16 @@ const StudentsPage = () => {
         // Teachers: show only students who have upcoming classes with this teacher
         // Use classes endpoint with filter=upcoming and teacher id
         try {
-          const classesRes = await api.get('/classes', { params: { filter: 'upcoming', teacher: user._id, limit: 1000 } });
+          const classesRes = await api.get('/classes', {
+            params: {
+              filter: 'upcoming',
+              teacher: user._id,
+              limit: 1000,
+              light: true,
+              populate: false,
+              includeTotal: false,
+            }
+          });
           const classesArr = classesRes.data.classes || [];
           console.log('[StudentsPage] fetched upcoming classes for teacher', { count: classesArr.length, teacher: user._id });
 

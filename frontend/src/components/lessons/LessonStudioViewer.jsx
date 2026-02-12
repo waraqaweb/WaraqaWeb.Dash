@@ -23,9 +23,11 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
 import WhiteboardModal from '../library/WhiteboardModal';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const LessonStudioViewer = ({ lesson, onClose }) => {
-  const { user } = useAuth();
+  const { user, socket } = useAuth();
+  const [branding, setBranding] = useState({ title: 'Waraqa', slogan: '', logoUrl: null });
   const [activeSection, setActiveSection] = useState(0);
   const [audience, setAudience] = useState('adults');
   const [level, setLevel] = useState('beginner');
@@ -67,6 +69,58 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
   const overlayRef = useRef(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef(null);
+
+  // Load public branding so the lesson stage uses the same logo as dashboard sidebar/favicon.
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const cacheKey = makeCacheKey('branding:public');
+        const cached = readCache(cacheKey, { deps: ['branding'] });
+        if (cached.hit && cached.value?.branding) {
+          const b = cached.value.branding;
+          const title = b?.title || 'Waraqa';
+          const slogan = b?.slogan || '';
+          const logoUrl = b?.logo?.url || b?.logo?.dataUri || null;
+          if (mounted) setBranding({ title, slogan, logoUrl });
+          if (cached.ageMs < 5 * 60_000) return;
+        }
+
+        const res = await api.get('/settings/branding');
+        const b = res?.data?.branding;
+        const title = b?.title || 'Waraqa';
+        const slogan = b?.slogan || '';
+        const logoUrl = b?.logo?.url || b?.logo?.dataUri || null;
+        if (mounted) setBranding({ title, slogan, logoUrl });
+        writeCache(cacheKey, { branding: b || { title, slogan, logo: logoUrl ? { url: logoUrl } : null } }, { ttlMs: 5 * 60_000, deps: ['branding'] });
+      } catch (e) {
+        // ignore branding load errors
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Live update when admin changes branding
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (payload) => {
+      try {
+        const b = payload?.branding;
+        if (!b) return;
+        const title = b?.title || 'Waraqa';
+        const slogan = b?.slogan || '';
+        const logoUrl = b?.logo?.url || b?.logo?.dataUri || null;
+        setBranding({ title, slogan, logoUrl });
+        const cacheKey = makeCacheKey('branding:public');
+        writeCache(cacheKey, { branding: b }, { ttlMs: 5 * 60_000, deps: ['branding'] });
+      } catch (_) {}
+    };
+    socket.on('branding:updated', handler);
+    return () => socket.off('branding:updated', handler);
+  }, [socket]);
 
   if (!lesson) return null;
   const meta = lesson.metadata?.lessonStudio || lesson.metadata?.testStudio || {};
@@ -579,8 +633,8 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-start gap-3">
             <img
-              src={`${import.meta.env.BASE_URL}favicon.svg`}
-              alt="Waraqa"
+              src={branding.logoUrl || `${import.meta.env.BASE_URL}favicon.svg`}
+              alt={branding.title || 'Waraqa'}
               className="h-[72px] w-[72px] rounded-full border border-slate-200 bg-white"
             />
             <div className="space-y-1">
@@ -767,8 +821,8 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                           <div className="flex items-start gap-4">
                             <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-200 bg-white">
                               <img
-                                src={`${import.meta.env.BASE_URL}favicon.svg`}
-                                alt="Waraqa"
+                                src={branding.logoUrl || `${import.meta.env.BASE_URL}favicon.svg`}
+                                alt={branding.title || 'Waraqa'}
                                 className="h-10 w-10"
                               />
                             </div>
@@ -933,9 +987,9 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                           const blockDirection = getDirectionFromFirstWord(block?.content || '');
                           return (
                             <div key={block.id}>
-                              <div className={`rounded-2xl border p-4 ${stylePreset.card}`}>
-                                <div className="mb-2 flex items-center justify-between gap-2">
-                                  <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${stylePreset.pill}`}>
+                              <div className={`relative rounded-2xl border p-4 pt-6 ${stylePreset.card}`}>
+                                <div className="absolute left-4 top-0 -translate-y-1/2">
+                                  <span className={`rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold ${stylePreset.pill}`}>
                                     {block.title || 'Explanation'}
                                   </span>
                                 </div>

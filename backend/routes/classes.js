@@ -113,6 +113,11 @@ function toBool(val) {
   return false;
 }
 
+function toBoolDefault(val, defaultValue) {
+  if (val === undefined || val === null || val === '') return Boolean(defaultValue);
+  return toBool(val);
+}
+
 function buildPerDayMap(recurrenceDetails = []) {
   const map = new Map();
   for (const slot of recurrenceDetails) {
@@ -751,6 +756,14 @@ async function buildChangePolicy(classDoc, user) {
 // Classes Routes - GET /api/classes
 router.get("/", authenticateToken, async (req, res) => {
   try {
+    const perfEnabled = process.env.DEBUG_PERF_CLASSES === '1';
+    const t0 = perfEnabled ? Date.now() : 0;
+    const mark = (label) => {
+      if (!perfEnabled) return;
+      const ms = Date.now() - t0;
+      console.log(`⏱️  [classes:list] +${ms}ms ${label}`);
+    };
+
     const {
       page = 1,
       limit = 20,
@@ -765,10 +778,18 @@ router.get("/", authenticateToken, async (req, res) => {
       date,
       dateFrom,
       dateTo,
+      light,
+      populate,
+      includeTotal,
     } = req.query;
 
     const now = new Date();
     const filters = {};
+
+    const pushAnd = (clause) => {
+      if (!clause || typeof clause !== 'object') return;
+      filters.$and = [...(filters.$and || []), clause];
+    };
 
     // If a teacher user supplies a teacher query param for someone else, reject explicitly
     if (req.user && req.user.role === 'teacher' && req.query.teacher && String(req.query.teacher) !== String(req.user._id)) {
@@ -807,6 +828,7 @@ router.get("/", authenticateToken, async (req, res) => {
     const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const normalizedSearch = typeof search === "string" ? search.trim() : "";
     if (normalizedSearch) {
+      mark('search:start');
       const regex = new RegExp(escapeRegExp(normalizedSearch), "i");
 
       const [teacherMatches, guardianMatches] = await Promise.all([
@@ -833,6 +855,8 @@ router.get("/", authenticateToken, async (req, res) => {
           .select("_id")
           .lean(),
       ]);
+
+      mark(`search:resolved teacherIds=${(teacherMatches || []).length} guardianIds=${(guardianMatches || []).length}`);
 
       const teacherIds = (teacherMatches || []).map((u) => u._id);
       const guardianIds = (guardianMatches || []).map((u) => u._id);
@@ -864,45 +888,15 @@ router.get("/", authenticateToken, async (req, res) => {
       filters.$and = [...(filters.$and || []), { $or: searchOr }];
     }
 
-    // upcoming / previous filtering
-    // Prefer endsAt for accurate "class ended" logic; fall back to scheduledDate+duration if endsAt is missing.
-    const durationMsExpr = { $multiply: [{ $ifNull: ["$duration", 0] }, 60000] };
-    const endsAtExpr = { $add: ["$scheduledDate", durationMsExpr] };
+    mark('filters:built');
 
+    // upcoming / previous filtering
+    // IMPORTANT: Avoid $expr-based computed filters here (they disable index usage and cause collection scans).
+    // We rely on `endsAt` being present (backfill script provided for legacy docs).
     if (filter === "upcoming") {
-      const timeFilter = {
-        $or: [
-          { endsAt: { $gte: now } },
-          {
-            endsAt: { $exists: false },
-            scheduledDate: { $exists: true, $ne: null },
-            $expr: { $gte: [endsAtExpr, now] },
-          },
-          {
-            endsAt: null,
-            scheduledDate: { $exists: true, $ne: null },
-            $expr: { $gte: [endsAtExpr, now] },
-          },
-        ],
-      };
-      filters.$and = [...(filters.$and || []), timeFilter];
+      pushAnd({ endsAt: { $gte: now } });
     } else if (filter === "previous") {
-      const timeFilter = {
-        $or: [
-          { endsAt: { $lt: now } },
-          {
-            endsAt: { $exists: false },
-            scheduledDate: { $exists: true, $ne: null },
-            $expr: { $lt: [endsAtExpr, now] },
-          },
-          {
-            endsAt: null,
-            scheduledDate: { $exists: true, $ne: null },
-            $expr: { $lt: [endsAtExpr, now] },
-          },
-        ],
-      };
-      filters.$and = [...(filters.$and || []), timeFilter];
+      pushAnd({ endsAt: { $lt: now } });
     }
 
     // Filter out classes that are hidden due to system vacation or individual teacher vacation
@@ -915,10 +909,12 @@ router.get("/", authenticateToken, async (req, res) => {
       filters.teacher = String(req.user._id);
       
       // Check if teacher is on vacation and filter classes accordingly
-      const teacher = await User.findById(req.user._id);
-      if (teacher && teacher.vacationStartDate && teacher.vacationEndDate) {
-        const vacationStart = new Date(teacher.vacationStartDate);
-        const vacationEnd = new Date(teacher.vacationEndDate);
+      const teacherDoc = await User.findById(req.user._id)
+        .select('vacationStartDate vacationEndDate')
+        .lean();
+      if (teacherDoc && teacherDoc.vacationStartDate && teacherDoc.vacationEndDate) {
+        const vacationStart = new Date(teacherDoc.vacationStartDate);
+        const vacationEnd = new Date(teacherDoc.vacationEndDate);
         const firstDayAfterVacation = new Date(vacationEnd.getTime() + 24 * 60 * 60 * 1000);
         
         // If currently on vacation, only show classes after vacation (first day)
@@ -945,9 +941,19 @@ router.get("/", authenticateToken, async (req, res) => {
       filters['student.studentId'] = String(req.user._id);
     }
 
-    const pageNum = parseInt(page, 10);
-    const limitNum = parseInt(limit, 10);
+    const pageNum = Math.max(1, Number.parseInt(page, 10) || 1);
+    const limitNumRaw = Number.parseInt(limit, 10);
+    const limitNum = Math.min(100, Math.max(1, Number.isFinite(limitNumRaw) ? limitNumRaw : 20));
     const skip = (pageNum - 1) * limitNum;
+
+    // List endpoints can be called in two very different modes:
+    // - UI pagination (needs populate + totals)
+    // - Bulk/metrics (large limit, studentIds, etc) where populate/totals are wasted
+    const lightMode = toBoolDefault(light, true);
+    const populateDefault = !(studentIds && typeof studentIds === 'string') && limitNum <= 100;
+    const shouldPopulate = toBoolDefault(populate, populateDefault);
+    const includeTotalDefault = !(studentIds && typeof studentIds === 'string') && limitNum <= 100;
+    const shouldIncludeTotal = toBoolDefault(includeTotal, includeTotalDefault);
 
     const sortOrder = filter === "upcoming" ? 1 : -1;
     const sortObj = { scheduledDate: sortOrder };
@@ -980,18 +986,20 @@ router.get("/", authenticateToken, async (req, res) => {
       filters.status = { $in: STATUS_ALLOW_LIST };
     }
 
-    const [rawClasses, totalClasses] = await Promise.all([
-      Class.find(filters)
-        .select([
+    const selectFields = lightMode
+      ? [
           'title',
-          'description',
           'subject',
           'status',
           'scheduledDate',
           'duration',
+          'endsAt',
           'timezone',
           'meetingLink',
-          'materials',
+          // Only include the fields needed for the whiteboard screenshot badge/list UI.
+          'materials.kind',
+          'materials.libraryItem',
+          'materials.uploadedByRole',
           'parentRecurringClass',
           'student.guardianId',
           'student.studentId',
@@ -1001,30 +1009,44 @@ router.get("/", authenticateToken, async (req, res) => {
           'classReport.submittedAt',
           'classReport.classScore',
           'classReport.attendance',
-          'classReport.subject',
-          'classReport.subjects',
-          'classReport.lessonTopic',
-          'classReport.customLessonTopic',
-          'classReport.teacherNotes',
-          'classReport.supervisorNotes',
-          'classReport.newAssignment',
-          'classReport.surah',
-          'classReport.verseEnd',
-          'classReport.recitedQuran',
           'reportSubmission.status',
           'createdAt',
-          'updatedAt'
-        ].join(' '))
-        .populate("teacher", "firstName lastName email phone profilePicture")
-        .populate("student.guardianId", "firstName lastName email phone")
-        .sort(sortObj)
-        .skip(skip)
-        .limit(limitNum)
-        .lean(),
-      Class.countDocuments(filters),
-    ]);
+          'updatedAt',
+        ].join(' ')
+      : undefined;
+
+    let query = Class.find(filters);
+    if (selectFields) query = query.select(selectFields);
+    if (shouldPopulate) {
+      const teacherSelect = lightMode ? 'firstName lastName profilePicture' : 'firstName lastName email phone profilePicture';
+      const guardianSelect = lightMode ? 'firstName lastName' : 'firstName lastName email phone';
+      query = query
+        .populate({ path: 'teacher', select: teacherSelect, options: { lean: true } })
+        .populate({ path: 'student.guardianId', select: guardianSelect, options: { lean: true } });
+    }
+    query = query.sort(sortObj).skip(skip);
+
+    // If totals are not needed (bulk/metrics callers), avoid countDocuments.
+    // Fetch one extra doc to determine hasNextPage.
+    const limitForQuery = shouldIncludeTotal ? limitNum : (limitNum + 1);
+    query = query.limit(limitForQuery).lean();
+
+    const totalPromise = shouldIncludeTotal ? Class.countDocuments(filters) : Promise.resolve(null);
+    const [rawRows, totalClasses] = await Promise.all([query, totalPromise]);
+
+    const hasNextPage = !shouldIncludeTotal
+      ? (Array.isArray(rawRows) && rawRows.length > limitNum)
+      : (pageNum < Math.ceil((Number(totalClasses) || 0) / limitNum));
+
+    const rawClasses = !shouldIncludeTotal && Array.isArray(rawRows)
+      ? rawRows.slice(0, limitNum)
+      : rawRows;
+
+    mark(`db:done rows=${(rawClasses || []).length} total=${totalClasses}`);
 
     await hydrateUnknownStudentNames(rawClasses);
+
+    mark('hydrateUnknownStudentNames:done');
 
     // Avoid N+1 queries for recurring patterns on list endpoints.
     // The details are available from GET /api/classes/:id when needed.
@@ -1036,7 +1058,9 @@ router.get("/", authenticateToken, async (req, res) => {
       };
     });
 
-    const totalPages = Math.ceil(totalClasses / limitNum);
+    const totalPages = shouldIncludeTotal
+      ? Math.ceil((Number(totalClasses) || 0) / limitNum)
+      : null;
 
     // Get user's timezone for conversion
     const userTimezone = req.user?.timezone || DEFAULT_TIMEZONE;
@@ -1045,13 +1069,15 @@ router.get("/", authenticateToken, async (req, res) => {
     const processedClasses = processArrayWithTimezone(classes, userTimezone, ['scheduledDate', 'createdAt', 'updatedAt']);
     const sanitizedClasses = processedClasses.map((cls) => sanitizeClassForRole(cls, req.user?.role));
 
+    mark('postprocess:done');
+
     res.json({
       classes: sanitizedClasses,
       pagination: {
         currentPage: pageNum,
         totalPages,
         totalClasses,
-        hasNextPage: pageNum < totalPages,
+        hasNextPage,
         hasPrevPage: pageNum > 1,
       },
       userTimezone,
@@ -3123,7 +3149,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
     console.log("🧐 Raw attendance type:", typeof payload.attendance, "value:", payload.attendance);
     console.log("🧐 Raw countAbsentForBilling type:", typeof payload.countAbsentForBilling, "value:", payload.countAbsentForBilling);
 
-    const attendanceOptions = new Set(["attended", "missed_by_student", "cancelled_by_teacher", "no_show_both"]);
+    const attendanceOptions = new Set(["attended", "missed_by_student", "cancelled_by_teacher", "cancelled_by_student", "no_show_both"]);
     const attendanceValue = attendanceOptions.has(payload.attendance) ? payload.attendance : "attended";
 
     const rawSubject = typeof payload.subject === "string" ? payload.subject.trim() : "";
@@ -3221,7 +3247,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
         absenceExcused,
         classScore,
       };
-    } else if (attendanceValue === "cancelled_by_teacher") {
+    } else if (attendanceValue === "cancelled_by_teacher" || attendanceValue === "cancelled_by_student") {
       if (!cancellationReason) {
         return res.status(400).json({
           message: "Cancellation reason is required",
@@ -3238,6 +3264,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
       classDoc.cancellation.reason = cancellationReason;
       classDoc.cancellation.cancelledAt = now;
       classDoc.cancellation.cancelledBy = req.user._id;
+      classDoc.cancellation.cancelledByRole = attendanceValue === "cancelled_by_student" ? "student" : "teacher";
       classDoc.markModified("cancellation");
     } else {
       // For other non-attended states (e.g., no_show_both), keep minimal payload
@@ -3313,6 +3340,10 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
       classDoc.attendance.teacherPresent = false;
       classDoc.attendance.studentPresent = true;
       classDoc.status = "cancelled_by_teacher";
+    } else if (attendanceValue === "cancelled_by_student") {
+      classDoc.attendance.teacherPresent = true;
+      classDoc.attendance.studentPresent = false;
+      classDoc.status = "cancelled_by_student";
     } else if (attendanceValue === "no_show_both") {
       classDoc.attendance.teacherPresent = false;
       classDoc.attendance.studentPresent = false;

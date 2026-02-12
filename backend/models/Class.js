@@ -269,7 +269,7 @@ const classSchema = new mongoose.Schema({
     }],
     attendance: {
       type: String,
-      enum: ["attended", "missed_by_student", "cancelled_by_teacher", "no_show_both"],
+      enum: ["attended", "missed_by_student", "cancelled_by_teacher", "cancelled_by_student", "no_show_both"],
     },
     countAbsentForBilling: {
       type: Boolean,
@@ -678,6 +678,11 @@ classSchema.index({ hidden: 1, scheduledDate: 1 });
 classSchema.index({ hidden: 1, status: 1, scheduledDate: 1 });
 classSchema.index({ scheduledDate: 1 });
 classSchema.index({ endsAt: 1 });
+// Compound indexes to support upcoming/previous filtering (endsAt) with common entity filters.
+classSchema.index({ teacher: 1, endsAt: 1, scheduledDate: 1 });
+classSchema.index({ "student.guardianId": 1, endsAt: 1, scheduledDate: 1 });
+classSchema.index({ "student.studentId": 1, endsAt: 1, scheduledDate: 1 });
+classSchema.index({ hidden: 1, status: 1, endsAt: 1, scheduledDate: 1 });
 classSchema.index({ createdAt: 1 });
 classSchema.index({ parentRecurringClass: 1 });
 classSchema.index({ isRecurring: 1, status: 1 });

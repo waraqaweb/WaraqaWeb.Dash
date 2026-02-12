@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, BookOpen, Layers, StickyNote, MessageCircle, Save, Copy, X, GripVertical, ArrowUp, ArrowDown, Palette, CheckCircle, XCircle } from 'lucide-react';
 import { subjects as fallbackSubjects } from '../../constants/reportTopicsConfig';
 import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
@@ -9,31 +9,58 @@ import RichTextToolbar from '../ui/RichTextToolbar';
 const createExplanationPart = () => ({ text: '', mediaUrl: '' });
 
 const BLOCK_STYLE_PRESETS = [
-  { value: 'sky', label: 'Sky', card: 'border-sky-200 bg-sky-50/80', pill: 'bg-sky-100 text-sky-700' },
-  { value: 'amber', label: 'Amber', card: 'border-amber-200 bg-amber-50/80', pill: 'bg-amber-100 text-amber-800' },
-  { value: 'emerald', label: 'Emerald', card: 'border-emerald-200 bg-emerald-50/80', pill: 'bg-emerald-100 text-emerald-700' },
-  { value: 'rose', label: 'Rose', card: 'border-rose-200 bg-rose-50/80', pill: 'bg-rose-100 text-rose-700' },
-  { value: 'indigo', label: 'Indigo', card: 'border-indigo-200 bg-indigo-50/80', pill: 'bg-indigo-100 text-indigo-700' },
-  { value: 'slate', label: 'Slate', card: 'border-slate-200 bg-slate-50/80', pill: 'bg-slate-200 text-slate-700' },
-  { value: 'teal', label: 'Teal', card: 'border-teal-200 bg-teal-50/80', pill: 'bg-teal-100 text-teal-700' },
-  { value: 'violet', label: 'Violet', card: 'border-violet-200 bg-violet-50/80', pill: 'bg-violet-100 text-violet-700' },
-  { value: 'lime', label: 'Lime', card: 'border-lime-200 bg-lime-50/80', pill: 'bg-lime-100 text-lime-700' },
-  { value: 'orange', label: 'Orange', card: 'border-orange-200 bg-orange-50/80', pill: 'bg-orange-100 text-orange-700' },
-  { value: 'cyan', label: 'Cyan', card: 'border-cyan-200 bg-cyan-50/80', pill: 'bg-cyan-100 text-cyan-700' }
+  // Clearer, higher-contrast palette (keeps existing `value`s for backward compatibility)
+  { value: 'sky', label: 'Blue', card: 'border-sky-300 bg-sky-100/70', pill: 'bg-sky-200 text-sky-900', edge: 'border-t-sky-400 border-l-sky-400' },
+  { value: 'emerald', label: 'Green', card: 'border-emerald-300 bg-emerald-100/70', pill: 'bg-emerald-200 text-emerald-900', edge: 'border-t-emerald-400 border-l-emerald-400' },
+  { value: 'amber', label: 'Yellow', card: 'border-amber-300 bg-amber-100/70', pill: 'bg-amber-200 text-amber-950', edge: 'border-t-amber-400 border-l-amber-400' },
+  { value: 'indigo', label: 'Purple', card: 'border-indigo-300 bg-indigo-100/70', pill: 'bg-indigo-200 text-indigo-950', edge: 'border-t-indigo-400 border-l-indigo-400' },
+  { value: 'rose', label: 'Pink', card: 'border-rose-300 bg-rose-100/70', pill: 'bg-rose-200 text-rose-950', edge: 'border-t-rose-400 border-l-rose-400' },
+  { value: 'slate', label: 'Gray', card: 'border-slate-300 bg-slate-100/70', pill: 'bg-slate-200 text-slate-900', edge: 'border-t-slate-400 border-l-slate-400' },
+  { value: 'teal', label: 'Teal', card: 'border-teal-300 bg-teal-100/70', pill: 'bg-teal-200 text-teal-950', edge: 'border-t-teal-400 border-l-teal-400' },
+  { value: 'violet', label: 'Violet', card: 'border-violet-300 bg-violet-100/70', pill: 'bg-violet-200 text-violet-950', edge: 'border-t-violet-400 border-l-violet-400' },
+  { value: 'lime', label: 'Lime', card: 'border-lime-300 bg-lime-100/70', pill: 'bg-lime-200 text-lime-950', edge: 'border-t-lime-400 border-l-lime-400' },
+  { value: 'orange', label: 'Orange', card: 'border-orange-300 bg-orange-100/70', pill: 'bg-orange-200 text-orange-950', edge: 'border-t-orange-400 border-l-orange-400' },
+  { value: 'cyan', label: 'Cyan', card: 'border-cyan-300 bg-cyan-100/70', pill: 'bg-cyan-200 text-cyan-950', edge: 'border-t-cyan-400 border-l-cyan-400' }
 ];
 
+// When adding blocks without an explicit style, auto-cycle through these clearer colors.
+const AUTO_BLOCK_STYLE_ORDER = ['sky', 'emerald', 'amber', 'indigo', 'rose', 'slate'];
+const AUTO_BLOCK_VARIANT_ORDER = ['filled', 'edge'];
+
 const DEFAULT_EXPLANATION_PRESETS = [
-  { title: 'Is it a Stick or a Chair?', style: 'sky' },
-  { title: 'Technical Distinction', style: 'emerald' },
-  { title: 'The Sound', style: 'amber' },
-  { title: 'Writing Workshop', style: 'indigo' },
-  { title: 'Tajweed Scholar Zone', style: 'slate' }
+  { id: 'preset-1', title: 'Is it a Stick or a Chair?', style: 'sky' },
+  { id: 'preset-2', title: 'Technical Distinction', style: 'emerald' },
+  { id: 'preset-3', title: 'The Sound', style: 'amber' },
+  { id: 'preset-4', title: 'Writing Workshop', style: 'indigo' },
+  { id: 'preset-5', title: 'Tajweed Scholar Zone', style: 'slate' }
 ];
+
+const createPresetBlock = (overrides = {}) => ({
+  id: `preset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  title: 'New preset',
+  style: 'sky',
+  ...overrides
+});
+
+const normalizePresetBlocks = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((preset) => {
+      if (!preset || typeof preset !== 'object') return null;
+      return {
+        id: preset.id || `preset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        title: typeof preset.title === 'string' ? preset.title : String(preset.title || ''),
+        style: preset.style || 'sky'
+      };
+    })
+    .filter(Boolean);
+};
 
 const createExplanationBlock = (overrides = {}) => ({
   id: `block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   title: 'Explanation block',
   style: 'sky',
+  variant: 'filled',
   content: '',
   mediaUrl: '',
   ...overrides
@@ -45,6 +72,7 @@ const normalizeExplanationBlocks = (value) => {
     id: block?.id || `block-${Date.now()}-${index}`,
     title: block?.title || 'Explanation block',
     style: block?.style || 'sky',
+    variant: block?.variant === 'edge' ? 'edge' : 'filled',
     content: block?.content || block?.text || '',
     mediaUrl: block?.mediaUrl || ''
   }));
@@ -124,6 +152,7 @@ const QUESTION_TYPES = [
 ];
 
 const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio', initialLesson = null }) => {
+  const lessonDraftStorageKey = 'lessonStudio:addDraft:v1';
   const [lessonMeta, setLessonMeta] = useState({
     subject: '',
     title: '',
@@ -139,14 +168,31 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
   const [showStatusToast, setShowStatusToast] = useState(false);
   const [activeEditorTab, setActiveEditorTab] = useState('explanation');
   const [draggingBlockIndex, setDraggingBlockIndex] = useState(null);
+  const [dragOverBlockIndex, setDragOverBlockIndex] = useState(null);
+  const [dragOverBlockPosition, setDragOverBlockPosition] = useState('before');
   const [blockHubOpen, setBlockHubOpen] = useState(false);
   const [blockHubSubject, setBlockHubSubject] = useState('');
   const [blockHubDraft, setBlockHubDraft] = useState({});
   const [blockHubDirty, setBlockHubDirty] = useState(false);
   const [blockHubTab, setBlockHubTab] = useState('subject');
-  const [presetDraft, setPresetDraft] = useState(DEFAULT_EXPLANATION_PRESETS);
+  const [presetDraft, setPresetDraft] = useState(() => normalizePresetBlocks(DEFAULT_EXPLANATION_PRESETS));
   const [presetDirty, setPresetDirty] = useState(false);
   const [audienceView, setAudienceView] = useState('standard');
+
+  const nextAutoStyleIndexRef = useRef(0);
+  const nextAutoVariantIndexRef = useRef(0);
+  const getNextAutoStyle = () => {
+    const order = AUTO_BLOCK_STYLE_ORDER;
+    const idx = nextAutoStyleIndexRef.current % order.length;
+    nextAutoStyleIndexRef.current += 1;
+    return order[idx] || 'sky';
+  };
+  const getNextAutoVariant = () => {
+    const order = AUTO_BLOCK_VARIANT_ORDER;
+    const idx = nextAutoVariantIndexRef.current % order.length;
+    nextAutoVariantIndexRef.current += 1;
+    return order[idx] || 'filled';
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -223,6 +269,63 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
     setActiveEditorTab('explanation');
   }, [initialLesson]);
 
+  // Persist Add-lesson draft so closing the modal to review something doesn't lose work.
+  // Only applies when creating a new lesson (not editing an existing one).
+  useEffect(() => {
+    if (initialLesson) return;
+    try {
+      const raw = localStorage.getItem(lessonDraftStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.lessonMeta && typeof parsed.lessonMeta === 'object') {
+          setLessonMeta((prev) => ({
+            ...prev,
+            subject: parsed.lessonMeta.subject || prev.subject,
+            title: parsed.lessonMeta.title || prev.title,
+            subtitle: parsed.lessonMeta.subtitle || prev.subtitle,
+            objective: parsed.lessonMeta.objective || prev.objective
+          }));
+        }
+        if (Array.isArray(parsed.sections) && parsed.sections.length) {
+          setSections(parsed.sections);
+          const idx = Number(parsed.activeSection);
+          if (Number.isInteger(idx) && idx >= 0 && idx < parsed.sections.length) {
+            setActiveSection(idx);
+          }
+        }
+        if (parsed.audienceView === 'kids' || parsed.audienceView === 'standard') {
+          setAudienceView(parsed.audienceView);
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    // run once per mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (initialLesson) return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(
+          lessonDraftStorageKey,
+          JSON.stringify({
+            lessonMeta,
+            sections,
+            activeSection,
+            audienceView,
+            updatedAt: Date.now()
+          })
+        );
+      } catch (e) {
+        // ignore
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [audienceView, activeSection, initialLesson, lessonMeta, sections]);
+
   useEffect(() => {
     try {
       const stored = localStorage.getItem('lessonBlockDefaults');
@@ -236,7 +339,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
       if (storedPresets) {
         const parsedPresets = JSON.parse(storedPresets);
         if (Array.isArray(parsedPresets)) {
-          setPresetDraft(parsedPresets);
+          setPresetDraft(normalizePresetBlocks(parsedPresets));
         }
       }
     } catch (error) {
@@ -245,6 +348,13 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
   }, []);
 
   const current = sections[activeSection];
+
+  const definitionStylePreset = useMemo(() => {
+    const key = audienceView === 'kids' ? 'explanationBlocksKids' : 'explanationBlocksStandard';
+    const first = normalizeExplanationBlocks(current?.[key] || [])[0];
+    const styleValue = first?.style || 'sky';
+    return BLOCK_STYLE_PRESETS.find((preset) => preset.value === styleValue) || BLOCK_STYLE_PRESETS[0];
+  }, [current, audienceView]);
 
   const getAudienceBlocksKey = () => (audienceView === 'kids' ? 'explanationBlocksKids' : 'explanationBlocksStandard');
 
@@ -265,12 +375,17 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
   };
 
   const addExplanationBlock = (overrides = {}) => {
+    const resolvedOverrides = {
+      ...overrides,
+      style: overrides?.style || getNextAutoStyle(),
+      variant: overrides?.variant || getNextAutoVariant(),
+    };
     setSections((prev) =>
       prev.map((section, idx) => {
         if (idx !== activeSection) return section;
         const key = getAudienceBlocksKey();
         const blocks = normalizeExplanationBlocks(section[key]);
-        return { ...section, [key]: [...blocks, createExplanationBlock(overrides)] };
+        return { ...section, [key]: [...blocks, createExplanationBlock(resolvedOverrides)] };
       })
     );
   };
@@ -729,7 +844,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
 
               {activeEditorTab === 'explanation' && (
                 <div className="mt-5 space-y-4">
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className={`rounded-2xl border border-slate-200 bg-white p-4 border-t-4 border-l-4 ${definitionStylePreset.edge || ''}`}>
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                       <span className="text-xs font-semibold uppercase text-slate-500">Definition</span>
                     </div>
@@ -773,7 +888,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                         </button>
                         {presetDraft.map((preset) => (
                           <button
-                            key={preset.title}
+                            key={preset.id || preset.title}
                             type="button"
                             onClick={() => addExplanationBlock({ title: preset.title, style: preset.style })}
                             className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold text-slate-500"
@@ -787,24 +902,72 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                     <div className="mt-4 space-y-4">
                       {normalizeExplanationBlocks(audienceView === 'kids' ? current?.explanationBlocksKids : current?.explanationBlocksStandard).map((block, idx) => {
                         const stylePreset = BLOCK_STYLE_PRESETS.find((preset) => preset.value === block.style) || BLOCK_STYLE_PRESETS[0];
+                        const blockShellClass = block.variant === 'edge'
+                          ? `bg-white border border-slate-200 border-t-4 border-l-4 ${stylePreset.edge || ''}`
+                          : `border ${stylePreset.card}`;
+                        const showDropIndicator =
+                          draggingBlockIndex !== null &&
+                          dragOverBlockIndex === idx &&
+                          draggingBlockIndex !== idx;
                         return (
                           <div
                             key={block.id}
-                            className={`rounded-2xl border border-slate-200 p-4 ${stylePreset.card}`}
-                            draggable
-                            onDragStart={() => setDraggingBlockIndex(idx)}
-                            onDragOver={(event) => event.preventDefault()}
+                            className={`relative rounded-2xl p-4 pt-6 ${blockShellClass}`}
+                            onDragOver={(event) => {
+                              if (draggingBlockIndex === null) return;
+                              event.preventDefault();
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              const mid = rect.top + rect.height / 2;
+                              const pos = event.clientY < mid ? 'before' : 'after';
+                              setDragOverBlockIndex(idx);
+                              setDragOverBlockPosition(pos);
+                            }}
+                            onDragLeave={() => {
+                              // keep indicator stable while moving between children; only clear if we were over this block
+                              setDragOverBlockIndex((prev) => (prev === idx ? null : prev));
+                            }}
                             onDrop={() => {
                               if (draggingBlockIndex === null) return;
-                              moveExplanationBlock(draggingBlockIndex, idx);
+                              const blocks = normalizeExplanationBlocks(audienceView === 'kids' ? current?.explanationBlocksKids : current?.explanationBlocksStandard);
+                              const maxInsert = Math.max(0, blocks.length - 1);
+                              const isAfter = dragOverBlockPosition === 'after';
+                              let targetIndex = idx + (isAfter ? 1 : 0);
+                              targetIndex = Math.max(0, Math.min(blocks.length, targetIndex));
+                              // Convert to a valid in-array index after removal.
+                              const insertIndex = draggingBlockIndex < targetIndex ? targetIndex - 1 : targetIndex;
+                              moveExplanationBlock(draggingBlockIndex, Math.max(0, Math.min(maxInsert, insertIndex)));
                               setDraggingBlockIndex(null);
+                              setDragOverBlockIndex(null);
                             }}
                           >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <GripVertical className="h-4 w-4 text-slate-400" />
+                            {showDropIndicator && (
+                              <div
+                                className={`pointer-events-none absolute left-3 right-3 h-0.5 rounded bg-indigo-600 ${
+                                  dragOverBlockPosition === 'after' ? 'bottom-2' : 'top-2'
+                                }`}
+                              />
+                            )}
+                            <div className="absolute left-4 top-0 -translate-y-1/2">
+                              <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 shadow-sm">
+                                <button
+                                  type="button"
+                                  className="cursor-grab rounded-full p-0.5 text-slate-400 hover:text-slate-600"
+                                  draggable
+                                  onDragStart={(event) => {
+                                    event.dataTransfer.effectAllowed = 'move';
+                                    try { event.dataTransfer.setData('text/plain', block.id); } catch (e) {}
+                                    setDraggingBlockIndex(idx);
+                                  }}
+                                  onDragEnd={() => {
+                                    setDraggingBlockIndex(null);
+                                    setDragOverBlockIndex(null);
+                                  }}
+                                  title="Drag block"
+                                >
+                                  <GripVertical className="h-3.5 w-3.5" />
+                                </button>
                                 <input
-                                  className="w-56 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm font-semibold text-slate-700"
+                                  className="w-48 bg-transparent text-xs font-semibold text-slate-700 outline-none"
                                   value={block.title}
                                   onChange={(event) => updateExplanationBlock(idx, { title: event.target.value })}
                                   placeholder="Block title"
@@ -813,11 +976,13 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                                   {stylePreset.label}
                                 </span>
                               </div>
-                              <div className="flex items-center gap-2">
+                            </div>
+                            <div className="absolute right-3 top-0 -translate-y-1/2">
+                              <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 shadow-sm">
                                 <label className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500">
                                   <Palette className="h-3 w-3" />
                                   <select
-                                    className="rounded-full border border-slate-300 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600"
+                                    className="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600"
                                     value={block.style}
                                     onChange={(event) => updateExplanationBlock(idx, { style: event.target.value })}
                                   >
@@ -831,7 +996,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                                 <button
                                   type="button"
                                   onClick={() => moveExplanationBlock(idx, idx - 1)}
-                                  className="rounded-full border border-slate-300 bg-white px-2 py-1 text-[10px] text-slate-600"
+                                  className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-600"
                                   title="Move up"
                                 >
                                   <ArrowUp className="h-3 w-3" />
@@ -839,7 +1004,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                                 <button
                                   type="button"
                                   onClick={() => moveExplanationBlock(idx, idx + 1)}
-                                  className="rounded-full border border-slate-300 bg-white px-2 py-1 text-[10px] text-slate-600"
+                                  className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-600"
                                   title="Move down"
                                 >
                                   <ArrowDown className="h-3 w-3" />
@@ -848,15 +1013,14 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                                   <button
                                     type="button"
                                     onClick={() => removeExplanationBlock(idx)}
-                                    className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white px-2 py-1 text-[10px] text-slate-500"
+                                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500"
                                   >
                                     <X className="h-3 w-3" />
-                                    Remove
                                   </button>
                                 )}
                               </div>
                             </div>
-                            <div className="mt-3">
+                            <div className="mt-1">
                               <RichTextEditor
                                 value={block.content}
                                 onChange={(value) => updateExplanationBlock(idx, { content: value })}
@@ -1273,7 +1437,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                       }
                       setBlockHubDraft((prev) => ({
                         ...prev,
-                        [blockHubSubject]: presetDraft.map((preset) => createExplanationBlock({ title: preset.title, style: preset.style }))
+                        [blockHubSubject]: presetDraft.map((preset) => createExplanationBlock({ title: preset.title, style: preset.style, variant: getNextAutoVariant() }))
                       }));
                       setBlockHubDirty(true);
                     }}
@@ -1301,9 +1465,11 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                   <div className="space-y-3">
                     {(normalizeExplanationBlocks(blockHubDraft?.[blockHubSubject]) || []).map((block, idx) => {
                       const stylePreset = BLOCK_STYLE_PRESETS.find((preset) => preset.value === block.style) || BLOCK_STYLE_PRESETS[0];
+                      const blockShellClass = block.variant === 'edge'
+                        ? `bg-white border border-slate-200 border-t-4 border-l-4 ${stylePreset.edge || ''}`
+                        : `border ${stylePreset.card}`;
                       return (
-                        <div key={block.id} className={`rounded-2xl border border-slate-200 bg-white p-3`}
-                        >
+                        <div key={block.id} className={`rounded-2xl p-3 ${blockShellClass}`}>
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <input
                               className="w-64 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm font-semibold text-slate-700"
@@ -1356,7 +1522,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                       type="button"
                       onClick={() => {
                         const next = normalizeExplanationBlocks(blockHubDraft?.[blockHubSubject]);
-                        next.push(createExplanationBlock());
+                        next.push(createExplanationBlock({ style: getNextAutoStyle(), variant: getNextAutoVariant() }));
                         setBlockHubDraft((prev) => ({ ...prev, [blockHubSubject]: next }));
                         setBlockHubDirty(true);
                       }}
@@ -1389,7 +1555,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                   {presetDraft.map((preset, idx) => {
                     const stylePreset = BLOCK_STYLE_PRESETS.find((item) => item.value === preset.style) || BLOCK_STYLE_PRESETS[0];
                     return (
-                      <div key={`${preset.title}-${idx}`} className="rounded-2xl border border-slate-200 bg-white p-3">
+                      <div key={preset.id || `preset-${idx}`} className="rounded-2xl border border-slate-200 bg-white p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <input
                             className="w-64 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm font-semibold text-slate-700"
@@ -1441,7 +1607,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                   <button
                     type="button"
                     onClick={() => {
-                      setPresetDraft((prev) => [...prev, { title: 'New preset', style: 'sky' }]);
+                      setPresetDraft((prev) => [...prev, createPresetBlock({ style: getNextAutoStyle() })]);
                       setPresetDirty(true);
                     }}
                     className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700"

@@ -123,6 +123,7 @@ const SalariesPage = () => {
         search: (debouncedSearch || '').trim() || undefined,
         sortBy: 'createdAt',
         order: 'desc',
+        light: true,
       };
 
       if (globalFilter && globalFilter !== 'all') {

@@ -325,7 +325,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
       if (attendance === "missed_by_student") {
         sanitizedPayload.countAbsentForBilling = Boolean(rest.countAbsentForBilling);
         sanitizedPayload.absenceExcused = Boolean(rest.absenceExcused);
-      } else if (attendance === "cancelled_by_teacher") {
+      } else if (attendance === "cancelled_by_teacher" || attendance === "cancelled_by_student") {
         if (!cancellationReason) {
           setShowToast({ show: true, type: "error", message: "Please provide a cancellation reason." });
           setLoading(false);
@@ -434,7 +434,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
   const isAttended = classReport.attendance === "attended";
   const isAbsent = classReport.attendance === "missed_by_student";
-  const isCancelled = classReport.attendance === "cancelled_by_teacher";
+  const isCancelled = classReport.attendance === "cancelled_by_teacher" || classReport.attendance === "cancelled_by_student";
 
   if (!derivedClassId) {
     return (
@@ -546,11 +546,12 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
           {/* === First Row: Attendance + Billing === */}
           <div className="space-y-2">
             <label className="block font-semibold">Attendance</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {[
                 { key: "attended", label: "Attended" },
                 { key: "missed_by_student", label: "Absent" },
-                { key: "cancelled_by_teacher", label: "Cancelled" }
+                { key: "cancelled_by_teacher", label: "Cancelled by teacher" },
+                { key: "cancelled_by_student", label: "Cancelled by student" }
               ].map(({ key, label }) => (
                 <button
                   key={key}
@@ -563,7 +564,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                         key === "missed_by_student"
                           ? (typeof prev.countAbsentForBilling === "boolean" ? prev.countAbsentForBilling : true)
                           : false,
-                      cancellationReason: key === "cancelled_by_teacher" ? prev.cancellationReason : "",
+                      cancellationReason: (key === "cancelled_by_teacher" || key === "cancelled_by_student") ? prev.cancellationReason : "",
                     }))
                   }
                   className={`recite-toggle w-full ${
@@ -577,21 +578,36 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
             {/* Show Count for Billing toggle ONLY if absent */}
             {classReport.attendance === "missed_by_student" && (
-              <div className="flex items-center space-x-2 mt-2">
-                <input
-                  type="checkbox"
-                  id="countAbsent"
-                  checked={classReport.countAbsentForBilling || false}
-                  onChange={(e) =>
-                    setClassReport({
-                      ...classReport,
-                      countAbsentForBilling: e.target.checked,
-                    })
-                  }
-                />
-                <label htmlFor="countAbsent" className="text-sm">
-                  Count this absence for billing
-                </label>
+              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <label htmlFor="countAbsent" className="text-sm font-medium text-slate-800">
+                      Count this absence for billing
+                    </label>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Turn on only when this missed class should still be billable.
+                    </p>
+                  </div>
+                  <button
+                    id="countAbsent"
+                    type="button"
+                    role="switch"
+                    aria-checked={Boolean(classReport.countAbsentForBilling)}
+                    onClick={() =>
+                      setClassReport((prev) => ({
+                        ...prev,
+                        countAbsentForBilling: !Boolean(prev.countAbsentForBilling),
+                      }))
+                    }
+                    className={`inline-flex min-w-[72px] items-center justify-center rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      classReport.countAbsentForBilling
+                        ? "bg-emerald-600 text-white"
+                        : "bg-slate-300 text-slate-700"
+                    }`}
+                  >
+                    {classReport.countAbsentForBilling ? "ON" : "OFF"}
+                  </button>
+                </div>
               </div>
             )}
           </div>

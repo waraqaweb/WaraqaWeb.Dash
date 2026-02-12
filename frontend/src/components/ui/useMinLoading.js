@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 
-const DEFAULT_MIN_DURATION_MS = 5000;
+// NOTE: Historically this hook enforced a *minimum visible spinner duration*.
+// That caused UX issues where empty states were delayed even when the API
+// returned instantly.
+//
+// New behavior: delayed-show spinner.
+// - If loading resolves quickly (< delayMs), the spinner never appears.
+// - If loading is slow, spinner appears after delayMs.
+// - Spinner hides immediately when loading becomes false.
+const DEFAULT_DELAY_MS = 150;
 
-const useMinLoading = (loading, minDurationMs = DEFAULT_MIN_DURATION_MS) => {
-  const [showLoading, setShowLoading] = useState(Boolean(loading));
-  const startRef = useRef(0);
+const useMinLoading = (loading, delayMs = DEFAULT_DELAY_MS) => {
+  const [showLoading, setShowLoading] = useState(false);
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -14,32 +21,34 @@ const useMinLoading = (loading, minDurationMs = DEFAULT_MIN_DURATION_MS) => {
     }
 
     if (loading) {
-      startRef.current = Date.now();
-      setShowLoading(true);
-      return undefined;
-    }
-
-    if (!showLoading) return undefined;
-
-    const elapsed = Date.now() - (startRef.current || Date.now());
-    const remaining = Math.max(0, Number(minDurationMs) - elapsed);
-    if (remaining === 0) {
-      setShowLoading(false);
-      return undefined;
-    }
-
-    timerRef.current = setTimeout(() => {
-      setShowLoading(false);
-      timerRef.current = null;
-    }, remaining);
-
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
+      const delay = Number(delayMs) || 0;
+      if (delay <= 0) {
+        setShowLoading(true);
+        return undefined;
       }
-    };
-  }, [loading, minDurationMs, showLoading]);
+      timerRef.current = setTimeout(() => {
+        setShowLoading(true);
+        timerRef.current = null;
+      }, delay);
+      return () => {
+        if (timerRef.current) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+      };
+    }
+
+    // Not loading: hide immediately.
+    setShowLoading(false);
+    return undefined;
+  }, [loading, delayMs]);
+
+  useEffect(() => () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
 
   return showLoading;
 };

@@ -14,6 +14,7 @@ const Class = require('../models/Class');
 const Invoice = require('../models/Invoice');
 const Student = require('../models/Student');
 const Vacation = require('../models/Vacation');
+const Setting = require('../models/Setting');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { decodeToken } = require('../utils/jwt');
 
@@ -369,6 +370,15 @@ router.get('/stats', authenticateToken, async (req, res) => {
     // Teacher view
     if (role === 'teacher') {
       const teacherId = req.user._id;
+
+      // Settings (with safe defaults)
+      const [firstClassWindowSetting, teacherReportWindowSetting] = await Promise.all([
+        Setting.findOne({ key: 'firstClassWindowHours' }).select('value').lean().catch(() => null),
+        Setting.findOne({ key: 'teacher_report_window_hours' }).select('value').lean().catch(() => null),
+      ]);
+      const firstClassWindowHours = Number(firstClassWindowSetting?.value) || 24;
+      const teacherReportWindowHours = Number(teacherReportWindowSetting?.value) || 72;
+      const teacherReportWindowMs = teacherReportWindowHours * 60 * 60 * 1000;
       // Active student vacations for this teacher's students (last 90 days)
       let studentsOnVacationList = [];
       try {
@@ -502,93 +512,71 @@ router.get('/stats', authenticateToken, async (req, res) => {
         }
       }
 
-      // Pending reports: past classes (in last 7 days) without submitted classReport.submittedAt
+      // Pending reports: past classes (recent window) where the report submission window is still open
+      // (deadline not expired / admin extension active) AND the report is not submitted.
+      const now = new Date();
       const pastWindow = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      const handledAttendances = ['attended', 'missed_by_student', 'cancelled_by_teacher', 'no_show_both'];
-      const handledStatuses = [
-        'completed',
-        'attended',
-        'missed_by_student',
-        'cancelled_by_teacher',
-        'cancelled_by_guardian',
-        'cancelled_by_admin',
-        'no_show_both',
-        'cancelled'
-      ];
 
-      // Select past classes in the recent window that have no submitted report
-      // and whose attendance wasn't recorded as attended/missed/cancelled.
-      // NOTE: use $and to avoid accidental key overwrites (duplicate $or keys).
+      const reportNotSubmittedFilter = {
+        $and: [
+          { $or: [{ 'classReport.submittedAt': { $exists: false } }, { 'classReport.submittedAt': null }] },
+          { 'reportSubmission.status': { $ne: 'submitted' } },
+        ],
+      };
+
+      // Window is open if:
+      // - teacherDeadline exists and is in the future
+      // - OR admin extension is active
+      // - OR (fallback) if teacherDeadline missing, scheduled end + configured window is still in the future
+      const windowOpenFilter = {
+        $or: [
+          { 'reportSubmission.teacherDeadline': { $gte: now } },
+          { 'reportSubmission.adminExtension.granted': true, 'reportSubmission.adminExtension.expiresAt': { $gte: now } },
+          {
+            $expr: {
+              $gte: [
+                {
+                  $ifNull: [
+                    '$reportSubmission.teacherDeadline',
+                    {
+                      $add: [
+                        { $ifNull: ['$endsAt', '$scheduledDate'] },
+                        teacherReportWindowMs,
+                      ],
+                    },
+                  ],
+                },
+                now,
+              ],
+            },
+          },
+        ],
+      };
+
+      // Exclude reports that are explicitly blocked/unsubmittable.
+      const reportStatusAllowed = {
+        'reportSubmission.status': { $nin: ['submitted', 'expired', 'unreported'] },
+      };
+
       const pendingReports = await Class.find({
         teacher: teacherId,
-        scheduledDate: { $lt: new Date(), $gte: pastWindow },
-        $and: [
-          {
-            $or: [
-              { 'classReport.submittedAt': { $exists: false } },
-              { 'classReport.submittedAt': null }
-            ]
-          },
-          {
-            $or: [
-              { 'classReport.attendance': { $exists: false } },
-              { 'classReport.attendance': { $nin: handledAttendances } }
-            ]
-          },
-          {
-            // Also exclude classes where attendance was recorded via the top-level
-            // attendance object or where status already indicates handled.
-            $nor: [
-              { status: { $in: handledStatuses } },
-              { 'attendance.markedAt': { $exists: true } },
-              { 'attendance.teacherPresent': true },
-              { 'attendance.studentPresent': true }
-            ]
-          }
-        ]
+        scheduledDate: { $lt: now, $gte: pastWindow },
+        ...reportNotSubmittedFilter,
+        ...windowOpenFilter,
+        ...reportStatusAllowed,
       })
+        .sort({ scheduledDate: -1 })
         .limit(20)
         .populate('student.guardianId', 'firstName lastName')
         .lean();
 
-      // Older overdue reports: classes older than the pastWindow with no submitted report
-      // Only include older classes if they are still within the teacher submission
-      // allowance window (teacherDeadline in the future) or an admin extension
-      // was granted and hasn't expired.
-      const now = new Date();
-      // Older classes: include only those without submitted report and where
-      // attendance does not indicate the class was handled (attended/missed/cancelled).
+      // Older reports (past the recent window) that are still submit-able (admin extension or still open).
       const overdueReports = await Class.find({
         teacher: teacherId,
         scheduledDate: { $lt: pastWindow },
-        $and: [
-          {
-            $or: [
-              { 'classReport.submittedAt': { $exists: false } },
-              { 'classReport.submittedAt': null }
-            ]
-          },
-          {
-            $or: [
-              { 'reportSubmission.teacherDeadline': { $gte: now } },
-              { 'reportSubmission.adminExtension.granted': true, 'reportSubmission.adminExtension.expiresAt': { $gte: now } }
-            ]
-          },
-          {
-            $or: [
-              { 'classReport.attendance': { $exists: false } },
-              { 'classReport.attendance': { $nin: handledAttendances } }
-            ]
-          },
-          {
-            $nor: [
-              { status: { $in: handledStatuses } },
-              { 'attendance.markedAt': { $exists: true } },
-              { 'attendance.teacherPresent': true },
-              { 'attendance.studentPresent': true }
-            ]
-          }
-        ]
+        ...reportNotSubmittedFilter,
+        ...windowOpenFilter,
+        ...reportStatusAllowed,
       })
         .sort({ scheduledDate: -1 })
         .limit(20)
@@ -633,40 +621,49 @@ router.get('/stats', authenticateToken, async (req, res) => {
         console.log('dashboard: overdueReports (deduped):', overdueReportsDedupe.map(c => ({ id: c._id, scheduledDate: c.scheduledDate, status: c.status })));
       }
 
-      // Pending first-class reminders: students who have exactly one class recorded (ever)
-      // and that class has no submitted report yet. Limit to 20.
+      // Pending first-class reminders:
+      // - show ONLY upcoming/not-ended classes within the configured window
+      // - only when this is the student's first-ever class with this teacher
+      const firstWindowEnd = new Date(now.getTime() + firstClassWindowHours * 60 * 60 * 1000);
       const pendingFirstAgg = await Class.aggregate([
-        { $match: { teacher: teacherId } },
-        { $group: { _id: '$student.studentId', count: { $sum: 1 }, classIds: { $push: '$_id' } } },
-        { $match: { count: 1 } },
-        { $unwind: '$classIds' },
+        {
+          $match: {
+            teacher: teacherId,
+            status: { $in: ['scheduled', 'in_progress'] },
+            scheduledDate: { $lte: firstWindowEnd },
+            $or: [
+              { endsAt: { $gte: now } },
+              { endsAt: { $exists: false }, scheduledDate: { $gte: now } },
+              { endsAt: null, scheduledDate: { $gte: now } },
+            ],
+          },
+        },
         {
           $lookup: {
             from: 'classes',
-            localField: 'classIds',
-            foreignField: '_id',
-            as: 'classDoc'
-          }
-        },
-        { $unwind: '$classDoc' },
-        { $replaceRoot: { newRoot: '$classDoc' } },
-        // Ensure the single-class candidate has no submitted report and no recorded attendance
-        // of attended/missed/cancelled so it truly needs a report.
-        { $match: { 
-            $or: [ { 'classReport.submittedAt': { $exists: false } }, { 'classReport.submittedAt': null } ],
-            $or: [
-              { 'classReport.attendance': { $exists: false } },
-              { 'classReport.attendance': { $nin: ['attended', 'missed_by_student', 'cancelled_by_teacher', 'cancelled'] } }
+            let: { studentId: '$student.studentId', when: '$scheduledDate' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$teacher', teacherId] },
+                      { $eq: ['$student.studentId', '$$studentId'] },
+                      { $lt: ['$scheduledDate', '$$when'] },
+                      { $ne: ['$status', 'pattern'] },
+                    ],
+                  },
+                },
+              },
+              { $limit: 1 },
             ],
-            $nor: [
-              { status: { $in: ['attended', 'missed_by_student', 'cancelled_by_teacher', 'cancelled'] } },
-              { 'attendance.markedAt': { $exists: true } },
-              { 'attendance.teacherPresent': true },
-              { 'attendance.studentPresent': true }
-            ]
-         } },
-        { $sort: { scheduledDate: -1 } },
-        { $limit: 20 }
+            as: 'prior',
+          },
+        },
+        { $match: { prior: { $size: 0 } } },
+        { $project: { prior: 0 } },
+        { $sort: { scheduledDate: 1 } },
+        { $limit: 20 },
       ]).exec();
 
       const pendingFirstClassStudents = pendingFirstAgg || [];

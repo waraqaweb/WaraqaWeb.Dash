@@ -9,7 +9,9 @@
     "dev": "nodemon server.js",
     "create-admin": "node scripts/createAdmin.js",
     "upsert-admin": "node scripts/upsertAdmin.js",
-    "create-users": "node scripts/seedUsers.js"
+    "create-users": "node scripts/seedUsers.js",
+    "backfill:class-endsat": "node scripts/backfillClassEndsAt.js",
+    "diagnose:class-endsat": "node scripts/diagnoseClassEndsAt.js"
   },
   "keywords": [
     "education",

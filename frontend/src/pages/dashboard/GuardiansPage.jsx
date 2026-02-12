@@ -98,7 +98,6 @@ const GuardiansPage = () => {
     try {
       const baseParams = {
         role: 'guardian',
-        search: debouncedSearch || undefined,
       };
 
       const makeRequest = (overrides = {}) => api.get('/users', {
@@ -124,23 +123,14 @@ const GuardiansPage = () => {
     } catch (err) {
       console.warn('Failed to fetch guardian status counts', err?.message || err);
     }
-  }, [debouncedSearch]);
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchTerm), 300);
     return () => clearTimeout(t);
   }, [searchTerm]);
 
-  // Global search should search across all status tabs and all pages.
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch]);
-
-  useEffect(() => {
-    if ((debouncedSearch || '').trim() && statusFilter !== 'all') {
-      setStatusFilter('all');
-    }
-  }, [debouncedSearch, statusFilter]);
+  // Search is client-side (Excel-like): do not reset pagination or refetch.
 
   useEffect(() => {
     guardiansRef.current = guardians || [];
@@ -151,7 +141,6 @@ const GuardiansPage = () => {
       const requestSignature = JSON.stringify({
         page: currentPage,
         limit: itemsPerPage,
-        search: (debouncedSearch || '').trim() || undefined,
         statusFilter,
         sortBy,
         order: sortOrder,
@@ -181,7 +170,6 @@ const GuardiansPage = () => {
       const cacheKey = makeCacheKey('guardians:list', 'admin', {
         page: currentPage,
         limit: itemsPerPage,
-        search: (debouncedSearch || '').trim() || undefined,
         statusFilter,
         sortBy,
         order: sortOrder,
@@ -206,7 +194,6 @@ const GuardiansPage = () => {
         role: 'guardian',
         page: currentPage,
         limit: itemsPerPage,
-        search: debouncedSearch,
         sortBy,
         order: sortOrder,
       };
@@ -240,7 +227,7 @@ const GuardiansPage = () => {
       setLoading(false);
       fetchGuardiansInFlightRef.current = false;
     }
-  }, [currentPage, debouncedSearch, fetchStatusCounts, itemsPerPage, sortBy, sortOrder, statusFilter]);
+  }, [currentPage, fetchStatusCounts, itemsPerPage, sortBy, sortOrder, statusFilter]);
 
   useEffect(() => {
     fetchGuardians();

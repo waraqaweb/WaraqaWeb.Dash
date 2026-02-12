@@ -75,6 +75,9 @@ export const updateLibraryItem = (itemId, payload) =>
 export const deleteLibraryItem = (itemId) =>
   handle(() => api.delete(`/library/items/${itemId}`));
 
+export const reorderLibraryItems = (ids, options = {}) =>
+  handle(() => api.post('/library/items/reorder', { ids, ...options }));
+
 export const uploadLibraryAsset = (formData) =>
   handle(() =>
     api.post('/library/items/upload', formData, {

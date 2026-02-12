@@ -15,7 +15,6 @@ import {
   Pencil, Copy, Repeat, Star, FileText, RotateCcw, Globe, MessageCircle, Image,
 } from "lucide-react";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
-import useMinLoading from "../../components/ui/useMinLoading";
 import CopyButton from "../../components/ui/CopyButton";
 import EditClassModal from "../../components/dashboard/EditClassModal";
 import CreateClassModal from "../../components/dashboard/CreateClassModal";
@@ -395,7 +394,8 @@ const ClassesPage = ({ isActive = true }) => {
 
   const [loading, setLoading] = useState(true);
   const [isFetching, setIsFetching] = useState(false);
-  const showLoading = useMinLoading(loading);
+  const [showDelayedLoading, setShowDelayedLoading] = useState(false);
+  const loadingDelayTimerRef = useRef(null);
   const [error, setError] = useState("");
   const [sortBy] = useState("scheduledDate");
   const [sortOrder] = useState("asc");
@@ -690,7 +690,7 @@ const ClassesPage = ({ isActive = true }) => {
   useEffect(() => {
     const t = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm || "");
-    }, 300);
+    }, 120);
     return () => clearTimeout(t);
   }, [searchTerm]);
 
@@ -765,11 +765,55 @@ const ClassesPage = ({ isActive = true }) => {
 
   const filteredClasses = useMemo(() => {
     let working = classes || [];
+
+    if (normalizedSearchTerm) {
+      const parts = normalizedSearchTerm.split(/\s+/).filter(Boolean);
+      working = working.filter((classItem) => {
+        const studentFirst = (classItem?.student?.studentId?.firstName || classItem?.student?.firstName || '').toLowerCase();
+        const studentLast = (classItem?.student?.studentId?.lastName || classItem?.student?.lastName || '').toLowerCase();
+        const studentFull = `${studentFirst} ${studentLast}`.replace(/\s+/g, ' ').trim();
+        const studentFullReversed = `${studentLast} ${studentFirst}`.replace(/\s+/g, ' ').trim();
+
+        const teacherFirst = (classItem?.teacher?.firstName || '').toLowerCase();
+        const teacherLast = (classItem?.teacher?.lastName || '').toLowerCase();
+        const teacherFull = `${teacherFirst} ${teacherLast}`.replace(/\s+/g, ' ').trim();
+        const teacherFullReversed = `${teacherLast} ${teacherFirst}`.replace(/\s+/g, ' ').trim();
+
+        const guardianFirst = (classItem?.student?.guardianId?.firstName || '').toLowerCase();
+        const guardianLast = (classItem?.student?.guardianId?.lastName || '').toLowerCase();
+        const guardianFull = `${guardianFirst} ${guardianLast}`.replace(/\s+/g, ' ').trim();
+
+        const subject = String(classItem?.subject || '').toLowerCase();
+        const status = String(classItem?.status || '').toLowerCase();
+        const classId = String(classItem?._id || '').toLowerCase();
+
+        const searchable = [
+          studentFirst,
+          studentLast,
+          studentFull,
+          studentFullReversed,
+          teacherFirst,
+          teacherLast,
+          teacherFull,
+          teacherFullReversed,
+          guardianFull,
+          subject,
+          status,
+          classId,
+        ].filter(Boolean);
+
+        const directMatch = searchable.some((value) => value.includes(normalizedSearchTerm));
+        if (directMatch) return true;
+
+        return parts.every((part) => searchable.some((value) => value.includes(part)));
+      });
+    }
+
     if (globalFilter === 'pending_report' || globalFilter === 'missed_report') {
       working = working.filter((cls) => getDisplayStatus(cls) === globalFilter);
     }
     return working;
-  }, [classes, globalFilter, getDisplayStatus]);
+  }, [classes, globalFilter, getDisplayStatus, normalizedSearchTerm]);
 
 
   const mapAvailabilityResponse = useCallback((raw = {}) => createAvailabilityState({
@@ -809,7 +853,7 @@ const ClassesPage = ({ isActive = true }) => {
     setCurrentPage(1);
     loadedClassPagesRef.current = new Set();
     setClassesCorpus([]);
-  }, [isActive, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter, normalizedSearchTerm]);
+  }, [isActive, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -832,7 +876,6 @@ const ClassesPage = ({ isActive = true }) => {
     guardianFilter,
     tabFilter,
     currentPage,
-    normalizedSearchTerm,
     isAdminUser,
   ]);
 
@@ -1209,7 +1252,6 @@ const fetchClasses = useCallback(async () => {
         teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
         guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
         global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
-        search: normalizedSearchTerm || undefined,
       }
     );
 
@@ -1221,7 +1263,6 @@ const fetchClasses = useCallback(async () => {
       teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
       guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
       global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
-      search: normalizedSearchTerm || undefined,
     });
 
     if (fetchClassesInFlightRef.current && fetchClassesKeyRef.current === requestSignature) {
@@ -1284,10 +1325,6 @@ const fetchClasses = useCallback(async () => {
       params.status = globalFilter;
     }
 
-    if (normalizedSearchTerm) {
-      params.search = normalizedSearchTerm;
-    }
-
     const res = await api.get("/classes", { params, signal: controller.signal });
     if (requestId !== fetchClassesRequestIdRef.current) {
       return;
@@ -1338,7 +1375,6 @@ const fetchClasses = useCallback(async () => {
   currentPage,
   globalFilter,
   guardianFilter,
-  normalizedSearchTerm,
   statusFilter,
   tabFilter,
   teacherFilter,
@@ -2791,7 +2827,35 @@ fetchClassesRef.current = fetchClasses;
     return icons[status] || <Clock className="h-4 w-4" />;
   };
 
-  const isListLoading = showLoading || isFetching;
+  useEffect(() => {
+    // Show the spinner only if loading/fetching is actually slow.
+    // This avoids delaying empty-state rendering when the API returns quickly with no results.
+    if (loading || isFetching) {
+      if (loadingDelayTimerRef.current) {
+        clearTimeout(loadingDelayTimerRef.current);
+      }
+      loadingDelayTimerRef.current = setTimeout(() => {
+        setShowDelayedLoading(true);
+        loadingDelayTimerRef.current = null;
+      }, 350);
+      return;
+    }
+
+    if (loadingDelayTimerRef.current) {
+      clearTimeout(loadingDelayTimerRef.current);
+      loadingDelayTimerRef.current = null;
+    }
+    setShowDelayedLoading(false);
+  }, [loading, isFetching]);
+
+  useEffect(() => () => {
+    if (loadingDelayTimerRef.current) {
+      clearTimeout(loadingDelayTimerRef.current);
+      loadingDelayTimerRef.current = null;
+    }
+  }, []);
+
+  const isListLoading = showDelayedLoading && (loading || isFetching);
   const renderClassesList = () => (
     <div className="space-y-4">
       {isListLoading && filteredClasses.length === 0 ? (
@@ -3214,7 +3278,7 @@ fetchClassesRef.current = fetchClasses;
                 )}
 
                 {/* Class Report */}
-                {classItem?.classReport && (
+                {classItemForDetails?.classReport && (
                   <div className="flex-1 min-w-[250px] max-w-lg space-y-2">
                     <h4 className="font-medium text-gray-900 mb-2 border-b pb-1">Class Report</h4>
                     {!reportSubmitted ? (
@@ -3227,16 +3291,16 @@ fetchClassesRef.current = fetchClasses;
                           </div>
                         )}
 
-                        {classItem.classReport.surah?.name && (
+                        {classItemForDetails.classReport.surah?.name && (
                           <div>
-                            <span className="font-medium">Surah:</span> {classItem.classReport.surah.name}
-                            {classItem.classReport.surah.verse && <> (up to verse {classItem.classReport.surah.verse})</>}
+                            <span className="font-medium">Surah:</span> {classItemForDetails.classReport.surah.name}
+                            {classItemForDetails.classReport.surah.verse && <> (up to verse {classItemForDetails.classReport.surah.verse})</>}
                           </div>
                         )}
 
-                        {classItem.classReport.recitedQuran && (
+                        {classItemForDetails.classReport.recitedQuran && (
                           <div>
-                            <span className="font-medium">Quran Recitation:</span> {classItem.classReport.recitedQuran === "yes" ? "Yes" : "No"}
+                            <span className="font-medium">Quran Recitation:</span> {classItemForDetails.classReport.recitedQuran === "yes" ? "Yes" : "No"}
                           </div>
                         )}
 

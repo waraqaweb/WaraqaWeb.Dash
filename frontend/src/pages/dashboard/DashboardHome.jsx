@@ -1313,12 +1313,15 @@ const DashboardHome = ({ isActive = true }) => {
                 <RecentActivityCard />
               )}
 
-              <div className="bg-card rounded-lg border border-border p-6">
-                <h3 className="text-base sm:text-lg font-semibold text-foreground mb-2">Pending Reports ({pendingTotal || 0})</h3>
-                  <PendingReportsList
-                    reports={[...(data.pendingReports || []), ...(data.overdueReports || []).map(x => ({ ...x, _isOverdue: true }))]}
-                    onOpen={(r) => navigate(`/classes/${r._id || r.id}/report`, { state: { background: location, reportClass: r } })}
-                  />
+              <div className="bg-card rounded-2xl border border-border p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <h3 className="text-base sm:text-lg font-semibold text-foreground">Pending Reports</h3>
+                  <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-xs font-medium text-muted-foreground">{pendingTotal || 0}</span>
+                </div>
+                <PendingReportsList
+                  reports={[...(data.pendingReports || []), ...(data.overdueReports || []).map(x => ({ ...x, _isOverdue: true }))]}
+                  onOpen={(r) => navigate(`/classes/${r._id || r.id}/report`, { state: { background: location, reportClass: r } })}
+                />
               </div>
             </div>
           </div>

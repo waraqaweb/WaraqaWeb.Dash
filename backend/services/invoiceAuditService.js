@@ -42,7 +42,9 @@ async function findUninvoicedLessons(options = {}) {
 
   const activeInvoiceFilter = {
     deleted: { $ne: true },
-    status: { $nin: ['cancelled', 'refunded'] }
+    // Refunded invoices are still invoices; treat them as valid attachments so we don't
+    // double-invoice lessons that were previously paid/refunded.
+    status: { $nin: ['cancelled'] }
   };
 
   const invoiced = new Set();
@@ -88,7 +90,7 @@ async function findUninvoicedLessons(options = {}) {
     const billedInvoiceId = cls.billedInInvoiceId ? String(cls.billedInInvoiceId) : null;
     if (billedInvoiceId) {
       const linkMeta = invoiceLinkMap.get(billedInvoiceId);
-      const isValidInvoice = linkMeta && !linkMeta.deleted && !['cancelled', 'refunded'].includes(linkMeta.status);
+      const isValidInvoice = linkMeta && !linkMeta.deleted && !['cancelled'].includes(linkMeta.status);
       if (isValidInvoice) continue;
     }
 

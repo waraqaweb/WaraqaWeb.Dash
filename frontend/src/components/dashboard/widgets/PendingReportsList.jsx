@@ -40,6 +40,7 @@ const PendingReportsList = ({ reports = [], onOpen }) => {
     if (r.classReport && (r.classReport.submittedAt || r.classReport.submitted)) return 'submitted';
     if (r.report && (r.report.submitted === true || r.report.status === 'submitted')) return 'submitted';
     if (r.status === 'submitted' || r.submitted === true) return 'submitted';
+    if (r.reportSubmission?.status === 'submitted') return 'submitted';
 
     const now = new Date();
     // Per instructions:
@@ -60,8 +61,9 @@ const PendingReportsList = ({ reports = [], onOpen }) => {
     // If flagged as overdue (older classes still in allowance), mark overdue
     if (r._isOverdue) return 'overdue';
 
-    // Default to pending as a safe fallback
-    return 'pending';
+    // If the window has expired (or we can't determine), treat as overdue so it doesn't
+    // masquerade as pending.
+    return 'overdue';
   };
 
   // Deduplicate reports that refer to the same class instance (same teacher, student and scheduled time).
@@ -86,19 +88,28 @@ const PendingReportsList = ({ reports = [], onOpen }) => {
     }
   }
 
+  const visible = deduped.filter((r) => statusFor(r) !== 'submitted');
+  if (visible.length === 0) {
+    return <div className="text-sm text-muted-foreground">No pending reports.</div>;
+  }
+
   return (
-    <div className="space-y-2">
-      {deduped.slice(0, 12).map((r) => {
+    <div className="max-h-[420px] overflow-y-auto pr-2">
+      <div className="space-y-2">
+      {visible.slice(0, 50).map((r) => {
         const id = r._id || r.id || Math.random();
         const when = r.scheduledDate ? new Date(r.scheduledDate) : (r.startTime ? new Date(r.startTime) : null);
         const timeLabel = when ? formatClassDate(when) : (r.time || '—');
         const status = statusFor(r);
 
-        // Do not render items that are already submitted
-        if (status === 'submitted') return null;
+        const rowAccent = status === 'open'
+          ? 'border-violet-200 bg-violet-50/50'
+          : status === 'overdue'
+            ? 'border-amber-200 bg-amber-50/50'
+            : 'border-yellow-200 bg-yellow-50/50';
 
         return (
-          <div key={id} className="p-2 rounded-md hover:bg-muted transition-colors flex items-start gap-3">
+          <div key={id} className={`p-3 rounded-xl border ${rowAccent} hover:bg-muted/60 transition-colors flex items-start gap-3`}>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold truncate">{classLabel(r)}</div>
               <div className="text-xs text-muted-foreground">{timeLabel}</div>
@@ -123,12 +134,13 @@ const PendingReportsList = ({ reports = [], onOpen }) => {
               </div>
 
               <div>
-                <button onClick={() => onOpen && onOpen(r)} className="text-sm text-primary underline">Open</button>
+                <button onClick={() => onOpen && onOpen(r)} className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-sm hover:opacity-95">Open</button>
               </div>
             </div>
           </div>
         );
       })}
+      </div>
     </div>
   );
 };

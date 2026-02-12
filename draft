@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "new customized explanation blocks"
+git commit -m "improvements from todolist"
 git push origin main
 
 ---

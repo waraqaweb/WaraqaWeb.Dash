@@ -95,7 +95,6 @@
 					try {
 						const baseParams = {
 							role: 'teacher',
-							search: debouncedSearch || undefined,
 						};
 
 						const makeRequest = (overrides = {}) => api.get('/users', {
@@ -129,21 +128,10 @@
 					return () => clearTimeout(timer);
 				}, [searchTerm]);
 
-				// Global search should search across all status tabs and all pages.
-				useEffect(() => {
-					setCurrentPage(1);
-				}, [debouncedSearch]);
-
-				useEffect(() => {
-					if ((debouncedSearch || '').trim() && statusFilter !== 'all') {
-						setStatusFilter('all');
-					}
-				}, [debouncedSearch, statusFilter]);
-
 				useEffect(() => {
 					fetchTeachers();
 					// eslint-disable-next-line react-hooks/exhaustive-deps
-				}, [debouncedSearch, sortBy, sortOrder, statusFilter, currentPage]);
+				}, [sortBy, sortOrder, statusFilter, currentPage]);
 
 				useEffect(() => {
 					teachersRef.current = teachers || [];
@@ -154,7 +142,6 @@
 						const requestSignature = JSON.stringify({
 							page: currentPage,
 							limit: itemsPerPage,
-							search: (debouncedSearch || '').trim() || undefined,
 							sortBy,
 							order: sortOrder,
 							statusFilter,
@@ -184,7 +171,6 @@
 						const cacheKey = makeCacheKey('teachers:list', 'admin', {
 							page: currentPage,
 							limit: itemsPerPage,
-							search: (debouncedSearch || '').trim() || undefined,
 							sortBy,
 							order: sortOrder,
 							statusFilter,
@@ -210,7 +196,6 @@
 							role: 'teacher',
 							page: currentPage,
 							limit: itemsPerPage,
-							search: debouncedSearch,
 							sortBy,
 							order: sortOrder,
 						};

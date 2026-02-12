@@ -469,6 +469,10 @@ router.get('/', authenticateToken, async (req, res) => {
       order: rawOrder
     } = req.query;
 
+    const light = String(req.query.light || '').toLowerCase();
+    const lightMode = ['1', 'true', 'yes'].includes(light);
+    const includeDynamic = ['1', 'true', 'yes'].includes(String(req.query.includeDynamic || '').toLowerCase());
+
     const filter = {};
 
     const smartSort = ['1', 'true', 'yes'].includes(String(req.query.smartSort || '').toLowerCase());
@@ -650,24 +654,42 @@ router.get('/', authenticateToken, async (req, res) => {
       if (!ids.length) {
         invoices = [];
       } else {
-        const docs = await Invoice.find({ _id: { $in: ids } })
-          .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
-          .populate('teacher', 'firstName lastName email')
-          .populate('items.student', 'firstName lastName')
-          .populate('items.teacher', 'firstName lastName')
-          .populate('items.class', CLASS_FIELDS_FOR_INVOICE)
-          .lean();
+        let q = Invoice.find({ _id: { $in: ids } });
+        if (lightMode) {
+          q = q
+            .select('invoiceNumber invoiceName invoiceSlug status type createdAt updatedAt dueDate paidAt paidDate paymentDate billingPeriod internalTotals total amount guardian teacher')
+            .populate('guardian', 'firstName lastName email')
+            .populate('teacher', 'firstName lastName email');
+        } else {
+          q = q
+            .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+            .populate('teacher', 'firstName lastName email')
+            .populate('items.student', 'firstName lastName')
+            .populate('items.teacher', 'firstName lastName')
+            .populate('items.class', CLASS_FIELDS_FOR_INVOICE);
+        }
+        const docs = await q.lean();
 
         const byId = new Map((docs || []).map((doc) => [String(doc._id), doc]));
         invoices = ids.map((id) => byId.get(String(id))).filter(Boolean);
       }
     } else {
-      invoices = await Invoice.find(filter)
-        .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
-        .populate('teacher', 'firstName lastName email')
-        .populate('items.student', 'firstName lastName')
-        .populate('items.teacher', 'firstName lastName')
-        .populate('items.class', CLASS_FIELDS_FOR_INVOICE)
+      let q = Invoice.find(filter);
+      if (lightMode) {
+        q = q
+          .select('invoiceNumber invoiceName invoiceSlug status type createdAt updatedAt dueDate paidAt paidDate paymentDate billingPeriod internalTotals total amount guardian teacher')
+          .populate('guardian', 'firstName lastName email')
+          .populate('teacher', 'firstName lastName email');
+      } else {
+        q = q
+          .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+          .populate('teacher', 'firstName lastName email')
+          .populate('items.student', 'firstName lastName')
+          .populate('items.teacher', 'firstName lastName')
+          .populate('items.class', CLASS_FIELDS_FOR_INVOICE);
+      }
+
+      invoices = await q
         .sort({ [sortBy]: sortOrder })
         .skip(skip)
         .limit(parseInt(limit))
@@ -680,33 +702,22 @@ router.get('/', authenticateToken, async (req, res) => {
     // cause numbers to "revert" after a refresh. We now simply return the
     // persisted values as-is. If identifiers ever need refresh, that should be
     // done explicitly via an admin action, not on read.
-    const normalizedInvoices = await Promise.all(invoices.map(async (inv) => {
-      try {
-        const doc = await Invoice.findById(inv._id)
-          .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
-          .populate('teacher', 'firstName lastName email')
-          .populate('items.student', 'firstName lastName')
-          .populate('items.teacher', 'firstName lastName')
-          .populate('items.class', CLASS_FIELDS_FOR_INVOICE);
-        if (!doc) return inv;
-
-        const invoiceObj = doc.toObject({ virtuals: true });
-
-        if (invoiceObj.type === 'guardian_invoice') {
-          try {
-            const dynamicClasses = await InvoiceService.buildDynamicClassList(doc);
-            invoiceObj.dynamicClasses = dynamicClasses;
-          } catch (dynamicErr) {
-            console.warn('[GET /invoices] dynamic class build failed', doc._id?.toString(), dynamicErr?.message || dynamicErr);
-          }
+    // Avoid N+1 queries: do not refetch each invoice again.
+    // Only attach dynamic classes when explicitly requested (guardian_invoice only).
+    let normalizedInvoices = invoices;
+    if (includeDynamic) {
+      normalizedInvoices = await Promise.all((invoices || []).map(async (inv) => {
+        try {
+          if (!inv || inv.type !== 'guardian_invoice') return inv;
+          const doc = await Invoice.findById(inv._id);
+          if (!doc) return inv;
+          const dynamicClasses = await InvoiceService.buildDynamicClassList(doc);
+          return { ...inv, dynamicClasses };
+        } catch (err) {
+          return inv;
         }
-
-        return invoiceObj;
-      } catch (err) {
-        console.error('Failed to load invoice doc for list', inv._id, err && err.message);
-        return inv;
-      }
-    }));
+      }));
+    }
 
     const total = await Invoice.countDocuments(filter);
     const pages = Math.ceil(total / parseInt(limit));
@@ -1061,9 +1072,21 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
           continue;
         }
 
+        // If the class is linked to an invoice that is cancelled/missing/deleted, clear the link
+        // so the lesson can be re-attached to an active invoice.
         if (classDoc.billedInInvoiceId) {
-          summary.skipped += 1;
-          continue;
+          const linked = await Invoice.findById(classDoc.billedInInvoiceId).select('_id deleted status').lean();
+          const isValid = linked && !linked.deleted && String(linked.status || '').toLowerCase() !== 'cancelled';
+          if (isValid) {
+            summary.skipped += 1;
+            continue;
+          }
+          await Class.updateOne(
+            { _id: classDoc._id, billedInInvoiceId: classDoc.billedInInvoiceId },
+            { $set: { billedInInvoiceId: null, billedAt: null } }
+          );
+          classDoc.billedInInvoiceId = null;
+          classDoc.billedAt = null;
         }
 
         const alreadyInInvoice = await Invoice.findOne({
@@ -1072,7 +1095,8 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
             { 'items.lessonId': String(classDoc._id) }
           ],
           deleted: { $ne: true },
-          status: { $nin: ['cancelled', 'refunded'] }
+          // Treat refunded as a real invoice attachment (avoid accidental double-invoicing)
+          status: { $nin: ['cancelled'] }
         });
 
         if (alreadyInInvoice) {
@@ -1086,14 +1110,14 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
           continue;
         }
 
-        const draftInvoice = await Invoice.findOne({
+        const openInvoice = await Invoice.findOne({
           guardian: guardianId,
           type: 'guardian_invoice',
-          status: 'draft',
+          status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] },
           deleted: { $ne: true }
         }).sort({ createdAt: 1 });
 
-        if (draftInvoice) {
+        if (openInvoice) {
           const guardian = await User.findById(guardianId).lean();
           const rate = guardian?.guardianInfo?.hourlyRate || 10;
           const duration = Number(classDoc.duration || 60);
@@ -1105,7 +1129,7 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
           const lastName = rest.join(' ');
 
           const result = await InvoiceService.updateInvoiceItems(
-            String(draftInvoice._id),
+            String(openInvoice._id),
             {
               addItems: [{
                 lessonId: String(classDoc._id),
@@ -1188,11 +1212,22 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
     }
 
     if (classDoc.billedInInvoiceId) {
-      return res.status(409).json({
-        success: false,
-        message: 'Class already linked to an invoice',
-        invoiceId: classDoc.billedInInvoiceId
-      });
+      const linked = await Invoice.findById(classDoc.billedInInvoiceId).select('_id deleted status invoiceNumber').lean();
+      const isValid = linked && !linked.deleted && String(linked.status || '').toLowerCase() !== 'cancelled';
+      if (isValid) {
+        return res.status(409).json({
+          success: false,
+          message: 'Class already linked to an invoice',
+          invoiceId: classDoc.billedInInvoiceId,
+          invoiceNumber: linked?.invoiceNumber
+        });
+      }
+      await Class.updateOne(
+        { _id: classDoc._id, billedInInvoiceId: classDoc.billedInInvoiceId },
+        { $set: { billedInInvoiceId: null, billedAt: null } }
+      );
+      classDoc.billedInInvoiceId = null;
+      classDoc.billedAt = null;
     }
 
     const guardianId = classDoc.student?.guardianId;
@@ -1206,7 +1241,7 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
         { 'items.lessonId': String(classDoc._id) }
       ],
       deleted: { $ne: true },
-      status: { $nin: ['cancelled', 'refunded'] }
+      status: { $nin: ['cancelled'] }
     });
 
     if (alreadyInInvoice) {
@@ -1218,14 +1253,14 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
       });
     }
 
-    const draftInvoice = await Invoice.findOne({
+    const openInvoice = await Invoice.findOne({
       guardian: guardianId,
       type: 'guardian_invoice',
-      status: 'draft',
+      status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] },
       deleted: { $ne: true }
     }).sort({ createdAt: 1 });
 
-    if (draftInvoice) {
+    if (openInvoice) {
       const guardian = await User.findById(guardianId).lean();
       const rate = guardian?.guardianInfo?.hourlyRate || 10;
       const duration = Number(classDoc.duration || 60);
@@ -1237,7 +1272,7 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
       const lastName = rest.join(' ');
 
       const result = await InvoiceService.updateInvoiceItems(
-        String(draftInvoice._id),
+        String(openInvoice._id),
         {
           addItems: [{
             lessonId: String(classDoc._id),
@@ -1253,7 +1288,7 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
             attended: classDoc.status === 'attended',
             status: classDoc.status || 'scheduled'
           }],
-          note: 'Manual attach: add class to draft invoice'
+          note: 'Manual attach: add class to open invoice'
         },
         req.user._id
       );
@@ -1264,9 +1299,10 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
 
       return res.json({
         success: true,
-        action: 'added_to_draft',
-        invoiceId: draftInvoice._id,
-        invoiceNumber: result.invoice?.invoiceNumber || draftInvoice.invoiceNumber,
+        action: 'added_to_open_invoice',
+        invoiceId: openInvoice._id,
+        invoiceNumber: result.invoice?.invoiceNumber || openInvoice.invoiceNumber,
+        invoiceStatus: result.invoice?.status || openInvoice.status,
         invoice: result.invoice
       });
     }
@@ -2708,6 +2744,20 @@ router.post('/:id/cancel', authenticateToken, requireAdmin, async (req, res) => 
     invoice.internalNotes = `${invoice.internalNotes || ''}\n[${timestamp}] Cancelled: ${reason}`.trim();
     invoice.updatedBy = req.user._id;
     await invoice.save();
+
+    // ✅ Unlink classes from this cancelled invoice so they can be re-invoiced.
+    // This prevents stale billedInInvoiceId from causing persistent audit alerts.
+    try {
+      const classIds = (invoice.items || []).map((it) => it.class || it.lessonId).filter(Boolean);
+      if (classIds.length > 0) {
+        await Class.updateMany(
+          { _id: { $in: classIds }, billedInInvoiceId: invoice._id },
+          { $unset: { billedInInvoiceId: 1, billedAt: 1 } }
+        );
+      }
+    } catch (unlinkErr) {
+      console.warn('Cancel invoice: failed to clear billedInInvoiceId from classes', unlinkErr?.message || unlinkErr);
+    }
 
     try {
       const notificationService = require('../services/notificationService');

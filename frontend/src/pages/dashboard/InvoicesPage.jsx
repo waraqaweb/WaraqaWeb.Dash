@@ -63,9 +63,9 @@ const InvoicesPage = ({ isActive = true }) => {
   const fetchInvoicesAbortRef = useRef(null);
   const fetchInvoicesRequestIdRef = useRef(0);
   const [loading, setLoading] = useState(true);
-  const showLoading = useMinLoading(loading);
+  const showLoading = useMinLoading(loading, 250);
   const [error, setError] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  // Search is client-side only (Excel-like): filter already loaded invoices without refetching.
   const [expandedInvoice, setExpandedInvoice] = useState(null);
   const [currentPage, setCurrentPage] = useState(Number(new URLSearchParams(location.search).get('page') || '1'));
   const [totalPages, setTotalPages] = useState(1);
@@ -133,12 +133,7 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const itemsPerPage = 10;
 
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
-
-  const isGlobalSearching = useMemo(() => Boolean((debouncedSearch || '').trim()), [debouncedSearch]);
+  const normalizedSearchTerm = useMemo(() => (searchTerm || '').trim().toLowerCase(), [searchTerm]);
 
   // Sync current page from URL (Back/Forward).
   useEffect(() => {
@@ -174,14 +169,7 @@ const InvoicesPage = ({ isActive = true }) => {
     fetchInvoices();
     if (isAdmin()) fetchStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, debouncedSearch]);
-
-  useEffect(() => {
-    if (!isActive) return;
-    setCurrentPage(1);
-    fetchInvoices();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, isGlobalSearching, debouncedSearch]);
+  }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab]);
 
   useEffect(() => {
     invoicesRef.current = invoices || [];
@@ -196,8 +184,6 @@ const InvoicesPage = ({ isActive = true }) => {
         statusFilter,
         typeFilter,
         segmentFilter,
-        searchMode: isGlobalSearching,
-        search: debouncedSearch,
       });
 
       if (fetchInvoicesInFlightRef.current && fetchInvoicesKeyRef.current === requestSignature) {
@@ -231,8 +217,6 @@ const InvoicesPage = ({ isActive = true }) => {
           statusFilter,
           typeFilter,
           segmentFilter,
-          searchMode: isGlobalSearching,
-          search: debouncedSearch,
         }
       );
 
@@ -261,38 +245,32 @@ const InvoicesPage = ({ isActive = true }) => {
       // - Unpaid tab: show oldest created invoices first (createdAt asc)
       // - Paid tab: show latest paid invoices first (paidAt desc)
       // - All tab (or none): show invoices by latest payment (paidAt desc, fallback createdAt)
-      if (!isGlobalSearching) {
-        if (activeTab && activeTab !== 'all') {
-          params.status = activeTab;
-          if (activeTab === 'unpaid') {
-            params.sortBy = 'createdAt';
-            params.order = 'asc';
-          } else {
-            params.sortBy = 'paidAt';
-            params.order = 'desc';
-          }
-        } else if (statusFilter !== 'all') {
-          params.status = statusFilter;
-          if (statusFilter === 'unpaid') {
-            params.sortBy = 'createdAt';
-            params.order = 'asc';
-          } else {
-            params.sortBy = 'paidAt';
-            params.order = 'desc';
-          }
+      if (activeTab && activeTab !== 'all') {
+        params.status = activeTab;
+        if (activeTab === 'unpaid') {
+          params.sortBy = 'createdAt';
+          params.order = 'asc';
         } else {
-          // Default for the 'all' tab: latest payment first
+          params.sortBy = 'paidAt';
+          params.order = 'desc';
+        }
+      } else if (statusFilter !== 'all') {
+        params.status = statusFilter;
+        if (statusFilter === 'unpaid') {
+          params.sortBy = 'createdAt';
+          params.order = 'asc';
+        } else {
           params.sortBy = 'paidAt';
           params.order = 'desc';
         }
       } else {
+        // Default for the 'all' tab: latest payment first
         params.sortBy = 'paidAt';
         params.order = 'desc';
       }
 
       if (typeFilter !== 'all') params.type = typeFilter;
       if (segmentFilter !== 'all') params.segment = segmentFilter;
-      if (isGlobalSearching) params.search = debouncedSearch;
 
       const { data } = await api.get('/invoices', { params, signal: controller.signal });
       if (requestId !== fetchInvoicesRequestIdRef.current) {
@@ -881,7 +859,14 @@ const InvoicesPage = ({ isActive = true }) => {
               return;
             }
 
-            const { data } = await api.get('/classes', { params });
+            const { data } = await api.get('/classes', {
+              params: {
+                ...params,
+                light: true,
+                populate: false,
+                includeTotal: false,
+              }
+            });
             if (cancelled) return;
 
             const list = Array.isArray(data?.classes) ? data.classes : [];
@@ -1078,19 +1063,17 @@ const InvoicesPage = ({ isActive = true }) => {
     let result = (invoices || []);
 
     // Apply the effective status filter: the active tab takes precedence.
-    if (!isGlobalSearching) {
-      const effectiveStatus = activeTab !== 'unpaid' ? activeTab : statusFilter;
-      if (effectiveStatus !== 'all') {
-        if (effectiveStatus === 'paid') {
-          result = result.filter((inv) => ['paid', 'refunded'].includes(inv.status));
-        } else if (effectiveStatus === 'refunded') {
-          result = result.filter((inv) => inv.status === 'refunded');
-        } else if (effectiveStatus === 'unpaid') {
-          // keep any status that is not paid/refunded
-          result = result.filter((inv) => !['paid', 'refunded'].includes(inv.status));
-        } else {
-          result = result.filter((inv) => inv.status === effectiveStatus);
-        }
+    const effectiveStatus = activeTab !== 'unpaid' ? activeTab : statusFilter;
+    if (effectiveStatus !== 'all') {
+      if (effectiveStatus === 'paid') {
+        result = result.filter((inv) => ['paid', 'refunded'].includes(inv.status));
+      } else if (effectiveStatus === 'refunded') {
+        result = result.filter((inv) => inv.status === 'refunded');
+      } else if (effectiveStatus === 'unpaid') {
+        // keep any status that is not paid/refunded
+        result = result.filter((inv) => !['paid', 'refunded'].includes(inv.status));
+      } else {
+        result = result.filter((inv) => inv.status === effectiveStatus);
       }
     }
 
@@ -1102,17 +1085,35 @@ const InvoicesPage = ({ isActive = true }) => {
       });
     }
 
+    // Client-side search (Excel-like) over the already-loaded invoices.
+    if (normalizedSearchTerm) {
+      result = result.filter((inv) => {
+        const guardian = inv.guardian || {};
+        const guardianName = `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim();
+        const haystack = [
+          inv.invoiceNumber,
+          inv.invoiceName,
+          inv.invoiceSlug,
+          inv.status,
+          inv.type,
+          guardianName,
+          guardian.email,
+          guardian.phone,
+          String(inv._id || ''),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(normalizedSearchTerm);
+      });
+    }
+
     return result;
-  }, [invoices, isGlobalSearching, activeTab, statusFilter, typeFilter]);
+  }, [invoices, activeTab, statusFilter, typeFilter, normalizedSearchTerm]);
 
   // Ensure consistent ordering client-side as a fallback in case backend doesn't apply requested sort.
   const displayedInvoices = useMemo(() => {
     const list = (filteredInvoices || []).slice();
-
-    if (isGlobalSearching) {
-      list.sort((a, b) => getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a));
-      return list;
-    }
 
     if (activeTab === 'unpaid') {
       list.sort((a, b) => {
@@ -1124,7 +1125,7 @@ const InvoicesPage = ({ isActive = true }) => {
       list.sort((a, b) => getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a));
     }
     return list;
-  }, [filteredInvoices, activeTab, isGlobalSearching]);
+  }, [filteredInvoices, activeTab]);
 
 
   const getChannelInfo = (invoice, channel) => (invoice?.delivery?.channels || []).find((entry) => entry.channel === channel);

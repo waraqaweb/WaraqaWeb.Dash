@@ -85,7 +85,6 @@ const MyStudentsPage = () => {
   const [editingStudent, setEditingStudent] = useState(null);
   const [expandedStudent, setExpandedStudent] = useState(null);
   const [localSearchTerm] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState(localSearchTerm);
   const [useGlobalSearch] = useState(true); // Guardian option
   const [guardianFilter] = useState('all');
   const [, setGuardiansList] = useState([]);
@@ -117,11 +116,13 @@ const MyStudentsPage = () => {
     useGlobalSearch ? (searchTerm || '') : (localSearchTerm || '')
   ), [useGlobalSearch, searchTerm, localSearchTerm]);
 
-  // Debounce localSearchTerm
+  const [debouncedEffectiveSearchTerm, setDebouncedEffectiveSearchTerm] = useState(effectiveSearchTerm || '');
+
+  // Debounce search input for smoother typing on large lists
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(localSearchTerm), 300);
+    const t = setTimeout(() => setDebouncedEffectiveSearchTerm(effectiveSearchTerm || ''), 120);
     return () => clearTimeout(t);
-  }, [localSearchTerm]);
+  }, [effectiveSearchTerm]);
 
   // Fetch students when component mounts or filters change
   // Wait for auth loading to finish before fetching to ensure token header is set
@@ -130,17 +131,12 @@ const MyStudentsPage = () => {
       fetchStudentsRef.current?.();
       if (!isGuardian || !isGuardian()) fetchGuardiansListRef.current?.();
     }
-  }, [user, loading, debouncedSearch, guardianFilter, sortBy, sortOrder, isGuardian]);
+  }, [user, loading, guardianFilter, sortBy, sortOrder, isGuardian]);
 
+  // Search is client-side (Excel-like): no refetch while typing.
   useEffect(() => {
     setCurrentPage(1);
-  }, [statusFilter, guardianFilter, effectiveSearchTerm]);
-
-  useEffect(() => {
-    if ((effectiveSearchTerm || '').trim() && statusFilter !== 'all') {
-      setStatusFilter('all');
-    }
-  }, [effectiveSearchTerm, statusFilter]);
+  }, [debouncedEffectiveSearchTerm, statusFilter, globalFilter]);
 
 
   useEffect(() => {
@@ -153,7 +149,6 @@ const fetchStudents = async () => {
     guardianFilter,
     statusFilter,
     globalFilter,
-    search: (effectiveSearchTerm || '').trim() || undefined,
     page: currentPage,
   });
 
@@ -226,7 +221,6 @@ const fetchStudents = async () => {
         guardianFilter,
         statusFilter,
         globalFilter,
-        search: (effectiveSearchTerm || '').trim() || undefined,
       }
     );
 
@@ -248,7 +242,6 @@ const fetchStudents = async () => {
       setIsHydrated(false);
       response = await api.get('/users/admin/all-students', {
         params: {
-          search: (effectiveSearchTerm || '').trim() || undefined,
           limit: 400,
           light: true,
         },
@@ -269,7 +262,6 @@ const fetchStudents = async () => {
         try {
           const fullRes = await api.get('/users/admin/all-students', {
             params: {
-              search: (effectiveSearchTerm || '').trim() || undefined,
               limit: 400,
             },
             signal: controller.signal
@@ -588,29 +580,38 @@ const fetchGuardiansList = async () => {
 
     // debug logs removed
 
-    const trimmedTerm = (effectiveSearchTerm || '').trim().toLowerCase();
+    const trimmedTerm = (debouncedEffectiveSearchTerm || '').trim().toLowerCase();
     if (trimmedTerm) {
       const parts = trimmedTerm.split(/\s+/).filter(Boolean);
+      const looksLikeEmailSearch = trimmedTerm.includes('@');
+      const looksLikeNumericSearch = /\d/.test(trimmedTerm);
+
       result = result.filter((s) => {
         const firstName = (s.firstName || '').toLowerCase();
         const lastName = (s.lastName || '').toLowerCase();
         const fullName = `${firstName} ${lastName}`.trim();
+        const fullNameReversed = `${lastName} ${firstName}`.trim();
         const email = (s.email || '').toLowerCase();
         const phone = (s.phone || '').toLowerCase();
-        const guardianName = s.guardian ? `${s.guardian.firstName} ${s.guardian.lastName}`.toLowerCase() : '';
         const className = s.class ? (s.class.name || '').toLowerCase() : '';
+        const idText = String(s._id || '').toLowerCase();
 
-        const partsMatchName = parts.every(p => (
-          firstName.startsWith(p) || lastName.startsWith(p) || fullName.includes(p)
+        const partsMatchName = parts.every((part) => (
+          fullName.includes(part) || fullNameReversed.includes(part)
         ));
+        const directNameMatch =
+          fullName.includes(trimmedTerm) ||
+          fullNameReversed.includes(trimmedTerm) ||
+          firstName.startsWith(trimmedTerm) ||
+          lastName.startsWith(trimmedTerm);
 
-        return partsMatchName || 
-               email.includes(trimmedTerm) || 
-               phone.includes(trimmedTerm) || 
-               fullName.includes(trimmedTerm) ||
-               guardianName.includes(trimmedTerm) ||
-               className.includes(trimmedTerm) ||
-               String(s._id).includes(trimmedTerm);
+        if (partsMatchName || directNameMatch) return true;
+
+        if (className.includes(trimmedTerm)) return true;
+        if (looksLikeEmailSearch && email.includes(trimmedTerm)) return true;
+        if (looksLikeNumericSearch && (phone.includes(trimmedTerm) || idText.includes(trimmedTerm))) return true;
+
+        return false;
       });
     }
 
@@ -631,7 +632,7 @@ const fetchGuardiansList = async () => {
     // debug logs removed
     
     return result;
-  }, [students, effectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter, isHydrated]);
+  }, [students, debouncedEffectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter, isHydrated]);
 
   const sortedStudents = useMemo(() => {
     const list = [...(filteredStudents || [])];
@@ -712,6 +713,9 @@ const fetchGuardiansList = async () => {
             filter: 'previous',
             studentIds: visibleIdsKey,
             limit: 1000,
+            light: true,
+            populate: false,
+            includeTotal: false,
           },
           signal: controller.signal
         });
@@ -768,6 +772,9 @@ const fetchGuardiansList = async () => {
         const baseParams = {
           studentIds: visibleIdsKey,
           limit: 2000,
+          light: true,
+          populate: false,
+          includeTotal: false,
         };
         if (isTeacher && isTeacher()) {
           baseParams.teacher = user._id || user.id;

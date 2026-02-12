@@ -349,6 +349,9 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
       sortBy = 'createdAt',
       order = 'desc',
       isActive,
+      light,
+      includeTotal,
+      includeComputedTeacherHours,
     } = req.query;
 
     const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 200);
@@ -388,19 +391,86 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
     const sortDirection = String(order).toLowerCase() === 'asc' ? 1 : -1;
     const sortOptions = { [resolvedSortBy]: sortDirection, _id: sortDirection };
 
-    const users = await User.find(query)
-      .select('-password')
-      .limit(parsedLimit)
-      .skip(skip)
-      .sort(sortOptions);
+    const lightMode = ['1', 'true', 'yes'].includes(String(light || '').toLowerCase());
+    const shouldIncludeTotal = !['0', 'false', 'no'].includes(String(includeTotal || '').toLowerCase());
+    const shouldIncludeComputedHours = (String(role || '').toLowerCase() === 'teacher')
+      ? !['0', 'false', 'no'].includes(String(includeComputedTeacherHours || '').toLowerCase())
+      : false;
 
-    const total = await User.countDocuments(query);
+    let selectFields = '-password';
+    if (lightMode) {
+      const normalizedRole = String(role || '').toLowerCase();
+      if (normalizedRole === 'teacher') {
+        selectFields = [
+          'firstName',
+          'lastName',
+          'email',
+          'phone',
+          'role',
+          'isActive',
+          'timezone',
+          'profilePicture',
+          'teacherInfo.monthlyHours',
+          'teacherInfo.googleMeetLink',
+          'createdAt',
+          'updatedAt'
+        ].join(' ');
+      } else if (normalizedRole === 'guardian') {
+        selectFields = [
+          'firstName',
+          'lastName',
+          'email',
+          'phone',
+          'role',
+          'isActive',
+          'timezone',
+          'profilePicture',
+          'guardianInfo.totalHours',
+          'guardianInfo.timezone',
+          'guardianInfo.students._id',
+          'createdAt',
+          'updatedAt'
+        ].join(' ');
+      } else {
+        selectFields = [
+          'firstName',
+          'lastName',
+          'email',
+          'phone',
+          'role',
+          'isActive',
+          'timezone',
+          'profilePicture',
+          'createdAt',
+          'updatedAt'
+        ].join(' ');
+      }
+    }
+
+    // If total is not needed, fetch limit+1 to determine hasNextPage without countDocuments.
+    const effectiveLimit = shouldIncludeTotal ? parsedLimit : (parsedLimit + 1);
+    const rows = await User.find(query)
+      .select(selectFields)
+      .limit(effectiveLimit)
+      .skip(skip)
+      .sort(sortOptions)
+      .lean();
+
+    const hasNextPage = !shouldIncludeTotal
+      ? (Array.isArray(rows) && rows.length > parsedLimit)
+      : false;
+
+    const users = !shouldIncludeTotal && Array.isArray(rows)
+      ? rows.slice(0, parsedLimit)
+      : rows;
+
+    const total = shouldIncludeTotal ? await User.countDocuments(query) : null;
 
     // For the teachers list, compute UNBILLED hours this month from Class durations
     // to keep the UI invoice-aware and avoid relying on teacherInfo.monthlyHours
     // (which is a mutable snapshot).
     let usersPayload = users;
-    if (String(role || '').toLowerCase() === 'teacher' && Array.isArray(users) && users.length) {
+    if (shouldIncludeComputedHours && Array.isArray(users) && users.length) {
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -428,13 +498,17 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
         console.warn('users: failed to aggregate teacher monthly hours', e && e.message);
       }
 
-      usersPayload = users.map((u) => {
-        const obj = u.toObject();
+      usersPayload = users.map((obj) => {
         const key = String(obj._id);
         const computed = hoursByTeacherId[key] ?? 0;
-        obj.teacherInfo = obj.teacherInfo || {};
-        obj.teacherInfo._computedMonthlyHours = computed;
-        return obj;
+        const teacherInfo = obj.teacherInfo && typeof obj.teacherInfo === 'object' ? obj.teacherInfo : {};
+        return {
+          ...obj,
+          teacherInfo: {
+            ...teacherInfo,
+            _computedMonthlyHours: computed,
+          }
+        };
       });
     }
 
@@ -444,7 +518,8 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
         page: parsedPage,
         limit: parsedLimit,
         total,
-        pages: Math.ceil(total / parsedLimit)
+        pages: shouldIncludeTotal && total !== null ? Math.ceil(total / parsedLimit) : null,
+        hasNextPage,
       }
     });
     

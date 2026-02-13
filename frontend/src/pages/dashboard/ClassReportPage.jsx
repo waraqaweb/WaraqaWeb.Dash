@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import api from '../../api/axios';
 import Select from "react-select";
 import { XCircle, Loader2, Star } from "lucide-react";
-import { useNavigate } from 'react-router-dom';
 import topicsMap, { subjects, surahs } from "../../constants/reportTopicsConfig";
 import Toast from "../../components/ui/Toast";
 import { saveDraft, loadDraft, clearDraft } from "../../utils/localStorageUtils";
@@ -28,7 +27,6 @@ const toApiAttendance = (attendance, cancelledBy) => {
 };
 
 const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => {
-  const navigate = useNavigate();
   const derivedClassId = reportClass?._id || reportClassId;
   const [classData, setClassData] = useState(reportClass || null);
   const [classLoadError, setClassLoadError] = useState(null);
@@ -473,19 +471,6 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const isAbsent = classReport.attendance === "absent";
   const isCancelled = classReport.attendance === "cancelled";
 
-  const handleOpenExtendReportRequest = () => {
-    const params = new URLSearchParams();
-    params.set('requestType', 'extend_class_report');
-    if (derivedClassId) params.set('classId', String(derivedClassId));
-    const studentId = classData?.student?.studentId?._id || classData?.student?.studentId;
-    const studentName = classData?.student?.studentName || classData?.studentSnapshot?.studentName;
-    if (studentId) params.set('studentId', String(studentId));
-    if (studentName) params.set('studentName', String(studentName));
-
-    onClose?.();
-    navigate(`/dashboard/requests?${params.toString()}`);
-  };
-
   if (!derivedClassId) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center p-4 z-50">
@@ -590,19 +575,6 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                   {reportMeta.historyCount} versions recorded in history. Contact an admin if you need to review older submissions.
                 </p>
               )}
-            </div>
-          )}
-
-          {userRole === 'teacher' && (
-            <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
-              <p className="text-foreground font-medium">Need more time or admin support for this report?</p>
-              <button
-                type="button"
-                onClick={handleOpenExtendReportRequest}
-                className="mt-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
-              >
-                Send “Extend Class Report” Request
-              </button>
             </div>
           )}
 

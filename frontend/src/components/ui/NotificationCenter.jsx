@@ -40,15 +40,6 @@ const NotificationCenter = () => {
   }, [user]);
 
   useEffect(() => {
-    if (!user) return undefined;
-    const intervalMs = isOpen ? 15000 : 30000;
-    const timer = setInterval(() => {
-      fetchNotifications();
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [user, isOpen]);
-
-  useEffect(() => {
     if (!isOpen || user?.role !== 'admin') return;
     const hasUninvoicedAlert = notifications.some(isUninvoicedLessonsNotification);
     if (hasUninvoicedAlert) fetchUninvoicedLessons();

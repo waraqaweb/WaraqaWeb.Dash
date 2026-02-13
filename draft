@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "tasks system and other improvements"
+git commit -m "Undoing the tasks pages"
 git push origin main
 
 ---
@@ -38,6 +38,4 @@ dmesg -T | tail -n 100
 
 
 
-
-You can't start you speech with a letter with Sukoon     and
-You can't end your speech with a letter with Harakh
+node backend/scripts/backfillClassEndsAt.js

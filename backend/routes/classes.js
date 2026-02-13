@@ -31,6 +31,8 @@ const { processArrayWithTimezone, addTimezoneInfo, DEFAULT_TIMEZONE } = require(
 const tzUtils = require("../utils/timezone"); // expects toUtc(dateString, tz) and buildUtcFromParts(parts, tz)
 const { generateRecurringClasses } = require("../utils/generateRecurringClasses");
 
+const MAX_CLASS_DURATION_MINUTES = 180;
+
 /* -------------------------
    GET /api/classes/reschedule-requests/stats
    Admin-only: counts of reschedule requests by requester role within a date range.
@@ -891,12 +893,34 @@ router.get("/", authenticateToken, async (req, res) => {
     mark('filters:built');
 
     // upcoming / previous filtering
-    // IMPORTANT: Avoid $expr-based computed filters here (they disable index usage and cause collection scans).
-    // We rely on `endsAt` being present (backfill script provided for legacy docs).
+    // Primary path: `endsAt` (index-friendly).
+    // Fallback path: legacy rows that missed `endsAt` should still be visible by approximating
+    // in-progress boundary using max allowed class duration.
+    const legacyUpcomingCutoff = new Date(now.getTime() - (MAX_CLASS_DURATION_MINUTES * 60 * 1000));
     if (filter === "upcoming") {
-      pushAnd({ endsAt: { $gte: now } });
+      pushAnd({
+        $or: [
+          { endsAt: { $gte: now } },
+          {
+            $and: [
+              { $or: [{ endsAt: { $exists: false } }, { endsAt: null }] },
+              { scheduledDate: { $gte: legacyUpcomingCutoff } },
+            ],
+          },
+        ],
+      });
     } else if (filter === "previous") {
-      pushAnd({ endsAt: { $lt: now } });
+      pushAnd({
+        $or: [
+          { endsAt: { $lt: now } },
+          {
+            $and: [
+              { $or: [{ endsAt: { $exists: false } }, { endsAt: null }] },
+              { scheduledDate: { $lt: legacyUpcomingCutoff } },
+            ],
+          },
+        ],
+      });
     }
 
     // Filter out classes that are hidden due to system vacation or individual teacher vacation
@@ -910,9 +934,9 @@ router.get("/", authenticateToken, async (req, res) => {
       
       // Check if teacher is on vacation and filter classes accordingly
       const teacherDoc = await User.findById(req.user._id)
-        .select('isActive vacationStartDate vacationEndDate')
+        .select('vacationStartDate vacationEndDate')
         .lean();
-      if (teacherDoc && teacherDoc.isActive === false && teacherDoc.vacationStartDate && teacherDoc.vacationEndDate) {
+      if (teacherDoc && teacherDoc.vacationStartDate && teacherDoc.vacationEndDate) {
         const vacationStart = new Date(teacherDoc.vacationStartDate);
         const vacationEnd = new Date(teacherDoc.vacationEndDate);
         const firstDayAfterVacation = new Date(vacationEnd.getTime() + 24 * 60 * 60 * 1000);
@@ -1179,7 +1203,14 @@ router.get("/series", authenticateToken, requireRole(["admin"]), async (req, res
     await hydrateUnknownStudentNames(patterns);
 
     const patternIds = patterns.map((p) => p._id);
-    const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'];
+    const cancelledStatuses = [
+      'cancelled',
+      'cancelled_by_admin',
+      'cancelled_by_teacher',
+      'cancelled_by_guardian',
+      'cancelled_by_student',
+      'no_show_both',
+    ];
 
     const childCounts = patternIds.length
       ? await Class.aggregate([

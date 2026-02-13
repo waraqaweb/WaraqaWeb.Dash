@@ -592,17 +592,20 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
     reader.readAsDataURL(file);
   };
 
-  const splitExamples = (raw) =>
-    raw
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
+  const sanitizeExampleToken = (value) =>
+    String(value || '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/gi, '')
+      .trim();
 
   const parseExamplesFromText = (raw) =>
-    raw
-      .split('\n')
-      .flatMap((line) => line.split(',').map((item) => item.trim()))
+    String(raw || '')
+      .split(/[\n,،;]+/g)
+      .map((item) => sanitizeExampleToken(item))
       .filter(Boolean);
+
+  const normalizeExamplesList = (list) =>
+    parseExamplesFromText((Array.isArray(list) ? list : []).join(','));
 
   const [showAllExamples, setShowAllExamples] = useState(false);
 
@@ -1238,29 +1241,25 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                     <button
                       type="button"
                       onClick={() => {
-                        setExamplesDraft((current?.examples || []).join('\n'));
+                        setExamplesDraft((current?.examples || []).join(', '));
                         setExamplesEditorOpen(true);
                       }}
                       className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold text-emerald-700"
                     >
-                      Open editor
+                      Edit comma list
                     </button>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     {(showAllExamples ? current?.examples : (current?.examples || []).slice(0, 10))?.map((example, idx) => (
                       <div key={`example-${idx}`} className="rounded-xl border border-emerald-200 bg-white p-3">
                         <span className="text-[10px] font-semibold uppercase text-emerald-600">Example {idx + 1}</span>
-                        <div className="mt-2">
-                          <RichTextEditor
-                            value={example}
-                            onChange={(value) => updateArrayItem('examples', idx, value)}
-                            minHeight={80}
-                            compact
-                            showToolbar={false}
-                            onFocus={setActiveEditorRef}
-                            placeholder="Example text..."
-                          />
-                        </div>
+                        <input
+                          type="text"
+                          value={example}
+                          onChange={(event) => updateArrayItem('examples', idx, event.target.value)}
+                          className="mt-2 w-full rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-sm font-medium text-emerald-900"
+                          placeholder="Example word"
+                        />
                       </div>
                     ))}
                   </div>
@@ -1284,9 +1283,13 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                 type="button"
                 onClick={() => {
                   if (typeof onSave !== 'function') return;
+                  const normalizedSections = (sections || []).map((section) => ({
+                    ...section,
+                    examples: normalizeExamplesList(section?.examples),
+                  }));
                   onSave({
                     ...lessonMeta,
-                    sections
+                    sections: normalizedSections
                   });
                 }}
                 className="rounded-full bg-emerald-600 p-3 text-white shadow-lg disabled:opacity-60"
@@ -1337,13 +1340,14 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
             className="mt-4 h-80 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm"
             value={examplesDraft}
             onChange={(event) => setExamplesDraft(event.target.value)}
-            placeholder="Examples..."
+            placeholder="example1, example2, example3"
           />
+          <p className="mt-2 text-xs text-slate-500">Use commas only. Spaces/new lines are removed on save.</p>
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <button
               type="button"
               onClick={() => {
-                setExamplesDraft((current?.examples || []).join('\n'));
+                setExamplesDraft((current?.examples || []).join(', '));
               }}
               className="rounded-full border border-border px-4 py-2 text-xs text-slate-600"
             >

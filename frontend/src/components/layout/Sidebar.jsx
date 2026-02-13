@@ -10,7 +10,6 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../api/axios';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
-import { canRoleAccessRequests } from '../../utils/requestsVisibility';
 import { 
   Home, 
   Users, 
@@ -32,7 +31,6 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
   const { user, logout, isAdmin } = useAuth();
   const [branding, setBranding] = useState({ logo: null, title: 'Waraqa', slogan: '' });
   const [presenterGlobal, setPresenterGlobal] = useState(false);
-  const [requestsVisibility, setRequestsVisibility] = useState('all_users');
 
   // Define navigation items based on user role
   const getNavigationItems = () => {
@@ -54,13 +52,6 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       { id: 'salaries', label: 'Salaries', icon: DollarSign, roles: ['admin', 'teacher'], link: salariesLink },
       { id: 'availability', label: isAdmin() ? 'Meetings' : 'My Availability', icon: Clock, roles: ['admin', 'teacher'], link: '/dashboard/availability' },
       { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
-      {
-        id: 'requests',
-        label: 'Requests',
-        icon: FileText,
-        roles: ['admin', 'teacher', 'guardian', 'student'].filter((r) => canRoleAccessRequests(r, requestsVisibility)),
-        link: '/dashboard/requests'
-      },
       { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
       { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },
       { id: 'presenter', label: 'Curricula', icon: Monitor, roles: presenterRoles, link: '/dashboard/interactive-learning' },
@@ -138,25 +129,6 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
                 writeCache(cacheKey, { value: res.data.setting.value }, { ttlMs: 60_000, deps: ['settings'] });
             }
         } catch (err) { }
-    })();
-
-    // fetch requests visibility
-    (async () => {
-      try {
-        const cacheKey = makeCacheKey('settings:requestsVisibility');
-        const cached = readCache(cacheKey, { deps: ['settings'] });
-        if (cached.hit && cached.value) {
-          if (mounted) setRequestsVisibility(cached.value.value || 'all_users');
-          if (cached.ageMs < 60_000) return;
-        }
-
-        const res = await api.get('/settings/requestsVisibility').catch(() => ({ data: { setting: { value: 'all_users' } } }));
-        const value = res?.data?.setting?.value || 'all_users';
-        if (mounted) setRequestsVisibility(value);
-        writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
-      } catch (err) {
-        // ignore
-      }
     })();
 
     return () => { mounted = false; };

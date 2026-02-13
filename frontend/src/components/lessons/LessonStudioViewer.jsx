@@ -59,8 +59,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState({});
   const [teacherMarks, setTeacherMarks] = useState({});
-  const [showExamplesWindow, setShowExamplesWindow] = useState(false);
-  const [examplesPage, setExamplesPage] = useState(0);
+  const [visibleExamplesCount, setVisibleExamplesCount] = useState(10);
   const [practicedExamples, setPracticedExamples] = useState({});
   const [annotatorTool, setAnnotatorTool] = useState('none');
   const wrapperRef = useRef(null);
@@ -241,8 +240,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
 
   useEffect(() => {
     setQuestionIndex(0);
-    setExamplesPage(0);
-    setShowExamplesWindow(false);
+    setVisibleExamplesCount(10);
     setPracticedExamples({});
   }, [activeSection]);
 
@@ -474,12 +472,8 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
     }));
   };
 
-  const initialExamples = 6;
-  const extraExamples = examples.slice(initialExamples);
-  const pageSize = 6;
-  const pageStart = examplesPage * pageSize;
-  const pageItems = extraExamples.slice(pageStart, pageStart + pageSize);
-  const totalPages = Math.max(1, Math.ceil(extraExamples.length / pageSize));
+  const examplesToShow = examples.slice(0, visibleExamplesCount);
+  const hasMoreExamples = visibleExamplesCount < examples.length;
 
   const buildExampleItems = (list) => {
     const items = [];
@@ -1067,17 +1061,26 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                   )}
 
                   {activePanel === 'examples' && (
-                    <div className="flex min-h-full flex-1 flex-col space-y-3">
-                      {renderExamplesInline(examples.slice(0, initialExamples))}
-                      {extraExamples.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setShowExamplesWindow(true)}
-                          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-                        >
-                          <Sparkles className="h-4 w-4" />
-                          Show more examples
-                        </button>
+                    <div className="flex min-h-full flex-1 flex-col space-y-3 max-h-[58vh] overflow-y-auto pr-1">
+                      {renderExamplesInline(examplesToShow)}
+                      {hasMoreExamples && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setVisibleExamplesCount((prev) => prev + 10)}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                          >
+                            <Sparkles className="h-4 w-4" />
+                            Show more examples
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setVisibleExamplesCount(examples.length)}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                          >
+                            Expand all
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}
@@ -1298,38 +1301,6 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
           <div className="text-xs" style={{ color: '#000' }}>Waraqa 2026 copyright</div>
         </div>
       </footer>
-
-      {showExamplesWindow && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Examples</p>
-                <h3 className="text-lg font-semibold text-foreground">More examples</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowExamplesWindow(false)}
-                className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
-              >
-                Close
-              </button>
-            </div>
-            <div className="mt-4">
-              {renderExamplesInline(pageItems)}
-            </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div className="text-slate-500">Page {examplesPage + 1} of {totalPages}</div>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => setExamplesPage(0)} className="rounded-full border border-slate-200 px-3 py-1 text-slate-600">First</button>
-                <button type="button" onClick={() => setExamplesPage((prev) => Math.max(0, prev - 1))} className="rounded-full border border-slate-200 px-3 py-1 text-slate-600">Prev</button>
-                <button type="button" onClick={() => setExamplesPage((prev) => Math.min(totalPages - 1, prev + 1))} className="rounded-full border border-slate-200 px-3 py-1 text-slate-600">Next</button>
-                <button type="button" onClick={() => setExamplesPage(totalPages - 1)} className="rounded-full border border-slate-200 px-3 py-1 text-slate-600">Last</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

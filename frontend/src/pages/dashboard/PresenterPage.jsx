@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import LessonStudio from '../../components/lessons/LessonStudio';
 import TestStudio from '../../components/lessons/TestStudio';
 import LessonStudioViewer from '../../components/lessons/LessonStudioViewer';
-import { createLibraryFolder, createLibraryItem, deleteLibraryItem, fetchFolderContents, fetchTree, reorderLibraryItems, updateLibraryItem } from '../../api/library';
-import { Plus, Folder, Settings, Link2, GripVertical } from 'lucide-react';
+import { createLibraryFolder, createLibraryItem, deleteLibraryItem, fetchFolderContents, fetchTree, updateLibraryItem } from '../../api/library';
+import { Plus, Folder, Settings, Link2 } from 'lucide-react';
 import api from '../../api/axios';
 import { useSearch } from '../../contexts/SearchContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -13,7 +13,6 @@ const TESTS_FOLDER_NAME = 'Tests';
 
 const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => {
   const { isAdmin } = useAuth();
-  const isAdminUser = typeof isAdmin === 'function' ? isAdmin() : Boolean(isAdmin);
   const [lessonsFolderId, setLessonsFolderId] = useState(null);
   const [lessons, setLessons] = useState([]);
   const [selectedLesson, setSelectedLesson] = useState(null);
@@ -43,12 +42,6 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
   const [hadithDraft, setHadithDraft] = useState('');
   const [hadithList, setHadithList] = useState([]);
   const { searchTerm: globalSearchTerm } = useSearch();
-
-  const lessonDraftStorageKey = 'lessonStudio:addDraft:v1';
-
-  const [dragLessonId, setDragLessonId] = useState(null);
-  const [dragLessonOverIndex, setDragLessonOverIndex] = useState(null);
-  const [dragLessonOverPosition, setDragLessonOverPosition] = useState('before');
 
   const resolveLessonsFolder = useCallback(async () => {
     const { tree } = await fetchTree();
@@ -294,10 +287,8 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
       await loadLessons();
       setSelectedLesson(created || null);
       setStatus('Lesson saved successfully.');
-      return true;
     } catch (error) {
       setStatus(error?.response?.data?.message || error.message || 'Unable to save lesson.');
-      return false;
     } finally {
       setSaving(false);
     }
@@ -323,41 +314,12 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
       });
       await loadLessons();
       setStatus('Lesson updated successfully.');
-      return true;
     } catch (error) {
       setStatus(error?.response?.data?.message || error.message || 'Unable to update lesson.');
-      return false;
     } finally {
       setSaving(false);
     }
   };
-
-  const persistLessonOrderForSubject = useCallback(
-    async (subjectName, orderedIds) => {
-      if (!isAdminUser || isPublic) return;
-      if (!subjectName) return;
-      if (!Array.isArray(orderedIds) || orderedIds.length === 0) return;
-
-      // Optimistic UI: update orderIndex locally first.
-      const orderStep = 10;
-      const indexById = new Map(orderedIds.map((id, idx) => [String(id), (idx + 1) * orderStep]));
-      setLessons((prev) =>
-        (prev || []).map((item) => {
-          const id = String(item?.id || item?._id || '');
-          if (!indexById.has(id)) return item;
-          return { ...item, orderIndex: indexById.get(id) };
-        })
-      );
-
-      try {
-        await reorderLibraryItems(orderedIds);
-      } catch (e) {
-        // Best-effort: refresh from server if persist fails.
-        await loadLessons();
-      }
-    },
-    [isAdminUser, isPublic, loadLessons]
-  );
 
   const handleSaveTest = async (payload) => {
     setSaving(true);
@@ -548,7 +510,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                         </div>
                         <span className="text-xs text-[#2C736C]">{isActive ? 'Selected' : 'Open'}</span>
                       </button>
-                      {isAdminUser && !isPublic && (
+                      {isAdmin && !isPublic && (
                         <button
                           type="button"
                           onClick={() => handleDeleteSubjectMaterials(subject.name)}
@@ -569,60 +531,11 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                 {subjectFilter ? `Showing lessons for ${subjectFilter}.` : 'Select a subject to view lessons.'}
               </p>
               <div className="mt-4 space-y-2">
-                {(subjectFilter ? (lessonsBySubject.get(subjectFilter) || []) : []).map((lesson, rowIdx) => (
+                {(subjectFilter ? (lessonsBySubject.get(subjectFilter) || []) : []).map((lesson) => (
                   <div
                     key={lesson.id || lesson._id}
                     className="flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C]"
-                    onDragOver={(event) => {
-                      if (!dragLessonId) return;
-                      event.preventDefault();
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      const mid = rect.top + rect.height / 2;
-                      const pos = event.clientY < mid ? 'before' : 'after';
-                      setDragLessonOverIndex(rowIdx);
-                      setDragLessonOverPosition(pos);
-                    }}
-                    onDrop={async (event) => {
-                      event.preventDefault();
-                      if (!dragLessonId) return;
-                      const targetList = (lessonsBySubject.get(subjectFilter) || []).slice();
-                      const fromIndex = targetList.findIndex((l) => String(l.id || l._id) === String(dragLessonId));
-                      if (fromIndex < 0) return;
-
-                      let toIndex = rowIdx + (dragLessonOverPosition === 'after' ? 1 : 0);
-                      toIndex = Math.max(0, Math.min(targetList.length, toIndex));
-
-                      const [moved] = targetList.splice(fromIndex, 1);
-                      const insertIndex = fromIndex < toIndex ? toIndex - 1 : toIndex;
-                      targetList.splice(insertIndex, 0, moved);
-
-                      setDragLessonId(null);
-                      setDragLessonOverIndex(null);
-
-                      const orderedIds = targetList.map((l) => String(l.id || l._id)).filter(Boolean);
-                      await persistLessonOrderForSubject(subjectFilter, orderedIds);
-                    }}
                   >
-                    {isAdminUser && !isPublic && (
-                      <div className="flex items-center">
-                        <button
-                          type="button"
-                          className="mr-2 inline-flex items-center rounded-full border border-[#2C736C]/20 bg-white px-2 py-1 text-[#2C736C]"
-                          draggable
-                          onDragStart={(event) => {
-                            event.dataTransfer.effectAllowed = 'move';
-                            setDragLessonId(String(lesson.id || lesson._id));
-                          }}
-                          onDragEnd={() => {
-                            setDragLessonId(null);
-                            setDragLessonOverIndex(null);
-                          }}
-                          title="Drag to reorder"
-                        >
-                          <GripVertical className="h-4 w-4" />
-                        </button>
-                      </div>
-                    )}
                     <button
                       type="button"
                       onClick={() => setSelectedLesson(lesson)}
@@ -631,7 +544,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                       <p>{lesson.displayName}</p>
                       <p className="text-[10px] text-[#2C736C]/80">{lesson.metadata?.lessonStudio?.subtitle || 'Lesson'}</p>
                     </button>
-                    {isAdminUser && !isPublic && (
+                    {isAdmin && !isPublic && (
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -667,10 +580,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                 <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
                   <LessonStudio
                     onSave={async (payload) => {
-                      const ok = await handleSaveLesson(payload);
-                      if (ok) {
-                        try { localStorage.removeItem(lessonDraftStorageKey); } catch (e) {}
-                      }
+                      await handleSaveLesson(payload);
                       setAddLessonOpen(false);
                     }}
                     saving={saving}
@@ -732,7 +642,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                         </div>
                         <span className="text-xs text-[#2C736C]">{isActive ? 'Selected' : 'Open'}</span>
                       </button>
-                      {isAdminUser && !isPublic && (
+                      {isAdmin && !isPublic && (
                         <button
                           type="button"
                           onClick={() => handleDeleteSubjectTests(subject.name)}
@@ -766,7 +676,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                       <p>{test.displayName}</p>
                       <p className="text-[10px] text-[#2C736C]/80">{test.metadata?.testStudio?.subtitle || 'Assessment'}</p>
                     </button>
-                    {isAdminUser && !isPublic && (
+                    {isAdmin && !isPublic && (
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -838,7 +748,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
         )}
       </div>
 
-      {isAdminUser && !isPublic && (
+      {isAdmin && !isPublic && (
         <div className="fixed bottom-6 right-6 z-40 flex flex-col gap-2">
           <button
             type="button"

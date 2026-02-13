@@ -664,10 +664,6 @@ const DashboardHome = ({ isActive = true }) => {
                 isUp: pct >= 0
               };
             };
-            const formatHoursTwoDecimals = (value) => {
-              const numeric = Number(value);
-              return Number.isFinite(numeric) ? numeric.toFixed(2) : '-';
-            };
             // Users: support many payload shapes from server.
             // Try multiple known keys and fall back to zeros.
             let totalUsers = 0, totalTeachers = 0;
@@ -1101,34 +1097,34 @@ const DashboardHome = ({ isActive = true }) => {
                 </div>
 
                 {/* Secondary lists placed side-by-side to reduce vertical length */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-2">
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                  <div className="bg-card rounded-lg border border-border p-4">
                     <h3 className="text-sm font-semibold mb-2">Top owing guardians</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(data.topOwingGuardians || data.guardians?.topOwingGuardians || []).slice(0,5).map((g, idx) => (
                         <div key={idx} className="flex items-center justify-between">
-                          <div className="min-w-0 flex-1 truncate whitespace-nowrap pr-2">{g.guardian?.firstName ? `${g.guardian.firstName} ${g.guardian.lastName || ''}` : g.guardianId || 'Unknown'}</div>
-                          <div className="font-semibold shrink-0">${g.totalOwed || 0}</div>
+                          <div className="truncate">{g.guardian?.firstName ? `${g.guardian.firstName} ${g.guardian.lastName || ''}` : g.guardianId || 'Unknown'}</div>
+                          <div className="font-semibold">${g.totalOwed || 0}</div>
                         </div>
                       ))}
                       {((data.topOwingGuardians || data.guardians?.topOwingGuardians || []).length === 0) && <div className="text-xs text-muted-foreground">No outstanding balances</div>}
                     </div>
                   </div>
 
-                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-2">
+                  <div className="bg-card rounded-lg border border-border p-4">
                     <h3 className="text-sm font-semibold mb-2">Guardians low on hours</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(data.guardiansLowHours || data.guardians?.guardiansLowHours || []).slice(0,5).map((g, idx) => (
                         <div key={idx} className="flex items-center justify-between">
-                          <div className="min-w-0 flex-1 truncate whitespace-nowrap pr-2">{g.firstName} {g.lastName}</div>
-                          <div className="text-xs shrink-0">{formatHoursTwoDecimals(g.guardianInfo?.totalHours ?? g.totalHours)} hrs</div>
+                          <div className="truncate">{g.firstName} {g.lastName}</div>
+                          <div className="text-xs">{g.guardianInfo?.totalHours ?? g.totalHours ?? '-' } hrs</div>
                         </div>
                       ))}
                       {((data.guardiansLowHours || data.guardians?.guardiansLowHours || []).length === 0) && <div className="text-xs text-muted-foreground">No guardians need topping up</div>}
                     </div>
                   </div>
 
-                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-4">
+                  <div className="bg-card rounded-lg border border-border p-4">
                     <h3 className="text-sm font-semibold mb-2">New students (last 30 days)</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(data.newStudentsLast30Days || data.students?.newStudentsLast30Days || []).slice(0, 6).map((s) => {
@@ -1144,8 +1140,8 @@ const DashboardHome = ({ isActive = true }) => {
 
                         return (
                           <div key={`${s.studentId || s.studentName}-${s.teacherId || s.teacherName}`} className="flex items-center justify-between">
-                            <div className="min-w-0 flex-1 truncate whitespace-nowrap pr-2">{s.studentName || 'Student'}{s.teacherName ? ` • ${s.teacherName}` : ''}</div>
-                            <div className={`text-xs shrink-0 ${dateColor}`}>{dateToShow ? formatDateDDMMMYYYY(dateToShow) : '—'}</div>
+                            <div className="truncate">{s.studentName || 'Student'}{s.teacherName ? ` • ${s.teacherName}` : ''}</div>
+                            <div className={`text-xs ${dateColor}`}>{dateToShow ? formatDateDDMMMYYYY(dateToShow) : '—'}</div>
                           </div>
                         );
                       })}
@@ -1155,13 +1151,13 @@ const DashboardHome = ({ isActive = true }) => {
                     </div>
                   </div>
 
-                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-2">
-                    <h3 className="text-sm font-semibold mb-2">Inactive students (For 24h)</h3>
+                  <div className="bg-card rounded-lg border border-border p-4">
+                    <h3 className="text-sm font-semibold mb-2">Inactive students (no teacher after 24h)</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(inactiveStudentsAfterActivity || []).slice(0, 6).map((s) => (
                         <div key={s.studentId || s._id} className="flex items-center justify-between">
-                          <div className="min-w-0 flex-1 truncate whitespace-nowrap pr-2">{s.studentName || 'Student'}</div>
-                          <div className="text-xs shrink-0">{s.inactiveAt ? formatDateDDMMMYYYY(s.inactiveAt) : (s.lastClassAt ? formatDateDDMMMYYYY(s.lastClassAt) : '—')}</div>
+                          <div className="truncate">{s.studentName || 'Student'}</div>
+                          <div className="text-xs">{s.inactiveAt ? formatDateDDMMMYYYY(s.inactiveAt) : (s.lastClassAt ? formatDateDDMMMYYYY(s.lastClassAt) : '—')}</div>
                         </div>
                       ))}
                       {(!inactiveStudentsAfterActivity || inactiveStudentsAfterActivity.length === 0) && (
@@ -1170,7 +1166,7 @@ const DashboardHome = ({ isActive = true }) => {
                     </div>
                   </div>
 
-                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-2">
+                  <div className="bg-card rounded-lg border border-border p-4">
                     <h3 className="text-sm font-semibold mb-2">Users on vacation</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(() => {
@@ -1191,8 +1187,8 @@ const DashboardHome = ({ isActive = true }) => {
                         ) : (
                           combined.map((u) => (
                             <div key={u.key} className="flex items-center justify-between">
-                              <div className="min-w-0 flex-1 truncate whitespace-nowrap pr-2">{u.label}</div>
-                              <div className="text-xs shrink-0">{u.until ? `until ${formatDateDDMMMYYYY(u.until)}` : ''}</div>
+                              <div className="truncate">{u.label}</div>
+                              <div className="text-xs">{u.until ? `until ${formatDateDDMMMYYYY(u.until)}` : ''}</div>
                             </div>
                           ))
                         );

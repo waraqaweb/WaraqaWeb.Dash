@@ -152,7 +152,6 @@ const QUESTION_TYPES = [
 ];
 
 const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio', initialLesson = null }) => {
-  const lessonDraftStorageKey = 'lessonStudio:addDraft:v1';
   const [lessonMeta, setLessonMeta] = useState({
     subject: '',
     title: '',
@@ -168,8 +167,6 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
   const [showStatusToast, setShowStatusToast] = useState(false);
   const [activeEditorTab, setActiveEditorTab] = useState('explanation');
   const [draggingBlockIndex, setDraggingBlockIndex] = useState(null);
-  const [dragOverBlockIndex, setDragOverBlockIndex] = useState(null);
-  const [dragOverBlockPosition, setDragOverBlockPosition] = useState('before');
   const [blockHubOpen, setBlockHubOpen] = useState(false);
   const [blockHubSubject, setBlockHubSubject] = useState('');
   const [blockHubDraft, setBlockHubDraft] = useState({});
@@ -268,63 +265,6 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
     setActiveSection(0);
     setActiveEditorTab('explanation');
   }, [initialLesson]);
-
-  // Persist Add-lesson draft so closing the modal to review something doesn't lose work.
-  // Only applies when creating a new lesson (not editing an existing one).
-  useEffect(() => {
-    if (initialLesson) return;
-    try {
-      const raw = localStorage.getItem(lessonDraftStorageKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        if (parsed.lessonMeta && typeof parsed.lessonMeta === 'object') {
-          setLessonMeta((prev) => ({
-            ...prev,
-            subject: parsed.lessonMeta.subject || prev.subject,
-            title: parsed.lessonMeta.title || prev.title,
-            subtitle: parsed.lessonMeta.subtitle || prev.subtitle,
-            objective: parsed.lessonMeta.objective || prev.objective
-          }));
-        }
-        if (Array.isArray(parsed.sections) && parsed.sections.length) {
-          setSections(parsed.sections);
-          const idx = Number(parsed.activeSection);
-          if (Number.isInteger(idx) && idx >= 0 && idx < parsed.sections.length) {
-            setActiveSection(idx);
-          }
-        }
-        if (parsed.audienceView === 'kids' || parsed.audienceView === 'standard') {
-          setAudienceView(parsed.audienceView);
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-    // run once per mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (initialLesson) return;
-    const timer = setTimeout(() => {
-      try {
-        localStorage.setItem(
-          lessonDraftStorageKey,
-          JSON.stringify({
-            lessonMeta,
-            sections,
-            activeSection,
-            audienceView,
-            updatedAt: Date.now()
-          })
-        );
-      } catch (e) {
-        // ignore
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [audienceView, activeSection, initialLesson, lessonMeta, sections]);
 
   useEffect(() => {
     try {
@@ -592,20 +532,17 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
     reader.readAsDataURL(file);
   };
 
-  const sanitizeExampleToken = (value) =>
-    String(value || '')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&nbsp;/gi, '')
-      .trim();
-
-  const parseExamplesFromText = (raw) =>
-    String(raw || '')
-      .split(/[\n,،;]+/g)
-      .map((item) => sanitizeExampleToken(item))
+  const splitExamples = (raw) =>
+    raw
+      .split(',')
+      .map((item) => item.trim())
       .filter(Boolean);
 
-  const normalizeExamplesList = (list) =>
-    parseExamplesFromText((Array.isArray(list) ? list : []).join(','));
+  const parseExamplesFromText = (raw) =>
+    raw
+      .split('\n')
+      .flatMap((line) => line.split(',').map((item) => item.trim()))
+      .filter(Boolean);
 
   const [showAllExamples, setShowAllExamples] = useState(false);
 
@@ -908,67 +845,22 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                         const blockShellClass = block.variant === 'edge'
                           ? `bg-white border border-slate-200 border-t-4 border-l-4 ${stylePreset.edge || ''}`
                           : `border ${stylePreset.card}`;
-                        const showDropIndicator =
-                          draggingBlockIndex !== null &&
-                          dragOverBlockIndex === idx &&
-                          draggingBlockIndex !== idx;
                         return (
                           <div
                             key={block.id}
                             className={`relative rounded-2xl p-4 pt-6 ${blockShellClass}`}
-                            onDragOver={(event) => {
-                              if (draggingBlockIndex === null) return;
-                              event.preventDefault();
-                              const rect = event.currentTarget.getBoundingClientRect();
-                              const mid = rect.top + rect.height / 2;
-                              const pos = event.clientY < mid ? 'before' : 'after';
-                              setDragOverBlockIndex(idx);
-                              setDragOverBlockPosition(pos);
-                            }}
-                            onDragLeave={() => {
-                              // keep indicator stable while moving between children; only clear if we were over this block
-                              setDragOverBlockIndex((prev) => (prev === idx ? null : prev));
-                            }}
+                            draggable
+                            onDragStart={() => setDraggingBlockIndex(idx)}
+                            onDragOver={(event) => event.preventDefault()}
                             onDrop={() => {
                               if (draggingBlockIndex === null) return;
-                              const blocks = normalizeExplanationBlocks(audienceView === 'kids' ? current?.explanationBlocksKids : current?.explanationBlocksStandard);
-                              const maxInsert = Math.max(0, blocks.length - 1);
-                              const isAfter = dragOverBlockPosition === 'after';
-                              let targetIndex = idx + (isAfter ? 1 : 0);
-                              targetIndex = Math.max(0, Math.min(blocks.length, targetIndex));
-                              // Convert to a valid in-array index after removal.
-                              const insertIndex = draggingBlockIndex < targetIndex ? targetIndex - 1 : targetIndex;
-                              moveExplanationBlock(draggingBlockIndex, Math.max(0, Math.min(maxInsert, insertIndex)));
+                              moveExplanationBlock(draggingBlockIndex, idx);
                               setDraggingBlockIndex(null);
-                              setDragOverBlockIndex(null);
                             }}
                           >
-                            {showDropIndicator && (
-                              <div
-                                className={`pointer-events-none absolute left-3 right-3 h-0.5 rounded bg-indigo-600 ${
-                                  dragOverBlockPosition === 'after' ? 'bottom-2' : 'top-2'
-                                }`}
-                              />
-                            )}
                             <div className="absolute left-4 top-0 -translate-y-1/2">
                               <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 shadow-sm">
-                                <button
-                                  type="button"
-                                  className="cursor-grab rounded-full p-0.5 text-slate-400 hover:text-slate-600"
-                                  draggable
-                                  onDragStart={(event) => {
-                                    event.dataTransfer.effectAllowed = 'move';
-                                    try { event.dataTransfer.setData('text/plain', block.id); } catch (e) {}
-                                    setDraggingBlockIndex(idx);
-                                  }}
-                                  onDragEnd={() => {
-                                    setDraggingBlockIndex(null);
-                                    setDragOverBlockIndex(null);
-                                  }}
-                                  title="Drag block"
-                                >
-                                  <GripVertical className="h-3.5 w-3.5" />
-                                </button>
+                                <GripVertical className="h-3.5 w-3.5 text-slate-400" />
                                 <input
                                   className="w-48 bg-transparent text-xs font-semibold text-slate-700 outline-none"
                                   value={block.title}
@@ -1241,25 +1133,29 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                     <button
                       type="button"
                       onClick={() => {
-                        setExamplesDraft((current?.examples || []).join(', '));
+                        setExamplesDraft((current?.examples || []).join('\n'));
                         setExamplesEditorOpen(true);
                       }}
                       className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold text-emerald-700"
                     >
-                      Edit comma list
+                      Open editor
                     </button>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     {(showAllExamples ? current?.examples : (current?.examples || []).slice(0, 10))?.map((example, idx) => (
                       <div key={`example-${idx}`} className="rounded-xl border border-emerald-200 bg-white p-3">
                         <span className="text-[10px] font-semibold uppercase text-emerald-600">Example {idx + 1}</span>
-                        <input
-                          type="text"
-                          value={example}
-                          onChange={(event) => updateArrayItem('examples', idx, event.target.value)}
-                          className="mt-2 w-full rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-sm font-medium text-emerald-900"
-                          placeholder="Example word"
-                        />
+                        <div className="mt-2">
+                          <RichTextEditor
+                            value={example}
+                            onChange={(value) => updateArrayItem('examples', idx, value)}
+                            minHeight={80}
+                            compact
+                            showToolbar={false}
+                            onFocus={setActiveEditorRef}
+                            placeholder="Example text..."
+                          />
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1283,13 +1179,9 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                 type="button"
                 onClick={() => {
                   if (typeof onSave !== 'function') return;
-                  const normalizedSections = (sections || []).map((section) => ({
-                    ...section,
-                    examples: normalizeExamplesList(section?.examples),
-                  }));
                   onSave({
                     ...lessonMeta,
-                    sections: normalizedSections
+                    sections
                   });
                 }}
                 className="rounded-full bg-emerald-600 p-3 text-white shadow-lg disabled:opacity-60"
@@ -1340,14 +1232,13 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
             className="mt-4 h-80 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm"
             value={examplesDraft}
             onChange={(event) => setExamplesDraft(event.target.value)}
-            placeholder="example1, example2, example3"
+            placeholder="Examples..."
           />
-          <p className="mt-2 text-xs text-slate-500">Use commas only. Spaces/new lines are removed on save.</p>
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <button
               type="button"
               onClick={() => {
-                setExamplesDraft((current?.examples || []).join(', '));
+                setExamplesDraft((current?.examples || []).join('\n'));
               }}
               className="rounded-full border border-border px-4 py-2 text-xs text-slate-600"
             >

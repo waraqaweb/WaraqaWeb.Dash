@@ -6,13 +6,11 @@ const fs = require('fs');
 const fsPromises = require('fs/promises');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose');
 const { body, param, query, validationResult } = require('express-validator');
 const { authenticateToken, optionalAuth, requireAdmin } = require('../middleware/auth');
 const libraryService = require('../services/libraryService');
 const libraryAnnotationService = require('../services/libraryAnnotationService');
 const LibraryAsset = require('../models/library/LibraryAsset');
-const LibraryItem = require('../models/library/LibraryItem');
 const { normalizeUtf8FromLatin1 } = require('../utils/textEncoding');
 
 const router = express.Router();
@@ -379,68 +377,6 @@ router.patch(
     try {
       const item = await libraryService.updateItem({ itemId: req.params.itemId, payload: req.body, user: req.user });
       res.json(item);
-    } catch (error) {
-      next(error);
-    }
-  }
-);
-
-// Bulk reorder items by updating their orderIndex.
-// Used by curricula lesson ordering so all users see the same list order.
-router.post(
-  '/items/reorder',
-  authenticateToken,
-  requireAdmin,
-  body('ids').isArray({ min: 1 }),
-  body('folderId').optional().isString(),
-  validate,
-  async (req, res, next) => {
-    try {
-      const rawIds = req.body?.ids || [];
-      const ids = rawIds
-        .map((id) => String(id || '').trim())
-        .filter((id) => mongoose.Types.ObjectId.isValid(id));
-
-      if (ids.length !== rawIds.length) {
-        return res.status(400).json({
-          message: 'Invalid item ids',
-          error: 'INVALID_IDS'
-        });
-      }
-
-      const folderIdRaw = req.body?.folderId;
-      const folderId = folderIdRaw && folderIdRaw !== 'root'
-        ? (mongoose.Types.ObjectId.isValid(folderIdRaw) ? new mongoose.Types.ObjectId(folderIdRaw) : null)
-        : null;
-      if (folderIdRaw && !folderId) {
-        return res.status(400).json({
-          message: 'Invalid folderId',
-          error: 'INVALID_FOLDER_ID'
-        });
-      }
-
-      const query = { _id: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) } };
-      if (folderId) query.folder = folderId;
-
-      const existing = await LibraryItem.find(query).select('_id folder').lean();
-      if (!existing || existing.length !== ids.length) {
-        return res.status(404).json({
-          message: 'One or more items were not found',
-          error: 'ITEMS_NOT_FOUND'
-        });
-      }
-
-      const orderStep = 10;
-      const ops = ids.map((id, idx) => ({
-        updateOne: {
-          filter: { _id: new mongoose.Types.ObjectId(id) },
-          update: { $set: { orderIndex: (idx + 1) * orderStep, updatedBy: req.user?._id || undefined } }
-        }
-      }));
-
-      await LibraryItem.bulkWrite(ops, { ordered: true });
-
-      res.json({ updated: ids.length });
     } catch (error) {
       next(error);
     }

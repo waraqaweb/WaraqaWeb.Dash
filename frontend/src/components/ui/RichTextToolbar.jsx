@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, ChevronDown, Indent, Italic, Outdent, Pilcrow, Text, Underline } from 'lucide-react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { AlignCenter, AlignLeft, AlignRight, Bold, Indent, Italic, Outdent, Pilcrow, Text, Underline } from 'lucide-react';
 
 const FONT_FAMILIES = [
   // Arabic / Quran-friendly
@@ -69,8 +69,6 @@ const RichTextToolbar = ({ activeRef, compact = false }) => {
   const [currentFont, setCurrentFont] = useState(FONT_FAMILIES[0].value);
   const [currentSize, setCurrentSize] = useState(16);
   const [color, setColor] = useState('#0f172a');
-  const [moreOpen, setMoreOpen] = useState(false);
-  const moreRef = useRef(null);
 
   const savedRangeRef = React.useRef(null);
 
@@ -150,18 +148,6 @@ const RichTextToolbar = ({ activeRef, compact = false }) => {
     return () => document.removeEventListener('selectionchange', handler);
   }, [activeRef, currentFont, currentSize]);
 
-  useEffect(() => {
-    if (!moreOpen) return;
-    const handler = (event) => {
-      const target = event.target;
-      if (!target) return;
-      if (moreRef.current && moreRef.current.contains(target)) return;
-      setMoreOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [moreOpen]);
-
   const toolbarClass = useMemo(
     () =>
       `inline-flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-slate-200/90 px-3 py-2 shadow-sm ${
@@ -239,119 +225,50 @@ const RichTextToolbar = ({ activeRef, compact = false }) => {
       <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('underline')} className="rounded-lg border border-border px-2 py-1">
         <Underline className="h-4 w-4" />
       </button>
-      <div ref={moreRef} className="relative">
-        <button
-          type="button"
-          onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-          onClick={() => setMoreOpen((prev) => !prev)}
-          className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1"
-          title="Alignment & direction"
-        >
-          <AlignLeft className="h-4 w-4" />
-          <ChevronDown className="h-3.5 w-3.5" />
-        </button>
-        {moreOpen && (
-          <div className="absolute right-0 top-full z-50 mt-2 w-52 rounded-xl border border-border bg-white p-2 shadow-lg">
-            <div className="grid gap-1">
-              <button
-                type="button"
-                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-                onClick={() => { exec('justifyLeft'); setMoreOpen(false); }}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
-              >
-                <AlignLeft className="h-4 w-4" />
-                Align left
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-                onClick={() => { exec('justifyCenter'); setMoreOpen(false); }}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
-              >
-                <AlignCenter className="h-4 w-4" />
-                Align center
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-                onClick={() => { exec('justifyRight'); setMoreOpen(false); }}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
-              >
-                <AlignRight className="h-4 w-4" />
-                Align right
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-                onClick={() => { exec('justifyFull'); setMoreOpen(false); }}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
-              >
-                <AlignJustify className="h-4 w-4" />
-                Justify
-              </button>
-
-              <div className="my-1 h-px bg-slate-100" />
-
-              <button
-                type="button"
-                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-                onClick={() => { exec('indent'); setMoreOpen(false); }}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
-              >
-                <Indent className="h-4 w-4" />
-                Indent
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-                onClick={() => { exec('outdent'); setMoreOpen(false); }}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
-              >
-                <Outdent className="h-4 w-4" />
-                Outdent
-              </button>
-
-              <div className="my-1 h-px bg-slate-100" />
-
-              <button
-                type="button"
-                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-                onClick={() => {
-                  if (activeRef?.current) {
-                    activeRef.current.dir = 'rtl';
-                    activeRef.current.style.textAlign = 'right';
-                  }
-                  setMoreOpen(false);
-                }}
-                className="flex items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
-              >
-                <span>Direction</span>
-                <span className="text-xs font-semibold text-slate-500">RTL</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-                onClick={() => {
-                  if (activeRef?.current) {
-                    activeRef.current.dir = 'ltr';
-                    activeRef.current.style.textAlign = 'left';
-                  }
-                  setMoreOpen(false);
-                }}
-                className="flex items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
-              >
-                <span>Direction</span>
-                <span className="text-xs font-semibold text-slate-500">LTR</span>
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyLeft')} className="rounded-lg border border-border px-2 py-1">
+        <AlignLeft className="h-4 w-4" />
+      </button>
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyCenter')} className="rounded-lg border border-border px-2 py-1">
+        <AlignCenter className="h-4 w-4" />
+      </button>
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyRight')} className="rounded-lg border border-border px-2 py-1">
+        <AlignRight className="h-4 w-4" />
+      </button>
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('indent')} className="rounded-lg border border-border px-2 py-1">
+        <Indent className="h-4 w-4" />
+      </button>
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('outdent')} className="rounded-lg border border-border px-2 py-1">
+        <Outdent className="h-4 w-4" />
+      </button>
       <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('formatBlock', '<h3>')} className="rounded-lg border border-border px-2 py-1">
         <Text className="h-4 w-4" />
       </button>
       <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('formatBlock', '<p>')} className="rounded-lg border border-border px-2 py-1">
         <Pilcrow className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
+        onClick={() => {
+          if (!activeRef?.current) return;
+          activeRef.current.dir = 'rtl';
+          activeRef.current.style.textAlign = 'right';
+        }}
+        className="rounded-lg border border-border px-2 py-1"
+      >
+        RTL
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
+        onClick={() => {
+          if (!activeRef?.current) return;
+          activeRef.current.dir = 'ltr';
+          activeRef.current.style.textAlign = 'left';
+        }}
+        className="rounded-lg border border-border px-2 py-1"
+      >
+        LTR
       </button>
       </div>
     </div>

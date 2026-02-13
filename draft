@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Undoing the tasks pages"
+git commit -m "resetting some changes"
 git push origin main
 
 ---
@@ -29,13 +29,3 @@ journalctl -u docker -n 200 --no-pager
 docker compose logs --tail 200
 journalctl -u ssh -n 100 --no-pager
 dmesg -T | tail -n 100
-
-
-
-
-
-
-
-
-
-node backend/scripts/backfillClassEndsAt.js

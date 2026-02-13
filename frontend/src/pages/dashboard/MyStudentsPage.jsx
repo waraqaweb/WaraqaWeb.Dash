@@ -5,7 +5,7 @@
  * Displays student list with details and provides actions for adding/editing students.
  */
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Users, MessageCircle, Mail, ChevronDown, UserX, UserCheck } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
@@ -13,6 +13,7 @@ import { formatDateDDMMMYYYY } from '../../utils/date';
 import AddStudentModal from '../../components/dashboard/AddStudentModal';
 import EditStudentModal from '../../components/students/EditStudentModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
 import { deleteStudent as deleteStandaloneStudent } from '../../api/students';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
@@ -43,11 +44,6 @@ const isStudentActive = (student = {}) => {
 const isCancelledClassStatus = (status) => {
   const normalized = String(status || '').toLowerCase();
   return normalized === 'canceled' || normalized.startsWith('cancelled');
-};
-
-const formatHours = (value) => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00';
 };
 
 const buildSubjectsByStudentId = (classesArr = []) => {
@@ -89,6 +85,7 @@ const MyStudentsPage = () => {
   const [editingStudent, setEditingStudent] = useState(null);
   const [expandedStudent, setExpandedStudent] = useState(null);
   const [localSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState(localSearchTerm);
   const [useGlobalSearch] = useState(true); // Guardian option
   const [guardianFilter] = useState('all');
   const [, setGuardiansList] = useState([]);
@@ -101,44 +98,6 @@ const MyStudentsPage = () => {
   const [sortOrder] = useState('asc');
   const [statusFilter, setStatusFilter] = useState('active');
   const [currentPage, setCurrentPage] = useState(1);
-
-  const getStudentRenderKey = useCallback((student) => {
-    const id = student && (student._id || student.id);
-    const guardianId = student && (student.guardianId || student.guardian?._id || student.guardian);
-    const source = student && student._source;
-    const base = id ? String(id) : `${String(student?.firstName || '').trim()}|${String(student?.lastName || '').trim()}`;
-    return `${base}|g:${guardianId ? String(guardianId) : 'none'}|s:${source ? String(source) : 'unknown'}`;
-  }, []);
-
-  const scoreStudentForDedupe = useCallback((student) => {
-    if (!student || typeof student !== 'object') return 0;
-    let score = 0;
-    if (student._source === 'standalone') score += 10;
-    if (student.lastName) score += 2;
-    if (student.email) score += 2;
-    if (student.phone || student.whatsapp) score += 1;
-    if (student.profilePicture || student.profilePictureThumbnail) score += 1;
-    if (student.studentInfo && typeof student.studentInfo === 'object') score += 1;
-    return score;
-  }, []);
-
-  const dedupeStudents = useCallback((list = []) => {
-    const map = new Map();
-    (Array.isArray(list) ? list : []).forEach((student) => {
-      const id = student && (student._id || student.id);
-      if (!id) return;
-      const key = String(id);
-      const prev = map.get(key);
-      if (!prev) {
-        map.set(key, student);
-        return;
-      }
-      const prevScore = scoreStudentForDedupe(prev);
-      const nextScore = scoreStudentForDedupe(student);
-      map.set(key, nextScore >= prevScore ? student : prev);
-    });
-    return Array.from(map.values());
-  }, [scoreStudentForDedupe]);
 
   const fetchStudentsRef = React.useRef(null);
   const fetchGuardiansListRef = React.useRef(null);
@@ -158,13 +117,11 @@ const MyStudentsPage = () => {
     useGlobalSearch ? (searchTerm || '') : (localSearchTerm || '')
   ), [useGlobalSearch, searchTerm, localSearchTerm]);
 
-  const [debouncedEffectiveSearchTerm, setDebouncedEffectiveSearchTerm] = useState(effectiveSearchTerm || '');
-
-  // Debounce search input for smoother typing on large lists
+  // Debounce localSearchTerm
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedEffectiveSearchTerm(effectiveSearchTerm || ''), 120);
+    const t = setTimeout(() => setDebouncedSearch(localSearchTerm), 300);
     return () => clearTimeout(t);
-  }, [effectiveSearchTerm]);
+  }, [localSearchTerm]);
 
   // Fetch students when component mounts or filters change
   // Wait for auth loading to finish before fetching to ensure token header is set
@@ -173,12 +130,9 @@ const MyStudentsPage = () => {
       fetchStudentsRef.current?.();
       if (!isGuardian || !isGuardian()) fetchGuardiansListRef.current?.();
     }
-  }, [user, loading, guardianFilter, sortBy, sortOrder, isGuardian]);
+  }, [user, loading, debouncedSearch, guardianFilter, sortBy, sortOrder, isGuardian]);
 
-  // Search is client-side (Excel-like): no refetch while typing.
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedEffectiveSearchTerm, statusFilter, globalFilter]);
+  // Search is client-side (Excel-like): do not reset pagination or refetch.
 
 
   useEffect(() => {
@@ -613,53 +567,43 @@ const fetchGuardiansList = async () => {
   fetchGuardiansListRef.current = fetchGuardiansList;
 
   const filteredStudents = useMemo(() => {
-    let result = dedupeStudents(students || []);
-    const searchActive = Boolean((debouncedEffectiveSearchTerm || '').trim());
+    let result = students || [];
 
-    if (!searchActive && isHydrated && statusFilter !== 'all') {
+    if (isHydrated && statusFilter !== 'all') {
       const desiredActive = statusFilter === 'active';
       result = result.filter((student) => isStudentActive(student) === desiredActive);
     }
 
     // debug logs removed
 
-    const trimmedTerm = (debouncedEffectiveSearchTerm || '').trim().toLowerCase();
+    const trimmedTerm = (effectiveSearchTerm || '').trim().toLowerCase();
     if (trimmedTerm) {
       const parts = trimmedTerm.split(/\s+/).filter(Boolean);
-      const looksLikeEmailSearch = trimmedTerm.includes('@');
-      const looksLikeNumericSearch = /\d/.test(trimmedTerm);
-
       result = result.filter((s) => {
         const firstName = (s.firstName || '').toLowerCase();
         const lastName = (s.lastName || '').toLowerCase();
         const fullName = `${firstName} ${lastName}`.trim();
-        const fullNameReversed = `${lastName} ${firstName}`.trim();
         const email = (s.email || '').toLowerCase();
         const phone = (s.phone || '').toLowerCase();
+        const guardianName = s.guardian ? `${s.guardian.firstName} ${s.guardian.lastName}`.toLowerCase() : '';
         const className = s.class ? (s.class.name || '').toLowerCase() : '';
-        const idText = String(s._id || '').toLowerCase();
 
-        const partsMatchName = parts.every((part) => (
-          fullName.includes(part) || fullNameReversed.includes(part)
+        const partsMatchName = parts.every(p => (
+          firstName.startsWith(p) || lastName.startsWith(p) || fullName.includes(p)
         ));
-        const directNameMatch =
-          fullName.includes(trimmedTerm) ||
-          fullNameReversed.includes(trimmedTerm) ||
-          firstName.startsWith(trimmedTerm) ||
-          lastName.startsWith(trimmedTerm);
 
-        if (partsMatchName || directNameMatch) return true;
-
-        if (className.includes(trimmedTerm)) return true;
-        if (looksLikeEmailSearch && email.includes(trimmedTerm)) return true;
-        if (looksLikeNumericSearch && (phone.includes(trimmedTerm) || idText.includes(trimmedTerm))) return true;
-
-        return false;
+        return partsMatchName || 
+               email.includes(trimmedTerm) || 
+               phone.includes(trimmedTerm) || 
+               fullName.includes(trimmedTerm) ||
+               guardianName.includes(trimmedTerm) ||
+               className.includes(trimmedTerm) ||
+               String(s._id).includes(trimmedTerm);
       });
     }
 
     // Apply global filter (only when using global search)
-    if (!searchActive && useGlobalSearch && globalFilter && globalFilter !== 'all') {
+    if (useGlobalSearch && globalFilter && globalFilter !== 'all') {
       switch (globalFilter) {
         case 'active':
           result = result.filter(s => isStudentActive(s));
@@ -675,7 +619,7 @@ const fetchGuardiansList = async () => {
     // debug logs removed
     
     return result;
-  }, [students, dedupeStudents, debouncedEffectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter, isHydrated]);
+  }, [students, effectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter, isHydrated]);
 
   const sortedStudents = useMemo(() => {
     const list = [...(filteredStudents || [])];
@@ -689,8 +633,6 @@ const fetchGuardiansList = async () => {
     };
 
     list.sort((a, b) => {
-      const activeDiff = (isStudentActive(b) ? 1 : 0) - (isStudentActive(a) ? 1 : 0);
-      if (activeDiff !== 0) return activeDiff;
       const keyA = buildNameKey(a);
       const keyB = buildNameKey(b);
       if (keyA === keyB) {
@@ -758,9 +700,6 @@ const fetchGuardiansList = async () => {
             filter: 'previous',
             studentIds: visibleIdsKey,
             limit: 1000,
-            light: true,
-            populate: false,
-            includeTotal: false,
           },
           signal: controller.signal
         });
@@ -817,9 +756,6 @@ const fetchGuardiansList = async () => {
         const baseParams = {
           studentIds: visibleIdsKey,
           limit: 2000,
-          light: true,
-          populate: false,
-          includeTotal: false,
         };
         if (isTeacher && isTeacher()) {
           baseParams.teacher = user._id || user.id;
@@ -995,7 +931,7 @@ const fetchGuardiansList = async () => {
   // Do not early-return while loading so the search and filters stay mounted (prevents focus loss)
 
   const isPageLoading = Boolean(loading || localLoading);
-  const showLoading = isPageLoading;
+  const showLoading = useMinLoading(isPageLoading);
 
   // Derived student counts for header counters
   const totalStudents = (students || []).length;
@@ -1081,7 +1017,7 @@ const fetchGuardiansList = async () => {
       ) : (
         <div className="space-y-3">
           {paginatedStudents.map((student) => (
-            <div key={getStudentRenderKey(student)} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+            <div key={student._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
               {/* Student Header */}
               <div className="p-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1140,7 +1076,7 @@ const fetchGuardiansList = async () => {
                       ) : null}
                         {/* Show real hours (computed from past classes durations) in My Students page */}
                         <span className="font-medium text-foreground">
-                          {formatHours(classesHoursMap[String(student._id)] ?? 0)} hours
+                          { (classesHoursMap[String(student._id)] ?? 0) } hours
                         </span>
                         <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(isStudentActive(student), student.activityState)}`}>
                           {student.activityState === 'loading' ? 'Loading' : (isStudentActive(student) ? 'Active' : 'Inactive')}

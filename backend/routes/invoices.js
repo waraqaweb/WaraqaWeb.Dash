@@ -469,10 +469,6 @@ router.get('/', authenticateToken, async (req, res) => {
       order: rawOrder
     } = req.query;
 
-    const light = String(req.query.light || '').toLowerCase();
-    const lightMode = ['1', 'true', 'yes'].includes(light);
-    const includeDynamic = ['1', 'true', 'yes'].includes(String(req.query.includeDynamic || '').toLowerCase());
-
     const filter = {};
 
     const smartSort = ['1', 'true', 'yes'].includes(String(req.query.smartSort || '').toLowerCase());
@@ -654,42 +650,24 @@ router.get('/', authenticateToken, async (req, res) => {
       if (!ids.length) {
         invoices = [];
       } else {
-        let q = Invoice.find({ _id: { $in: ids } });
-        if (lightMode) {
-          q = q
-            .select('invoiceNumber invoiceName invoiceSlug status type createdAt updatedAt dueDate paidAt paidDate paymentDate billingPeriod internalTotals total amount guardian teacher')
-            .populate('guardian', 'firstName lastName email')
-            .populate('teacher', 'firstName lastName email');
-        } else {
-          q = q
-            .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
-            .populate('teacher', 'firstName lastName email')
-            .populate('items.student', 'firstName lastName')
-            .populate('items.teacher', 'firstName lastName')
-            .populate('items.class', CLASS_FIELDS_FOR_INVOICE);
-        }
-        const docs = await q.lean();
+        const docs = await Invoice.find({ _id: { $in: ids } })
+          .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+          .populate('teacher', 'firstName lastName email')
+          .populate('items.student', 'firstName lastName')
+          .populate('items.teacher', 'firstName lastName')
+          .populate('items.class', CLASS_FIELDS_FOR_INVOICE)
+          .lean();
 
         const byId = new Map((docs || []).map((doc) => [String(doc._id), doc]));
         invoices = ids.map((id) => byId.get(String(id))).filter(Boolean);
       }
     } else {
-      let q = Invoice.find(filter);
-      if (lightMode) {
-        q = q
-          .select('invoiceNumber invoiceName invoiceSlug status type createdAt updatedAt dueDate paidAt paidDate paymentDate billingPeriod internalTotals total amount guardian teacher')
-          .populate('guardian', 'firstName lastName email')
-          .populate('teacher', 'firstName lastName email');
-      } else {
-        q = q
-          .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
-          .populate('teacher', 'firstName lastName email')
-          .populate('items.student', 'firstName lastName')
-          .populate('items.teacher', 'firstName lastName')
-          .populate('items.class', CLASS_FIELDS_FOR_INVOICE);
-      }
-
-      invoices = await q
+      invoices = await Invoice.find(filter)
+        .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+        .populate('teacher', 'firstName lastName email')
+        .populate('items.student', 'firstName lastName')
+        .populate('items.teacher', 'firstName lastName')
+        .populate('items.class', CLASS_FIELDS_FOR_INVOICE)
         .sort({ [sortBy]: sortOrder })
         .skip(skip)
         .limit(parseInt(limit))
@@ -702,22 +680,33 @@ router.get('/', authenticateToken, async (req, res) => {
     // cause numbers to "revert" after a refresh. We now simply return the
     // persisted values as-is. If identifiers ever need refresh, that should be
     // done explicitly via an admin action, not on read.
-    // Avoid N+1 queries: do not refetch each invoice again.
-    // Only attach dynamic classes when explicitly requested (guardian_invoice only).
-    let normalizedInvoices = invoices;
-    if (includeDynamic) {
-      normalizedInvoices = await Promise.all((invoices || []).map(async (inv) => {
-        try {
-          if (!inv || inv.type !== 'guardian_invoice') return inv;
-          const doc = await Invoice.findById(inv._id);
-          if (!doc) return inv;
-          const dynamicClasses = await InvoiceService.buildDynamicClassList(doc);
-          return { ...inv, dynamicClasses };
-        } catch (err) {
-          return inv;
+    const normalizedInvoices = await Promise.all(invoices.map(async (inv) => {
+      try {
+        const doc = await Invoice.findById(inv._id)
+          .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+          .populate('teacher', 'firstName lastName email')
+          .populate('items.student', 'firstName lastName')
+          .populate('items.teacher', 'firstName lastName')
+          .populate('items.class', CLASS_FIELDS_FOR_INVOICE);
+        if (!doc) return inv;
+
+        const invoiceObj = doc.toObject({ virtuals: true });
+
+        if (invoiceObj.type === 'guardian_invoice') {
+          try {
+            const dynamicClasses = await InvoiceService.buildDynamicClassList(doc);
+            invoiceObj.dynamicClasses = dynamicClasses;
+          } catch (dynamicErr) {
+            console.warn('[GET /invoices] dynamic class build failed', doc._id?.toString(), dynamicErr?.message || dynamicErr);
+          }
         }
-      }));
-    }
+
+        return invoiceObj;
+      } catch (err) {
+        console.error('Failed to load invoice doc for list', inv._id, err && err.message);
+        return inv;
+      }
+    }));
 
     const total = await Invoice.countDocuments(filter);
     const pages = Math.ceil(total / parseInt(limit));

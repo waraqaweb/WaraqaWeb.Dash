@@ -31,8 +31,6 @@ const { processArrayWithTimezone, addTimezoneInfo, DEFAULT_TIMEZONE } = require(
 const tzUtils = require("../utils/timezone"); // expects toUtc(dateString, tz) and buildUtcFromParts(parts, tz)
 const { generateRecurringClasses } = require("../utils/generateRecurringClasses");
 
-const MAX_CLASS_DURATION_MINUTES = 180;
-
 /* -------------------------
    GET /api/classes/reschedule-requests/stats
    Admin-only: counts of reschedule requests by requester role within a date range.
@@ -113,11 +111,6 @@ function toBool(val) {
   if (typeof val === "boolean") return val;
   if (typeof val === "string") return val === "true";
   return false;
-}
-
-function toBoolDefault(val, defaultValue) {
-  if (val === undefined || val === null || val === '') return Boolean(defaultValue);
-  return toBool(val);
 }
 
 function buildPerDayMap(recurrenceDetails = []) {
@@ -780,9 +773,6 @@ router.get("/", authenticateToken, async (req, res) => {
       date,
       dateFrom,
       dateTo,
-      light,
-      populate,
-      includeTotal,
     } = req.query;
 
     const now = new Date();
@@ -893,34 +883,12 @@ router.get("/", authenticateToken, async (req, res) => {
     mark('filters:built');
 
     // upcoming / previous filtering
-    // Primary path: `endsAt` (index-friendly).
-    // Fallback path: legacy rows that missed `endsAt` should still be visible by approximating
-    // in-progress boundary using max allowed class duration.
-    const legacyUpcomingCutoff = new Date(now.getTime() - (MAX_CLASS_DURATION_MINUTES * 60 * 1000));
+    // IMPORTANT: Avoid $expr-based computed filters here (they disable index usage and cause collection scans).
+    // We rely on `endsAt` being present (backfill script provided for legacy docs).
     if (filter === "upcoming") {
-      pushAnd({
-        $or: [
-          { endsAt: { $gte: now } },
-          {
-            $and: [
-              { $or: [{ endsAt: { $exists: false } }, { endsAt: null }] },
-              { scheduledDate: { $gte: legacyUpcomingCutoff } },
-            ],
-          },
-        ],
-      });
+      pushAnd({ endsAt: { $gte: now } });
     } else if (filter === "previous") {
-      pushAnd({
-        $or: [
-          { endsAt: { $lt: now } },
-          {
-            $and: [
-              { $or: [{ endsAt: { $exists: false } }, { endsAt: null }] },
-              { scheduledDate: { $lt: legacyUpcomingCutoff } },
-            ],
-          },
-        ],
-      });
+      pushAnd({ endsAt: { $lt: now } });
     }
 
     // Filter out classes that are hidden due to system vacation or individual teacher vacation
@@ -933,12 +901,10 @@ router.get("/", authenticateToken, async (req, res) => {
       filters.teacher = String(req.user._id);
       
       // Check if teacher is on vacation and filter classes accordingly
-      const teacherDoc = await User.findById(req.user._id)
-        .select('vacationStartDate vacationEndDate')
-        .lean();
-      if (teacherDoc && teacherDoc.vacationStartDate && teacherDoc.vacationEndDate) {
-        const vacationStart = new Date(teacherDoc.vacationStartDate);
-        const vacationEnd = new Date(teacherDoc.vacationEndDate);
+      const teacher = await User.findById(req.user._id);
+      if (teacher && teacher.vacationStartDate && teacher.vacationEndDate) {
+        const vacationStart = new Date(teacher.vacationStartDate);
+        const vacationEnd = new Date(teacher.vacationEndDate);
         const firstDayAfterVacation = new Date(vacationEnd.getTime() + 24 * 60 * 60 * 1000);
         
         // If currently on vacation, only show classes after vacation (first day)
@@ -967,17 +933,8 @@ router.get("/", authenticateToken, async (req, res) => {
 
     const pageNum = Math.max(1, Number.parseInt(page, 10) || 1);
     const limitNumRaw = Number.parseInt(limit, 10);
-    const limitNum = Math.min(1000, Math.max(1, Number.isFinite(limitNumRaw) ? limitNumRaw : 20));
+    const limitNum = Math.min(100, Math.max(1, Number.isFinite(limitNumRaw) ? limitNumRaw : 20));
     const skip = (pageNum - 1) * limitNum;
-
-    // List endpoints can be called in two very different modes:
-    // - UI pagination (needs populate + totals)
-    // - Bulk/metrics (large limit, studentIds, etc) where populate/totals are wasted
-    const lightMode = toBoolDefault(light, true);
-    const populateDefault = !(studentIds && typeof studentIds === 'string') && limitNum <= 100;
-    const shouldPopulate = toBoolDefault(populate, populateDefault);
-    const includeTotalDefault = !(studentIds && typeof studentIds === 'string') && limitNum <= 100;
-    const shouldIncludeTotal = toBoolDefault(includeTotal, includeTotalDefault);
 
     const sortOrder = filter === "upcoming" ? 1 : -1;
     const sortObj = { scheduledDate: sortOrder };
@@ -1010,9 +967,11 @@ router.get("/", authenticateToken, async (req, res) => {
       filters.status = { $in: STATUS_ALLOW_LIST };
     }
 
-    const selectFields = lightMode
-      ? [
+    const [rawClasses, totalClasses] = await Promise.all([
+      Class.find(filters)
+        .select([
           'title',
+          'description',
           'subject',
           'status',
           'scheduledDate',
@@ -1020,10 +979,7 @@ router.get("/", authenticateToken, async (req, res) => {
           'endsAt',
           'timezone',
           'meetingLink',
-          // Only include the fields needed for the whiteboard screenshot badge/list UI.
-          'materials.kind',
-          'materials.libraryItem',
-          'materials.uploadedByRole',
+          'materials',
           'parentRecurringClass',
           'student.guardianId',
           'student.studentId',
@@ -1033,38 +989,28 @@ router.get("/", authenticateToken, async (req, res) => {
           'classReport.submittedAt',
           'classReport.classScore',
           'classReport.attendance',
+          'classReport.subject',
+          'classReport.subjects',
+          'classReport.lessonTopic',
+          'classReport.customLessonTopic',
+          'classReport.teacherNotes',
+          'classReport.supervisorNotes',
+          'classReport.newAssignment',
+          'classReport.surah',
+          'classReport.verseEnd',
+          'classReport.recitedQuran',
           'reportSubmission.status',
           'createdAt',
-          'updatedAt',
-        ].join(' ')
-      : undefined;
-
-    let query = Class.find(filters);
-    if (selectFields) query = query.select(selectFields);
-    if (shouldPopulate) {
-      const teacherSelect = lightMode ? 'firstName lastName profilePicture' : 'firstName lastName email phone profilePicture';
-      const guardianSelect = lightMode ? 'firstName lastName' : 'firstName lastName email phone';
-      query = query
-        .populate({ path: 'teacher', select: teacherSelect, options: { lean: true } })
-        .populate({ path: 'student.guardianId', select: guardianSelect, options: { lean: true } });
-    }
-    query = query.sort(sortObj).skip(skip);
-
-    // If totals are not needed (bulk/metrics callers), avoid countDocuments.
-    // Fetch one extra doc to determine hasNextPage.
-    const limitForQuery = shouldIncludeTotal ? limitNum : (limitNum + 1);
-    query = query.limit(limitForQuery).lean();
-
-    const totalPromise = shouldIncludeTotal ? Class.countDocuments(filters) : Promise.resolve(null);
-    const [rawRows, totalClasses] = await Promise.all([query, totalPromise]);
-
-    const hasNextPage = !shouldIncludeTotal
-      ? (Array.isArray(rawRows) && rawRows.length > limitNum)
-      : (pageNum < Math.ceil((Number(totalClasses) || 0) / limitNum));
-
-    const rawClasses = !shouldIncludeTotal && Array.isArray(rawRows)
-      ? rawRows.slice(0, limitNum)
-      : rawRows;
+          'updatedAt'
+        ].join(' '))
+        .populate({ path: "teacher", select: "firstName lastName email phone profilePicture", options: { lean: true } })
+        .populate({ path: "student.guardianId", select: "firstName lastName email phone", options: { lean: true } })
+        .sort(sortObj)
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Class.countDocuments(filters),
+    ]);
 
     mark(`db:done rows=${(rawClasses || []).length} total=${totalClasses}`);
 
@@ -1082,9 +1028,7 @@ router.get("/", authenticateToken, async (req, res) => {
       };
     });
 
-    const totalPages = shouldIncludeTotal
-      ? Math.ceil((Number(totalClasses) || 0) / limitNum)
-      : null;
+    const totalPages = Math.ceil(totalClasses / limitNum);
 
     // Get user's timezone for conversion
     const userTimezone = req.user?.timezone || DEFAULT_TIMEZONE;
@@ -1101,7 +1045,7 @@ router.get("/", authenticateToken, async (req, res) => {
         currentPage: pageNum,
         totalPages,
         totalClasses,
-        hasNextPage,
+        hasNextPage: pageNum < totalPages,
         hasPrevPage: pageNum > 1,
       },
       userTimezone,
@@ -1203,14 +1147,7 @@ router.get("/series", authenticateToken, requireRole(["admin"]), async (req, res
     await hydrateUnknownStudentNames(patterns);
 
     const patternIds = patterns.map((p) => p._id);
-    const cancelledStatuses = [
-      'cancelled',
-      'cancelled_by_admin',
-      'cancelled_by_teacher',
-      'cancelled_by_guardian',
-      'cancelled_by_student',
-      'no_show_both',
-    ];
+    const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'];
 
     const childCounts = patternIds.length
       ? await Class.aggregate([
@@ -3180,7 +3117,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
     console.log("🧐 Raw attendance type:", typeof payload.attendance, "value:", payload.attendance);
     console.log("🧐 Raw countAbsentForBilling type:", typeof payload.countAbsentForBilling, "value:", payload.countAbsentForBilling);
 
-    const attendanceOptions = new Set(["attended", "missed_by_student", "cancelled_by_teacher", "cancelled_by_student", "no_show_both"]);
+    const attendanceOptions = new Set(["attended", "missed_by_student", "cancelled_by_teacher", "no_show_both"]);
     const attendanceValue = attendanceOptions.has(payload.attendance) ? payload.attendance : "attended";
 
     const rawSubject = typeof payload.subject === "string" ? payload.subject.trim() : "";
@@ -3278,7 +3215,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
         absenceExcused,
         classScore,
       };
-    } else if (attendanceValue === "cancelled_by_teacher" || attendanceValue === "cancelled_by_student") {
+    } else if (attendanceValue === "cancelled_by_teacher") {
       if (!cancellationReason) {
         return res.status(400).json({
           message: "Cancellation reason is required",
@@ -3295,7 +3232,6 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
       classDoc.cancellation.reason = cancellationReason;
       classDoc.cancellation.cancelledAt = now;
       classDoc.cancellation.cancelledBy = req.user._id;
-      classDoc.cancellation.cancelledByRole = attendanceValue === "cancelled_by_student" ? "student" : "teacher";
       classDoc.markModified("cancellation");
     } else {
       // For other non-attended states (e.g., no_show_both), keep minimal payload
@@ -3371,10 +3307,6 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
       classDoc.attendance.teacherPresent = false;
       classDoc.attendance.studentPresent = true;
       classDoc.status = "cancelled_by_teacher";
-    } else if (attendanceValue === "cancelled_by_student") {
-      classDoc.attendance.teacherPresent = true;
-      classDoc.attendance.studentPresent = false;
-      classDoc.status = "cancelled_by_student";
     } else if (attendanceValue === "no_show_both") {
       classDoc.attendance.teacherPresent = false;
       classDoc.attendance.studentPresent = false;

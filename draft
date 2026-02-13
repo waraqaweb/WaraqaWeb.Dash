@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "resetting some changes"
+git commit -m "nginx templates docker"
 git push origin main
 
 ---

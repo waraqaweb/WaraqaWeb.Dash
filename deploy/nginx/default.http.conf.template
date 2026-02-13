@@ -1,15 +1,15 @@
 ## Upstream notes
-# Prefer startup-time DNS resolution for Docker service names.
-# This avoids nginx runtime DNS lookups (which can intermittently fail in some Docker setups
-# with errors like "unexpected DNS response" / "wrong ident"), at the cost of requiring an
-# nginx reload/restart if the upstream container IPs change.
+# Use Docker DNS at runtime so nginx can start even if the service name
+# is not resolvable during container boot.
+
+resolver 127.0.0.11 ipv6=off valid=10s;
 
 upstream backend_upstream {
-  server backend:5000;
+  server backend:5000 resolve;
 }
 
 upstream frontend_upstream {
-  server frontend:80;
+  server frontend:80 resolve;
 }
 
 # HTTP-only mode (used when certs are not yet installed)

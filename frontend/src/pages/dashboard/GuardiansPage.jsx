@@ -32,7 +32,6 @@ import {
 } from 'lucide-react';
 import ProfileEditModal from '../../components/dashboard/ProfileEditModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
-import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
@@ -97,7 +96,7 @@ const GuardiansPage = () => {
   const [logActionModal, setLogActionModal] = useState({ open: false, log: null, action: '' });
   const [logActionConfirm, setLogActionConfirm] = useState('');
   const [logActionLoading, setLogActionLoading] = useState(false);
-  const showLoading = useMinLoading(loading);
+  const showLoading = loading;
 
   const fetchStatusCounts = useCallback(async () => {
     try {

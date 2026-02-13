@@ -13,7 +13,6 @@ import { formatDateDDMMMYYYY } from '../../utils/date';
 import AddStudentModal from '../../components/dashboard/AddStudentModal';
 import EditStudentModal from '../../components/students/EditStudentModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
-import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
 import { deleteStudent as deleteStandaloneStudent } from '../../api/students';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
@@ -996,7 +995,7 @@ const fetchGuardiansList = async () => {
   // Do not early-return while loading so the search and filters stay mounted (prevents focus loss)
 
   const isPageLoading = Boolean(loading || localLoading);
-  const showLoading = useMinLoading(isPageLoading);
+  const showLoading = isPageLoading;
 
   // Derived student counts for header counters
   const totalStudents = (students || []).length;

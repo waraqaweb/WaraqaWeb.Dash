@@ -38,7 +38,6 @@
 			} from 'lucide-react';
 			import api from '../../api/axios';
 			import LoadingSpinner from '../../components/ui/LoadingSpinner';
-			import useMinLoading from '../../components/ui/useMinLoading';
 			import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 			const TEACHER_STATUS_TABS = [
@@ -66,7 +65,7 @@
 
 			const [teachers, setTeachers] = useState([]);
 			const [loading, setLoading] = useState(true);
-			const showLoading = useMinLoading(loading);
+			const showLoading = loading;
 			const teachersRef = useRef([]);
 			const fetchTeachersInFlightRef = useRef(false);
 			const fetchTeachersKeyRef = useRef('');

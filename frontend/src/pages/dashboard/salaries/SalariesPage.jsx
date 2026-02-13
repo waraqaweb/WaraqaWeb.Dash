@@ -11,7 +11,6 @@ import SalaryEditModal from "./SalaryEditModal";
 import SalaryCreateModal from "./SalaryCreateModal";
 import PrimaryButton from '../../../components/ui/PrimaryButton';
 import LoadingSpinner from '../../../components/ui/LoadingSpinner';
-import useMinLoading from '../../../components/ui/useMinLoading';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
 const SalariesPage = () => {
@@ -22,7 +21,7 @@ const SalariesPage = () => {
   const [salaries, setSalaries] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const showLoading = useMinLoading(loading);
+  const showLoading = loading;
   const salariesRef = useRef([]);
   const fetchSalariesInFlightRef = useRef(false);
   const fetchSalariesKeyRef = useRef('');

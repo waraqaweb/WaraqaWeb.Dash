@@ -49,6 +49,11 @@ const isGuardianActive = (guardian = {}) => {
   return true;
 };
 
+const formatHours2 = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num.toFixed(2) : '0.00';
+};
+
 const GuardiansPage = () => {
   const { isAdmin, loginAsUser } = useAuth();
   const { searchTerm, globalFilter } = useSearch();
@@ -130,6 +135,10 @@ const GuardiansPage = () => {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearch]);
+
   // Search is client-side (Excel-like): do not reset pagination or refetch.
 
   useEffect(() => {
@@ -138,12 +147,16 @@ const GuardiansPage = () => {
 
   const fetchGuardians = useCallback(async () => {
     try {
+      const searchMode = Boolean((debouncedSearch || '').trim());
+      const fetchPage = searchMode ? 1 : currentPage;
+      const fetchLimit = searchMode ? 500 : itemsPerPage;
       const requestSignature = JSON.stringify({
-        page: currentPage,
-        limit: itemsPerPage,
-        statusFilter,
+        page: fetchPage,
+        limit: fetchLimit,
+        statusFilter: searchMode ? 'all' : statusFilter,
         sortBy,
         order: sortOrder,
+        search: (debouncedSearch || '').trim() || undefined,
       });
 
       if (fetchGuardiansInFlightRef.current && fetchGuardiansKeyRef.current === requestSignature) {
@@ -168,11 +181,12 @@ const GuardiansPage = () => {
       fetchGuardiansAbortRef.current = controller;
 
       const cacheKey = makeCacheKey('guardians:list', 'admin', {
-        page: currentPage,
-        limit: itemsPerPage,
-        statusFilter,
+        page: fetchPage,
+        limit: fetchLimit,
+        statusFilter: searchMode ? 'all' : statusFilter,
         sortBy,
         order: sortOrder,
+        search: (debouncedSearch || '').trim() || undefined,
       });
 
       const cached = readCache(cacheKey, { deps: ['users', 'guardians'] });
@@ -192,13 +206,14 @@ const GuardiansPage = () => {
       setLoading(!hasExisting);
       const params = {
         role: 'guardian',
-        page: currentPage,
-        limit: itemsPerPage,
+        page: fetchPage,
+        limit: fetchLimit,
         sortBy,
         order: sortOrder,
+        search: (debouncedSearch || '').trim() || undefined,
       };
 
-      if (statusFilter !== 'all') {
+      if (!searchMode && statusFilter !== 'all') {
         params.isActive = statusFilter === 'active';
       }
 
@@ -207,7 +222,7 @@ const GuardiansPage = () => {
         return;
       }
       const fetched = response.data.users || [];
-      const nextTotalPages = response.data.pagination?.pages || 1;
+      const nextTotalPages = searchMode ? 1 : (response.data.pagination?.pages || 1);
       setGuardians(fetched);
       setTotalPages(nextTotalPages);
       fetchStatusCounts();
@@ -227,7 +242,7 @@ const GuardiansPage = () => {
       setLoading(false);
       fetchGuardiansInFlightRef.current = false;
     }
-  }, [currentPage, fetchStatusCounts, itemsPerPage, sortBy, sortOrder, statusFilter]);
+  }, [currentPage, fetchStatusCounts, itemsPerPage, sortBy, sortOrder, statusFilter, debouncedSearch]);
 
   useEffect(() => {
     fetchGuardians();
@@ -631,14 +646,15 @@ const GuardiansPage = () => {
 
   const filteredGuardians = useMemo(() => {
     let result = guardians || [];
+    const searchMode = Boolean((debouncedSearch || '').trim());
 
-    if (statusFilter !== 'all') {
+    if (!searchMode && statusFilter !== 'all') {
       const desired = statusFilter === 'active';
       result = result.filter((guardian) => isGuardianActive(guardian) === desired);
     }
 
-    if (searchTerm.trim()) {
-      const globalTerm = searchTerm.toLowerCase();
+    if (debouncedSearch.trim()) {
+      const globalTerm = debouncedSearch.toLowerCase();
       result = result.filter((g) => {
         const fullName = `${g.firstName || ''} ${g.lastName || ''}`.toLowerCase();
         return (
@@ -651,7 +667,7 @@ const GuardiansPage = () => {
       });
     }
 
-    if (globalFilter && globalFilter !== 'all') {
+    if (!searchMode && globalFilter && globalFilter !== 'all') {
       switch (globalFilter) {
         case 'active':
           result = result.filter(g => g.isActive === true);
@@ -665,10 +681,22 @@ const GuardiansPage = () => {
     }
 
     return result;
-  }, [guardians, searchTerm, globalFilter, statusFilter]);
+  }, [guardians, debouncedSearch, globalFilter, statusFilter]);
 
   const sortedGuardians = useMemo(() => {
     const list = [...(filteredGuardians || [])];
+    const searchMode = Boolean((debouncedSearch || '').trim());
+    if (searchMode) {
+      list.sort((a, b) => {
+        const aActive = isGuardianActive(a);
+        const bActive = isGuardianActive(b);
+        if (aActive !== bActive) return aActive ? -1 : 1;
+        const nameA = `${a.firstName || ''} ${a.lastName || ''}`.trim();
+        const nameB = `${b.firstName || ''} ${b.lastName || ''}`.trim();
+        return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+      });
+      return list;
+    }
     const buildNameKey = (guardian) => {
       const first = (guardian.firstName || '').trim().toLowerCase();
       const last = (guardian.lastName || '').trim().toLowerCase();
@@ -692,7 +720,7 @@ const GuardiansPage = () => {
     }
 
     return list;
-  }, [filteredGuardians, sortBy, sortOrder]);
+  }, [filteredGuardians, sortBy, sortOrder, debouncedSearch]);
 
   // keep the page UI mounted while loading so search inputs don't lose focus
   const confirmToken = logActionModal.log?.action || 'action';
@@ -774,7 +802,7 @@ const GuardiansPage = () => {
                         </span>
                         <span className="flex items-center">
                           <Clock className="h-3 w-3 mr-1" />
-                          {guardian.guardianInfo?.totalHours || 0} hours left
+                          {formatHours2(guardian.guardianInfo?.totalHours || 0)} hours left
                         </span>
                         {guardian.email && (
                           <span className="flex items-center">
@@ -899,7 +927,7 @@ const GuardiansPage = () => {
           </div>
           <div className="flex items-center space-x-2">
             <Clock className="h-4 w-4 text-muted-foreground" />
-            <span>Total Hours: {guardian.guardianInfo?.totalHours || 0}</span>
+            <span>Total Hours: {formatHours2(guardian.guardianInfo?.totalHours || 0)}</span>
           </div>
           {isAdmin() && (
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -1022,7 +1050,7 @@ const GuardiansPage = () => {
                 </div>
                 <div>
                   <p className="font-medium text-foreground">{student.firstName} {student.lastName}</p>
-                  <p className="text-xs text-muted-foreground">{student.hoursRemaining || 0} hours left</p>
+                  <p className="text-xs text-muted-foreground">{formatHours2(student.hoursRemaining || 0)} hours left</p>
                 </div>
               </div>
               <div className="text-xs text-muted-foreground mt-1">
@@ -1230,7 +1258,7 @@ const GuardiansPage = () => {
                     {preview && (
                       <div className="mt-2 text-xs text-foreground">
                         <span className="font-medium">Preview:</span>{' '}
-                        current {preview.currentHours ?? 0}h → projected {preview.projectedHours ?? preview.currentHours}h, owed {preview.owedHours ?? 0}h, amount ${preview.amount ?? 0}
+                        current {formatHours2(preview.currentHours ?? 0)}h → projected {formatHours2(preview.projectedHours ?? preview.currentHours)}h, owed {formatHours2(preview.owedHours ?? 0)}h, amount ${preview.amount ?? 0}
                       </div>
                     )}
                   </div>
@@ -1407,7 +1435,7 @@ const GuardiansPage = () => {
                               <span className="rounded-md bg-muted/50 px-2 py-0.5 text-[11px]">
                                 {log.amount ? `Amount: ${log.amount}` : ''}
                                 {log.amount && log.hours ? ' • ' : ''}
-                                {log.hours ? `Hours: ${log.hours}` : ''}
+                                {log.hours ? `Hours: ${formatHours2(log.hours)}` : ''}
                               </span>
                             ) : null}
                             {(log.balanceBefore !== undefined || log.balanceAfter !== undefined) ? (
@@ -1445,7 +1473,7 @@ const GuardiansPage = () => {
                                           <span>{entry.date ? formatDateDDMMMYYYY(entry.date) : 'Date N/A'}</span>
                                           {entry.studentName && <span>Student: {entry.studentName}</span>}
                                           {entry.teacherName && <span>Teacher: {entry.teacherName}</span>}
-                                          {entry.hours !== null && entry.hours !== undefined ? <span>{entry.hours}h</span> : null}
+                                          {entry.hours !== null && entry.hours !== undefined ? <span>{formatHours2(entry.hours)}h</span> : null}
                                           {entry.status ? <span>Status: {entry.status}</span> : null}
                                         </li>
                                       ))}

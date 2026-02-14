@@ -872,6 +872,24 @@ router.get("/", authenticateToken, async (req, res) => {
         searchOr.push({ "student.guardianId": { $in: guardianIds } });
       }
 
+      if (searchTokens.length > 1) {
+        const tokenClauses = searchTokens.map((token) => {
+          const tokenRegex = new RegExp(escapeRegExp(token), "i");
+          return {
+            $or: [
+              { title: tokenRegex },
+              { subject: tokenRegex },
+              { description: tokenRegex },
+              { classCode: tokenRegex },
+              { meetingLink: tokenRegex },
+              { "student.studentName": tokenRegex },
+              { "student.guardianName": tokenRegex },
+            ],
+          };
+        });
+        searchOr.push({ $and: tokenClauses });
+      }
+
       // If other filters used $or (e.g., upcoming filter), combine safely.
       if (filters.$or) {
         filters.$and = [...(filters.$and || []), { $or: filters.$or }];
@@ -934,7 +952,8 @@ router.get("/", authenticateToken, async (req, res) => {
 
     const pageNum = Math.max(1, Number.parseInt(page, 10) || 1);
     const limitNumRaw = Number.parseInt(limit, 10);
-    const limitNum = Math.min(100, Math.max(1, Number.isFinite(limitNumRaw) ? limitNumRaw : 20));
+    const maxLimit = normalizedSearch ? 500 : 100;
+    const limitNum = Math.min(maxLimit, Math.max(1, Number.isFinite(limitNumRaw) ? limitNumRaw : 20));
     const skip = (pageNum - 1) * limitNum;
 
     const sortOrder = filter === "upcoming" ? 1 : -1;

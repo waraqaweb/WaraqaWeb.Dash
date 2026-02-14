@@ -66,6 +66,11 @@ const buildSubjectsByStudentId = (classesArr = []) => {
   return out;
 };
 
+const formatHours2 = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num.toFixed(2) : '0.00';
+};
+
 
 const MyStudentsPage = () => {
   const { user, isAdmin, isTeacher, isGuardian, loading } = useAuth();
@@ -574,15 +579,16 @@ const fetchGuardiansList = async () => {
 
   const filteredStudents = useMemo(() => {
     let result = students || [];
+    const trimmedTerm = (effectiveSearchTerm || '').trim().toLowerCase();
+    const searchMode = Boolean(trimmedTerm);
 
-    if (statusFilter !== 'all') {
+    if (!searchMode && statusFilter !== 'all') {
       const desiredActive = statusFilter === 'active';
       result = result.filter((student) => isStudentActive(student) === desiredActive);
     }
 
     // debug logs removed
 
-    const trimmedTerm = (effectiveSearchTerm || '').trim().toLowerCase();
     if (trimmedTerm) {
       const parts = trimmedTerm.split(/\s+/).filter(Boolean);
       const hasEmailSignal = trimmedTerm.includes('@');
@@ -614,7 +620,7 @@ const fetchGuardiansList = async () => {
     }
 
     // Apply global filter (only when using global search)
-    if (useGlobalSearch && globalFilter && globalFilter !== 'all') {
+    if (!searchMode && useGlobalSearch && globalFilter && globalFilter !== 'all') {
       switch (globalFilter) {
         case 'active':
           result = result.filter(s => isStudentActive(s));
@@ -634,6 +640,21 @@ const fetchGuardiansList = async () => {
 
   const sortedStudents = useMemo(() => {
     const list = [...(filteredStudents || [])];
+    const trimmedTerm = (effectiveSearchTerm || '').trim().toLowerCase();
+    const searchMode = Boolean(trimmedTerm);
+
+    if (searchMode) {
+      list.sort((a, b) => {
+        const aActive = isStudentActive(a);
+        const bActive = isStudentActive(b);
+        if (aActive !== bActive) return aActive ? -1 : 1;
+        const nameA = `${a.firstName || ''} ${a.lastName || ''}`.trim();
+        const nameB = `${b.firstName || ''} ${b.lastName || ''}`.trim();
+        return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+      });
+      return list;
+    }
+
     const buildNameKey = (student) => {
       const first = (student.firstName || '').trim().toLowerCase();
       const last = (student.lastName || '').trim().toLowerCase();
@@ -657,7 +678,7 @@ const fetchGuardiansList = async () => {
     }
 
     return list;
-  }, [filteredStudents, sortBy, sortOrder]);
+  }, [filteredStudents, sortBy, sortOrder, effectiveSearchTerm]);
 
   const totalPages = useMemo(() => (
     sortedStudents.length ? Math.ceil(sortedStudents.length / STUDENTS_PER_PAGE) : 1
@@ -727,7 +748,7 @@ const fetchGuardiansList = async () => {
         const hoursMap = {};
         Object.keys(map).forEach((k) => {
           const mins = Number(map[k]) || 0;
-          const hrs = Math.round((mins / 60) * 10) / 10;
+          const hrs = Math.round((mins / 60) * 100) / 100;
           hoursMap[k] = hrs >= 0 ? hrs : 0;
         });
         setClassesHoursMap(hoursMap);
@@ -1087,7 +1108,7 @@ const fetchGuardiansList = async () => {
                       ) : null}
                         {/* Show real hours (computed from past classes durations) in My Students page */}
                         <span className="font-medium text-foreground">
-                          { (classesHoursMap[String(student._id)] ?? 0) } hours
+                          {formatHours2(classesHoursMap[String(student._id)] ?? 0)} hours
                         </span>
                         <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(isStudentActive(student), student.activityState)}`}>
                           {student.activityState === 'loading' ? 'Loading' : (isStudentActive(student) ? 'Active' : 'Inactive')}

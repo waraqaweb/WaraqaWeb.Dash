@@ -55,6 +55,20 @@ const formatClassDate = (d) => {
   return `${weekday}, ${day} ${month} ${year} ${hour}:${minute} ${ampm}`;
 };
 
+const formatHours2 = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num.toFixed(2) : '0.00';
+};
+
+const formatDateDMMM = (value) => {
+  if (!value) return '—';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  const day = d.getUTCDate();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${day} ${months[d.getUTCMonth()]}`;
+};
+
 const getRegionFromLocale = (locale = '') => {
   const match = String(locale || '').match(/-([A-Z]{2})\b/);
   return match ? match[1] : null;
@@ -1097,8 +1111,8 @@ const DashboardHome = ({ isActive = true }) => {
                 </div>
 
                 {/* Secondary lists placed side-by-side to reduce vertical length */}
-                <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                  <div className="bg-card rounded-lg border border-border p-4">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-2">
                     <h3 className="text-sm font-semibold mb-2">Top owing guardians</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(data.topOwingGuardians || data.guardians?.topOwingGuardians || []).slice(0,5).map((g, idx) => (
@@ -1111,20 +1125,20 @@ const DashboardHome = ({ isActive = true }) => {
                     </div>
                   </div>
 
-                  <div className="bg-card rounded-lg border border-border p-4">
+                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-2">
                     <h3 className="text-sm font-semibold mb-2">Guardians low on hours</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(data.guardiansLowHours || data.guardians?.guardiansLowHours || []).slice(0,5).map((g, idx) => (
                         <div key={idx} className="flex items-center justify-between">
                           <div className="truncate">{g.firstName} {g.lastName}</div>
-                          <div className="text-xs">{g.guardianInfo?.totalHours ?? g.totalHours ?? '-' } hrs</div>
+                          <div className="text-xs">{formatHours2(g.guardianInfo?.totalHours ?? g.totalHours ?? 0)} hrs</div>
                         </div>
                       ))}
                       {((data.guardiansLowHours || data.guardians?.guardiansLowHours || []).length === 0) && <div className="text-xs text-muted-foreground">No guardians need topping up</div>}
                     </div>
                   </div>
 
-                  <div className="bg-card rounded-lg border border-border p-4">
+                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-3">
                     <h3 className="text-sm font-semibold mb-2">New students (last 30 days)</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(data.newStudentsLast30Days || data.students?.newStudentsLast30Days || []).slice(0, 6).map((s) => {
@@ -1140,8 +1154,8 @@ const DashboardHome = ({ isActive = true }) => {
 
                         return (
                           <div key={`${s.studentId || s.studentName}-${s.teacherId || s.teacherName}`} className="flex items-center justify-between">
-                            <div className="truncate">{s.studentName || 'Student'}{s.teacherName ? ` • ${s.teacherName}` : ''}</div>
-                            <div className={`text-xs ${dateColor}`}>{dateToShow ? formatDateDDMMMYYYY(dateToShow) : '—'}</div>
+                            <div className="min-w-0 truncate whitespace-nowrap">{s.studentName || 'Student'}{s.teacherName ? ` • ${s.teacherName}` : ''}</div>
+                            <div className={`text-xs shrink-0 ml-3 ${dateColor}`}>{dateToShow ? formatDateDMMM(dateToShow) : '—'}</div>
                           </div>
                         );
                       })}
@@ -1151,7 +1165,7 @@ const DashboardHome = ({ isActive = true }) => {
                     </div>
                   </div>
 
-                  <div className="bg-card rounded-lg border border-border p-4">
+                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-3">
                     <h3 className="text-sm font-semibold mb-2">Inactive students (no teacher after 24h)</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(inactiveStudentsAfterActivity || []).slice(0, 6).map((s) => (
@@ -1166,7 +1180,7 @@ const DashboardHome = ({ isActive = true }) => {
                     </div>
                   </div>
 
-                  <div className="bg-card rounded-lg border border-border p-4">
+                  <div className="bg-card rounded-lg border border-border p-4 lg:col-span-2">
                     <h3 className="text-sm font-semibold mb-2">Users on vacation</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       {(() => {
@@ -1363,7 +1377,7 @@ const DashboardHome = ({ isActive = true }) => {
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="rounded-full border border-primary/20 bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Timezone: {user?.timezone || '—'}</span>
               <span className="rounded-full border border-border bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Students: {myChildrenCount}</span>
-              <span className="rounded-full border border-border bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Remaining: {remainingHours} hrs</span>
+              <span className="rounded-full border border-border bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Remaining: {formatHours2(remainingHours)} hrs</span>
               {upcomingClass?.scheduledDate && (
                 <span className="rounded-full border border-border bg-background/70 px-2 py-0.5 text-xs font-medium text-muted-foreground">Next: {formatDateDDMMMYYYY(upcomingClass.scheduledDate)}</span>
               )}
@@ -1444,21 +1458,21 @@ const DashboardHome = ({ isActive = true }) => {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-          <StatCard title="Remaining hours" value={`${(data.guardianHours ?? data.guardianInfo?.totalHours ?? 0)} hrs`} Icon={Clock} color="bg-primary/10 text-primary" />
+          <StatCard title="Remaining hours" value={`${formatHours2(data.guardianHours ?? data.guardianInfo?.totalHours ?? 0)} hrs`} Icon={Clock} color="bg-primary/10 text-primary" />
           <StatCard title="My Students" value={myChildrenCount} Icon={Users} color="bg-sidebar-accent/25 text-sidebar-accent-foreground" />
           {/* Combined Hours card: total hours + small per-student list */}
           <div className="bg-gradient-to-br from-primary/5 via-card to-card rounded-lg border border-primary/15 p-4">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Consumed hours (last 30 days)</p>
-                <p className="text-lg sm:text-xl font-semibold text-foreground">{(data.totalHoursLast30 ?? 0)} hrs</p>
+                <p className="text-lg sm:text-xl font-semibold text-foreground">{formatHours2(data.totalHoursLast30 ?? 0)} hrs</p>
                 {/* small per-student list inside the same card (full list, small font) */}
                 {Array.isArray(data.recentStudentHours) && data.recentStudentHours.length > 0 ? (
                   <div className="mt-2 space-y-1 max-h-40 overflow-auto">
                     {data.recentStudentHours.map(s => (
                       <div key={s._id} className="flex items-center justify-between">
                         <div className="text-xs text-foreground truncate">{s.studentName || 'Student'}</div>
-                        <div className="text-xs text-muted-foreground">{s.totalHours} hrs</div>
+                        <div className="text-xs text-muted-foreground">{formatHours2(s.totalHours)} hrs</div>
                       </div>
                     ))}
                   </div>
@@ -1487,7 +1501,7 @@ const DashboardHome = ({ isActive = true }) => {
             <p className="text-sm font-medium text-muted-foreground">Last paid hours</p>
             {lastPaid && (lastPaid.hours != null) ? (
               <div className="mt-2">
-                <div className="text-lg sm:text-xl font-semibold text-foreground">{lastPaid.hours} hrs</div>
+                <div className="text-lg sm:text-xl font-semibold text-foreground">{formatHours2(lastPaid.hours)} hrs</div>
                 <div className="text-xs text-muted-foreground mt-1">from {lastPaid.fromDate ? formatClassDate(lastPaid.fromDate) : (lastPaid.from ? formatClassDate(lastPaid.from) : '—')}</div>
               </div>
             ) : (

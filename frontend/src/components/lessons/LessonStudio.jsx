@@ -208,8 +208,9 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
   const [sections, setSections] = useState([defaultSection(0)]);
   const [activeSection, setActiveSection] = useState(0);
   const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
-  const [examplesEditorOpen, setExamplesEditorOpen] = useState(false);
-  const [examplesDraft, setExamplesDraft] = useState('');
+  const EXAMPLES_STEP = 10;
+  const [examplesInputDraft, setExamplesInputDraft] = useState('');
+  const [visibleExamplesCount, setVisibleExamplesCount] = useState(EXAMPLES_STEP);
   const [activeEditorRef, setActiveEditorRef] = useState(null);
   const [showStatusToast, setShowStatusToast] = useState(false);
   const [activeEditorTab, setActiveEditorTab] = useState('explanation');
@@ -590,23 +591,23 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
     reader.readAsDataURL(file);
   };
 
-  const splitExamples = (raw) =>
-    raw
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-
   const parseExamplesFromText = (raw) =>
     raw
-      .split('\n')
-      .flatMap((line) => line.split(',').map((item) => item.trim()))
+      .replace(/\r/g, '')
+      .split(/\n|,/)
+      .map((item) => item.replace(/\s+/g, ' ').trim())
       .filter(Boolean);
 
-  const [showAllExamples, setShowAllExamples] = useState(false);
+  useEffect(() => {
+    const currentExamples = sections?.[activeSection]?.examples || [];
+    setVisibleExamplesCount(EXAMPLES_STEP);
+    setExamplesInputDraft((currentExamples || []).join(', '));
+  }, [activeSection]);
 
   useEffect(() => {
-    setShowAllExamples(false);
-  }, [activeSection]);
+    const currentExamples = sections?.[activeSection]?.examples || [];
+    setExamplesInputDraft((currentExamples || []).join(', '));
+  }, [sections, activeSection]);
 
   useEffect(() => {
     if (!status) return;
@@ -1228,43 +1229,71 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                       <BookOpen className="h-4 w-4 text-emerald-600" />
                       Examples
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setExamplesDraft((current?.examples || []).join('\n'));
-                        setExamplesEditorOpen(true);
-                      }}
-                      className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold text-emerald-700"
-                    >
-                      Open editor
-                    </button>
                   </div>
+
+                  <div className="mt-3 rounded-xl border border-emerald-200 bg-white p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Quick entry (comma separated)</div>
+                    <textarea
+                      className="mt-2 w-full rounded-lg border border-emerald-200 bg-background px-3 py-2 text-sm leading-6"
+                      rows={3}
+                      value={examplesInputDraft}
+                      onChange={(event) => setExamplesInputDraft(event.target.value)}
+                      onBlur={() => {
+                        const nextExamples = parseExamplesFromText(examplesInputDraft);
+                        setSections((prev) => prev.map((section, idx) => (idx === activeSection ? { ...section, examples: nextExamples } : section)));
+                        setVisibleExamplesCount((prev) => Math.max(EXAMPLES_STEP, prev));
+                      }}
+                      placeholder="word 1, word 2, word 3"
+                    />
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextExamples = parseExamplesFromText(examplesInputDraft);
+                          setSections((prev) => prev.map((section, idx) => (idx === activeSection ? { ...section, examples: nextExamples } : section)));
+                        }}
+                        className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold text-emerald-700"
+                      >
+                        Apply list
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    {(showAllExamples ? current?.examples : (current?.examples || []).slice(0, 10))?.map((example, idx) => (
-                      <div key={`example-${idx}`} className="rounded-xl border border-emerald-200 bg-white p-3">
-                        <span className="text-[10px] font-semibold uppercase text-emerald-600">Example {idx + 1}</span>
+                    {(current?.examples || []).slice(0, visibleExamplesCount).map((example, idx) => {
+                      const exampleIndex = idx;
+                      return (
+                      <div key={`example-${exampleIndex}`} className="rounded-xl border border-emerald-200 bg-white p-3">
+                        <span className="text-[10px] font-semibold uppercase text-emerald-600">Example {exampleIndex + 1}</span>
                         <div className="mt-2">
-                          <RichTextEditor
+                          <textarea
+                            className="w-full rounded-lg border border-emerald-200 bg-background px-3 py-2 text-sm leading-6"
+                            rows={3}
                             value={example}
-                            onChange={(value) => updateArrayItem('examples', idx, value)}
-                            minHeight={80}
-                            compact
-                            showToolbar={false}
-                            onFocus={setActiveEditorRef}
+                            onChange={(event) => updateArrayItem('examples', exampleIndex, event.target.value)}
                             placeholder="Example text..."
                           />
                         </div>
                       </div>
-                    ))}
+                    );})}
                   </div>
-                  {(current?.examples?.length || 0) > 10 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllExamples((prev) => !prev)}
-                      className="mt-2 text-[11px] font-semibold text-emerald-700"
-                    >
-                      {showAllExamples ? 'Show fewer' : 'Show more examples'}
-                    </button>
+                  {(current?.examples?.length || 0) > visibleExamplesCount && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleExamplesCount((prev) => Math.min(prev + EXAMPLES_STEP, current?.examples?.length || 0))}
+                        className="text-[11px] font-semibold text-emerald-700"
+                      >
+                        Show more examples
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVisibleExamplesCount(current?.examples?.length || EXAMPLES_STEP)}
+                        className="text-[11px] font-semibold text-emerald-700"
+                      >
+                        Expand all
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
@@ -1310,53 +1339,6 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
         </div>
       </div>
       </div>
-      {examplesEditorOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-        <div className="w-full max-w-5xl rounded-3xl border border-border bg-white p-6 shadow-2xl">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Examples</p>
-              <h3 className="text-lg font-semibold text-foreground">Manage examples</h3>
-            </div>
-            <button
-              type="button"
-              onClick={() => setExamplesEditorOpen(false)}
-              className="rounded-full border border-border px-3 py-1 text-xs text-slate-600"
-            >
-              Close
-            </button>
-          </div>
-          <textarea
-            className="mt-4 h-80 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm"
-            value={examplesDraft}
-            onChange={(event) => setExamplesDraft(event.target.value)}
-            placeholder="Examples..."
-          />
-          <div className="mt-4 flex flex-wrap justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setExamplesDraft((current?.examples || []).join('\n'));
-              }}
-              className="rounded-full border border-border px-4 py-2 text-xs text-slate-600"
-            >
-              Reset
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const nextExamples = parseExamplesFromText(examplesDraft);
-                setSections((prev) => prev.map((section, idx) => (idx === activeSection ? { ...section, examples: nextExamples } : section)));
-                setExamplesEditorOpen(false);
-              }}
-              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white"
-            >
-              Save examples
-            </button>
-          </div>
-        </div>
-      </div>
-      )}
       {blockHubOpen && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
         <div className="w-full max-w-4xl rounded-3xl border border-border bg-white p-6 shadow-2xl">

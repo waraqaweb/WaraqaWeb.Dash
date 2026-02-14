@@ -354,7 +354,9 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
       includeComputedTeacherHours,
     } = req.query;
 
-    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 200);
+    const trimmedSearch = (search || '').trim();
+    const maxListLimit = trimmedSearch ? 500 : 200;
+    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 10, 1), maxListLimit);
     const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
     const skip = (parsedPage - 1) * parsedLimit;
 
@@ -372,7 +374,6 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
       }
     }
 
-    const trimmedSearch = (search || '').trim();
     if (trimmedSearch) {
       const regex = new RegExp(escapeRegex(trimmedSearch), 'i');
       query.$or = [

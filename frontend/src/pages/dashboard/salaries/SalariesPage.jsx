@@ -132,6 +132,12 @@ const SalariesPage = () => {
         params.status = globalFilter;
       }
 
+      if (!searchMode && (!globalFilter || globalFilter === 'all')) {
+        params.smartSort = true;
+        delete params.sortBy;
+        delete params.order;
+      }
+
       if ((debouncedSearch || '').trim()) {
         params.smartSort = true;
         delete params.sortBy;

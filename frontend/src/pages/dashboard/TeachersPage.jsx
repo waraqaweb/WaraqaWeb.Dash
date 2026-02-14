@@ -54,6 +54,11 @@
 				return true;
 			};
 
+			const formatHours2 = (value) => {
+				const num = Number(value);
+				return Number.isFinite(num) ? num.toFixed(2) : '0.00';
+			};
+
 			const TeachersPage = () => {
 				const { isAdmin, loginAsUser } = useAuth();
 				const { searchTerm, globalFilter } = useSearch();
@@ -131,7 +136,11 @@
 				useEffect(() => {
 					fetchTeachers();
 					// eslint-disable-next-line react-hooks/exhaustive-deps
-				}, [sortBy, sortOrder, statusFilter, currentPage]);
+				}, [sortBy, sortOrder, statusFilter, currentPage, debouncedSearch]);
+
+				useEffect(() => {
+					setCurrentPage(1);
+				}, [debouncedSearch]);
 
 				useEffect(() => {
 					teachersRef.current = teachers || [];
@@ -139,12 +148,16 @@
 
 				const fetchTeachers = async () => {
 					try {
+						const searchMode = Boolean((debouncedSearch || '').trim());
+						const fetchPage = searchMode ? 1 : currentPage;
+						const fetchLimit = searchMode ? 500 : itemsPerPage;
 						const requestSignature = JSON.stringify({
-							page: currentPage,
-							limit: itemsPerPage,
+							page: fetchPage,
+							limit: fetchLimit,
 							sortBy,
 							order: sortOrder,
-							statusFilter,
+							statusFilter: searchMode ? 'all' : statusFilter,
+							search: (debouncedSearch || '').trim() || undefined,
 						});
 
 						if (fetchTeachersInFlightRef.current && fetchTeachersKeyRef.current === requestSignature) {
@@ -169,11 +182,12 @@
 						fetchTeachersAbortRef.current = controller;
 
 						const cacheKey = makeCacheKey('teachers:list', 'admin', {
-							page: currentPage,
-							limit: itemsPerPage,
+							page: fetchPage,
+							limit: fetchLimit,
 							sortBy,
 							order: sortOrder,
-							statusFilter,
+							statusFilter: searchMode ? 'all' : statusFilter,
+							search: (debouncedSearch || '').trim() || undefined,
 						});
 
 						const cached = readCache(cacheKey, { deps: ['users', 'classes'] });
@@ -194,13 +208,14 @@
 						setLoading(!hasExisting);
 						const params = {
 							role: 'teacher',
-							page: currentPage,
-							limit: itemsPerPage,
+							page: fetchPage,
+							limit: fetchLimit,
 							sortBy,
 							order: sortOrder,
+							search: (debouncedSearch || '').trim() || undefined,
 						};
 
-						if (statusFilter !== 'all') {
+						if (!searchMode && statusFilter !== 'all') {
 							params.isActive = statusFilter === 'active';
 						}
 
@@ -210,7 +225,7 @@
 						}
 						const fetched = response.data.users || [];
 						setTeachers(fetched);
-						const nextTotalPages = (response.data.pagination && response.data.pagination.pages) || 1;
+						const nextTotalPages = searchMode ? 1 : ((response.data.pagination && response.data.pagination.pages) || 1);
 						setTotalPages(nextTotalPages);
 
 						// Refresh counts in the background so list can render ASAP.
@@ -474,14 +489,15 @@
 
 				const filteredTeachers = useMemo(() => {
 					let result = teachers || [];
+					const searchMode = Boolean((debouncedSearch || '').trim());
 
-					if (statusFilter !== 'all') {
+					if (!searchMode && statusFilter !== 'all') {
 						const desired = statusFilter === 'active';
 						result = result.filter((t) => isTeacherActive(t) === desired);
 					}
 
-					if (searchTerm && searchTerm.trim()) {
-						const term = searchTerm.toLowerCase();
+					if (debouncedSearch && debouncedSearch.trim()) {
+						const term = debouncedSearch.toLowerCase();
 						result = result.filter((t) => {
 							const fullName = `${t.firstName || ''} ${t.lastName || ''}`.toLowerCase();
 							return (
@@ -493,7 +509,7 @@
 						});
 					}
 
-					if (globalFilter && globalFilter !== 'all') {
+					if (!searchMode && globalFilter && globalFilter !== 'all') {
 						if (globalFilter === 'active') {
 							result = result.filter((t) => t.isActive === true);
 						} else if (globalFilter === 'inactive') {
@@ -502,10 +518,22 @@
 					}
 
 					return result;
-				}, [teachers, searchTerm, globalFilter, statusFilter]);
+				}, [teachers, debouncedSearch, globalFilter, statusFilter]);
 
 				const sortedTeachers = useMemo(() => {
 					const list = [...(filteredTeachers || [])];
+					const searchMode = Boolean((debouncedSearch || '').trim());
+					if (searchMode) {
+						list.sort((a, b) => {
+							const aActive = isTeacherActive(a);
+							const bActive = isTeacherActive(b);
+							if (aActive !== bActive) return aActive ? -1 : 1;
+							const nameA = `${a.firstName || ''} ${a.lastName || ''}`.trim();
+							const nameB = `${b.firstName || ''} ${b.lastName || ''}`.trim();
+							return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+						});
+						return list;
+					}
 					const buildNameKey = (teacher) => {
 						const first = (teacher.firstName || '').trim().toLowerCase();
 						const last = (teacher.lastName || '').trim().toLowerCase();
@@ -529,7 +557,7 @@
 					}
 
 					return list;
-				}, [filteredTeachers, sortBy, sortOrder]);
+				}, [filteredTeachers, sortBy, sortOrder, debouncedSearch]);
 				const confirmToken = logActionModal.log?.action || 'action';
 				const isConfirmValid = logActionConfirm.trim() === confirmToken;
 
@@ -600,10 +628,11 @@
 															<span className="flex items-center">
 																<Clock className="h-3 w-3 mr-1" />
 																{/* Prefer the server-computed aggregation for this month when present. */}
-																{ (teacher.teacherInfo && (teacher.teacherInfo._computedMonthlyHours !== undefined && teacher.teacherInfo._computedMonthlyHours !== null))
-																	? Number(teacher.teacherInfo._computedMonthlyHours) || 0
-																	: Number(teacher.teacherInfo?.monthlyHours ?? 0) || 0
-																} hours this month
+																{formatHours2(
+																	(teacher.teacherInfo && (teacher.teacherInfo._computedMonthlyHours !== undefined && teacher.teacherInfo._computedMonthlyHours !== null))
+																		? Number(teacher.teacherInfo._computedMonthlyHours) || 0
+																		: Number(teacher.teacherInfo?.monthlyHours ?? 0) || 0
+																)} hours this month
 															</span>
 															<span className="text-[11px] text-muted-foreground">(unbilled)</span>
 														</div>
@@ -787,6 +816,18 @@
 														</div>
 													</div>
 												</div>
+													{teacher.teacherInfo?.subjects?.length > 0 && (
+														<div>
+															<h5 className="text-sm font-medium text-foreground mb-1">Subjects</h5>
+															<div className="flex flex-wrap gap-2">
+																{teacher.teacherInfo.subjects.map((subject, index) => (
+																	<span key={index} className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full">
+																		{subject}
+																	</span>
+																))}
+															</div>
+														</div>
+													)}
 												{teacher.teacherInfo?.bio && (
 										<div className="mt-4 p-3">
 												<h4 className="font-semibold text-foreground mb-2">Bio</h4>
@@ -796,17 +837,6 @@
 											</div>
 										)}
 										
-										
-
-										<div className="mt-3 p-3">
-											<div className="flex flex-wrap gap-2">
-												{teacher.teacherInfo?.subjects?.map((subject, index) => (
-													<span key={index} className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full">
-														{subject}
-													</span>
-												))}
-											</div>
-										</div>
 									</div>
 								))}
 							</div>

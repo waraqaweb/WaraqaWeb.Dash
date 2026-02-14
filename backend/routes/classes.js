@@ -637,6 +637,7 @@ async function buildChangePolicy(classDoc, user) {
 
   const classInactiveStatuses = [
     "cancelled_by_teacher",
+    "cancelled_by_student",
     "cancelled_by_guardian",
     "cancelled_by_admin",
     "completed",
@@ -902,12 +903,31 @@ router.get("/", authenticateToken, async (req, res) => {
     mark('filters:built');
 
     // upcoming / previous filtering
-    // IMPORTANT: Avoid $expr-based computed filters here (they disable index usage and cause collection scans).
-    // We rely on `endsAt` being present (backfill script provided for legacy docs).
+    // Prefer `endsAt` (indexed), but keep legacy docs (missing endsAt) visible via scheduledDate fallback.
     if (filter === "upcoming") {
-      pushAnd({ endsAt: { $gte: now } });
+      pushAnd({
+        $or: [
+          { endsAt: { $gte: now } },
+          {
+            $and: [
+              { $or: [{ endsAt: { $exists: false } }, { endsAt: null }] },
+              { scheduledDate: { $gte: now } },
+            ],
+          },
+        ],
+      });
     } else if (filter === "previous") {
-      pushAnd({ endsAt: { $lt: now } });
+      pushAnd({
+        $or: [
+          { endsAt: { $lt: now } },
+          {
+            $and: [
+              { $or: [{ endsAt: { $exists: false } }, { endsAt: null }] },
+              { scheduledDate: { $lt: now } },
+            ],
+          },
+        ],
+      });
     }
 
     // Filter out classes that are hidden due to system vacation or individual teacher vacation
@@ -967,6 +987,7 @@ router.get("/", authenticateToken, async (req, res) => {
       "attended",
       "missed_by_student",
       "cancelled_by_teacher",
+      "cancelled_by_student",
       "cancelled_by_guardian",
       "cancelled_by_admin",
       "no_show_both",
@@ -1171,7 +1192,7 @@ router.get("/series", authenticateToken, requireRole(["admin"]), async (req, res
     await hydrateUnknownStudentNames(patterns);
 
     const patternIds = patterns.map((p) => p._id);
-    const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'];
+    const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'];
 
     const childCounts = patternIds.length
       ? await Class.aggregate([
@@ -1757,7 +1778,7 @@ router.post(
         return res.status(400).json({ message: "Cannot cancel a recurring pattern template" });
       }
 
-      if (["cancelled_by_teacher", "cancelled_by_guardian", "cancelled_by_admin"].includes(classDoc.status)) {
+      if (["cancelled_by_teacher", "cancelled_by_student", "cancelled_by_guardian", "cancelled_by_admin"].includes(classDoc.status)) {
         return res.status(409).json({ message: "Class has already been cancelled" });
       }
 
@@ -2785,7 +2806,7 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
               'student.guardianId': guardianId,
               'student.studentId': studentId,
               scheduledDate: { $gte: billingStart, $lte: billingEnd },
-              status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'] }
+              status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'] }
             })
               .select('_id subject scheduledDate duration student teacher status')
               .lean();

@@ -226,6 +226,7 @@ const classSchema = new mongoose.Schema({
       "attended",            // Student attended the class
       "missed_by_student",   // Student didn't show up, teacher did
   "cancelled_by_teacher", // Teacher cancelled the class
+  "cancelled_by_student", // Student cancelled the class
   "cancelled_by_guardian", // Guardian cancelled the class
   "cancelled_by_admin",   // Admin cancelled the class
       "no_show_both",         // Neither teacher nor student attended
@@ -953,6 +954,10 @@ classSchema.methods.submitClassReport = function(reportData, submittedBy) {
     this.attendance.teacherPresent = false;
     this.attendance.studentPresent = true;
     this.status = 'cancelled_by_teacher';
+  } else if (reportData.attendance === 'cancelled_by_student') {
+    this.attendance.teacherPresent = true;
+    this.attendance.studentPresent = false;
+    this.status = 'cancelled_by_student';
   } else if (reportData.attendance === 'no_show_both') {
     this.attendance.teacherPresent = false;
     this.attendance.studentPresent = false;

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlignCenter, AlignLeft, AlignRight, Bold, Indent, Italic, Outdent, Pilcrow, Text, Underline } from 'lucide-react';
+import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Indent, Italic, MoreHorizontal, Outdent, Pilcrow, Text, Underline } from 'lucide-react';
 
 const FONT_FAMILIES = [
   // Arabic / Quran-friendly
@@ -124,6 +124,7 @@ const RichTextEditor = ({
   const [currentFont, setCurrentFont] = useState(defaultFont);
   const [currentSize, setCurrentSize] = useState(defaultSize);
   const [color, setColor] = useState('#0f172a');
+  const [showMoreTools, setShowMoreTools] = useState(false);
 
   useEffect(() => {
     setCurrentFont(defaultFont || FONT_FAMILIES[0].value);
@@ -198,6 +199,13 @@ const RichTextEditor = ({
   useEffect(() => {
     ensureDefaultTypingStyle();
   }, [ensureDefaultTypingStyle]);
+
+  useEffect(() => {
+    if (!showMoreTools) return;
+    const close = () => setShowMoreTools(false);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [showMoreTools]);
 
   useEffect(() => {
     const handler = () => {
@@ -342,51 +350,81 @@ const RichTextEditor = ({
         <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('underline')} className="rounded-lg border border-border px-2 py-1">
           <Underline className="h-4 w-4" />
         </button>
-        <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyLeft')} className="rounded-lg border border-border px-2 py-1">
-          <AlignLeft className="h-4 w-4" />
-        </button>
-        <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyCenter')} className="rounded-lg border border-border px-2 py-1">
-          <AlignCenter className="h-4 w-4" />
-        </button>
-        <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyRight')} className="rounded-lg border border-border px-2 py-1">
-          <AlignRight className="h-4 w-4" />
-        </button>
-        <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('indent')} className="rounded-lg border border-border px-2 py-1">
-          <Indent className="h-4 w-4" />
-        </button>
-        <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('outdent')} className="rounded-lg border border-border px-2 py-1">
-          <Outdent className="h-4 w-4" />
-        </button>
         <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('formatBlock', '<h3>')} className="rounded-lg border border-border px-2 py-1">
           <Text className="h-4 w-4" />
         </button>
         <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('formatBlock', '<p>')} className="rounded-lg border border-border px-2 py-1">
           <Pilcrow className="h-4 w-4" />
         </button>
-        <button
-          type="button"
-          onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-          onClick={() => {
-            if (!editorRef.current) return;
-            editorRef.current.dir = 'rtl';
-            editorRef.current.style.textAlign = 'right';
-          }}
-          className="rounded-lg border border-border px-2 py-1"
-        >
-          RTL
-        </button>
-        <button
-          type="button"
-          onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
-          onClick={() => {
-            if (!editorRef.current) return;
-            editorRef.current.dir = 'ltr';
-            editorRef.current.style.textAlign = 'left';
-          }}
-          className="rounded-lg border border-border px-2 py-1"
-        >
-          LTR
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowMoreTools((prev) => !prev);
+            }}
+            className="rounded-lg border border-border px-2 py-1"
+            title="More text tools"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+          {showMoreTools && (
+            <div
+              className="absolute right-0 z-10 mt-2 w-44 rounded-xl border border-border bg-white p-1.5 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyLeft')} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-slate-100">
+                <AlignLeft className="h-3.5 w-3.5" />
+                Align left
+              </button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyCenter')} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-slate-100">
+                <AlignCenter className="h-3.5 w-3.5" />
+                Align center
+              </button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyRight')} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-slate-100">
+                <AlignRight className="h-3.5 w-3.5" />
+                Align right
+              </button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('justifyFull')} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-slate-100">
+                <AlignJustify className="h-3.5 w-3.5" />
+                Justify
+              </button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('indent')} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-slate-100">
+                <Indent className="h-3.5 w-3.5" />
+                Indent
+              </button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => exec('outdent')} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-slate-100">
+                <Outdent className="h-3.5 w-3.5" />
+                Outdent
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
+                onClick={() => {
+                  if (!editorRef.current) return;
+                  editorRef.current.dir = 'rtl';
+                  editorRef.current.style.textAlign = 'right';
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-slate-100"
+              >
+                RTL direction
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); saveSelection(); }}
+                onClick={() => {
+                  if (!editorRef.current) return;
+                  editorRef.current.dir = 'ltr';
+                  editorRef.current.style.textAlign = 'left';
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-slate-100"
+              >
+                LTR direction
+              </button>
+            </div>
+          )}
+        </div>
         </div>
         </div>
       )}

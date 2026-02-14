@@ -4,11 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 // That caused UX issues where empty states were delayed even when the API
 // returned instantly.
 //
-// New behavior: delayed-show spinner.
-// - If loading resolves quickly (< delayMs), the spinner never appears.
-// - If loading is slow, spinner appears after delayMs.
+// New behavior: immediate spinner by default.
+// - Spinner appears as soon as loading starts.
 // - Spinner hides immediately when loading becomes false.
-const DEFAULT_DELAY_MS = 150;
+const DEFAULT_DELAY_MS = 0;
 
 const useMinLoading = (loading, delayMs = DEFAULT_DELAY_MS) => {
   const [showLoading, setShowLoading] = useState(false);

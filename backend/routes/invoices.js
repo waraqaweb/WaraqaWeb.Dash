@@ -674,39 +674,9 @@ router.get('/', authenticateToken, async (req, res) => {
         .lean();
     }
 
-    // IMPORTANT: Do NOT mutate or resave invoices during a GET. Previously this
-    // route reloaded each invoice, recalculated totals and saved the document.
-    // That would overwrite UI-applied snapshot totals (from the view modal) and
-    // cause numbers to "revert" after a refresh. We now simply return the
-    // persisted values as-is. If identifiers ever need refresh, that should be
-    // done explicitly via an admin action, not on read.
-    const normalizedInvoices = await Promise.all(invoices.map(async (inv) => {
-      try {
-        const doc = await Invoice.findById(inv._id)
-          .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
-          .populate('teacher', 'firstName lastName email')
-          .populate('items.student', 'firstName lastName')
-          .populate('items.teacher', 'firstName lastName')
-          .populate('items.class', CLASS_FIELDS_FOR_INVOICE);
-        if (!doc) return inv;
-
-        const invoiceObj = doc.toObject({ virtuals: true });
-
-        if (invoiceObj.type === 'guardian_invoice') {
-          try {
-            const dynamicClasses = await InvoiceService.buildDynamicClassList(doc);
-            invoiceObj.dynamicClasses = dynamicClasses;
-          } catch (dynamicErr) {
-            console.warn('[GET /invoices] dynamic class build failed', doc._id?.toString(), dynamicErr?.message || dynamicErr);
-          }
-        }
-
-        return invoiceObj;
-      } catch (err) {
-        console.error('Failed to load invoice doc for list', inv._id, err && err.message);
-        return inv;
-      }
-    }));
+    // IMPORTANT: list endpoint must stay read-only and fast.
+    // Return the already fetched lean rows directly to avoid N+1 refetch/populate work.
+    const normalizedInvoices = invoices;
 
     const total = await Invoice.countDocuments(filter);
     const pages = Math.ceil(total / parseInt(limit));

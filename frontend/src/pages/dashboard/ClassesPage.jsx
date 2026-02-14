@@ -768,8 +768,32 @@ const ClassesPage = ({ isActive = true }) => {
     if (globalFilter === 'pending_report' || globalFilter === 'missed_report') {
       working = working.filter((cls) => getDisplayStatus(cls) === globalFilter);
     }
+
+    if (normalizedSearchTerm) {
+      const searchParts = normalizedSearchTerm.split(/\s+/).filter(Boolean);
+      working = working.filter((cls) => {
+        const studentName = String(cls?.student?.studentName || '').toLowerCase().trim();
+        const teacherFirst = String(cls?.teacher?.firstName || '').toLowerCase().trim();
+        const teacherLast = String(cls?.teacher?.lastName || '').toLowerCase().trim();
+        const teacherName = `${teacherFirst} ${teacherLast}`.trim();
+
+        const haystack = [
+          studentName,
+          teacherFirst,
+          teacherLast,
+          teacherName,
+          String(cls?.subject || '').toLowerCase(),
+          String(cls?.title || '').toLowerCase(),
+          String(cls?.description || '').toLowerCase(),
+          String(cls?.classCode || '').toLowerCase(),
+        ].filter(Boolean);
+
+        return searchParts.every((part) => haystack.some((value) => value.includes(part)));
+      });
+    }
+
     return working;
-  }, [classes, globalFilter, getDisplayStatus]);
+  }, [classes, globalFilter, getDisplayStatus, normalizedSearchTerm]);
 
 
   const mapAvailabilityResponse = useCallback((raw = {}) => createAvailabilityState({
@@ -809,7 +833,7 @@ const ClassesPage = ({ isActive = true }) => {
     setCurrentPage(1);
     loadedClassPagesRef.current = new Set();
     setClassesCorpus([]);
-  }, [isActive, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter]);
+  }, [isActive, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter, normalizedSearchTerm]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -1208,6 +1232,7 @@ const fetchClasses = useCallback(async () => {
         teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
         guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
         global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+        search: normalizedSearchTerm || undefined,
       }
     );
 
@@ -1219,6 +1244,7 @@ const fetchClasses = useCallback(async () => {
       teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
       guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
       global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
+      search: normalizedSearchTerm || undefined,
     });
 
     if (fetchClassesInFlightRef.current && fetchClassesKeyRef.current === requestSignature) {
@@ -1280,6 +1306,9 @@ const fetchClasses = useCallback(async () => {
     if (globalFilter && globalFilter !== 'all' && !isReportFilter) {
       params.status = globalFilter;
     }
+    if (normalizedSearchTerm) {
+      params.search = normalizedSearchTerm;
+    }
 
     const res = await api.get("/classes", { params, signal: controller.signal });
     if (requestId !== fetchClassesRequestIdRef.current) {
@@ -1335,6 +1364,7 @@ const fetchClasses = useCallback(async () => {
   tabFilter,
   teacherFilter,
   user?._id,
+  normalizedSearchTerm,
 ]);
 
 // Keep a ref reference to fetchClasses so effects that are created earlier can call it

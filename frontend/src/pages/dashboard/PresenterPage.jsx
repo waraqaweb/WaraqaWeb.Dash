@@ -3,13 +3,14 @@ import LessonStudio from '../../components/lessons/LessonStudio';
 import TestStudio from '../../components/lessons/TestStudio';
 import LessonStudioViewer from '../../components/lessons/LessonStudioViewer';
 import { createLibraryFolder, createLibraryItem, deleteLibraryItem, fetchFolderContents, fetchTree, updateLibraryItem } from '../../api/library';
-import { Plus, Folder, Settings, Link2 } from 'lucide-react';
+import { Plus, Folder, Settings, Link2, GripVertical } from 'lucide-react';
 import api from '../../api/axios';
 import { useSearch } from '../../contexts/SearchContext';
 import { useAuth } from '../../contexts/AuthContext';
 
 const LESSONS_FOLDER_NAME = 'Lessons';
 const TESTS_FOLDER_NAME = 'Tests';
+const ADD_LESSON_DRAFT_KEY = 'presenter:add-lesson-draft:v1';
 
 const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => {
   const { isAdmin } = useAuth();
@@ -41,6 +42,12 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
   const [showUserResults, setShowUserResults] = useState(false);
   const [hadithDraft, setHadithDraft] = useState('');
   const [hadithList, setHadithList] = useState([]);
+  const [draggingLessonId, setDraggingLessonId] = useState(null);
+  const [lessonDropPreview, setLessonDropPreview] = useState(null);
+  const [isReorderingLessons, setIsReorderingLessons] = useState(false);
+  const [draggingTestId, setDraggingTestId] = useState(null);
+  const [testDropPreview, setTestDropPreview] = useState(null);
+  const [isReorderingTests, setIsReorderingTests] = useState(false);
   const { searchTerm: globalSearchTerm } = useSearch();
 
   const resolveLessonsFolder = useCallback(async () => {
@@ -287,12 +294,111 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
       await loadLessons();
       setSelectedLesson(created || null);
       setStatus('Lesson saved successfully.');
+      try {
+        localStorage.removeItem(ADD_LESSON_DRAFT_KEY);
+      } catch (_) {
+        // ignore storage errors
+      }
+      return true;
     } catch (error) {
       setStatus(error?.response?.data?.message || error.message || 'Unable to save lesson.');
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const applySubjectLessonReorder = useCallback(
+    async ({ subjectName, draggedLessonId, targetLessonId, position }) => {
+      if (!subjectName || !draggedLessonId || !targetLessonId || !position) return;
+      const sourceLessons = lessonsBySubject.get(subjectName) || [];
+      const ids = sourceLessons.map((item) => item.id || item._id).filter(Boolean);
+      const fromIndex = ids.indexOf(draggedLessonId);
+      const targetIndex = ids.indexOf(targetLessonId);
+      if (fromIndex === -1 || targetIndex === -1) return;
+
+      const provisional = [...ids];
+      const [draggedId] = provisional.splice(fromIndex, 1);
+      let insertIndex = position === 'before' ? targetIndex : targetIndex + 1;
+      if (fromIndex < insertIndex) insertIndex -= 1;
+      if (insertIndex < 0) insertIndex = 0;
+      if (insertIndex > provisional.length) insertIndex = provisional.length;
+      if (insertIndex === fromIndex) return;
+      provisional.splice(insertIndex, 0, draggedId);
+
+      const orderMap = new Map(provisional.map((id, index) => [id, index + 1]));
+      const nextLessons = lessons.map((lesson) => {
+        const lessonId = lesson.id || lesson._id;
+        const lessonSubject = lesson.subject || lesson.metadata?.lessonStudio?.subject || 'General';
+        if (lessonSubject !== subjectName || !orderMap.has(lessonId)) return lesson;
+        return { ...lesson, orderIndex: orderMap.get(lessonId) };
+      });
+
+      setLessons(nextLessons);
+      setIsReorderingLessons(true);
+      setStatus('');
+      try {
+        await Promise.all(
+          provisional.map((lessonId, index) =>
+            updateLibraryItem(lessonId, { orderIndex: index + 1 })
+          )
+        );
+        await loadLessons();
+      } catch (error) {
+        await loadLessons();
+        setStatus(error?.response?.data?.message || 'Unable to reorder lessons.');
+      } finally {
+        setIsReorderingLessons(false);
+      }
+    },
+    [lessonsBySubject, lessons, loadLessons]
+  );
+
+  const applySubjectTestReorder = useCallback(
+    async ({ subjectName, draggedTestId, targetTestId, position }) => {
+      if (!subjectName || !draggedTestId || !targetTestId || !position) return;
+      const sourceTests = testsBySubject.get(subjectName) || [];
+      const ids = sourceTests.map((item) => item.id || item._id).filter(Boolean);
+      const fromIndex = ids.indexOf(draggedTestId);
+      const targetIndex = ids.indexOf(targetTestId);
+      if (fromIndex === -1 || targetIndex === -1) return;
+
+      const provisional = [...ids];
+      const [draggedId] = provisional.splice(fromIndex, 1);
+      let insertIndex = position === 'before' ? targetIndex : targetIndex + 1;
+      if (fromIndex < insertIndex) insertIndex -= 1;
+      if (insertIndex < 0) insertIndex = 0;
+      if (insertIndex > provisional.length) insertIndex = provisional.length;
+      if (insertIndex === fromIndex) return;
+      provisional.splice(insertIndex, 0, draggedId);
+
+      const orderMap = new Map(provisional.map((id, index) => [id, index + 1]));
+      const nextTests = tests.map((test) => {
+        const testId = test.id || test._id;
+        const testSubject = test.subject || test.metadata?.testStudio?.subject || 'General';
+        if (testSubject !== subjectName || !orderMap.has(testId)) return test;
+        return { ...test, orderIndex: orderMap.get(testId) };
+      });
+
+      setTests(nextTests);
+      setIsReorderingTests(true);
+      setStatus('');
+      try {
+        await Promise.all(
+          provisional.map((testId, index) =>
+            updateLibraryItem(testId, { orderIndex: index + 1 })
+          )
+        );
+        await loadTests();
+      } catch (error) {
+        await loadTests();
+        setStatus(error?.response?.data?.message || 'Unable to reorder tests.');
+      } finally {
+        setIsReorderingTests(false);
+      }
+    },
+    [testsBySubject, tests, loadTests]
+  );
 
   const handleUpdateLesson = async (payload) => {
     if (!lessonToEdit) return;
@@ -534,8 +640,68 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                 {(subjectFilter ? (lessonsBySubject.get(subjectFilter) || []) : []).map((lesson) => (
                   <div
                     key={lesson.id || lesson._id}
-                    className="flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C]"
+                    className={`relative flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C] ${
+                      lessonDropPreview?.targetLessonId === (lesson.id || lesson._id) ? 'ring-1 ring-[#2C736C]/40' : ''
+                    }`}
+                    onDragOver={(event) => {
+                      if (!isAdmin || isPublic || !subjectFilter || !draggingLessonId) return;
+                      event.preventDefault();
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const position = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                      setLessonDropPreview({ targetLessonId: lesson.id || lesson._id, position });
+                    }}
+                    onDrop={async (event) => {
+                      if (!isAdmin || isPublic || !subjectFilter || !draggingLessonId) return;
+                      event.preventDefault();
+                      const targetLessonId = lesson.id || lesson._id;
+                      const position = lessonDropPreview?.targetLessonId === targetLessonId
+                        ? lessonDropPreview.position
+                        : 'after';
+                      await applySubjectLessonReorder({
+                        subjectName: subjectFilter,
+                        draggedLessonId: draggingLessonId,
+                        targetLessonId,
+                        position
+                      });
+                      setDraggingLessonId(null);
+                      setLessonDropPreview(null);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingLessonId(null);
+                      setLessonDropPreview(null);
+                    }}
                   >
+                    {lessonDropPreview?.targetLessonId === (lesson.id || lesson._id) && lessonDropPreview?.position === 'before' && (
+                      <div className="pointer-events-none absolute left-2 right-2 top-0.5 h-0.5 rounded bg-[#2C736C]" />
+                    )}
+                    {lessonDropPreview?.targetLessonId === (lesson.id || lesson._id) && lessonDropPreview?.position === 'after' && (
+                      <div className="pointer-events-none absolute left-2 right-2 bottom-0.5 h-0.5 rounded bg-[#2C736C]" />
+                    )}
+                    {isAdmin && !isPublic && (
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={(event) => {
+                          setDraggingLessonId(lesson.id || lesson._id);
+                          setLessonDropPreview(null);
+                          try {
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', String(lesson.id || lesson._id));
+                          } catch (_) {
+                            // ignore dnd metadata errors
+                          }
+                        }}
+                        onDragEnd={() => {
+                          setDraggingLessonId(null);
+                          setLessonDropPreview(null);
+                        }}
+                        className="rounded-full border border-[#2C736C]/30 p-1 text-[#2C736C] hover:bg-white/60"
+                        title="Reorder lesson"
+                        disabled={isReorderingLessons}
+                      >
+                        <GripVertical className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setSelectedLesson(lesson)}
@@ -580,13 +746,14 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                 <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
                   <LessonStudio
                     onSave={async (payload) => {
-                      await handleSaveLesson(payload);
-                      setAddLessonOpen(false);
+                      const saved = await handleSaveLesson(payload);
+                      if (saved) setAddLessonOpen(false);
                     }}
                     saving={saving}
                     status={status}
                     onClose={() => setAddLessonOpen(false)}
                     title="Add lesson"
+                    draftKey={ADD_LESSON_DRAFT_KEY}
                   />
                 </div>
               </div>
@@ -666,8 +833,68 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                 {(testSubjectFilter ? (testsBySubject.get(testSubjectFilter) || []) : []).map((test) => (
                   <div
                     key={test.id || test._id}
-                    className="flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C]"
+                    className={`relative flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C] ${
+                      testDropPreview?.targetTestId === (test.id || test._id) ? 'ring-1 ring-[#2C736C]/40' : ''
+                    }`}
+                    onDragOver={(event) => {
+                      if (!isAdmin || isPublic || !testSubjectFilter || !draggingTestId) return;
+                      event.preventDefault();
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const position = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                      setTestDropPreview({ targetTestId: test.id || test._id, position });
+                    }}
+                    onDrop={async (event) => {
+                      if (!isAdmin || isPublic || !testSubjectFilter || !draggingTestId) return;
+                      event.preventDefault();
+                      const targetTestId = test.id || test._id;
+                      const position = testDropPreview?.targetTestId === targetTestId
+                        ? testDropPreview.position
+                        : 'after';
+                      await applySubjectTestReorder({
+                        subjectName: testSubjectFilter,
+                        draggedTestId: draggingTestId,
+                        targetTestId,
+                        position
+                      });
+                      setDraggingTestId(null);
+                      setTestDropPreview(null);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingTestId(null);
+                      setTestDropPreview(null);
+                    }}
                   >
+                    {testDropPreview?.targetTestId === (test.id || test._id) && testDropPreview?.position === 'before' && (
+                      <div className="pointer-events-none absolute left-2 right-2 top-0.5 h-0.5 rounded bg-[#2C736C]" />
+                    )}
+                    {testDropPreview?.targetTestId === (test.id || test._id) && testDropPreview?.position === 'after' && (
+                      <div className="pointer-events-none absolute left-2 right-2 bottom-0.5 h-0.5 rounded bg-[#2C736C]" />
+                    )}
+                    {isAdmin && !isPublic && (
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={(event) => {
+                          setDraggingTestId(test.id || test._id);
+                          setTestDropPreview(null);
+                          try {
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', String(test.id || test._id));
+                          } catch (_) {
+                            // ignore dnd metadata errors
+                          }
+                        }}
+                        onDragEnd={() => {
+                          setDraggingTestId(null);
+                          setTestDropPreview(null);
+                        }}
+                        className="rounded-full border border-[#2C736C]/30 p-1 text-[#2C736C] hover:bg-white/60"
+                        title="Reorder test"
+                        disabled={isReorderingTests}
+                      >
+                        <GripVertical className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setSelectedTest(test)}

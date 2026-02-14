@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "nginx templates docker"
+git commit -m "up to classes loading edits"
 git push origin main
 
 ---

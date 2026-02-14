@@ -98,6 +98,7 @@ const MyStudentsPage = () => {
   const [sortOrder] = useState('asc');
   const [statusFilter, setStatusFilter] = useState('active');
   const [currentPage, setCurrentPage] = useState(1);
+  const [debouncedGlobalSearch, setDebouncedGlobalSearch] = useState(searchTerm || '');
 
   const fetchStudentsRef = React.useRef(null);
   const fetchGuardiansListRef = React.useRef(null);
@@ -114,8 +115,13 @@ const MyStudentsPage = () => {
   };
 
   const effectiveSearchTerm = useMemo(() => (
-    useGlobalSearch ? (searchTerm || '') : (localSearchTerm || '')
-  ), [useGlobalSearch, searchTerm, localSearchTerm]);
+    useGlobalSearch ? (debouncedGlobalSearch || '') : (localSearchTerm || '')
+  ), [useGlobalSearch, debouncedGlobalSearch, localSearchTerm]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedGlobalSearch(searchTerm || ''), 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   // Debounce localSearchTerm
   useEffect(() => {
@@ -569,7 +575,7 @@ const fetchGuardiansList = async () => {
   const filteredStudents = useMemo(() => {
     let result = students || [];
 
-    if (isHydrated && statusFilter !== 'all') {
+    if (statusFilter !== 'all') {
       const desiredActive = statusFilter === 'active';
       result = result.filter((student) => isStudentActive(student) === desiredActive);
     }
@@ -579,26 +585,31 @@ const fetchGuardiansList = async () => {
     const trimmedTerm = (effectiveSearchTerm || '').trim().toLowerCase();
     if (trimmedTerm) {
       const parts = trimmedTerm.split(/\s+/).filter(Boolean);
+      const hasEmailSignal = trimmedTerm.includes('@');
+      const hasPhoneSignal = /\d/.test(trimmedTerm);
+      const isIdSignal = /^[a-f0-9]{6,}$/i.test(trimmedTerm);
       result = result.filter((s) => {
         const firstName = (s.firstName || '').toLowerCase();
         const lastName = (s.lastName || '').toLowerCase();
         const fullName = `${firstName} ${lastName}`.trim();
         const email = (s.email || '').toLowerCase();
         const phone = (s.phone || '').toLowerCase();
-        const guardianName = s.guardian ? `${s.guardian.firstName} ${s.guardian.lastName}`.toLowerCase() : '';
-        const className = s.class ? (s.class.name || '').toLowerCase() : '';
+        const fullNameParts = fullName.split(/\s+/).filter(Boolean);
 
         const partsMatchName = parts.every(p => (
-          firstName.startsWith(p) || lastName.startsWith(p) || fullName.includes(p)
+          firstName.startsWith(p)
+          || lastName.startsWith(p)
+          || fullName.includes(p)
+          || fullNameParts.some((namePart) => namePart.startsWith(p))
         ));
 
-        return partsMatchName || 
-               email.includes(trimmedTerm) || 
-               phone.includes(trimmedTerm) || 
-               fullName.includes(trimmedTerm) ||
-               guardianName.includes(trimmedTerm) ||
-               className.includes(trimmedTerm) ||
-               String(s._id).includes(trimmedTerm);
+        if (partsMatchName) return true;
+
+        if (hasEmailSignal && email.includes(trimmedTerm)) return true;
+        if (hasPhoneSignal && phone.includes(trimmedTerm)) return true;
+        if (isIdSignal && String(s._id || '').toLowerCase().includes(trimmedTerm)) return true;
+
+        return false;
       });
     }
 
@@ -619,7 +630,7 @@ const fetchGuardiansList = async () => {
     // debug logs removed
     
     return result;
-  }, [students, effectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter, isHydrated]);
+  }, [students, effectiveSearchTerm, useGlobalSearch, globalFilter, statusFilter]);
 
   const sortedStudents = useMemo(() => {
     const list = [...(filteredStudents || [])];

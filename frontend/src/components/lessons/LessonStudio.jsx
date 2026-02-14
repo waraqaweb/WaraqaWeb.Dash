@@ -151,7 +151,54 @@ const QUESTION_TYPES = [
   { value: 'silent-voiced', label: 'Recognize silent vs articulated/voiced' }
 ];
 
-const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio', initialLesson = null }) => {
+const normalizeStudioSections = (inputSections) => {
+  const nextSections = Array.isArray(inputSections) && inputSections.length
+    ? inputSections
+    : [defaultSection(0)];
+
+  return nextSections.map((section, idx) => {
+    const explanation = section?.explanation || defaultExplanation();
+    const normalizedBlocks = normalizeExplanationBlocks(section?.explanationBlocks);
+    const standardBlocks = normalizeExplanationBlocks(section?.explanationBlocksStandard || section?.explanationBlocks);
+    const kidsBlocksRaw = normalizeExplanationBlocks(section?.explanationBlocksKids);
+    const legacyParts = [
+      { label: 'Adults - Beginner', parts: explanation?.adults?.beginner, style: 'sky' },
+      { label: 'Adults - Advanced', parts: explanation?.adults?.advanced, style: 'indigo' },
+      { label: 'Kids - Beginner', parts: explanation?.kids?.beginner, style: 'emerald' },
+      { label: 'Kids - Advanced', parts: explanation?.kids?.advanced, style: 'rose' }
+    ];
+    const legacyBlocks = legacyParts.flatMap((item) => {
+      const parts = normalizeExplanationParts(item.parts);
+      return parts.map((part, partIndex) =>
+        createExplanationBlock({
+          title: parts.length > 1 ? `${item.label} ${partIndex + 1}` : item.label,
+          style: item.style,
+          content: part?.text || '',
+          mediaUrl: part?.mediaUrl || ''
+        })
+      );
+    });
+
+    return {
+      ...section,
+      id: section?.id || `section-${Date.now()}-${idx}`,
+      explanation: {
+        adults: {
+          beginner: normalizeExplanationParts(explanation?.adults?.beginner),
+          advanced: normalizeExplanationParts(explanation?.adults?.advanced)
+        },
+        kids: {
+          beginner: normalizeExplanationParts(explanation?.kids?.beginner),
+          advanced: normalizeExplanationParts(explanation?.kids?.advanced)
+        }
+      },
+      explanationBlocksStandard: standardBlocks.length ? standardBlocks : (normalizedBlocks.length ? normalizedBlocks : legacyBlocks),
+      explanationBlocksKids: kidsBlocksRaw.length ? kidsBlocksRaw : (standardBlocks.length ? standardBlocks : (normalizedBlocks.length ? normalizedBlocks : legacyBlocks))
+    };
+  });
+};
+
+const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio', initialLesson = null, draftKey = '' }) => {
   const [lessonMeta, setLessonMeta] = useState({
     subject: '',
     title: '',
@@ -167,6 +214,7 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
   const [showStatusToast, setShowStatusToast] = useState(false);
   const [activeEditorTab, setActiveEditorTab] = useState('explanation');
   const [draggingBlockIndex, setDraggingBlockIndex] = useState(null);
+  const [blockDropPreview, setBlockDropPreview] = useState(null);
   const [blockHubOpen, setBlockHubOpen] = useState(false);
   const [blockHubSubject, setBlockHubSubject] = useState('');
   const [blockHubDraft, setBlockHubDraft] = useState({});
@@ -218,53 +266,61 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
       subtitle: meta.subtitle || '',
       objective: meta.objective || ''
     });
-    const nextSections = Array.isArray(meta.sections) && meta.sections.length
-      ? meta.sections
-      : [defaultSection(0)];
-    setSections(
-      nextSections.map((section, idx) => {
-        const explanation = section?.explanation || defaultExplanation();
-        const normalizedBlocks = normalizeExplanationBlocks(section?.explanationBlocks);
-        const standardBlocks = normalizeExplanationBlocks(section?.explanationBlocksStandard || section?.explanationBlocks);
-        const kidsBlocksRaw = normalizeExplanationBlocks(section?.explanationBlocksKids);
-        const legacyParts = [
-          { label: 'Adults - Beginner', parts: explanation?.adults?.beginner, style: 'sky' },
-          { label: 'Adults - Advanced', parts: explanation?.adults?.advanced, style: 'indigo' },
-          { label: 'Kids - Beginner', parts: explanation?.kids?.beginner, style: 'emerald' },
-          { label: 'Kids - Advanced', parts: explanation?.kids?.advanced, style: 'rose' }
-        ];
-        const legacyBlocks = legacyParts.flatMap((item) => {
-          const parts = normalizeExplanationParts(item.parts);
-          return parts.map((part, partIndex) =>
-            createExplanationBlock({
-              title: parts.length > 1 ? `${item.label} ${partIndex + 1}` : item.label,
-              style: item.style,
-              content: part?.text || '',
-              mediaUrl: part?.mediaUrl || ''
-            })
-          );
-        });
-        return {
-          ...section,
-          id: section?.id || `section-${Date.now()}-${idx}`,
-          explanation: {
-            adults: {
-              beginner: normalizeExplanationParts(explanation?.adults?.beginner),
-              advanced: normalizeExplanationParts(explanation?.adults?.advanced)
-            },
-            kids: {
-              beginner: normalizeExplanationParts(explanation?.kids?.beginner),
-              advanced: normalizeExplanationParts(explanation?.kids?.advanced)
-            }
-          },
-          explanationBlocksStandard: standardBlocks.length ? standardBlocks : (normalizedBlocks.length ? normalizedBlocks : legacyBlocks),
-          explanationBlocksKids: kidsBlocksRaw.length ? kidsBlocksRaw : (standardBlocks.length ? standardBlocks : (normalizedBlocks.length ? normalizedBlocks : legacyBlocks))
-        };
-      })
-    );
+    setSections(normalizeStudioSections(meta.sections));
     setActiveSection(0);
     setActiveEditorTab('explanation');
   }, [initialLesson]);
+
+  useEffect(() => {
+    if (!draftKey || initialLesson) return;
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return;
+      if (parsed.lessonMeta && typeof parsed.lessonMeta === 'object') {
+        setLessonMeta((prev) => ({
+          ...prev,
+          subject: parsed.lessonMeta.subject || '',
+          title: parsed.lessonMeta.title || '',
+          subtitle: parsed.lessonMeta.subtitle || '',
+          objective: parsed.lessonMeta.objective || ''
+        }));
+      }
+      if (Array.isArray(parsed.sections)) {
+        setSections(normalizeStudioSections(parsed.sections));
+      }
+      if (Number.isInteger(parsed.activeSection) && parsed.activeSection >= 0) {
+        setActiveSection(parsed.activeSection);
+      }
+      if (typeof parsed.activeEditorTab === 'string') {
+        setActiveEditorTab(parsed.activeEditorTab);
+      }
+      if (parsed.audienceView === 'kids' || parsed.audienceView === 'standard') {
+        setAudienceView(parsed.audienceView);
+      }
+    } catch (error) {
+      // ignore storage errors
+    }
+  }, [draftKey, initialLesson]);
+
+  useEffect(() => {
+    if (!draftKey || initialLesson) return;
+    try {
+      localStorage.setItem(
+        draftKey,
+        JSON.stringify({
+          lessonMeta,
+          sections,
+          activeSection,
+          activeEditorTab,
+          audienceView
+        })
+      );
+    } catch (error) {
+      // ignore storage errors
+    }
+  }, [draftKey, initialLesson, lessonMeta, sections, activeSection, activeEditorTab, audienceView]);
 
   useEffect(() => {
     try {
@@ -386,12 +442,14 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
         if (idx !== activeSection) return section;
         const key = getAudienceBlocksKey();
         const blocks = normalizeExplanationBlocks(section[key]);
-        if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= blocks.length || toIndex >= blocks.length) {
+        if (fromIndex < 0 || toIndex < 0 || fromIndex >= blocks.length || toIndex > blocks.length) {
           return section;
         }
         const next = [...blocks];
         const [moved] = next.splice(fromIndex, 1);
-        next.splice(toIndex, 0, moved);
+        const insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
+        if (insertAt === fromIndex) return section;
+        next.splice(insertAt, 0, moved);
         return { ...section, [key]: next };
       })
     );
@@ -845,22 +903,62 @@ const LessonStudio = ({ onSave, saving, status, onClose, title = 'Lesson Studio'
                         const blockShellClass = block.variant === 'edge'
                           ? `bg-white border border-slate-200 border-t-4 border-l-4 ${stylePreset.edge || ''}`
                           : `border ${stylePreset.card}`;
+                        const isPreviewBefore = blockDropPreview?.index === idx && blockDropPreview?.position === 'before';
+                        const isPreviewAfter = blockDropPreview?.index === idx && blockDropPreview?.position === 'after';
                         return (
                           <div
                             key={block.id}
                             className={`relative rounded-2xl p-4 pt-6 ${blockShellClass}`}
-                            draggable
-                            onDragStart={() => setDraggingBlockIndex(idx)}
-                            onDragOver={(event) => event.preventDefault()}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              if (draggingBlockIndex === null) return;
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              const position = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                              setBlockDropPreview({ index: idx, position });
+                            }}
                             onDrop={() => {
                               if (draggingBlockIndex === null) return;
-                              moveExplanationBlock(draggingBlockIndex, idx);
+                              const position = blockDropPreview?.index === idx ? blockDropPreview.position : 'after';
+                              const targetIndex = position === 'before' ? idx : idx + 1;
+                              moveExplanationBlock(draggingBlockIndex, targetIndex);
                               setDraggingBlockIndex(null);
+                              setBlockDropPreview(null);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingBlockIndex(null);
+                              setBlockDropPreview(null);
                             }}
                           >
+                            {isPreviewBefore && (
+                              <div className="pointer-events-none absolute left-3 right-3 top-1 h-0.5 rounded bg-indigo-500" />
+                            )}
+                            {isPreviewAfter && (
+                              <div className="pointer-events-none absolute left-3 right-3 bottom-1 h-0.5 rounded bg-indigo-500" />
+                            )}
                             <div className="absolute left-4 top-0 -translate-y-1/2">
                               <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 shadow-sm">
-                                <GripVertical className="h-3.5 w-3.5 text-slate-400" />
+                                <button
+                                  type="button"
+                                  draggable
+                                  onDragStart={(event) => {
+                                    setDraggingBlockIndex(idx);
+                                    setBlockDropPreview(null);
+                                    try {
+                                      event.dataTransfer.effectAllowed = 'move';
+                                      event.dataTransfer.setData('text/plain', String(idx));
+                                    } catch (_) {
+                                      // no-op
+                                    }
+                                  }}
+                                  onDragEnd={() => {
+                                    setDraggingBlockIndex(null);
+                                    setBlockDropPreview(null);
+                                  }}
+                                  className="cursor-grab rounded-full p-0.5 text-slate-400 hover:bg-slate-100 active:cursor-grabbing"
+                                  title="Drag block"
+                                >
+                                  <GripVertical className="h-3.5 w-3.5" />
+                                </button>
                                 <input
                                   className="w-48 bg-transparent text-xs font-semibold text-slate-700 outline-none"
                                   value={block.title}

@@ -822,27 +822,28 @@ router.get("/", authenticateToken, async (req, res) => {
     if (normalizedSearch) {
       mark('search:start');
       const regex = new RegExp(escapeRegExp(normalizedSearch), "i");
+      const searchTokens = normalizedSearch.split(/\s+/).map((token) => token.trim()).filter(Boolean);
+      const buildUserTokenClauses = (tokens = []) => (
+        tokens.map((token) => ({
+          $or: [
+            { firstName: new RegExp(escapeRegExp(token), "i") },
+            { lastName: new RegExp(escapeRegExp(token), "i") },
+            { email: new RegExp(escapeRegExp(token), "i") },
+            { phone: new RegExp(escapeRegExp(token), "i") },
+          ],
+        }))
+      );
 
       const [teacherMatches, guardianMatches] = await Promise.all([
         User.find({
           role: "teacher",
-          $or: [
-            { firstName: regex },
-            { lastName: regex },
-            { email: regex },
-            { phone: regex },
-          ],
+          $and: buildUserTokenClauses(searchTokens),
         })
           .select("_id")
           .lean(),
         User.find({
           role: "guardian",
-          $or: [
-            { firstName: regex },
-            { lastName: regex },
-            { email: regex },
-            { phone: regex },
-          ],
+          $and: buildUserTokenClauses(searchTokens),
         })
           .select("_id")
           .lean(),
@@ -979,7 +980,11 @@ router.get("/", authenticateToken, async (req, res) => {
           'endsAt',
           'timezone',
           'meetingLink',
-          'materials',
+          'materials._id',
+          'materials.kind',
+          'materials.name',
+          'materials.libraryItem',
+          'materials.uploadedByRole',
           'parentRecurringClass',
           'student.guardianId',
           'student.studentId',
@@ -3117,7 +3122,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
     console.log("🧐 Raw attendance type:", typeof payload.attendance, "value:", payload.attendance);
     console.log("🧐 Raw countAbsentForBilling type:", typeof payload.countAbsentForBilling, "value:", payload.countAbsentForBilling);
 
-    const attendanceOptions = new Set(["attended", "missed_by_student", "cancelled_by_teacher", "no_show_both"]);
+    const attendanceOptions = new Set(["attended", "missed_by_student", "cancelled_by_teacher", "cancelled_by_student", "no_show_both"]);
     const attendanceValue = attendanceOptions.has(payload.attendance) ? payload.attendance : "attended";
 
     const rawSubject = typeof payload.subject === "string" ? payload.subject.trim() : "";
@@ -3215,7 +3220,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
         absenceExcused,
         classScore,
       };
-    } else if (attendanceValue === "cancelled_by_teacher") {
+    } else if (attendanceValue === "cancelled_by_teacher" || attendanceValue === "cancelled_by_student") {
       if (!cancellationReason) {
         return res.status(400).json({
           message: "Cancellation reason is required",
@@ -3307,6 +3312,10 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
       classDoc.attendance.teacherPresent = false;
       classDoc.attendance.studentPresent = true;
       classDoc.status = "cancelled_by_teacher";
+    } else if (attendanceValue === "cancelled_by_student") {
+      classDoc.attendance.teacherPresent = true;
+      classDoc.attendance.studentPresent = false;
+      classDoc.status = "cancelled_by_student";
     } else if (attendanceValue === "no_show_both") {
       classDoc.attendance.teacherPresent = false;
       classDoc.attendance.studentPresent = false;

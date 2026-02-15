@@ -27,6 +27,98 @@ class TeacherSalaryService {
     return [...TEACHER_VISIBLE_STATUSES];
   }
 
+  static async applyPendingGuardianPayoutsToInvoice(teacherId, month = null, year = null, userId) {
+    const teacher = await User.findById(teacherId).select('_id teacherInfo firstName lastName');
+    if (!teacher) return { appliedCount: 0, appliedAmountUSD: 0 };
+
+    const pending = Array.isArray(teacher?.teacherInfo?.pendingGuardianPayouts)
+      ? teacher.teacherInfo.pendingGuardianPayouts
+      : [];
+
+    if (!pending.length) return { appliedCount: 0, appliedAmountUSD: 0 };
+
+    const candidates = pending.filter((entry) => {
+      if (!entry) return false;
+      if (entry.appliedAt || entry.appliedInvoiceId) return false;
+      const amount = Number(entry.amountUSD || 0);
+      if (!Number.isFinite(amount) || amount <= 0) return false;
+      return true;
+    });
+
+    if (!candidates.length) return { appliedCount: 0, appliedAmountUSD: 0 };
+
+    const hasTargetPeriod = Number.isFinite(Number(month)) && Number.isFinite(Number(year));
+    const invoiceQuery = {
+      teacher: teacherId,
+      deleted: false,
+      isAdjustment: { $ne: true }
+    };
+
+    if (hasTargetPeriod) {
+      invoiceQuery.month = Number(month);
+      invoiceQuery.year = Number(year);
+    } else {
+      invoiceQuery.status = { $in: ['draft', 'published'] };
+    }
+
+    const targetInvoice = await TeacherInvoice.findOne(invoiceQuery).sort({ createdAt: 1 });
+
+    if (!targetInvoice || targetInvoice.status === 'paid') {
+      return { appliedCount: 0, appliedAmountUSD: 0 };
+    }
+
+    const actorId = userId || teacherId;
+    let appliedCount = 0;
+    let appliedAmountUSD = 0;
+    const appliedIds = new Set();
+
+    candidates.forEach((entry) => {
+      const amountUSD = Math.round(Number(entry.amountUSD || 0) * 100) / 100;
+      if (amountUSD <= 0) return;
+
+      const studentNames = Array.isArray(entry.studentNames)
+        ? entry.studentNames.filter(Boolean)
+        : [];
+      const studentsPart = studentNames.length ? ` for ${studentNames.join(', ')}` : '';
+      const invoiceRef = entry.sourceInvoiceNumber || entry.sourceInvoiceId ? ` (source ${entry.sourceInvoiceNumber || entry.sourceInvoiceId})` : '';
+
+      let reason = `Guardian payment share${studentsPart}${invoiceRef}`;
+      if (reason.length < 5) reason = 'Guardian payment share';
+      if (reason.length > 200) reason = reason.slice(0, 200);
+
+      targetInvoice.addBonus({
+        source: 'guardian',
+        guardianId: entry.guardianId || null,
+        amountUSD,
+        reason
+      }, actorId);
+
+      appliedCount += 1;
+      appliedAmountUSD = Math.round((appliedAmountUSD + amountUSD) * 100) / 100;
+      if (entry._id) appliedIds.add(String(entry._id));
+    });
+
+    if (appliedCount <= 0) return { appliedCount: 0, appliedAmountUSD: 0 };
+
+    await targetInvoice.save();
+
+    const now = new Date();
+    teacher.teacherInfo.pendingGuardianPayouts = pending.map((entry) => {
+      if (!entry?._id) return entry;
+      if (!appliedIds.has(String(entry._id))) return entry;
+      entry.appliedAt = now;
+      entry.appliedInvoiceId = targetInvoice._id;
+      return entry;
+    });
+    await teacher.save();
+
+    return {
+      appliedCount,
+      appliedAmountUSD,
+      invoiceId: targetInvoice._id
+    };
+  }
+
   /**
    * Aggregate hours for a teacher in a given month
    * @param {ObjectId|String} teacherId - Teacher ID
@@ -351,6 +443,20 @@ class TeacherSalaryService {
 
       await this.markClassesAsBilled(classIds, invoice._id);
 
+      let pendingPayoutResult = { appliedCount: 0, appliedAmountUSD: 0 };
+      if (!isAdjustment) {
+        try {
+          pendingPayoutResult = await this.applyPendingGuardianPayoutsToInvoice(
+            teacherId,
+            month,
+            year,
+            userId
+          );
+        } catch (pendingErr) {
+          console.warn('[createTeacherInvoice] Failed to apply pending guardian payouts:', pendingErr?.message || pendingErr);
+        }
+      }
+
       // Log audit
       await TeacherSalaryAudit.logAction({
         action: 'invoice_create',
@@ -372,7 +478,9 @@ class TeacherSalaryService {
         metadata: {
           classCount: classIds.length,
           ratePartition: rateInfo.partition,
-          exchangeRate: exchangeRateInfo.rate
+          exchangeRate: exchangeRateInfo.rate,
+          pendingGuardianPayoutsApplied: pendingPayoutResult?.appliedCount || 0,
+          pendingGuardianPayoutsAmountUSD: pendingPayoutResult?.appliedAmountUSD || 0
         }
       });
 
@@ -473,6 +581,14 @@ class TeacherSalaryService {
           const { totalHours, classes, meta } = await this.aggregateTeacherHours(teacher._id, month, year);
 
           if (existing) {
+            if (!dryRun && existing.status !== 'paid') {
+              try {
+                await this.applyPendingGuardianPayoutsToInvoice(teacher._id, month, year, userId);
+              } catch (pendingErr) {
+                console.warn('[generateMonthlyInvoices] Failed to apply pending guardian payouts to existing invoice:', pendingErr?.message || pendingErr);
+              }
+            }
+
             // Check if there are classes not included in any invoice
             const existingClassIds = Array.isArray(existing.classIds)
               ? existing.classIds.map(id => id.toString())

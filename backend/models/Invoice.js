@@ -1548,60 +1548,116 @@ invoiceSchema.methods.processPayment = async function(amount, paymentMethod = 'm
       const transferFee = roundCurrency(tipAmount * 0.05);
       const netTip = roundCurrency(tipAmount - transferFee);
 
-      // collect unique teacher ids from items that are eligible
-      // fallback to teacherSnapshot name if teacher id is not present (tests may supply snapshots)
-      const teacherIds = [];
+      // collect unique teacher recipients from items that are eligible
+      // fallback: use teacher snapshot name key when teacher id is missing
+      const teacherRecipientsMap = {};
       (this.items || []).forEach((it) => {
         if (it && it.excludeFromTeacherPayment) return;
-        let t = null;
+
+        let teacherIdValue = null;
         if (it && it.teacher) {
           try {
-            t = it.teacher._id ? it.teacher._id : it.teacher;
+            teacherIdValue = it.teacher._id ? it.teacher._id : it.teacher;
           } catch (e) {
-            t = it.teacher;
+            teacherIdValue = it.teacher;
           }
         }
-        // fallback: use teacherSnapshot name as a stable identifier when teacher field is missing
-        if (!t && it && it.teacherSnapshot) {
-          const first = (it.teacherSnapshot.firstName || '').toString().trim();
-          const last = (it.teacherSnapshot.lastName || '').toString().trim();
-          const nameKey = (first || last) ? `${first}:${last}` : null;
-          if (nameKey) t = nameKey;
+
+        let key = null;
+        if (teacherIdValue) {
+          key = typeof teacherIdValue === 'string'
+            ? teacherIdValue
+            : (teacherIdValue && typeof teacherIdValue.toString === 'function' ? teacherIdValue.toString() : String(teacherIdValue));
         }
 
-        if (t) {
-          const idStr = typeof t === 'string' ? t : (t && typeof t.toString === 'function' ? t.toString() : String(t));
-          if (!teacherIds.includes(idStr)) teacherIds.push(idStr);
+        const snapshotFirst = (it?.teacherSnapshot?.firstName || '').toString().trim();
+        const snapshotLast = (it?.teacherSnapshot?.lastName || '').toString().trim();
+        const snapshotName = [snapshotFirst, snapshotLast].filter(Boolean).join(' ').trim();
+
+        if (!key && snapshotName) {
+          key = `${snapshotFirst}:${snapshotLast}`;
+        }
+
+        if (!key) return;
+
+        if (!teacherRecipientsMap[key]) {
+          teacherRecipientsMap[key] = {
+            key,
+            teacherId: mongoose.Types.ObjectId.isValid(key) ? key : null,
+            name: snapshotName || key
+          };
         }
       });
 
-      const count = teacherIds.length;
-  console.info('[Invoice.processPayment] teacherIds for distribution:', teacherIds);
+      const teacherKeys = Object.keys(teacherRecipientsMap);
+      const count = teacherKeys.length;
+  console.info('[Invoice.processPayment] teacher recipients for distribution:', teacherKeys);
       if (count > 0) {
-        // distribute netTip evenly, adjust last teacher for rounding remainder
-        const base = Math.floor((netTip / count) * 100) / 100;
-        let distributedSum = Math.round(base * 100) / 100 * count;
-        // due to rounding, compute remainder
-        let remainder = Math.round((netTip - distributedSum) * 100) / 100;
+        const distributedByTeacher = {};
+        const hasManualAllocations = Array.isArray(options.teacherBonusAllocations);
 
-        for (let i = 0; i < teacherIds.length; i++) {
-          let amount = base;
-          // give remainder to last one
-          if (i === teacherIds.length - 1) {
-            amount = roundCurrency(amount + remainder);
+        if (hasManualAllocations) {
+          (options.teacherBonusAllocations || []).forEach((raw) => {
+            if (!raw) return;
+            const amount = roundCurrency(Number(raw.amountUSD ?? raw.amount ?? 0));
+            if (!Number.isFinite(amount) || amount <= 0) return;
+
+            const rawTeacherKey = raw.teacherId || raw.teacherKey || raw.key || raw.teacher;
+            let targetKey = rawTeacherKey ? String(rawTeacherKey) : '';
+
+            if (!teacherRecipientsMap[targetKey]) {
+              const nameCandidate = String(raw.teacherName || raw.name || '').trim().toLowerCase();
+              if (nameCandidate) {
+                const byName = teacherKeys.find((candidateKey) => {
+                  const candidateName = String(teacherRecipientsMap[candidateKey]?.name || '').trim().toLowerCase();
+                  return candidateName && candidateName === nameCandidate;
+                });
+                if (byName) targetKey = byName;
+              }
+            }
+
+            if (!teacherRecipientsMap[targetKey]) return;
+
+            distributedByTeacher[targetKey] = roundCurrency((distributedByTeacher[targetKey] || 0) + amount);
+          });
+
+          const manualSum = roundCurrency(
+            Object.values(distributedByTeacher).reduce((sum, value) => sum + (Number(value) || 0), 0)
+          );
+          if (manualSum - netTip > 0.01) {
+            throw new Error(`Teacher bonus allocation exceeds net tip. Net tip is $${netTip.toFixed(2)}, allocations total $${manualSum.toFixed(2)}.`);
           }
+        } else {
+          // default distribution: equal split with remainder on last recipient
+          const base = Math.floor((netTip / count) * 100) / 100;
+          const distributedSum = Math.round(base * 100) / 100 * count;
+          const remainder = Math.round((netTip - distributedSum) * 100) / 100;
+          for (let i = 0; i < teacherKeys.length; i++) {
+            const key = teacherKeys[i];
+            let amount = base;
+            if (i === teacherKeys.length - 1) {
+              amount = roundCurrency(amount + remainder);
+            }
+            distributedByTeacher[key] = roundCurrency(amount);
+          }
+        }
 
+        const distributionEntries = Object.entries(distributedByTeacher)
+          .map(([key, amount]) => ({ key, amount: roundCurrency(Number(amount || 0)) }))
+          .filter((entry) => Number.isFinite(entry.amount) && entry.amount > 0);
+
+        for (const entry of distributionEntries) {
           const teacherLog = {
-            amount: roundCurrency(amount),
+            amount: entry.amount,
             method: 'tip_distribution',
             paymentMethod: 'tip',
             transactionId: undefined,
             processedBy: logEntry.processedBy,
             processedAt: new Date(),
-            note: `Tip distribution to teacher ${teacherIds[i]}`,
+            note: `Tip distribution to teacher ${entry.key}`,
             snapshot: {
               invoiceId: this._id,
-              teacherId: teacherIds[i],
+              teacherId: entry.key,
               invoiceRemainingBefore: logEntry.snapshot?.invoiceRemainingBefore,
               invoiceRemainingAfter: logEntry.snapshot?.invoiceRemainingAfter
             }
@@ -1611,22 +1667,81 @@ invoiceSchema.methods.processPayment = async function(amount, paymentMethod = 'm
         }
         this.markModified('paymentLogs');
         await this.save();
-        // Now that teacher tip logs are persisted, update each teacher's monthlyEarnings so the tip is tracked for payouts
+        // Now that teacher tip logs are persisted, update each teacher's monthlyEarnings
+        // and store pending guardian payout entries for teacher-invoice auto-attachment.
         try {
           const User = require('./User');
-          for (let j = 0; j < teacherIds.length; j++) {
-            const tId = teacherIds[j];
+          const distributionEntries = Object.entries(distributedByTeacher)
+            .map(([key, amount]) => ({ key, amount: roundCurrency(Number(amount || 0)) }))
+            .filter((entry) => Number.isFinite(entry.amount) && entry.amount > 0);
+
+          for (const allocation of distributionEntries) {
+            const tId = allocation.key;
             try {
               if (!tId) continue;
               // If tId is an ObjectId string, update the teacher record; otherwise skip (snapshot-only)
               if (typeof tId === 'string' && mongoose.Types.ObjectId.isValid(tId)) {
-                const logs = Array.isArray(this.paymentLogs)
-                  ? this.paymentLogs.filter(l => l && l.method === 'tip_distribution' && l.snapshot && String(l.snapshot.teacherId) === String(tId))
-                  : [];
-                const sum = logs.reduce((s, l) => s + (Number(l.amount || 0) || 0), 0);
-                if (sum > 0) {
-                  await User.findByIdAndUpdate(tId, { $inc: { 'teacherInfo.monthlyEarnings': sum } }).exec();
-                }
+                const currentTeacherAmount = Number(allocation.amount || 0);
+                const safeTeacherAmount = Number.isFinite(currentTeacherAmount) && currentTeacherAmount > 0
+                  ? roundCurrency(currentTeacherAmount)
+                  : 0;
+                if (safeTeacherAmount <= 0) continue;
+
+                const teacherStudentNames = Array.from(new Set(
+                  (this.items || [])
+                    .filter((it) => {
+                      if (!it || it.excludeFromTeacherPayment) return false;
+                      const itemTeacher = it.teacher && it.teacher._id ? it.teacher._id : it.teacher;
+                      const itemTeacherKey = itemTeacher
+                        ? String(itemTeacher)
+                        : ((it?.teacherSnapshot?.firstName || it?.teacherSnapshot?.lastName)
+                            ? `${(it?.teacherSnapshot?.firstName || '').toString().trim()}:${(it?.teacherSnapshot?.lastName || '').toString().trim()}`
+                            : null);
+                      if (!itemTeacherKey) return false;
+                      return String(itemTeacherKey) === String(tId);
+                    })
+                    .map((it) => {
+                      const snap = it?.studentSnapshot || {};
+                      const full = `${snap.firstName || ''} ${snap.lastName || ''}`.trim();
+                      return full || snap.studentName || '';
+                    })
+                    .filter(Boolean)
+                ));
+
+                const guardianName = (() => {
+                  const snap = this.guardianSnapshot || {};
+                  const full = `${snap.firstName || ''} ${snap.lastName || ''}`.trim();
+                  return full || '';
+                })();
+
+                const now = new Date();
+                const noteStudentSuffix = teacherStudentNames.length
+                  ? ` for ${teacherStudentNames.join(', ')}`
+                  : '';
+                const pendingNote = `Guardian payment share${noteStudentSuffix}`.slice(0, 220);
+
+                await User.findByIdAndUpdate(
+                  tId,
+                  {
+                    $inc: { 'teacherInfo.monthlyEarnings': safeTeacherAmount },
+                    $push: {
+                      'teacherInfo.pendingGuardianPayouts': {
+                        sourceInvoiceId: this._id,
+                        sourceInvoiceNumber: this.invoiceNumber || this.invoiceName || '',
+                        guardianId: this.guardian && this.guardian._id ? this.guardian._id : this.guardian,
+                        guardianName,
+                        studentNames: teacherStudentNames,
+                        amountUSD: safeTeacherAmount,
+                        periodMonth: now.getUTCMonth() + 1,
+                        periodYear: now.getUTCFullYear(),
+                        note: pendingNote,
+                        createdAt: now,
+                        appliedAt: null,
+                        appliedInvoiceId: null
+                      }
+                    }
+                  }
+                ).exec();
               }
             } catch (innerU) {
               console.warn('Failed to update teacher monthlyEarnings for', tId, innerU && innerU.message);

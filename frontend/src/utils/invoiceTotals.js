@@ -74,13 +74,12 @@ const computeTransferFeeAmount = (transferFeeDetails = {}, subtotal = null) => {
   return roundCurrency(resolved);
 };
 
-const buildStaticClassEntries = (invoice = {}) => {
-  const rawItems = Array.isArray(invoice.items) ? invoice.items.filter(Boolean) : [];
+const buildClassEntriesFromItems = (sourceItems = [], coverage = {}) => {
+  const rawItems = Array.isArray(sourceItems) ? sourceItems.filter(Boolean) : [];
   if (!rawItems.length) {
     return { items: [], totalMinutes: 0, totalHours: 0 };
   }
 
-  const coverage = invoice.coverage || {};
   const maxHours = toFiniteNumber(coverage.maxHours);
   const hasCap = Number.isFinite(maxHours) && maxHours > 0;
   const capMinutes = hasCap ? Math.round(maxHours * 60) : null;
@@ -161,6 +160,10 @@ const buildStaticClassEntries = (invoice = {}) => {
   };
 };
 
+const buildStaticClassEntries = (invoice = {}) => {
+  return buildClassEntriesFromItems(invoice.items, invoice.coverage || {});
+};
+
 export const resolveInvoiceClassEntries = (invoice = {}) => {
   if (!invoice) {
     return { items: [], totalMinutes: 0, totalHours: 0 };
@@ -168,13 +171,17 @@ export const resolveInvoiceClassEntries = (invoice = {}) => {
 
   const dynamicPayload = invoice.dynamicClasses;
   if (dynamicPayload && Array.isArray(dynamicPayload.items) && dynamicPayload.items.length) {
-    const items = dynamicPayload.items.filter(Boolean);
-    const totalMinutes = toFiniteNumber(dynamicPayload.totalMinutes);
-    const totalHours = toFiniteNumber(dynamicPayload.totalHours);
+    const filteredDynamic = buildClassEntriesFromItems(dynamicPayload.items, invoice.coverage || {});
+    if (filteredDynamic.items.length > 0) {
+      return filteredDynamic;
+    }
+
+    const fallbackMinutes = toFiniteNumber(dynamicPayload.totalMinutes);
+    const fallbackHours = toFiniteNumber(dynamicPayload.totalHours);
     return {
-      items,
-      totalMinutes: Number.isFinite(totalMinutes) ? totalMinutes : null,
-      totalHours: Number.isFinite(totalHours) ? totalHours : null
+      items: dynamicPayload.items.filter(Boolean),
+      totalMinutes: Number.isFinite(fallbackMinutes) ? fallbackMinutes : null,
+      totalHours: Number.isFinite(fallbackHours) ? fallbackHours : null
     };
   }
 

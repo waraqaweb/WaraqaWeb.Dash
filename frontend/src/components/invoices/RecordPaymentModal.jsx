@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import api from '../../api/axios';
 import { computeInvoiceTotals, resolveInvoiceClassEntries } from '../../utils/invoiceTotals';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import { X, DollarSign, CreditCard, ClipboardSignature } from 'lucide-react';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 
-const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
-  const [invoice, setInvoice] = useState(null);
+const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
+  const [localInvoice, setLocalInvoice] = useState(invoice || null);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
     amount: '',
@@ -19,19 +19,15 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [activeField, setActiveField] = useState('amount'); // 'amount' | 'hours'
-  const [savingCoverage, setSavingCoverage] = useState(false);
-  const [coverageSaved, setCoverageSaved] = useState(false);
-  const [lastSavedHours, setLastSavedHours] = useState(null);
-  const autoSaveTimerRef = useRef(null);
 
   const resolvedClassEntries = useMemo(
-    () => resolveInvoiceClassEntries(invoice || {}),
-    [invoice]
+    () => resolveInvoiceClassEntries(localInvoice || {}),
+    [localInvoice]
   );
 
   // Resolve a consistent hourly rate for conversions (matches backend fallbacks)
   const hourlyRate = useMemo(() => {
-    const inv = invoice || {};
+    const inv = localInvoice || {};
     const fromInvoice = Number(inv?.guardianFinancial?.hourlyRate || 0) || 0;
     const fromGuardian = Number(inv?.guardian?.guardianInfo?.hourlyRate || 0) || 0;
     if (fromInvoice > 0) return fromInvoice;
@@ -43,14 +39,14 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
     const amt = items.reduce((s, it) => s + (Number(it?.amount || 0) || 0), 0);
     if (hours > 0 && amt > 0) return Math.round((amt / hours) * 100) / 100;
     return 10;
-  }, [invoice, resolvedClassEntries]);
+  }, [localInvoice, resolvedClassEntries]);
 
   const transferFeeAmount = useMemo(() => {
-    const tf = invoice?.guardianFinancial?.transferFee;
+    const tf = localInvoice?.guardianFinancial?.transferFee;
     if (!tf || tf.waived) return 0;
     const amount = Number(tf.amount || 0);
     return Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : 0;
-  }, [invoice]);
+  }, [localInvoice]);
 
   const computeAmountFromHours = React.useCallback((hoursValue) => {
     const hrs = Number(hoursValue);
@@ -74,51 +70,48 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
   }, [hourlyRate, transferFeeAmount]);
 
   useEffect(() => {
+    if (invoice) {
+      setLocalInvoice(invoice);
+    }
+  }, [invoice]);
+
+  useEffect(() => {
+    if (!invoiceId) return;
+
     const fetchInvoice = async () => {
       try {
-        
         const { data } = await api.get(`/invoices/${invoiceId}`);
         const inv = data.invoice || data;
-        
         const computed = computeInvoiceTotals(inv);
-        const fetchedClassEntries = resolveInvoiceClassEntries(inv);
-        setInvoice({ ...inv, __computedTotal: computed.total, __computedHours: computed.hours, __computedTransferFee: computed.transferFee });
-          const initialAmountRaw = computed.remaining > 0 ? computed.remaining : Number(inv?.total || inv?.amount || 0);
-          const rawTransferFee = (() => {
-            const tf = inv?.guardianFinancial?.transferFee;
-            if (!tf || tf.waived) return 0;
-            const amt = Number(tf.amount || 0);
-            return Number.isFinite(amt) && amt > 0 ? Math.round(amt * 100) / 100 : 0;
-          })();
-          const derivedRate = (() => {
-            const fromInvoice = Number(inv?.guardianFinancial?.hourlyRate || 0) || 0;
-            const fromGuardian = Number(inv?.guardian?.guardianInfo?.hourlyRate || 0) || 0;
-            if (fromInvoice > 0) return fromInvoice;
-            if (fromGuardian > 0) return fromGuardian;
-            const items = fetchedClassEntries.items || [];
-            const itemWithRate = items.find((it) => Number(it?.rate || 0) > 0);
-            if (itemWithRate) return Number(itemWithRate.rate);
-            const hours = items.reduce((s, it) => s + ((Number(it?.duration || 0) || 0) / 60), 0);
-            const amt = items.reduce((s, it) => s + (Number(it?.amount || 0) || 0), 0);
-            if (hours > 0 && amt > 0) return Math.round((amt / hours) * 100) / 100;
-            return 10;
-          })();
-          const basePortion = Number.isFinite(initialAmountRaw) ? initialAmountRaw - rawTransferFee : NaN;
-          const initialHours = (Number.isFinite(basePortion) && basePortion > 0 && derivedRate > 0)
-            ? Math.round((basePortion / derivedRate) * 1000) / 1000
-            : '';
-          const formattedAmount = Number.isFinite(initialAmountRaw) && initialAmountRaw > 0
-            ? (Math.round(initialAmountRaw * 100) / 100).toFixed(2)
-            : '';
+        const normalizedInvoice = {
+          ...inv,
+          __computedTotal: computed.total,
+          __computedHours: computed.hours,
+          __computedTransferFee: computed.transferFee,
+        };
+        setLocalInvoice(normalizedInvoice);
+
+        const computedTotal = Number(computed?.total || 0);
+        const computedPaid = Number(computed?.paid || 0);
+        const computedDue = Math.max(0, Math.round((computedTotal - computedPaid) * 100) / 100);
+        const initialAmountRaw = computedDue > 0 ? computedDue : computedTotal;
+        const initialHoursRaw = Number(computed?.hours || 0);
+        const formattedAmount = Number.isFinite(initialAmountRaw) && initialAmountRaw > 0
+          ? (Math.round(initialAmountRaw * 100) / 100).toFixed(2)
+          : '';
+        const formattedHours = Number.isFinite(initialHoursRaw) && initialHoursRaw > 0
+          ? (Math.round(initialHoursRaw * 100) / 100).toFixed(2)
+          : '';
+
         setForm({
           amount: formattedAmount,
-          // prefer guardian's preferred method, then invoice method, then paypal by default
           paymentMethod: (inv.guardian && inv.guardian.paymentMethod) || inv.paymentMethod || 'paypal',
           transactionId: '',
-          hoursPaid: Number.isFinite(initialHours) && initialHours > 0 ? initialHours.toFixed(2) : '',
+          hoursPaid: formattedHours,
           tip: inv.tip ? String(inv.tip) : '',
           paypalInvoiceNumber: inv.paypalInvoiceNumber || ''
         });
+        setError('');
       } catch (err) {
         console.error(err);
         setError('Failed to load invoice details');
@@ -126,32 +119,27 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
         setLoading(false);
       }
     };
+
     fetchInvoice();
-  }, [invoiceId]);
+  }, [invoiceId, invoice?.coverage?.maxHours, invoice?.coverage?.endDate, invoice?.updatedAt]);
 
   // Compute the same billing window used in the view modal and invoices page
   const [billingWindow, setBillingWindow] = useState({ start: null, end: null, loading: true });
   // Class-boundary guidance for payments (derived strictly from resolved class entries)
   const [boundaries, setBoundaries] = useState({ hours: [], dates: [] });
   const [boundaryHint, setBoundaryHint] = useState(null);
-  // Ensure the initial defaults snap to a valid boundary once invoice and boundaries are known
-  const [didInitDefaults, setDidInitDefaults] = useState(false);
   useEffect(() => {
-    if (!invoice) return;
-
+    if (!localInvoice) return;
     // Prefer resolved class entries (dynamic-aware) to compute boundaries
     const items = (resolvedClassEntries.items || []).slice().filter(Boolean);
     const normalized = items
       .map(it => ({
         rawDate: (it.date ? new Date(it.date) : (it.scheduledDate ? new Date(it.scheduledDate) : null)),
-        // durations may be in minutes on items or hours; prefer minutes if present
         durationMin: (typeof it.duration === 'number' && isFinite(it.duration) ? it.duration : (typeof it.minutes === 'number' ? it.minutes : null)),
       }))
       .filter(e => e.rawDate && !Number.isNaN(e.rawDate.getTime()) && typeof e.durationMin === 'number' && e.durationMin > 0);
     normalized.sort((a, b) => a.rawDate - b.rawDate);
-
     const filteredNormalized = normalized;
-
     let cumMin = 0;
     const boundariesMinutes = [];
     const boundariesDates = [];
@@ -162,42 +150,16 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
     }
     const boundariesHours = boundariesMinutes.map(m => Math.round((m / 60) * 1000) / 1000);
     setBoundaries({ hours: boundariesHours, dates: boundariesDates });
-
-    // Initialize default amount/hours to the next valid boundary, not the raw remaining amount
-    // to avoid cases like $12 (1.2h) on a 1.0h invoice. If the next boundary is the final
-    // boundary (i.e., paying 100% of the invoice items), also include the transfer fee so the
-    // invoice can transition to paid without a small residual.
-    if (!didInitDefaults && boundariesHours.length > 0) {
-      // Determine current covered hours from invoice.coverage.maxHours (server source of truth)
-      const covered = (invoice.coverage && typeof invoice.coverage.maxHours === 'number' && isFinite(invoice.coverage.maxHours))
-        ? Math.max(0, Number(invoice.coverage.maxHours))
-        : 0;
-      // Pick the next boundary strictly greater than covered; if none, use the last boundary
-      const nextIdx = boundariesHours.findIndex((h) => h > covered);
-      const targetHours = nextIdx !== -1 ? boundariesHours[nextIdx] : boundariesHours[boundariesHours.length - 1];
-
-      // Base amount from hours
-      const computedAmount = computeAmountFromHours(targetHours);
-      const targetAmount = computedAmount !== null ? computedAmount : Math.round((targetHours * hourlyRate) * 100) / 100;
-      setActiveField('hours');
-      setForm((prev) => ({
-        ...prev,
-        hoursPaid: targetHours.toFixed(2),
-        amount: targetAmount.toFixed(2)
-      }));
-      setDidInitDefaults(true);
-    }
-
     // Billing window from filtered items (respects coverage.maxHours)
     const hasItems = filteredNormalized.length > 0;
-    const start = hasItems ? new Date(Math.min(...filteredNormalized.map(e => e.rawDate.getTime()))) : (invoice.billingPeriod?.startDate ? new Date(invoice.billingPeriod.startDate) : null);
-    const end = hasItems ? new Date(Math.max(...filteredNormalized.map(e => e.rawDate.getTime()))) : (invoice.billingPeriod?.endDate ? new Date(invoice.billingPeriod.endDate) : null);
+    const start = hasItems ? new Date(Math.min(...filteredNormalized.map(e => e.rawDate.getTime()))) : (localInvoice.billingPeriod?.startDate ? new Date(localInvoice.billingPeriod.startDate) : null);
+    const end = hasItems ? new Date(Math.max(...filteredNormalized.map(e => e.rawDate.getTime()))) : (localInvoice.billingPeriod?.endDate ? new Date(localInvoice.billingPeriod.endDate) : null);
     setBillingWindow({
       start: start ? formatDateDDMMMYYYY(start) : null,
       end: end ? formatDateDDMMMYYYY(end) : null,
       loading: false,
     });
-  }, [invoice, computeAmountFromHours, didInitDefaults, hourlyRate, resolvedClassEntries]);
+  }, [localInvoice, resolvedClassEntries]);
 
   // ✅ Removed boundary validation - hoursPaid accepts any value (actual payment amount)
   // Live boundary hint for reference only (not enforced)
@@ -233,11 +195,6 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
     const { name, value } = e.target;
     if (name === 'amount') {
       setActiveField('amount');
-      // If user switches to amount field, trigger immediate save of hours if pending
-      if (autoSaveTimerRef.current && form.hoursPaid && Number(form.hoursPaid) > 0) {
-        clearTimeout(autoSaveTimerRef.current);
-        saveCoverageToBackend(form.hoursPaid);
-      }
       const hours = computeHoursFromAmount(value);
         setForm(prev => ({
           ...prev,
@@ -268,91 +225,104 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
     const numeric = Number(tipValue) || 0;
     return Math.round((numeric - calcTransferFee(numeric)) * 100) / 100;
   };
-  const teachersList = (resolvedClassEntries.items || [])
-    .map(i => i.teacherSnapshot?.firstName ? `${i.teacherSnapshot.firstName} ${i.teacherSnapshot.lastName}` : (i.teacher?.firstName ? `${i.teacher.firstName} ${i.teacher.lastName}` : null))
-    .filter(Boolean);
-  
-  // Get unique teachers only
-  const uniqueTeachers = Array.from(new Set(teachersList));
-  const teachersCount = uniqueTeachers.length;
-  const perTeacherTip = teachersCount > 0 ? Math.round((calcNetTip(form.tip || 0) / teachersCount) * 100) / 100 : 0;
+  const teacherRecipients = useMemo(() => {
+    const map = {};
+    (resolvedClassEntries.items || []).forEach((item) => {
+      if (!item || item.excludeFromTeacherPayment) return;
+
+      const teacherObj = item.teacher && typeof item.teacher === 'object' ? item.teacher : null;
+      const teacherIdRaw = teacherObj?._id || item.teacher || null;
+      const teacherId = teacherIdRaw ? String(teacherIdRaw) : null;
+
+      const snapshotFirst = (item?.teacherSnapshot?.firstName || teacherObj?.firstName || '').toString().trim();
+      const snapshotLast = (item?.teacherSnapshot?.lastName || teacherObj?.lastName || '').toString().trim();
+      const teacherName = [snapshotFirst, snapshotLast].filter(Boolean).join(' ').trim() || 'Unknown teacher';
+
+      const key = teacherId || `${snapshotFirst}:${snapshotLast}`;
+      if (!key) return;
+
+      if (!map[key]) {
+        map[key] = {
+          key,
+          teacherId,
+          name: teacherName
+        };
+      }
+    });
+    return Object.values(map);
+  }, [resolvedClassEntries]);
+
+  const teachersCount = teacherRecipients.length;
+  const netTipAmount = calcNetTip(form.tip || 0);
+
+  const buildDefaultBonusDraft = (netTipValue, recipients) => {
+    const safeRecipients = Array.isArray(recipients) ? recipients : [];
+    const count = safeRecipients.length;
+    if (count === 0 || netTipValue <= 0) return {};
+
+    const base = Math.floor((netTipValue / count) * 100) / 100;
+    const baseTotal = Math.round(base * 100) / 100 * count;
+    const remainder = Math.round((netTipValue - baseTotal) * 100) / 100;
+
+    const next = {};
+    safeRecipients.forEach((recipient, idx) => {
+      const amount = idx === count - 1
+        ? Math.round((base + remainder) * 100) / 100
+        : Math.round(base * 100) / 100;
+      next[recipient.key] = {
+        include: true,
+        amount
+      };
+    });
+    return next;
+  };
+
+  const [bonusOverridesEnabled, setBonusOverridesEnabled] = useState(false);
+  const [teacherBonusDraft, setTeacherBonusDraft] = useState({});
+
+  useEffect(() => {
+    if (bonusOverridesEnabled) return;
+    setTeacherBonusDraft(buildDefaultBonusDraft(netTipAmount, teacherRecipients));
+  }, [bonusOverridesEnabled, netTipAmount, teacherRecipients]);
+
+  const effectiveTeacherBonuses = useMemo(() => {
+    if (!teacherRecipients.length || netTipAmount <= 0) return [];
+
+    if (!bonusOverridesEnabled) {
+      const defaults = buildDefaultBonusDraft(netTipAmount, teacherRecipients);
+      return teacherRecipients.map((recipient) => ({
+        ...recipient,
+        include: true,
+        amount: Number(defaults?.[recipient.key]?.amount || 0)
+      }));
+    }
+
+    return teacherRecipients.map((recipient) => {
+      const draft = teacherBonusDraft?.[recipient.key] || {};
+      const include = draft.include !== false;
+      const amount = Math.max(0, Math.round((Number(draft.amount || 0) || 0) * 100) / 100);
+      return {
+        ...recipient,
+        include,
+        amount
+      };
+    });
+  }, [bonusOverridesEnabled, teacherBonusDraft, teacherRecipients, netTipAmount]);
+
+  const totalAllocatedBonus = useMemo(() => {
+    return Math.round(
+      effectiveTeacherBonuses.reduce((sum, entry) => sum + (entry.include ? Number(entry.amount || 0) : 0), 0) * 100
+    ) / 100;
+  }, [effectiveTeacherBonuses]);
+
+  const unallocatedBonus = Math.round((Math.max(0, netTipAmount - totalAllocatedBonus)) * 100) / 100;
+  const perTeacherTip = teachersCount > 0 ? Math.round((netTipAmount / teachersCount) * 100) / 100 : 0;
 
   const handleSubmit = e => {
     e.preventDefault();
     // Open confirmation modal; actual submission is performed in handleConfirm
     setConfirmOpen(true);
   };
-
-  // Auto-save coverage (maxHours) after user stops typing for 1.5 seconds
-  const saveCoverageToBackend = React.useCallback(async (hoursValue) => {
-    if (!hoursValue || Number(hoursValue) <= 0) {
-      return;
-    }
-
-    const newHours = Number(hoursValue);
-
-    // Skip if same value already saved
-    if (lastSavedHours === newHours) {
-      return;
-    }
-
-    // Skip if the value matches what's currently in the invoice (no change)
-    const currentMaxHours = invoice?.coverage?.maxHours;
-    if (typeof currentMaxHours === 'number' && Math.abs(currentMaxHours - newHours) < 0.001) {
-      // Values are essentially the same, no need to save
-      setLastSavedHours(newHours);
-      return;
-    }
-
-    setSavingCoverage(true);
-    setCoverageSaved(false);
-
-    try {
-      const payload = {
-        maxHours: newHours
-      };
-
-      await api.put(`/invoices/${invoiceId}/coverage`, payload);
-      
-      // Refresh invoice to show updated coverage
-      const { data } = await api.get(`/invoices/${invoiceId}`);
-      const inv = data.invoice || data;
-      const computed = computeInvoiceTotals(inv);
-      setInvoice({ ...inv, __computedTotal: computed.total, __computedHours: computed.hours, __computedTransferFee: computed.transferFee });
-      
-      setLastSavedHours(newHours);
-      setCoverageSaved(true);
-      setTimeout(() => setCoverageSaved(false), 3000); // Hide message after 3 seconds
-    } catch (err) {
-      console.error('Failed to auto-save coverage:', err);
-      // Don't show error to user for auto-save failures unless critical
-    } finally {
-      setSavingCoverage(false);
-    }
-  }, [invoiceId, invoice?.coverage?.maxHours, lastSavedHours]);
-
-  // Auto-save effect: triggers 1.5 seconds after user stops typing
-  useEffect(() => {
-    // Clear any existing timer
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-    }
-
-    // Only auto-save if user is editing hours field and has valid value
-    if (activeField === 'hours' && form.hoursPaid && Number(form.hoursPaid) > 0) {
-      // Set new timer to save after 1.5 seconds of no typing
-      autoSaveTimerRef.current = setTimeout(() => {
-        saveCoverageToBackend(form.hoursPaid);
-      }, 1500); // 1.5 second debounce
-    }
-
-    // Cleanup timer on unmount or when dependencies change
-    return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
-    };
-  }, [form.hoursPaid, activeField, saveCoverageToBackend]); // Re-run when hoursPaid or activeField changes
 
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -378,6 +348,10 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
     setSaving(true);
     setError('');
     try {
+      if (bonusOverridesEnabled && totalAllocatedBonus > netTipAmount + 0.01) {
+        throw new Error(`Teacher bonus allocation exceeds net tip (${netTipAmount.toFixed(2)}).`);
+      }
+
       const paidHoursNumeric = form.hoursPaid ? Number(form.hoursPaid) : undefined;
       let derivedAmount = form.amount ? Number(form.amount) : undefined;
       if (Number.isFinite(paidHoursNumeric) && paidHoursNumeric > 0) {
@@ -397,7 +371,17 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
         tip: form.tip ? Number(form.tip) : undefined,
         // ✅ Always send paidHours - this is the actual payment amount, not an estimate
         paidHours: normalizedHours,
-        paypalInvoiceNumber: form.paypalInvoiceNumber ? String(form.paypalInvoiceNumber).trim() : undefined
+        paypalInvoiceNumber: form.paypalInvoiceNumber ? String(form.paypalInvoiceNumber).trim() : undefined,
+        teacherBonusAllocations: bonusOverridesEnabled
+          ? effectiveTeacherBonuses
+              .filter((entry) => entry.include && Number(entry.amount || 0) > 0)
+              .map((entry) => ({
+                teacherId: entry.teacherId || undefined,
+                teacherKey: entry.key,
+                teacherName: entry.name,
+                amountUSD: Math.round(Number(entry.amount || 0) * 100) / 100
+              }))
+          : undefined
       };
       
       const res = await api.post(`/invoices/${invoiceId}/payment`, payload);
@@ -430,8 +414,10 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
 
   if (loading) return <LoadingSpinner />;
   // Display exactly what was saved on the invoice as the primary source of truth, and show computed as secondary
-  const savedTotal = Number(invoice?.total ?? invoice?.amount ?? 0) || 0;
-  const savedHours = (typeof invoice?.hoursCovered === 'number') ? invoice.hoursCovered : (invoice?.paidHours ?? invoice?.hoursPaid ?? null);
+  const savedTotal = Number(localInvoice?.total ?? localInvoice?.amount ?? localInvoice?.__computedTotal ?? 0) || 0;
+  const savedHours = Number.isFinite(Number(localInvoice?.__computedHours))
+    ? Number(localInvoice.__computedHours)
+    : ((typeof localInvoice?.hoursCovered === 'number') ? localInvoice.hoursCovered : (localInvoice?.paidHours ?? localInvoice?.hoursPaid ?? null));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-8 backdrop-blur-sm">
@@ -448,13 +434,13 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
           <div className="flex items-start justify-between">
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-[0.3em] text-white/70">Record payment</p>
-              <h2 className="mt-1 text-xl font-semibold leading-tight truncate">{invoice?.invoiceNumber}</h2>
+              <h2 className="mt-1 text-xl font-semibold leading-tight truncate">{localInvoice?.invoiceNumber}</h2>
 
               {/* Compact guardian info: role • name • email (single compact row, truncated) */}
               <div className="mt-1 flex items-center gap-3 text-sm text-white/90 truncate">
-                <span className="text-xs text-white/80 truncate">{invoice?.guardian?.role || invoice?.guardian?.relationship || 'Guardian'}</span>
-                <span className="text-xs text-white/90 truncate">• {invoice?.guardian?.firstName} {invoice?.guardian?.lastName}</span>
-                <span className="text-xs text-white/90 truncate">• {invoice?.guardian?.email || '—'}</span>
+                <span className="text-xs text-white/80 truncate">{localInvoice?.guardian?.role || localInvoice?.guardian?.relationship || 'Guardian'}</span>
+                <span className="text-xs text-white/90 truncate">• {localInvoice?.guardian?.firstName} {localInvoice?.guardian?.lastName}</span>
+                <span className="text-xs text-white/90 truncate">• {localInvoice?.guardian?.email || '—'}</span>
               </div>
             </div>
           </div>
@@ -508,7 +494,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
                                 const lastBoundary = (boundaries.hours || [])[boundaries.hours.length - 1];
                                 const EPS = 0.005;
                                 const isFinal = Math.abs(Number(h) - Number(lastBoundary)) <= EPS;
-                                const tf = invoice?.guardianFinancial?.transferFee || {};
+                                const tf = localInvoice?.guardianFinancial?.transferFee || {};
                                 const feeAmount = Number(tf.amount || 0);
                                 const feeWaived = tf.waived === true;
                                 if (isFinal && feeAmount > 0 && !feeWaived) {
@@ -527,7 +513,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
                                 const lastBoundary = (boundaries.hours || [])[boundaries.hours.length - 1];
                                 const EPS = 0.005;
                                 const isFinal = Math.abs(Number(h) - Number(lastBoundary)) <= EPS;
-                                const tf = invoice?.guardianFinancial?.transferFee || {};
+                                const tf = localInvoice?.guardianFinancial?.transferFee || {};
                                 const feeAmount = Number(tf.amount || 0);
                                 const feeWaived = tf.waived === true;
                                 if (isFinal && feeAmount > 0 && !feeWaived) {
@@ -552,7 +538,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
                     <div>
                       {!editingPaypal ? (
                         <button type="button" onClick={() => setEditingPaypal(true)} className="text-sm text-slate-700 underline">
-                          {form.paypalInvoiceNumber || (invoice?.paypalInvoiceNumber || '—')}
+                          {form.paypalInvoiceNumber || (localInvoice?.paypalInvoiceNumber || '—')}
                         </button>
                       ) : (
                         <input
@@ -569,7 +555,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
 
                   <div className="mt-3 flex items-center justify-between">
                     <div className="text-xs uppercase text-slate-400">Total paid so far</div>
-                    <div className="text-sm font-semibold text-slate-700">${Number(invoice?.paidAmount || 0).toFixed(2)}</div>
+                    <div className="text-sm font-semibold text-slate-700">${Number(localInvoice?.paidAmount || 0).toFixed(2)}</div>
                   </div>
                 </div>
               </div>
@@ -598,16 +584,6 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
                 <label className="flex flex-col gap-1 text-sm text-slate-600">
                   <div className="flex items-center justify-between">
                     <span className="font-medium text-slate-800">Hours paid</span>
-                    {savingCoverage && (
-                      <span className="text-xs text-blue-600 animate-pulse">
-                        Saving...
-                      </span>
-                    )}
-                    {coverageSaved && !savingCoverage && (
-                      <span className="text-xs text-emerald-600 font-medium">
-                        ✓ Saved
-                      </span>
-                    )}
                   </div>
                   <input
                     type="number"
@@ -642,7 +618,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
 
               
             {/* Payment method + reference on a single row */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
               <label className="flex flex-col gap-2 text-sm text-slate-600">
                 <span className="flex items-center gap-2 font-medium text-slate-800">
                   <CreditCard className="h-4 w-4 text-slate-400" />
@@ -663,7 +639,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
                 </select>
               </label>
 
-              <label className="flex flex-col gap-2 text-sm text-slate-600">
+              <label className="flex flex-col gap-2 text-sm text-slate-600 sm:col-span-3">
                 <span className="flex items-center gap-2 font-medium text-slate-800">
                   <ClipboardSignature className="h-4 w-4 text-slate-400" />
                   Reference
@@ -673,8 +649,9 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
                   name="transactionId"
                   value={form.transactionId}
                   onChange={handleChange}
+                  autoComplete="off"
                   className="rounded-md border border-slate-200 px-3 py-2 text-slate-800 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-100"
-                  placeholder="e.g. TRANS-12345"
+                  placeholder="Paste PayPal invoice link or transaction reference"
                 />
               </label>
             </div>
@@ -706,7 +683,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-xs uppercase text-slate-400">Invoice</div>
-                    <div className="font-semibold">{invoice?.invoiceName || invoice?.invoiceNumber}</div>
+                    <div className="font-semibold">{localInvoice?.invoiceName || localInvoice?.invoiceNumber}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-xs uppercase text-slate-400">Total</div>
@@ -730,7 +707,7 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Fees</span>
-                  <span className="font-medium text-slate-800">${((typeof invoice?.__computedTransferFee === 'number' && invoice.__computedTransferFee !== null) ? invoice.__computedTransferFee : calcTransferFee(form.tip || 0)).toFixed(2)}</span>
+                  <span className="font-medium text-slate-800">${((typeof localInvoice?.__computedTransferFee === 'number' && localInvoice.__computedTransferFee !== null) ? localInvoice.__computedTransferFee : calcTransferFee(form.tip || 0)).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Tip</span>
@@ -755,24 +732,94 @@ const RecordPaymentModal = ({ invoiceId, onClose, onUpdated }) => {
                 <div className="flex items-start justify-between gap-3">
                   <span className="text-xs text-slate-500">Teachers</span>
                   <div className="text-right flex-1">
-                    {uniqueTeachers.length === 0 ? (
+                    {teacherRecipients.length === 0 ? (
                       <span className="text-xs text-slate-500">—</span>
                     ) : (
-                      <div className="space-y-1">
-                        {uniqueTeachers.map((teacher, index) => (
-                          <div key={index} className="flex items-center justify-between gap-3 text-xs">
-                            <span className="text-slate-700">{teacher}</span>
-                            {form.tip && Number(form.tip) > 0 && (
-                              <span className="text-emerald-600 font-medium whitespace-nowrap">
-                                ${perTeacherTip.toFixed(2)}
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                        {form.tip && Number(form.tip) > 0 && uniqueTeachers.length > 0 && (
-                          <div className="pt-1 mt-1 border-t border-slate-100 text-xs text-slate-500">
-                            {uniqueTeachers.length} teacher{uniqueTeachers.length !== 1 ? 's' : ''} • ${perTeacherTip.toFixed(2)} each
-                          </div>
+                      <div className="space-y-1.5">
+                        {teacherRecipients.map((teacher) => {
+                          const current = effectiveTeacherBonuses.find((entry) => entry.key === teacher.key) || {
+                            include: true,
+                            amount: 0
+                          };
+
+                          return (
+                            <div key={teacher.key} className="flex items-center justify-between gap-2 text-xs">
+                              <span className="text-slate-700 truncate">{teacher.name}</span>
+
+                              {form.tip && Number(form.tip) > 0 ? (
+                                bonusOverridesEnabled ? (
+                                  <div className="inline-flex items-center gap-2">
+                                    <label className="inline-flex items-center gap-1 text-[11px] text-slate-500">
+                                      <input
+                                        type="checkbox"
+                                        checked={current.include !== false}
+                                        onChange={(e) => {
+                                          const checked = e.target.checked;
+                                          setTeacherBonusDraft((prev) => ({
+                                            ...prev,
+                                            [teacher.key]: {
+                                              include: checked,
+                                              amount: Number(prev?.[teacher.key]?.amount ?? current.amount ?? 0)
+                                            }
+                                          }));
+                                        }}
+                                      />
+                                      Add
+                                    </label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      disabled={current.include === false}
+                                      value={Number(current.amount || 0).toFixed(2)}
+                                      onChange={(e) => {
+                                        const nextAmount = Math.max(0, Number(e.target.value || 0));
+                                        setTeacherBonusDraft((prev) => ({
+                                          ...prev,
+                                          [teacher.key]: {
+                                            include: prev?.[teacher.key]?.include !== false,
+                                            amount: Math.round(nextAmount * 100) / 100
+                                          }
+                                        }));
+                                      }}
+                                      className="w-20 rounded border border-slate-200 px-1.5 py-0.5 text-right text-[11px] text-slate-700"
+                                    />
+                                  </div>
+                                ) : (
+                                  <span className="text-emerald-600 font-medium whitespace-nowrap">
+                                    ${perTeacherTip.toFixed(2)}
+                                  </span>
+                                )
+                              ) : (
+                                <span className="text-slate-400">$0.00</span>
+                              )}
+                            </div>
+                          );
+                        })}
+
+                        {form.tip && Number(form.tip) > 0 && teacherRecipients.length > 0 && (
+                          <>
+                            <div className="pt-1 mt-1 border-t border-slate-100 text-[11px] text-slate-500">
+                              {bonusOverridesEnabled
+                                ? `${teacherRecipients.length} teacher${teacherRecipients.length !== 1 ? 's' : ''} • allocated $${totalAllocatedBonus.toFixed(2)}${unallocatedBonus > 0 ? ` • unallocated $${unallocatedBonus.toFixed(2)}` : ''}`
+                                : `${teacherRecipients.length} teacher${teacherRecipients.length !== 1 ? 's' : ''} • $${perTeacherTip.toFixed(2)} each`}
+                            </div>
+
+                            <label className="mt-1 inline-flex items-center justify-end gap-1 text-[11px] text-slate-500">
+                              <input
+                                type="checkbox"
+                                checked={bonusOverridesEnabled}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  setBonusOverridesEnabled(checked);
+                                  if (checked) {
+                                    setTeacherBonusDraft(buildDefaultBonusDraft(netTipAmount, teacherRecipients));
+                                  }
+                                }}
+                              />
+                              Customize bonus split
+                            </label>
+                          </>
                         )}
                       </div>
                     )}

@@ -2293,7 +2293,7 @@ router.post('/:id/payment', authenticateToken, async (req, res) => {
   try {
     console.log('=== [Invoices API] POST /invoices/:id/payment START ===', { id: req.params.id, body: req.body, user: req.user?._id });
     const invoiceId = req.params.id;
-    const { amount, paymentMethod, transactionId, tip, paidHours, note, paidAt } = req.body;
+    const { amount, paymentMethod, transactionId, tip, paidHours, note, paidAt, teacherBonusAllocations } = req.body;
     if (!amount || !paymentMethod) return res.status(400).json({ success:false, message: 'Must provide amount and paymentMethod' });
 
     // Build payment payload including optional tip and paidHours
@@ -2304,7 +2304,8 @@ router.post('/:id/payment', authenticateToken, async (req, res) => {
       tip: tip !== undefined ? Number(tip) : undefined,
       paidHours: paidHours !== undefined ? Number(paidHours) : undefined,
       note: note !== undefined ? String(note) : undefined,
-      paidAt: paidAt ? new Date(paidAt) : undefined
+      paidAt: paidAt ? new Date(paidAt) : undefined,
+      teacherBonusAllocations: Array.isArray(teacherBonusAllocations) ? teacherBonusAllocations : undefined
     };
     // Support Idempotency-Key header for safe retries
     const idempotencyKey = req.get('Idempotency-Key') || req.get('idempotency-key') || null;

@@ -1337,6 +1337,87 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     }
   }, [invoice?.invoiceSlug]);
 
+  const handleCopyCoverageMessage = useCallback(async () => {
+    const firstClass = filteredClasses?.[0] || null;
+    const lastClass = filteredClasses?.[filteredClasses.length - 1] || null;
+    const startDateText = firstClass?.date || '-';
+    const endDateText = lastClass?.date || '-';
+
+    if (!invoice?.invoiceSlug) {
+      setNotesStatus({ type: 'error', message: 'Public invoice link is not available yet' });
+      setTimeout(() => setNotesStatus(null), 2500);
+      return;
+    }
+
+    const shareUrl = `${window.location.origin}/public/invoices/${invoice.invoiceSlug}`;
+    const message = [
+      `This invoice covers from ${startDateText} to ${endDateText}.`,
+      `This is a link to view all classes covered by this invoice: ${shareUrl}`,
+      'Or visit your account on our dashboard for full details.',
+      'If you find any mistakes please let us know.',
+      'Please contact us immediately if you notice any discrepancies.'
+    ].join('\n');
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message);
+      } else {
+        const copied = window.prompt('Copy this coverage message:', message);
+        if (copied === null) {
+          throw new Error('Copy cancelled');
+        }
+      }
+      setNotesStatus({ type: 'success', message: 'Coverage message copied' });
+    } catch (err) {
+      console.error('Failed to copy coverage message', err);
+      setNotesStatus({ type: 'error', message: 'Copy failed' });
+    }
+    setTimeout(() => setNotesStatus(null), 2000);
+  }, [filteredClasses, invoice?.invoiceSlug]);
+
+  const latestPaymentReference = useMemo(() => {
+    const logs = Array.isArray(invoice?.paymentLogs)
+      ? invoice.paymentLogs
+      : [];
+
+    const nonTipLogs = logs.filter((log) => log && log.method !== 'tip_distribution');
+    const latest = nonTipLogs.length ? nonTipLogs[nonTipLogs.length - 1] : null;
+
+    const reference = String(
+      latest?.transactionId
+      || invoice?.transactionId
+      || invoice?.paymentReference
+      || ''
+    ).trim();
+
+    if (!reference) return null;
+
+    const isLink = /^https?:\/\//i.test(reference);
+    return { value: reference, isLink };
+  }, [invoice?.paymentLogs, invoice?.transactionId, invoice?.paymentReference]);
+
+  const handleCopyPaymentReference = useCallback(async () => {
+    const referenceValue = latestPaymentReference?.value;
+    if (!referenceValue) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(referenceValue);
+      } else {
+        const copied = window.prompt('Copy payment reference:', referenceValue);
+        if (copied === null) {
+          throw new Error('Copy cancelled');
+        }
+      }
+      setNotesStatus({ type: 'success', message: 'Payment reference copied' });
+    } catch (err) {
+      console.error('Failed to copy payment reference', err);
+      setNotesStatus({ type: 'error', message: 'Copy failed' });
+    }
+
+    setTimeout(() => setNotesStatus(null), 2000);
+  }, [latestPaymentReference]);
+
   if (loading) return <LoadingSpinner />;
   if (!invoice) return <div className="p-4 text-center">Invoice not found</div>;
 
@@ -1534,6 +1615,37 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                           <span>Paid</span>
                           <span>${paidAmount.toFixed(2)}</span>
                         </div>
+                        {latestPaymentReference && (
+                          <div className="space-y-1.5 pt-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-slate-600">Payment reference</span>
+                              <div className="flex items-center gap-1.5">
+                                {latestPaymentReference.isLink && (
+                                  <a
+                                    href={latestPaymentReference.value}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                                    title="Open payment link"
+                                  >
+                                    <Link2 className="h-3 w-3" />
+                                    Open
+                                  </a>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={handleCopyPaymentReference}
+                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                                  title="Copy payment reference"
+                                >
+                                  <FileText className="h-3 w-3" />
+                                  Copy
+                                </button>
+                              </div>
+                            </div>
+                            <p className="break-all text-xs text-slate-500">{latestPaymentReference.value}</p>
+                          </div>
+                        )}
                       </div>
                       <div className="mt-3 border-t border-slate-100 pt-3 text-sm text-slate-600">
                         {isRefillOnlyInvoice ? (
@@ -1704,11 +1816,24 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
           {!isRefillOnlyInvoice && (
             <div className="px-8 pb-8">
               <div className="flex h-full w-full flex-col rounded-3xl border border-slate-200 bg-white shadow-sm">
-                <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
                   <h3 className="text-base font-semibold text-slate-900">Class sessions</h3>
-                  <span className="text-xs uppercase tracking-wide text-slate-400">
-                    {classesLoading ? 'Refreshing…' : `${filteredClasses.length} entries`}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs uppercase tracking-wide text-slate-400">
+                      {classesLoading ? 'Refreshing…' : `${filteredClasses.length} entries`}
+                    </span>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={handleCopyCoverageMessage}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                        title="Copy coverage message"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        <span>Copy message</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {filteredClasses.length === 0 ? (
                   <div className="flex flex-1 items-center justify-center px-5 py-12 text-center text-sm text-slate-500">

@@ -1222,8 +1222,8 @@ const ClassesPage = ({ isActive = true }) => {
 const fetchClasses = useCallback(async () => {
   try {
     const searchMode = Boolean((normalizedSearchTerm || '').trim());
-    const fetchPage = searchMode ? 1 : currentPage;
-    const fetchLimit = searchMode ? 500 : 30;
+    const fetchPage = currentPage;
+    const fetchLimit = 30;
     const cacheKey = makeCacheKey(
       'classes:list',
       user?._id,
@@ -1300,6 +1300,14 @@ const fetchClasses = useCallback(async () => {
       order: "asc",
     };
 
+    if (searchMode && tabFilter === 'upcoming') {
+      const now = new Date();
+      const monthAhead = new Date(now);
+      monthAhead.setMonth(monthAhead.getMonth() + 1);
+      params.dateFrom = now.toISOString();
+      params.dateTo = monthAhead.toISOString();
+    }
+
     if (statusFilter !== "all") params.status = statusFilter;
     if (teacherFilter !== "all") params.teacher = teacherFilter;
     if (guardianFilter !== "all") params.guardian = guardianFilter;
@@ -1337,14 +1345,14 @@ const fetchClasses = useCallback(async () => {
       return merged;
     });
     const apiTotalPages = Number(res.data?.pagination?.totalPages);
-    setTotalPages(searchMode ? 1 : (Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1));
+    setTotalPages(Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1);
     setError("");
 
     writeCache(
       cacheKey,
       {
         classes: fetchedClasses,
-        totalPages: searchMode ? 1 : (Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1),
+        totalPages: Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1,
       },
       { ttlMs: 5 * 60_000, deps: ['classes'] }
     );

@@ -38,7 +38,7 @@ import RefundInvoiceModal from '../../components/invoices/RefundInvoiceModal';
 import CreateGuardianInvoiceModal from '../../components/invoices/CreateGuardianInvoiceModal';
 import ConfirmModal from '../../components/ui/ConfirmModal';
 import Toast from '../../components/ui/Toast';
-import { computeInvoiceTotals } from '../../utils/invoiceTotals';
+import { computeInvoiceTotals, resolveInvoiceClassEntries } from '../../utils/invoiceTotals';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const getInvoicePaymentTimestamp = (invoice) => {
@@ -106,6 +106,7 @@ const InvoicesPage = ({ isActive = true }) => {
   const [copiedInvoiceId, setCopiedInvoiceId] = useState(null);
   const [toast, setToast] = useState({ show: false, type: '', message: '' });
   const [createInvoiceOpen, setCreateInvoiceOpen] = useState(false);
+  const [cardOverrides, setCardOverrides] = useState({});
 
   const derivedFilters = useMemo(() => {
     if (!globalFilter || globalFilter === 'all') {
@@ -758,229 +759,65 @@ const InvoicesPage = ({ isActive = true }) => {
 
   // Inline billing window computed from classes with the same accuracy as the modal
   const BillingWindowInline = React.useMemo(() => {
-    return function BillingWindowInline({ invoice, bare = false }) {
-      const [windowDates, setWindowDates] = React.useState({ start: null, end: null, loading: true });
+    return function BillingWindowInline({ invoice, bare = false, overrideRange = null }) {
+      if (!invoice) return null;
 
-      React.useEffect(() => {
-        let cancelled = false;
-        const run = async () => {
-          try {
-            if (!invoice) return;
+      if (overrideRange && (overrideRange.start || overrideRange.end)) {
+        const start = overrideRange.start || null;
+        const end = overrideRange.end || null;
 
-            // Match modal logic exactly: compute studentId, from, to
-            const studentId = typeof invoice?.student === 'string'
-              ? invoice.student
-              : (invoice?.student?._id || '');
-
-            // Do not use invoice.lastInvoiceDate as a start date - it may represent the previous invoice end.
-            // Prefer explicit billingPeriod start or the invoice creation date as a safe fallback.
-            const from = invoice?.billingPeriod?.startDate
-              || invoice?.billingPeriod?.start
-              || invoice?.billingPeriod?.start_date
-              || invoice?.startDate
-              || invoice?.createdAt
-              || '';
-
-            // Determine max hours cap from coverage first (affects "to" behavior)
-            const hasMax = typeof invoice?.coverage?.maxHours === 'number' && Number.isFinite(invoice.coverage.maxHours) && invoice.coverage.maxHours > 0;
-            const maxMinutes = hasMax ? Math.round(Number(invoice.coverage.maxHours) * 60) : null;
-
-            // In the modal, when maxHours is set, customEndDate is cleared -> we should not bound by invoice end/due dates.
-            // Only use an explicit end when a coverage endDate exists AND no max-hours cap is active.
-            const to = hasMax
-              ? ''
-              : (
-                  invoice?.coverage?.endDate
-                  || invoice?.endDate
-                  || invoice?.billingPeriod?.endDate
-                  || invoice?.billingPeriod?.end
-                  || invoice?.billingPeriod?.end_date
-                  || ''
-                );
-
-            // Fallbacks from invoice items or provided dates
-            const itemDates = Array.isArray(invoice?.items)
-              ? invoice.items
-                  .map((it) => (it && (it.date || it.scheduledDate) ? new Date(it.date || it.scheduledDate) : null))
-                  .filter((d) => d && !Number.isNaN(d.getTime()))
-              : [];
-
-            const fallbackStart = itemDates.length
-              ? new Date(Math.min(...itemDates.map((d) => d.getTime())))
-              : (from ? new Date(from) : null);
-            const fallbackEnd = itemDates.length
-              ? new Date(Math.max(...itemDates.map((d) => d.getTime())))
-              : (to ? new Date(to) : null);
-
-            // Prefer computing the inline billing window directly from invoice.items when available.
-            // This mirrors what users see in the invoice modal and avoids API mismatches that can
-            // cause both start and end to display the same date.
-            try {
-              if (itemDates.length) {
-                // Build detailed entries with duration (minutes) to respect coverage.maxHours
-                const detailed = (invoice.items || [])
-                  .map(it => ({
-                    date: it.date || it.scheduledDate ? new Date(it.date || it.scheduledDate) : null,
-                    durationMin: (typeof it.duration === 'number' && isFinite(it.duration)) ? it.duration : (typeof it.minutes === 'number' ? it.minutes : 0)
-                  }))
-                  .filter(e => e.date && !Number.isNaN(e.date.getTime()));
-
-                // Sort oldest -> newest
-                detailed.sort((a, b) => a.date - b.date);
-
-                // Apply maxHours cap if present
-                let effective = detailed;
-                if (hasMax && maxMinutes > 0) {
-                  let cum = 0;
-                  const acc = [];
-                  for (const e of detailed) {
-                    const dur = Number(e.durationMin || 0);
-                    if (cum + dur > maxMinutes) break;
-                    acc.push(e);
-                    cum += dur;
-                  }
-                  effective = acc;
-                }
-
-                const startDate = effective.length ? effective[0].date : fallbackStart;
-                const endDate = effective.length ? effective[effective.length - 1].date : fallbackEnd;
-
-                setWindowDates({
-                  start: startDate ? formatDate(startDate) : null,
-                  end: endDate ? formatDate(endDate) : null,
-                  loading: false
-                });
-                return; // no need to call the API
-              }
-            } catch (err) {
-              // If anything goes wrong, fall back to the API approach below
-              console.warn('BillingWindowInline: item-derived window failed, falling back to API', err);
-            }
-
-            // Build request params to mirror the modal: { studentId, from, to }
-            const params = {
-              studentId: studentId || '',
-              from: from || '',
-              to: to || ''
-            };
-
-            // If we truly have no context, abort and fall back to invoice items
-            if (!params.studentId && !params.from && !params.to) {
-              setWindowDates({
-                start: fallbackStart ? fallbackStart.toLocaleDateString(undefined, { timeZone: 'UTC' }) : null,
-                end: fallbackEnd ? fallbackEnd.toLocaleDateString(undefined, { timeZone: 'UTC' }) : null,
-                loading: false
-              });
-              return;
-            }
-
-            const { data } = await api.get('/classes', { params });
-            if (cancelled) return;
-
-            const list = Array.isArray(data?.classes) ? data.classes : [];
-            // Map to { rawDate, duration }
-            const mapped = list
-              .map((c) => {
-                const d = new Date(c.scheduledDate || c.date);
-                return {
-                  rawDate: d,
-                  duration: Number(c.duration || 0)
-                };
-              })
-              .filter((e) => e.rawDate instanceof Date && !Number.isNaN(e.rawDate.getTime()));
-
-            // Sort oldest -> newest
-            mapped.sort((a, b) => a.rawDate - b.rawDate);
-
-            // Apply end boundary only if "to" exists (i.e., customEndDate/coverage end without max-hours cap)
-            const endBoundary = to ? new Date(to) : null;
-            const constrained = endBoundary && !Number.isNaN(endBoundary?.getTime())
-              ? mapped.filter((e) => e.rawDate.getTime() <= endBoundary.getTime())
-              : mapped;
-
-            // Apply max hours cap cumulatively like the modal
-            let effective = constrained;
-            if (hasMax && maxMinutes > 0) {
-              let cum = 0;
-              const acc = [];
-              for (const e of constrained) {
-                const dur = Number(e?.duration || 0);
-                const safe = Number.isFinite(dur) && dur > 0 ? dur : 0;
-                if (cum + safe > maxMinutes) break;
-                acc.push(e);
-                cum += safe;
-              }
-              effective = acc;
-            }
-
-            // Prefer invoice item-derived range when no classes are found to avoid misleading future windows
-            const startDate = effective.length
-              ? new Date(Math.min(...effective.map((e) => e.rawDate.getTime())))
-              : fallbackStart;
-            const endDate = effective.length
-              ? new Date(Math.max(...effective.map((e) => e.rawDate.getTime())))
-              : (fallbackEnd || endBoundary);
-
-            setWindowDates({
-              start: startDate ? formatDate(startDate) : null,
-              end: endDate ? formatDate(endDate) : null,
-              loading: false
-            });
-          } catch (_) {
-            // Fall back to invoice item-derived range on error
-            try {
-              const fromFallback = invoice?.billingPeriod?.startDate
-                || invoice?.billingPeriod?.start
-                || invoice?.billingPeriod?.start_date
-                || invoice?.startDate
-                || invoice?.createdAt
-                || '';
-
-              const toFallback =
-                invoice?.coverage?.endDate
-                || invoice?.endDate
-                || invoice?.billingPeriod?.endDate
-                || invoice?.billingPeriod?.end
-                || invoice?.billingPeriod?.end_date
-                || '';
-
-              const itemDatesFallback = Array.isArray(invoice?.items)
-                ? invoice.items
-                    .map((it) => (it && (it.date || it.scheduledDate) ? new Date(it.date || it.scheduledDate) : null))
-                    .filter((d) => d && !Number.isNaN(d.getTime()))
-                : [];
-
-              const fallbackStart = itemDatesFallback.length
-                ? new Date(Math.min(...itemDatesFallback.map((d) => d.getTime())))
-                : (fromFallback ? new Date(fromFallback) : null);
-              const fallbackEnd = itemDatesFallback.length
-                ? new Date(Math.max(...itemDatesFallback.map((d) => d.getTime())))
-                : (toFallback ? new Date(toFallback) : null);
-
-              setWindowDates({
-                start: fallbackStart ? formatDate(fallbackStart) : null,
-                end: fallbackEnd ? formatDate(fallbackEnd) : null,
-                loading: false
-              });
-            } catch (e) {
-              setWindowDates({ start: null, end: null, loading: false });
-            }
-          }
-        };
-        run();
-        return () => { cancelled = true; };
-      }, [invoice]);
-
-      if (windowDates.loading) {
         return (
-          <span className="inline-flex items-center gap-2 text-slate-500">
+          <span className="inline-flex items-center gap-2">
             <Calendar className="h-4 w-4 text-slate-400" />
-            <span>{bare ? '…' : 'Billing window: …'}</span>
+            <span>
+              {bare ? (
+                <>
+                  {start || '—'} {'→'} {end || '—'}
+                </>
+              ) : (
+                <>
+                  From {start || '—'} {'-To→'} {end || '—'}
+                </>
+              )}
+            </span>
           </span>
         );
       }
 
-      if (!windowDates.start && !windowDates.end) return null;
+      const entries = resolveInvoiceClassEntries(invoice);
+      const items = Array.isArray(entries?.items) ? entries.items : [];
+      const itemDates = items
+        .map((it) => {
+          const dt = it?.date || it?.scheduledDate || it?.class?.scheduledDate || it?.class?.dateTime;
+          const date = dt ? new Date(dt) : null;
+          return date && !Number.isNaN(date.getTime()) ? date : null;
+        })
+        .filter(Boolean);
+
+      const fallbackStart = invoice?.billingPeriod?.startDate
+        || invoice?.billingPeriod?.start
+        || invoice?.billingPeriod?.start_date
+        || invoice?.startDate
+        || invoice?.createdAt
+        || null;
+      const fallbackEnd = invoice?.coverage?.endDate
+        || invoice?.endDate
+        || invoice?.billingPeriod?.endDate
+        || invoice?.billingPeriod?.end
+        || invoice?.billingPeriod?.end_date
+        || null;
+
+      const startDate = fallbackStart
+        ? new Date(fallbackStart)
+        : (itemDates.length ? new Date(Math.min(...itemDates.map((d) => d.getTime()))) : null);
+      const endDate = fallbackEnd
+        ? new Date(fallbackEnd)
+        : (itemDates.length ? new Date(Math.max(...itemDates.map((d) => d.getTime()))) : null);
+
+      const start = startDate && !Number.isNaN(startDate.getTime()) ? formatDate(startDate) : null;
+      const end = endDate && !Number.isNaN(endDate.getTime()) ? formatDate(endDate) : null;
+
+      if (!start && !end) return null;
 
       return (
         <span className="inline-flex items-center gap-2">
@@ -988,11 +825,11 @@ const InvoicesPage = ({ isActive = true }) => {
           <span>
             {bare ? (
               <>
-                {windowDates.start || '—'} {'→'} {windowDates.end || '—'}
+                {start || '—'} {'→'} {end || '—'}
               </>
             ) : (
               <>
-                From {windowDates.start || '—'} {'-To→'} {windowDates.end || '—'}
+                From {start || '—'} {'-To→'} {end || '—'}
               </>
             )}
           </span>
@@ -1161,6 +998,95 @@ const InvoicesPage = ({ isActive = true }) => {
     }
     return list;
   }, [filteredInvoices, activeTab]);
+
+  useEffect(() => {
+    const visible = (displayedInvoices || []).slice(0, itemsPerPage);
+    if (!visible.length) return;
+
+    let cancelled = false;
+
+    const buildSignature = (inv) => {
+      const maxHours = Number(inv?.coverage?.maxHours || 0);
+      const endDate = inv?.coverage?.endDate || '';
+      const updatedAt = inv?.updatedAt || '';
+      const paidAmount = Number(inv?.paidAmount || 0);
+      return `${updatedAt}|${maxHours}|${endDate}|${paidAmount}`;
+    };
+
+    const fetchOverrides = async () => {
+      const targets = visible.filter((inv) => {
+        const nextSignature = buildSignature(inv);
+        const cached = cardOverrides[inv._id];
+        return !cached || cached.signature !== nextSignature;
+      });
+
+      if (!targets.length) return;
+
+      const updates = {};
+      await Promise.all(
+        targets.map(async (inv) => {
+          try {
+            const { data } = await api.get(`/invoices/${inv._id}`);
+            const fullInvoice = data?.invoice || data;
+            const computed = computeInvoiceTotals(fullInvoice || {});
+
+            const entries = resolveInvoiceClassEntries(fullInvoice || {});
+            const items = Array.isArray(entries?.items) ? entries.items : [];
+            const itemDates = items
+              .map((it) => {
+                const dt = it?.date || it?.scheduledDate || it?.class?.scheduledDate || it?.class?.dateTime;
+                const date = dt ? new Date(dt) : null;
+                return date && !Number.isNaN(date.getTime()) ? date : null;
+              })
+              .filter(Boolean);
+
+            const fallbackStart = fullInvoice?.billingPeriod?.startDate
+              || fullInvoice?.billingPeriod?.start
+              || fullInvoice?.billingPeriod?.start_date
+              || fullInvoice?.startDate
+              || fullInvoice?.createdAt
+              || null;
+            const fallbackEnd = fullInvoice?.coverage?.endDate
+              || fullInvoice?.endDate
+              || fullInvoice?.billingPeriod?.endDate
+              || fullInvoice?.billingPeriod?.end
+              || fullInvoice?.billingPeriod?.end_date
+              || null;
+
+            const startDate = fallbackStart
+              ? new Date(fallbackStart)
+              : (itemDates.length ? new Date(Math.min(...itemDates.map((d) => d.getTime()))) : null);
+            const endDate = fallbackEnd
+              ? new Date(fallbackEnd)
+              : (itemDates.length ? new Date(Math.max(...itemDates.map((d) => d.getTime()))) : null);
+
+            const start = startDate && !Number.isNaN(startDate.getTime()) ? formatDate(startDate) : null;
+            const end = endDate && !Number.isNaN(endDate.getTime()) ? formatDate(endDate) : null;
+
+            updates[inv._id] = {
+              signature: buildSignature(inv),
+              total: Number(computed?.total || 0),
+              hours: Number(computed?.hours || 0),
+              paid: Number(computed?.paid || 0),
+              start,
+              end,
+            };
+          } catch (_) {
+            // Keep fallback values from list payload when detail fetch fails.
+          }
+        })
+      );
+
+      if (cancelled || !Object.keys(updates).length) return;
+      setCardOverrides((prev) => ({ ...prev, ...updates }));
+    };
+
+    fetchOverrides();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [displayedInvoices, itemsPerPage, formatDate, cardOverrides]);
 
 
   const getChannelInfo = (invoice, channel) => (invoice?.delivery?.channels || []).find((entry) => entry.channel === channel);
@@ -1368,11 +1294,26 @@ const InvoicesPage = ({ isActive = true }) => {
             ) : (
               displayedInvoices.map((invoice) => {
                 const statusTone = getStatusBadgeTone(invoice.status);
+                const override = cardOverrides[invoice._id] || null;
                 
-                // ✅ Use computeInvoiceTotals to respect coverage.maxHours filter
                 const computed = computeInvoiceTotals(invoice);
-                const invoiceTotal = computed.total;
-                const paidAmount = computed.paid;
+                const storedTotalCandidates = [invoice?.adjustedTotal, invoice?.total, invoice?.amount]
+                  .map((value) => Number(value))
+                  .filter((value) => Number.isFinite(value) && value >= 0);
+                const invoiceTotal = Number.isFinite(override?.total)
+                  ? Number(override.total)
+                  : (storedTotalCandidates.length > 0 ? storedTotalCandidates[0] : computed.total);
+
+                const storedHoursCandidates = [invoice?.hoursCovered, invoice?.paidHours, invoice?.hoursPaid]
+                  .map((value) => Number(value))
+                  .filter((value) => Number.isFinite(value) && value >= 0);
+                const invoiceHours = Number.isFinite(override?.hours)
+                  ? Number(override.hours)
+                  : (storedHoursCandidates.length > 0 ? storedHoursCandidates[0] : Number(computed.hours || 0));
+
+                const paidAmount = Number.isFinite(override?.paid)
+                  ? Number(override.paid)
+                  : (Number.isFinite(Number(invoice?.paidAmount)) ? Number(invoice.paidAmount) : computed.paid);
                 const isPaidStatus = ['paid', 'refunded'].includes(invoice.status);
                 const primaryAmount = isPaidStatus && paidAmount > 0 ? paidAmount : invoiceTotal;
                 const primaryLabel = isPaidStatus ? 'Paid' : 'Total';
@@ -1406,28 +1347,31 @@ const InvoicesPage = ({ isActive = true }) => {
                             )}
                           </div>
                           <div className="space-y-1.5 text-sm text-slate-600">
-                            <div className="flex flex-wrap items-center gap-4">
-                              <span className="inline-flex items-center gap-2 text-slate-700">
+                            <div className="flex items-center gap-4">
+                              <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-slate-700">
                                 <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
                                   {getInitials(invoice.guardian?.firstName, invoice.guardian?.lastName)}
                                 </span>
-                                <span className="inline-flex items-center gap-2">
-                                  <span className="text-slate-700">{invoice.guardian?.firstName} {invoice.guardian?.lastName}</span>
+                                <span className="inline-flex min-w-0 items-center gap-2">
+                                  <span className="truncate text-slate-700">{invoice.guardian?.firstName} {invoice.guardian?.lastName}</span>
                                   {invoice.guardian?.email && (
-                                    <span className="text-xs text-slate-400">• {invoice.guardian.email}</span>
+                                    <span className="truncate text-xs text-slate-400">• {invoice.guardian.email}</span>
                                   )}
                                 </span>
                               </span>
                               
-                              <span className="inline-flex items-center gap-2">
-                                <span className="font-medium text-slate-700">{primaryLabel}: {formatCurrency(primaryAmount)}</span>
+                              <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-sm text-slate-700">
+                                <span className="font-medium">{primaryLabel}: {formatCurrency(primaryAmount)}</span>
+                                <span className="hidden h-1 w-1 rounded-full bg-slate-300 sm:inline-block" />
+                                <span>Hours: <span className="font-medium">{invoiceHours.toFixed(2)}</span></span>
+                                <span className="hidden h-1 w-1 rounded-full bg-slate-300 sm:inline-block" />
+                                <BillingWindowInline
+                                  key={`${invoice._id}-${invoice.coverage?.maxHours || 0}-${invoice.coverage?.endDate || ''}`}
+                                  invoice={invoice}
+                                  bare
+                                  overrideRange={override ? { start: override.start, end: override.end } : null}
+                                />
                               </span>
-                              <span className="hidden h-1.5 w-1.5 rounded-full bg-slate-200 lg:block" />
-                              {/* Billing window inline (computed like modal) */}
-                              <BillingWindowInline 
-                                key={`${invoice._id}-${invoice.coverage?.maxHours || 0}-${invoice.coverage?.endDate || ''}`}
-                                invoice={invoice} 
-                              />
                             </div>
                             
                           </div>
@@ -1435,8 +1379,8 @@ const InvoicesPage = ({ isActive = true }) => {
 
                         <div className="flex flex-col items-start gap-3 lg:items-end">
                           <div className="flex flex-wrap gap-2">
-                            {renderChannelButton(invoice, 'email', 'by Email', Mail)}
-                            {renderChannelButton(invoice, 'whatsapp', 'via WhatsApp', MessageCircle)}
+                            {renderChannelButton(invoice, 'email', 'Email', Mail)}
+                            {renderChannelButton(invoice, 'whatsapp', 'WhatsApp', MessageCircle)}
                             <button
                               onClick={() => handleDownloadDocx(invoice._id, invoice.invoiceNumber)}
                               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
@@ -1448,7 +1392,7 @@ const InvoicesPage = ({ isActive = true }) => {
                               ) : (
                                 <DownloadCloud className="h-3.5 w-3.5" />
                               )}
-                              <span>Download DOCX</span>
+                              <span>DOCX</span>
                             </button>
                           </div>
 
@@ -1614,6 +1558,7 @@ const InvoicesPage = ({ isActive = true }) => {
       )}
       {modalState.type === 'payment' && (
         <RecordPaymentModal
+          invoice={invoices.find(inv => inv._id === modalState.invoiceId) || null}
           invoiceId={modalState.invoiceId}
           onClose={() => closeModal()}
           onUpdated={() => {

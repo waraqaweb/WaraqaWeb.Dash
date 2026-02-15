@@ -9,6 +9,7 @@ const generateInvoiceDoc = require('../utils/generateInvoiceDoc');
 const { buildGuardianFinancialSnapshot } = require('../utils/guardianFinancial');
 const dayjs = require('dayjs');
 const notificationService = require('./notificationService');
+const TeacherSalaryService = require('./teacherSalaryService');
 
 const roundCurrency = (value) => {
   const numeric = Number(value);
@@ -26,6 +27,16 @@ const ensureDate = (value) => {
   if (!value) return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const getCalendarMonthEndExclusive = (value) => {
+  const base = ensureDate(value) || new Date();
+  return new Date(base.getFullYear(), base.getMonth() + 1, 1);
+};
+
+const getCalendarMonthEndInclusive = (value) => {
+  const exclusiveEnd = getCalendarMonthEndExclusive(value);
+  return new Date(exclusiveEnd.getTime() - 1);
 };
 
 const EPSILON_HOURS = 0.0005;
@@ -693,10 +704,10 @@ class InvoiceService {
           ? (unpaidClasses[0].scheduledDate || unpaidClasses[0].date)
           : today;
 
-        // Calculate one calendar month from the first unpaid class
-        const endDate = dayjs(startDate).add(1, 'month').toDate();
+        // Cap auto-generated coverage at the end of the start month
+        const endDate = getCalendarMonthEndExclusive(startDate);
 
-        // Filter classes to only include those within the one month period
+        // Filter classes to only include those within the current calendar-month boundary
         const selectedClasses = unpaidClasses.filter(cls => {
           const clsDate = new Date(cls.scheduledDate || cls.date);
           return clsDate >= new Date(startDate) && clsDate < endDate;
@@ -856,8 +867,8 @@ class InvoiceService {
         }
       }
       
-      // Calculate one calendar month from the EARLIEST unbilled class date
-      const searchEndDate = dayjs(billingStartDate).add(1, 'month').toDate();
+      // Cap auto-generated coverage at the end of the earliest class month
+      const searchEndDate = getCalendarMonthEndExclusive(billingStartDate);
 
       // Build initial item from the reported class
       const duration = Number(classDoc.duration || 60);
@@ -886,7 +897,7 @@ class InvoiceService {
         attended: classDoc.status === 'attended'
       };
 
-      // Include ALL classes (attended, missed, scheduled) within one calendar month from the first unpaid class
+      // Include ALL classes (attended, missed, scheduled) up to the month boundary of the first unpaid class
       let items = [firstItem];
       let lastClassDate = firstDate;
       
@@ -1183,10 +1194,10 @@ class InvoiceService {
 
       // Initialize billing period - will be updated based on unpaid classes
       let billingStart = opts.billingPeriodStart instanceof Date ? opts.billingPeriodStart : now;
-      let billingEnd = opts.billingPeriodEnd instanceof Date ? opts.billingPeriodEnd : dayjs(billingStart).add(1, 'month').toDate();
+      let billingEnd = opts.billingPeriodEnd instanceof Date ? opts.billingPeriodEnd : getCalendarMonthEndExclusive(billingStart);
 
       // Predictive coverage: Find ALL unpaid classes first to determine billing start date
-      // from the earliest unpaid class, then include all classes within one month from that date
+      // from the earliest unpaid class, then include classes until that month boundary
       try {
         const trackedStudentIds = collectGuardianStudentIds(guardian, zeroHourStudents);
 
@@ -1226,7 +1237,7 @@ class InvoiceService {
           // Use the earliest unpaid class date as billing start, or today if no classes
           if (allUnpaidClasses.length > 0 && allUnpaidClasses[0].scheduledDate) {
             billingStart = new Date(allUnpaidClasses[0].scheduledDate);
-            billingEnd = dayjs(billingStart).add(1, 'month').toDate();
+            billingEnd = getCalendarMonthEndExclusive(billingStart);
           }
 
           console.log(`🔍 [Zero-Hour PAYG Invoice] Guardian: ${guardian.firstName} ${guardian.lastName}`);
@@ -2200,14 +2211,20 @@ class InvoiceService {
         || ensureDate(invoiceDoc?.createdAt)
         || new Date();
       const billingEnd = ensureDate(invoiceDoc?.billingPeriod?.endDate);
-      let coverageEnd = ensureDate(invoiceDoc?.coverage?.endDate) || billingEnd || null;
+      const hasCoverageHoursCap = coverageHours > EPSILON_HOURS;
+      let coverageEnd = ensureDate(invoiceDoc?.coverage?.endDate) || null;
       if (coverageEnd) {
         coverageEnd.setHours(23, 59, 59, 999);
-      } else if (billingStart) {
-        coverageEnd = dayjs(billingStart).add(1, 'month').toDate();
+      } else if (!hasCoverageHoursCap) {
+        coverageEnd = billingEnd || null;
+        if (coverageEnd) {
+          coverageEnd.setHours(23, 59, 59, 999);
+        } else if (billingStart) {
+          coverageEnd = getCalendarMonthEndInclusive(billingStart);
+        }
       }
-      if (isUnpaid && billingStart) {
-        const minEnd = dayjs(billingStart).add(1, 'month').endOf('day').toDate();
+      if (isUnpaid && billingStart && !hasCoverageHoursCap) {
+        const minEnd = getCalendarMonthEndInclusive(billingStart);
         if (!coverageEnd || coverageEnd < minEnd) {
           coverageEnd = minEnd;
         }
@@ -4184,7 +4201,10 @@ class InvoiceService {
         paidHours: paymentData.paidHours,
         note: paymentData.note,
         tip: paymentData.tip,
-        paidAt: paymentData.paidAt
+        paidAt: paymentData.paidAt,
+        teacherBonusAllocations: Array.isArray(paymentData.teacherBonusAllocations)
+          ? paymentData.teacherBonusAllocations
+          : undefined
       };
 
       // Re-check persisted payment logs to avoid a race where two concurrent
@@ -4280,6 +4300,28 @@ class InvoiceService {
 
         // rethrow to be handled by the outer catch
         throw procErr;
+      }
+
+      try {
+        const tipDistributionTeacherIds = Array.from(
+          new Set(
+            (updatedInvoice?.paymentLogs || [])
+              .filter((log) => log?.method === 'tip_distribution')
+              .map((log) => String(log?.teacher || ''))
+              .filter(Boolean)
+          )
+        );
+
+        for (const teacherId of tipDistributionTeacherIds) {
+          await TeacherSalaryService.applyPendingGuardianPayoutsToInvoice(
+            teacherId,
+            null,
+            null,
+            adminUserId
+          );
+        }
+      } catch (bonusApplyErr) {
+        console.warn('Failed to apply pending guardian payouts to nearest teacher invoice', bonusApplyErr?.message || bonusApplyErr);
       }
   
   // Credit hours directly to guardian account (students tracking is separate for academic purposes)

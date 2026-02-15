@@ -475,6 +475,23 @@ const userSchema = new mongoose.Schema({
       default: 0,
       min: 0
     },
+
+    pendingGuardianPayouts: [
+      {
+        sourceInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' },
+        sourceInvoiceNumber: { type: String, trim: true, default: '' },
+        guardianId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        guardianName: { type: String, trim: true, default: '' },
+        studentNames: [{ type: String, trim: true }],
+        amountUSD: { type: Number, default: 0, min: 0 },
+        periodMonth: { type: Number, min: 1, max: 12 },
+        periodYear: { type: Number, min: 2020, max: 2100 },
+        note: { type: String, trim: true, maxlength: 220 },
+        createdAt: { type: Date, default: Date.now },
+        appliedAt: { type: Date, default: null },
+        appliedInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'TeacherInvoice', default: null }
+      }
+    ],
     
     lastYTDReset: {
       type: Date,

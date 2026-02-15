@@ -17,10 +17,7 @@ chmod +x deploy/scripts/deploy.sh
 
 
 -----------------------------------
-cd /opt/waraqa
-chmod +x deploy/scripts/deploy.sh
-./deploy/scripts/deploy.sh pull
-./deploy/scripts/deploy.sh all
+and if I click next show all results in the future this is 
 
 
 --------------------------------

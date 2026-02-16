@@ -1625,6 +1625,14 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
       return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
 
+    const invoiceStatus = String(invoice.status || '').toLowerCase();
+    if (['paid', 'refunded'].includes(invoiceStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Coverage settings are locked for paid or refunded invoices'
+      });
+    }
+
     const previousCoverage = invoice.coverage && typeof invoice.coverage === 'object'
       ? {
           maxHours: invoice.coverage.maxHours,

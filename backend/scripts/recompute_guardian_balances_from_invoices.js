@@ -7,6 +7,7 @@ const Guardian = require('../models/Guardian');
 
 const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb';
 const dryRun = String(process.argv[2] || '').toLowerCase() === 'dry';
+const guardianSelector = process.argv[3] ? String(process.argv[3]).trim() : '';
 
 const COUNTABLE_STATUSES = new Set(['attended', 'missed_by_student', 'absent']);
 const EPSILON_HOURS = 0.0001;
@@ -82,7 +83,10 @@ const computeGuardian = async (guardian) => {
     if (totalItemHours <= 0) continue;
     const isPaid = ['paid', 'partially_paid'].includes(String(invoice.status || ''));
     let paidHours = extractPaidHours(invoice, guardian.guardianInfo?.hourlyRate || 0);
-    if (paidHours <= EPSILON_HOURS && isPaid) {
+    const coverageMax = Number(invoice?.coverage?.maxHours);
+    if (Number.isFinite(coverageMax) && coverageMax >= 0) {
+      paidHours = Math.min(totalItemHours, coverageMax);
+    } else if (paidHours <= EPSILON_HOURS && isPaid) {
       paidHours = totalItemHours;
     }
     if (paidHours <= EPSILON_HOURS) continue;
@@ -174,7 +178,15 @@ const computeGuardian = async (guardian) => {
 
 const main = async () => {
   await mongoose.connect(uri);
-  const guardians = await User.find({ role: 'guardian' });
+  const guardianFilter = { role: 'guardian' };
+  if (guardianSelector) {
+    if (mongoose.Types.ObjectId.isValid(guardianSelector)) {
+      guardianFilter._id = guardianSelector;
+    } else {
+      guardianFilter.email = guardianSelector.toLowerCase();
+    }
+  }
+  const guardians = await User.find(guardianFilter);
   let processed = 0;
   let unassignedCount = 0;
 

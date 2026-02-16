@@ -285,7 +285,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     const normalizedEndDate = coverage.endDate ? formatDateInput(coverage.endDate) : '';
 
     const nextMaxHours = normalizedMax && normalizedMax > 0 ? String(normalizedMax) : '';
-    const nextCustomEndDate = nextMaxHours ? '' : normalizedEndDate;
+    const nextCustomEndDate = normalizedEndDate || '';
 
     skipNextCoverageSave.current = true;
     setMaxHours(nextMaxHours);
@@ -564,6 +564,55 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     return parsed;
   }, [customEndDate]);
 
+  const isCoverageLocked = useMemo(() => {
+    const status = String(invoice?.status || '').toLowerCase();
+    return ['paid', 'refunded'].includes(status);
+  }, [invoice?.status]);
+
+  const getEligibleSortedClasses = useCallback(() => {
+    return [...(classes || [])]
+      .filter((entry) => entry && entry.isEligible !== false)
+      .filter((entry) => entry.rawDate instanceof Date && !Number.isNaN(entry.rawDate.getTime()))
+      .sort((a, b) => a.rawDate - b.rawDate);
+  }, [classes]);
+
+  const computeEndDateFromMaxHours = useCallback((hoursValue) => {
+    const numeric = Number(hoursValue);
+    if (!Number.isFinite(numeric) || numeric <= 0) return '';
+    const maxMinutes = Math.round(numeric * 60);
+    if (maxMinutes <= 0) return '';
+
+    const eligible = getEligibleSortedClasses();
+    let totalMinutes = 0;
+    let lastDate = null;
+    for (const entry of eligible) {
+      const minutes = Number(entry?.duration || 0) || 0;
+      if (totalMinutes + minutes > maxMinutes) break;
+      totalMinutes += minutes;
+      lastDate = entry.rawDate;
+    }
+
+    if (!lastDate) return '';
+    return lastDate.toISOString().slice(0, 10);
+  }, [getEligibleSortedClasses]);
+
+  const computeMaxHoursFromEndDate = useCallback((value) => {
+    if (!value) return '';
+    const boundary = new Date(value);
+    if (Number.isNaN(boundary.getTime())) return '';
+    boundary.setHours(23, 59, 59, 999);
+
+    const eligible = getEligibleSortedClasses();
+    const totalMinutes = eligible.reduce((sum, entry) => {
+      if (entry.rawDate.getTime() > boundary.getTime()) return sum;
+      return sum + (Number(entry.duration || 0) || 0);
+    }, 0);
+
+    const hours = totalMinutes / 60;
+    const normalized = formatHoursValue(hours);
+    return normalized || '';
+  }, [getEligibleSortedClasses, formatHoursValue]);
+
   const filteredClasses = useMemo(() => {
     const sorted = [...(classes || [])].sort((a, b) => {
       if (!(a?.rawDate instanceof Date) || Number.isNaN(a.rawDate?.getTime?.())) return 1;
@@ -740,6 +789,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   ]);
 
   useEffect(() => {
+    if (isCoverageLocked) return;
     if (userModifiedFiltersRef.current) return;
     const hasCap = maxHours !== '' && maxHours !== null && maxHours !== undefined;
     if (!hasCap) return;
@@ -761,7 +811,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     if (diff > 0.005) {
       setMaxHours(normalizedActualString);
     }
-  }, [totalMinutes, maxHours, formatHoursValue]);
+  }, [totalMinutes, maxHours, formatHoursValue, isCoverageLocked]);
 
   const previewTotals = useMemo(() => {
     const hours = Number.isFinite(totalMinutes) ? roundCurrency(totalMinutes / 60) : 0;
@@ -921,6 +971,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const handleSaveCoverage = useCallback(async () => {
     const targetInvoiceId = invoice?._id || resolvedInvoiceId;
     if (!targetInvoiceId) return;
+    if (isCoverageLocked) return;
     setSavingCoverage(true);
     let succeeded = false;
 
@@ -992,11 +1043,12 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
         setTimeout(() => setCoverageStatus(null), 2000);
       }
     }
-  }, [resolvedInvoiceId, invoice, maxHours, customEndDate, waiveTransferFee, syncInvoiceState, previewTotals]);
+  }, [resolvedInvoiceId, invoice, maxHours, customEndDate, waiveTransferFee, syncInvoiceState, previewTotals, isCoverageLocked]);
 
   useEffect(() => {
     if (!isAdmin) return;
     if (!invoice && !resolvedInvoiceId) return;
+    if (isCoverageLocked) return;
 
     if (skipNextCoverageSave.current) {
       skipNextCoverageSave.current = false;
@@ -1026,7 +1078,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [isAdmin, invoice, resolvedInvoiceId, maxHours, customEndDate, waiveTransferFee, handleSaveCoverage, savingCoverage]);
+  }, [isAdmin, invoice, resolvedInvoiceId, maxHours, customEndDate, waiveTransferFee, handleSaveCoverage, savingCoverage, isCoverageLocked]);
 
   const handleNoteChange = useCallback((field, value) => {
     setNoteEdits((prev) => ({ ...prev, [field]: value }));
@@ -1717,14 +1769,19 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                           type="number"
                           value={maxHours}
                           onChange={(e) => {
+                            if (isCoverageLocked) return;
                             const value = e.target.value;
                             userModifiedFiltersRef.current = true; // Track user modification
                             setMaxHours(value);
-                            if (value !== '' && value !== null && value !== undefined) {
+                            if (value === '' || value === null || value === undefined) {
                               setCustomEndDate('');
+                              return;
                             }
+                            const derivedEndDate = computeEndDateFromMaxHours(value);
+                            setCustomEndDate(derivedEndDate);
                           }}
                           placeholder="e.g. 10"
+                          disabled={isCoverageLocked}
                           className="rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                         />
                         
@@ -1735,13 +1792,18 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                           type="date"
                           value={customEndDate}
                           onChange={(e) => {
+                            if (isCoverageLocked) return;
                             const value = e.target.value;
                             userModifiedFiltersRef.current = true; // Track user modification
                             setCustomEndDate(value);
-                            if (value) {
+                            if (!value) {
                               setMaxHours('');
+                              return;
                             }
+                            const derivedMax = computeMaxHoursFromEndDate(value);
+                            setMaxHours(derivedMax);
                           }}
+                          disabled={isCoverageLocked}
                           className="rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                         />
                       </label>

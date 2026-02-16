@@ -54,6 +54,15 @@ const formatHours2 = (value) => {
   return Number.isFinite(num) ? num.toFixed(2) : '0.00';
 };
 
+const copyToClipboard = (text) => {
+  if (!text) return;
+  navigator.clipboard.writeText(String(text)).then(() => {
+    alert('Copied to clipboard!');
+  }).catch((err) => {
+    console.error('Failed to copy:', err);
+  });
+};
+
 const GuardiansPage = () => {
   const { isAdmin, loginAsUser } = useAuth();
   const { searchTerm, globalFilter } = useSearch();
@@ -896,12 +905,34 @@ const GuardiansPage = () => {
         <div className="space-y-2 text-sm">
           <div className="flex items-center space-x-2">
             <Mail className="h-4 w-4 text-muted-foreground" />
-            <span>{guardian.email}</span>
+            {isAdmin() ? (
+              <button
+                type="button"
+                onClick={() => copyToClipboard(guardian.email)}
+                className="text-left text-primary hover:underline"
+                title="Copy email"
+              >
+                {guardian.email}
+              </button>
+            ) : (
+              <span>{guardian.email}</span>
+            )}
           </div>
           {guardian.phone && (
             <div className="flex items-center space-x-2">
               <Phone className="h-4 w-4 text-muted-foreground" />
-              <span>{guardian.phone}</span>
+              {isAdmin() ? (
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(guardian.phone)}
+                  className="text-left text-primary hover:underline"
+                  title="Copy phone"
+                >
+                  {guardian.phone}
+                </button>
+              ) : (
+                <span>{guardian.phone}</span>
+              )}
             </div>
           )}
           {guardian.address && (
@@ -984,6 +1015,19 @@ const GuardiansPage = () => {
             <span className="font-medium">Hourly Rate:</span>
             <span>{(guardian.guardianInfo?.hourlyRate ?? guardian.hourlyRate ?? guardian.guardianInfo?.rate ?? guardian.rate) ?? 'Not set'}</span>
           </div>
+          {isAdmin() && guardian._id && (
+            <div className="flex items-center space-x-2">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <button
+                type="button"
+                onClick={() => copyToClipboard(String(guardian._id))}
+                className="text-left text-primary hover:underline"
+                title="Copy guardian ID"
+              >
+                ID: {guardian._id}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

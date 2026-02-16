@@ -97,7 +97,13 @@ async function setTeacherInactive(vacation) {
  */
 async function reactivateTeacher(teacherId) {
   try {
-    await User.findByIdAndUpdate(teacherId, { 
+    const user = await User.findById(teacherId).select('vacationStartDate vacationEndDate isActive');
+    const hasVacationFlags = Boolean(user?.vacationStartDate || user?.vacationEndDate);
+    if (!hasVacationFlags) {
+      return;
+    }
+
+    await User.findByIdAndUpdate(teacherId, {
       isActive: true,
       $unset: { vacationStartDate: "", vacationEndDate: "" }
     });
@@ -129,12 +135,19 @@ async function updateTeacherVacationStatuses() {
     for (const vacation of endedVacations) {
       const teacherUserId = vacation.user?._id || vacation.user;
       if (teacherUserId) {
-        // Always clear vacation flags once a vacation is ended.
-        // This prevents stale vacation window fields from hiding upcoming classes.
-        await User.findByIdAndUpdate(teacherUserId, {
-          isActive: true,
-          $unset: { vacationStartDate: "", vacationEndDate: "" }
-        });
+        const teacherDoc = vacation.user?._id
+          ? vacation.user
+          : await User.findById(teacherUserId).select('vacationStartDate vacationEndDate isActive');
+        const hasVacationFlags = Boolean(teacherDoc?.vacationStartDate || teacherDoc?.vacationEndDate);
+
+        // Only reactivate if the user still has vacation flags set.
+        // This avoids overriding manual inactive changes.
+        if (hasVacationFlags) {
+          await User.findByIdAndUpdate(teacherUserId, {
+            isActive: true,
+            $unset: { vacationStartDate: "", vacationEndDate: "" }
+          });
+        }
 
         // Safety net: restore future classes that were temporarily put on hold/cancelled
         // because of this vacation but never restored due prior workflow gaps.

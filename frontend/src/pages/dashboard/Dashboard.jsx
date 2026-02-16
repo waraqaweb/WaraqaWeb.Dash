@@ -78,9 +78,11 @@ const DashboardQuerySync = () => {
   useEffect(() => {
     const t = setTimeout(() => {
       try {
+        const raw = typeof searchTerm === 'string' ? searchTerm : '';
+        if (raw.endsWith(' ')) return; // avoid eating a just-typed space
+
         const params = new URLSearchParams(location.search);
-        const q = (searchTerm || '').trim();
-        if (q) params.set('q', q);
+        if (raw) params.set('q', raw);
         else params.delete('q');
         const next = params.toString();
         const current = (location.search || '').replace(/^\?/, '');

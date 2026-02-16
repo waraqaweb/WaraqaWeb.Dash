@@ -721,12 +721,34 @@
 														<div className="space-y-2 text-sm">
 															<div className="flex items-center space-x-2">
 																<Mail className="h-4 w-4 text-muted-foreground" />
-																<span>{teacher.email}</span>
+																{isAdmin() ? (
+																	<button
+																		type="button"
+																		onClick={() => copyToClipboard(teacher.email)}
+																		className="text-left text-primary hover:underline"
+																		title="Copy email"
+																	>
+																		{teacher.email}
+																	</button>
+																) : (
+																	<span>{teacher.email}</span>
+																)}
 															</div>
 															{teacher.phone && (
 																<div className="flex items-center space-x-2">
 																	<Phone className="h-4 w-4 text-muted-foreground" />
-																	<span>{teacher.phone}</span>
+																	{isAdmin() ? (
+																		<button
+																			type="button"
+																			onClick={() => copyToClipboard(teacher.phone)}
+																			className="text-left text-primary hover:underline"
+																			title="Copy phone"
+																		>
+																			{teacher.phone}
+																		</button>
+																	) : (
+																		<span>{teacher.phone}</span>
+																	)}
 																</div>
 															)}
 															{teacher.address && (
@@ -813,6 +835,19 @@
 																<Calendar className="h-4 w-4 text-muted-foreground" />
 																<span>Joined: {formatDateDDMMMYYYY(teacher.createdAt)}</span>
 															</div>
+															{isAdmin() && teacher._id && (
+																<div className="flex items-center space-x-2">
+																	<User className="h-4 w-4 text-muted-foreground" />
+																	<button
+																		type="button"
+																		onClick={() => copyToClipboard(String(teacher._id))}
+																		className="text-left text-primary hover:underline"
+																		title="Copy teacher ID"
+																	>
+																		ID: {teacher._id}
+																	</button>
+																</div>
+															)}
 														</div>
 													</div>
 												</div>

@@ -71,6 +71,15 @@ const formatHours2 = (value) => {
   return Number.isFinite(num) ? num.toFixed(2) : '0.00';
 };
 
+const copyToClipboard = (text) => {
+  if (!text) return;
+  navigator.clipboard.writeText(String(text)).then(() => {
+    alert('Copied to clipboard!');
+  }).catch((err) => {
+    console.error('Failed to copy:', err);
+  });
+};
+
 
 const MyStudentsPage = () => {
   const { user, isAdmin, isTeacher, isGuardian, loading } = useAuth();
@@ -1232,8 +1241,36 @@ const fetchGuardiansList = async () => {
                       <div>
                         <h4 className="font-medium text-gray-900 mb-2">Contact Information</h4>
                         <div className="space-y-1 text-sm text-gray-600">
-                          <p><span className="font-medium">Email:</span> {student.email || 'Not provided'}</p>
-                          <p><span className="font-medium">Phone:</span> {student.phone || 'Not provided'}</p>
+                          <p>
+                            <span className="font-medium">Email:</span>{' '}
+                            {isAdmin && isAdmin() && student.email ? (
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(student.email)}
+                                className="text-left text-primary hover:underline"
+                                title="Copy email"
+                              >
+                                {student.email}
+                              </button>
+                            ) : (
+                              student.email || 'Not provided'
+                            )}
+                          </p>
+                          <p>
+                            <span className="font-medium">Phone:</span>{' '}
+                            {isAdmin && isAdmin() && student.phone ? (
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(student.phone)}
+                                className="text-left text-primary hover:underline"
+                                title="Copy phone"
+                              >
+                                {student.phone}
+                              </button>
+                            ) : (
+                              student.phone || 'Not provided'
+                            )}
+                          </p>
                         </div>
                       </div>
                     )}
@@ -1247,6 +1284,19 @@ const fetchGuardiansList = async () => {
                         {showTimezone && (
                           <p><span className="font-medium">Timezone:</span> {deriveStudentTimezone(student)}</p>
                         )}
+                        {isAdmin && isAdmin() && student._id && (
+                          <p>
+                            <span className="font-medium">ID:</span>{' '}
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(String(student._id))}
+                              className="text-left text-primary hover:underline"
+                              title="Copy student ID"
+                            >
+                              {student._id}
+                            </button>
+                          </p>
+                        )}
                       </div>
                     </div>
                     
@@ -1257,6 +1307,7 @@ const fetchGuardiansList = async () => {
                         <p><span className="font-medium">Subjects:</span> {subjects.length ? subjects.join(', ') : 'Not specified'}</p>
                       </div>
                     </div>
+
                   </div>
                   
                   {(() => {

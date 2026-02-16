@@ -327,7 +327,6 @@ const ClassesPage = ({ isActive = true }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { searchTerm, globalFilter } = useSearch();
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm || "");
   const getInitialTab = () => {
 
     try {
@@ -687,16 +686,9 @@ const ClassesPage = ({ isActive = true }) => {
     return { id, label, haystack };
   }, []);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setDebouncedSearchTerm(searchTerm || "");
-    }, 300);
-    return () => clearTimeout(t);
-  }, [searchTerm]);
-
   const normalizedSearchTerm = useMemo(
-    () => (debouncedSearchTerm || "").trim().toLowerCase(),
-    [debouncedSearchTerm]
+    () => (searchTerm || "").trim().toLowerCase(),
+    [searchTerm]
   );
 
   useEffect(() => {
@@ -1221,9 +1213,9 @@ const ClassesPage = ({ isActive = true }) => {
 // Fetch classes with filter
 const fetchClasses = useCallback(async () => {
   try {
-    const searchMode = Boolean((normalizedSearchTerm || '').trim());
-    const fetchPage = currentPage;
-    const fetchLimit = 30;
+    const searchMode = Boolean(normalizedSearchTerm);
+    const fetchPage = searchMode ? 1 : currentPage;
+    const fetchLimit = searchMode ? 500 : 30;
     const cacheKey = makeCacheKey(
       'classes:list',
       user?._id,
@@ -1277,7 +1269,7 @@ const fetchClasses = useCallback(async () => {
       const cachedClasses = cached.value.classes || [];
       const cachedTotalPages = cached.value.totalPages || 1;
       setClasses(cachedClasses);
-      setTotalPages(cachedTotalPages);
+      setTotalPages(searchMode ? 1 : cachedTotalPages);
       setError('');
       setLoading(false);
 
@@ -1345,14 +1337,15 @@ const fetchClasses = useCallback(async () => {
       return merged;
     });
     const apiTotalPages = Number(res.data?.pagination?.totalPages);
-    setTotalPages(Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1);
+    const normalizedTotalPages = Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1;
+    setTotalPages(searchMode ? 1 : normalizedTotalPages);
     setError("");
 
     writeCache(
       cacheKey,
       {
         classes: fetchedClasses,
-        totalPages: Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1,
+        totalPages: searchMode ? 1 : normalizedTotalPages,
       },
       { ttlMs: 5 * 60_000, deps: ['classes'] }
     );

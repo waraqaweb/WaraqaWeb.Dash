@@ -4324,7 +4324,7 @@ class InvoiceService {
         console.warn('Failed to apply pending guardian payouts to nearest teacher invoice', bonusApplyErr?.message || bonusApplyErr);
       }
   
-  // Credit hours directly to guardian account (students tracking is separate for academic purposes)
+  // Credit hours to guardian and keep student subdoc balances consistent when possible
   try {
     const paidHrs = Number(paymentData.paidHours || paidHours || 0);
     if (paidHrs > 0) {
@@ -4333,7 +4333,6 @@ class InvoiceService {
         const guardian = await User.findById(guardianIdForCredit);
         if (guardian) {
           guardian.guardianInfo = guardian.guardianInfo || {};
-          guardian.guardianInfo.autoTotalHours = false;
           let hoursToCredit = paidHrs;
           if (hasClassLinkedItems) {
             hoursToCredit = Math.min(paidHrs, eligibleCoverageIncrementHours);
@@ -4346,8 +4345,68 @@ class InvoiceService {
           hoursToCredit = roundHours(Math.max(0, hoursToCredit));
 
           if (hoursToCredit > EPSILON_HOURS) {
-            const existingTotal = Number(guardian.guardianInfo.totalHours || 0) || 0;
-            guardian.guardianInfo.totalHours = roundHours(existingTotal + hoursToCredit);
+            const studentsArray = Array.isArray(guardian.guardianInfo.students)
+              ? guardian.guardianInfo.students
+              : [];
+
+            const resolveStudentKey = (value) => {
+              if (!value) return null;
+              if (typeof value === 'object' && value._id) return String(value._id);
+              return String(value);
+            };
+
+            let distributedHours = 0;
+            if (studentsArray.length && itemsAsc.length) {
+              const creditableItems = itemsAsc.filter((item) => (
+                item
+                && !item.excludeFromStudentBalance
+                && !item.exemptFromGuardian
+                && !(item.flags && (item.flags.notCountForBoth || item.flags.exemptFromGuardian))
+                && item.student
+              ));
+
+              let remaining = hoursToCredit;
+              const hoursByStudent = new Map();
+
+              for (const item of creditableItems) {
+                if (remaining <= EPSILON_HOURS) break;
+                const itemHours = roundHours((Number(item.duration || 0) || 0) / 60);
+                if (itemHours <= 0) continue;
+                const slice = Math.min(itemHours, remaining);
+                const studentKey = resolveStudentKey(item.student);
+                if (!studentKey) continue;
+                hoursByStudent.set(studentKey, roundHours((hoursByStudent.get(studentKey) || 0) + slice));
+                distributedHours = roundHours(distributedHours + slice);
+                remaining = roundHours(remaining - slice);
+              }
+
+              if (hoursByStudent.size) {
+                for (const student of studentsArray) {
+                  const candidateKeys = [
+                    resolveStudentKey(student._id),
+                    resolveStudentKey(student.studentId),
+                    resolveStudentKey(student.standaloneStudentId)
+                  ].filter(Boolean);
+                  const key = candidateKeys.find((candidate) => hoursByStudent.has(candidate));
+                  if (!key) continue;
+                  const increment = hoursByStudent.get(key) || 0;
+                  const current = Number(student.hoursRemaining || 0) || 0;
+                  student.hoursRemaining = roundHours(current + increment);
+                }
+                guardian.markModified('guardianInfo.students');
+              }
+            }
+
+            const canRecalculate = studentsArray.length
+              && distributedHours >= roundHours(hoursToCredit - EPSILON_HOURS);
+            if (canRecalculate) {
+              const recalculatedTotal = studentsArray.reduce((sum, student) => sum + (Number(student.hoursRemaining || 0) || 0), 0);
+              guardian.guardianInfo.totalHours = roundHours(recalculatedTotal);
+            } else {
+              const existingTotal = Number(guardian.guardianInfo.totalHours || 0) || 0;
+              guardian.guardianInfo.totalHours = roundHours(existingTotal + hoursToCredit);
+              guardian.guardianInfo.autoTotalHours = false;
+            }
 
             await guardian.save();
             try {
@@ -4410,9 +4469,8 @@ class InvoiceService {
 
         const guardianId = resolveId(freshInvoice.guardian || updatedInvoice.guardian);
         
-        // ✅ Student hours are tracked separately for academic purposes only
-        // They do not affect invoice/payment calculations
-        // Guardian totalHours is the only balance tracked for payments
+        // Student subdoc hours are kept in sync when payments are applied.
+        // Guardian totalHours remains the authoritative balance for payments.
 
         // update guardian totalHours
         try {

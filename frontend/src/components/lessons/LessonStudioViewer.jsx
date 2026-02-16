@@ -336,6 +336,34 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
     [sections]
   );
 
+  const sectionGridConfig = useMemo(() => {
+    const labels = sections.map((section, idx) => String(section?.title || `Section ${idx + 1}`));
+    const longest = labels.reduce((max, label) => Math.max(max, label.length), 0);
+    let columns = 1;
+    if (longest <= 8) columns = 5;
+    else if (longest <= 12) columns = 4;
+    else if (longest <= 18) columns = 3;
+    else if (longest <= 24) columns = 2;
+    columns = Math.max(1, Math.min(columns, labels.length));
+
+    const configByColumns = {
+      1: { min: 240, max: 420 },
+      2: { min: 220, max: 280 },
+      3: { min: 200, max: 240 },
+      4: { min: 180, max: 220 },
+      5: { min: 170, max: 210 }
+    };
+    const { min, max } = configByColumns[columns] || configByColumns[1];
+    const gap = 12;
+    const maxWidth = (max * columns) + (gap * (columns - 1));
+
+    return {
+      minWidth: min,
+      maxWidth: max,
+      containerMaxWidth: `${maxWidth}px`
+    };
+  }, [sections]);
+
   const getExplanationValue = (audienceKey, levelKey) => current.explanation?.[audienceKey]?.[levelKey];
 
   const normalizeExplanationBlocks = (value) => {
@@ -425,7 +453,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
     : [{ text: '—', mediaUrl: '' }];
   const hasBlocks = explanationBlocks.length > 0;
   const showObjective = Boolean(meta.objective);
-    const renderRichText = (value) => ({ __html: value || '' });
+  const renderRichText = (value) => ({ __html: value || '' });
   const objectiveList = useMemo(() => {
     if (!meta.objective) return [];
     if (Array.isArray(meta.objective)) return meta.objective.filter(Boolean).map(String);
@@ -465,6 +493,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
   const contentDir = isArabic ? 'rtl' : 'ltr';
   const contentAlign = isArabic ? 'text-right' : 'text-left';
   const noteDirection = getDirectionFromFirstWord((notes || [])[0]);
+  const definitionDirection = getDirectionFromFirstWord(definitionText || '');
 
   const togglePracticed = (key) => {
     setPracticedExamples((prev) => ({
@@ -910,13 +939,10 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                             <p className="text-sm font-semibold text-slate-700">Choose a section</p>
                             <div className="mt-3 flex justify-center">
                               <div
-                                className="grid gap-3"
+                                className="flex flex-wrap justify-center gap-3"
                                 style={{
-                                  gridTemplateColumns:
-                                    sections.length === 2
-                                      ? 'repeat(2, minmax(220px, 260px))'
-                                      : 'repeat(auto-fit, minmax(180px, 220px))',
-                                  justifyContent: 'center'
+                                  width: '100%',
+                                  maxWidth: sectionGridConfig.containerMaxWidth
                                 }}
                               >
                                 {sections.map((section, index) => {
@@ -927,7 +953,12 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                                       key={`section-${index}`}
                                       type="button"
                                       onClick={() => handleStartLesson(index)}
-                                      className={`w-full rounded-2xl border px-4 py-2.5 text-base font-semibold shadow-sm transition hover:shadow ${palette}`}
+                                      className={`whitespace-nowrap rounded-2xl border px-4 py-2.5 text-base font-semibold shadow-sm transition hover:shadow ${palette}`}
+                                      style={{
+                                        flex: `1 1 ${sectionGridConfig.maxWidth}px`,
+                                        minWidth: `${sectionGridConfig.minWidth}px`,
+                                        maxWidth: `${sectionGridConfig.maxWidth}px`
+                                      }}
                                     >
                                       {label}
                                     </button>
@@ -947,119 +978,112 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                     </div>
                   ) : (
                     <>
-                    {activePanel === 'explanation' && (
-                      <div className="flex min-h-full flex-1 flex-col space-y-4">
-                    <div className="mx-auto w-full max-w-[66%] space-y-4">
-                      <div className="mb-2 flex items-center justify-between">
-                        <p className="text-sm font-bold text-slate-700">
-                          {audience === 'kids' ? `${kidTone.label} lesson` : 'Standard lesson'}
-                        </p>
-                        <span className="text-[11px] font-semibold text-slate-500">{level}</span>
-                      </div>
-                      {definitionText && (
-                        (() => {
-                          const defDirection = getDirectionFromFirstWord(definitionText);
-                          return (
-                            <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
-                              <p className="text-[11px] font-semibold uppercase text-slate-500">Definition</p>
-                              <div className={`mt-2 text-base text-slate-800 ${defDirection.align}`} dir={defDirection.dir}>
-                                <span dangerouslySetInnerHTML={renderRichText(definitionText)} />
-                              </div>
+                      {activePanel === 'explanation' && (
+                        <div className="flex min-h-full flex-1 flex-col space-y-4">
+                          <div className="mx-auto w-full max-w-[66%] space-y-4">
+                            <div className="mb-2 flex items-center justify-between">
+                              <p className="text-sm font-bold text-slate-700">
+                                {audience === 'kids' ? `${kidTone.label} lesson` : 'Standard lesson'}
+                              </p>
+                              <span className="text-[11px] font-semibold text-slate-500">{level}</span>
                             </div>
-                          );
-                        })()
-                      )}
-                      {hasBlocks ? (
-                        explanationBlocks.map((block) => {
-                          const stylePreset = {
-                            sky: { card: 'border-sky-200 bg-sky-50/90', pill: 'bg-sky-100 text-sky-700' },
-                            amber: { card: 'border-amber-200 bg-amber-50/90', pill: 'bg-amber-100 text-amber-800' },
-                            emerald: { card: 'border-emerald-200 bg-emerald-50/90', pill: 'bg-emerald-100 text-emerald-700' },
-                            rose: { card: 'border-rose-200 bg-rose-50/90', pill: 'bg-rose-100 text-rose-700' },
-                            indigo: { card: 'border-indigo-200 bg-indigo-50/90', pill: 'bg-indigo-100 text-indigo-700' },
-                            slate: { card: 'border-slate-200 bg-slate-50/90', pill: 'bg-slate-200 text-slate-700' }
-                          }[block.style] || { card: 'border-slate-200 bg-slate-50/90', pill: 'bg-slate-200 text-slate-700' };
-                          const blockDirection = getDirectionFromFirstWord(block?.content || '');
-                          return (
-                            <div key={block.id}>
-                              <div className={`relative rounded-2xl border p-4 pt-6 ${stylePreset.card}`}>
-                                <div className="absolute left-4 top-0 -translate-y-1/2">
-                                  <span className={`rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold ${stylePreset.pill}`}>
-                                    {block.title || 'Explanation'}
-                                  </span>
-                                </div>
-                                <div className={`text-base text-slate-800 ${blockDirection.align}`} dir={blockDirection.dir}>
-                                  <span dangerouslySetInnerHTML={renderRichText(block?.content || '—')} />
+                            {definitionText && (
+                              <div className={`rounded-2xl border bg-slate-50/90 p-4 ${explanationBorder}`}>
+                                <div className="text-xs font-semibold uppercase text-slate-500">Definition</div>
+                                <div className={`mt-2 text-base text-slate-800 ${definitionDirection.align}`} dir={definitionDirection.dir}>
+                                  <span dangerouslySetInnerHTML={renderRichText(definitionText || '—')} />
                                 </div>
                               </div>
-                              {block?.mediaUrl && (
-                                <div className="mt-3 flex justify-center">
-                                  <div className="inline-block max-w-full overflow-hidden rounded-xl border border-slate-200 bg-transparent p-0 leading-none">
-                                    <img
-                                      src={block.mediaUrl}
-                                      alt="Explanation media"
-                                      className="block h-auto max-h-80 w-auto max-w-full object-contain"
-                                    />
+                            )}
+                            {hasBlocks ? (
+                              explanationBlocks.map((block) => {
+                                const stylePreset = {
+                                  sky: { card: 'border-sky-200 bg-sky-50/90', pill: 'bg-sky-100 text-sky-700' },
+                                  amber: { card: 'border-amber-200 bg-amber-50/90', pill: 'bg-amber-100 text-amber-800' },
+                                  emerald: { card: 'border-emerald-200 bg-emerald-50/90', pill: 'bg-emerald-100 text-emerald-700' },
+                                  rose: { card: 'border-rose-200 bg-rose-50/90', pill: 'bg-rose-100 text-rose-700' },
+                                  indigo: { card: 'border-indigo-200 bg-indigo-50/90', pill: 'bg-indigo-100 text-indigo-700' },
+                                  slate: { card: 'border-slate-200 bg-slate-50/90', pill: 'bg-slate-200 text-slate-700' }
+                                }[block.style] || { card: 'border-slate-200 bg-slate-50/90', pill: 'bg-slate-200 text-slate-700' };
+                                const blockDirection = getDirectionFromFirstWord(block?.content || '');
+                                return (
+                                  <div key={block.id}>
+                                    <div className={`relative rounded-2xl border p-4 pt-6 ${stylePreset.card}`}>
+                                      <div className="absolute left-4 top-0 -translate-y-1/2">
+                                        <span className={`rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold ${stylePreset.pill}`}>
+                                          {block.title || 'Explanation'}
+                                        </span>
+                                      </div>
+                                      <div className={`text-base text-slate-800 ${blockDirection.align}`} dir={blockDirection.dir}>
+                                        <span dangerouslySetInnerHTML={renderRichText(block?.content || '—')} />
+                                      </div>
+                                    </div>
+                                    {block?.mediaUrl && (
+                                      <div className="mt-3 flex justify-center">
+                                        <div className="inline-block max-w-full overflow-hidden rounded-xl border border-slate-200 bg-transparent p-0 leading-none">
+                                          <img
+                                            src={block.mediaUrl}
+                                            alt="Explanation media"
+                                            className="block h-auto max-h-80 w-auto max-w-full object-contain"
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      ) : (
-                        explanationParts.map((part, idx) => (
-                          <div key={`explanation-part-${idx}`}>
-                            {(() => {
-                              const partDirection = getDirectionFromFirstWord(part?.text || '');
-                              return (
-                            <div className={`rounded-2xl border bg-slate-50/90 p-4 ${explanationBorder}`}>
-                              <div className={`text-base text-slate-800 ${partDirection.align}`} dir={partDirection.dir}>
-                                {audience === 'kids' && idx === 0 ? <span>{`${kidTone.tone} will love this:`} </span> : null}
-                                <span dangerouslySetInnerHTML={renderRichText(part?.text || '—')} />
-                              </div>
-                            </div>
-                              );
-                            })()}
-                            {part?.mediaUrl && (
-                              <div className="mt-3 flex justify-center">
-                                <div className="inline-block max-w-full overflow-hidden rounded-xl border border-slate-200 bg-transparent p-0 leading-none">
-                                  <img
-                                    src={part.mediaUrl}
-                                    alt="Explanation media"
-                                    className="block h-auto max-h-80 w-auto max-w-full object-contain"
-                                  />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-
-                    {notes.length > 0 && (
-                      <div className="mx-auto w-full max-w-[50%]">
-                        <div className="mb-2 flex items-center gap-2">
-                          <FileText className="h-4 w-4 text-slate-600" />
-                          <p className="rounded-full bg-amber-100/80 px-3 py-0.5 text-sm font-bold text-amber-800">Notes</p>
-                        </div>
-                        <div className={`rounded-2xl border bg-amber-50/60 p-4 shadow-sm ${noteBorder}`}>
-                          <div className={`space-y-2 text-sm text-slate-700 ${noteDirection.align}`} dir={noteDirection.dir}>
-                            {notes.length === 1 ? (
-                              <div dangerouslySetInnerHTML={renderRichText(notes[0])} />
+                                );
+                              })
                             ) : (
-                              notes.map((note, idx) => (
-                                <div key={`note-${idx}`} className="flex gap-2">
-                                  <span className="font-semibold text-slate-500">{idx + 1}.</span>
-                                  <div dangerouslySetInnerHTML={renderRichText(note)} />
-                                </div>
-                              ))
+                              explanationParts.map((part, idx) => {
+                                const partDirection = getDirectionFromFirstWord(part?.text || '');
+                                return (
+                                  <div key={`explanation-part-${idx}`}>
+                                    <div className={`rounded-2xl border bg-slate-50/90 p-4 ${explanationBorder}`}>
+                                      <div className={`text-base text-slate-800 ${partDirection.align}`} dir={partDirection.dir}>
+                                        {audience === 'kids' && idx === 0 ? <span>{`${kidTone.tone} will love this:`} </span> : null}
+                                        <span dangerouslySetInnerHTML={renderRichText(part?.text || '—')} />
+                                      </div>
+                                    </div>
+                                    {part?.mediaUrl && (
+                                      <div className="mt-3 flex justify-center">
+                                        <div className="inline-block max-w-full overflow-hidden rounded-xl border border-slate-200 bg-transparent p-0 leading-none">
+                                          <img
+                                            src={part.mediaUrl}
+                                            alt="Explanation media"
+                                            className="block h-auto max-h-80 w-auto max-w-full object-contain"
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })
                             )}
                           </div>
+
+                          {notes.length > 0 && (
+                            <div className="mx-auto w-full max-w-[50%]">
+                              <div className="mb-2 flex items-center gap-2">
+                                <FileText className="h-4 w-4 text-slate-600" />
+                                <p className="rounded-full bg-amber-100/80 px-3 py-0.5 text-sm font-bold text-amber-800">Notes</p>
+                              </div>
+                              <div className={`rounded-2xl border bg-amber-50/60 p-4 shadow-sm ${noteBorder}`}>
+                                <div className={`space-y-2 text-sm text-slate-700 ${noteDirection.align}`} dir={noteDirection.dir}>
+                                  {notes.length === 1 ? (
+                                    <div dangerouslySetInnerHTML={renderRichText(notes[0])} />
+                                  ) : (
+                                    notes.map((note, idx) => (
+                                      <div key={`note-${idx}`} className="flex gap-2">
+                                        <span className="font-semibold text-slate-500">{idx + 1}.</span>
+                                        <div dangerouslySetInnerHTML={renderRichText(note)} />
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    )}
-                    </div>
-                  )}
+                      )}
 
                   {activePanel === 'examples' && (
                     <div className="flex min-h-full flex-1 flex-col space-y-3">

@@ -979,6 +979,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
         customEndDate: customEndDate || '',
         waiveTransferFee: Boolean(waiveTransferFee)
       };
+      userModifiedFiltersRef.current = false;
       setCoverageStatus({ type: 'success', message: 'saved' });
       succeeded = true;
     } catch (err) {
@@ -1003,6 +1004,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     }
 
     if (savingCoverage) return;
+    if (!userModifiedFiltersRef.current) return;
 
     const current = {
       maxHours: maxHours || '',

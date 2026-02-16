@@ -1,8 +1,9 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Guardian hours inconsistency fixt 3"
+git commit -m "Guardian hours inconsistency fixt 4"
 git push origin main
+
 
 ---
 

@@ -123,8 +123,10 @@ const computeGuardian = async (guardian) => {
       .filter(Boolean)
       .map((value) => String(value));
 
-    const consumed = candidateIds.reduce((sum, id) => sum + (consumedByStudent.get(id) || 0), 0);
-    const paid = candidateIds.reduce((sum, id) => sum + (paidByStudent.get(id) || 0), 0);
+    const uniqueIds = [...new Set(candidateIds)];
+
+    const consumed = uniqueIds.reduce((sum, id) => sum + (consumedByStudent.get(id) || 0), 0);
+    const paid = uniqueIds.reduce((sum, id) => sum + (paidByStudent.get(id) || 0), 0);
     const newHoursRemaining = roundHours(paid - consumed);
     perStudent.push({
       id: s?._id || s?.studentId || s?.standaloneStudentId || null,

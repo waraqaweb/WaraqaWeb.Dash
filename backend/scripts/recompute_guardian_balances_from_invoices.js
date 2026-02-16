@@ -80,19 +80,14 @@ const computeGuardian = async (guardian) => {
 
     const totalItemHours = itemsAsc.reduce((sum, item) => sum + (Number(item?.duration || 0) || 0) / 60, 0);
     if (totalItemHours <= 0) continue;
-
-    let coverageHours = null;
-    if (invoice.coverage && Number.isFinite(Number(invoice.coverage.maxHours))) {
-      coverageHours = Math.min(totalItemHours, Math.max(0, Number(invoice.coverage.maxHours)));
-    } else if (invoice.status === 'paid') {
-      coverageHours = totalItemHours;
-    } else {
-      const paidHours = extractPaidHours(invoice, guardian.guardianInfo?.hourlyRate || 0);
-      coverageHours = Math.min(totalItemHours, paidHours);
+    const isPaid = ['paid', 'partially_paid'].includes(String(invoice.status || ''));
+    let paidHours = extractPaidHours(invoice, guardian.guardianInfo?.hourlyRate || 0);
+    if (paidHours <= EPSILON_HOURS && isPaid) {
+      paidHours = totalItemHours;
     }
+    if (paidHours <= EPSILON_HOURS) continue;
 
-    if (!coverageHours || coverageHours <= EPSILON_HOURS) continue;
-
+    const coverageHours = Math.min(totalItemHours, paidHours);
     let remaining = coverageHours;
     for (const item of itemsAsc) {
       if (remaining <= EPSILON_HOURS) break;

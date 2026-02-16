@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import Card from '../ui/Card';
 import Badge from '../ui/Badge';
@@ -38,6 +39,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
   const [debugOpen, setDebugOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const [deleting, setDeleting] = useState(false);
   
   const [editedValues, setEditedValues] = useState({
@@ -225,18 +227,26 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
     );
     if (!confirmed) return;
 
-    try {
-      setDeleting(true);
-      setError(null);
-      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`);
-      if (onUpdate) onUpdate();
-      onClose();
-    } catch (err) {
-      console.error('Error deleting invoice:', err);
-      setError(err.response?.data?.message || 'Failed to delete invoice');
-    } finally {
-      setDeleting(false);
-    }
+    startDeleteCountdown({
+      message: `Deleting invoice ${invoice.invoiceNumber || ''}`,
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        try {
+          setDeleting(true);
+          setError(null);
+          await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`);
+          if (onUpdate) onUpdate();
+          onClose();
+        } catch (err) {
+          console.error('Error deleting invoice:', err);
+          setError(err.response?.data?.message || 'Failed to delete invoice');
+          throw err;
+        } finally {
+          setDeleting(false);
+        }
+      }
+    });
   };
 
   if (loading) {

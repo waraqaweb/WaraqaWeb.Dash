@@ -2,7 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import api from '../api/axios';
 
 const STORAGE_KEY = 'waraqa:deleteClassCountdown:v1';
-const DEFAULT_DURATION_SECONDS = 5;
+const DEFAULT_PRE_DELETE_SECONDS = 2;
+const DEFAULT_UNDO_SECONDS = 3;
 const REFRESH_EVENT = 'classes:refresh';
 
 const DeleteClassCountdownContext = createContext(null);
@@ -27,6 +28,8 @@ export const DeleteClassCountdownProvider = ({ children }) => {
   const [message, setMessage] = useState('Deleting class');
   const [endsAtMs, setEndsAtMs] = useState(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const [preDelaySeconds, setPreDelaySeconds] = useState(DEFAULT_PRE_DELETE_SECONDS);
+  const [undoSeconds, setUndoSeconds] = useState(DEFAULT_UNDO_SECONDS);
   const [error, setError] = useState('');
 
   const intervalRef = useRef(null);
@@ -59,6 +62,8 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     setEndsAtMs(null);
     setSecondsLeft(0);
     setMessage('Deleting class');
+    setPreDelaySeconds(DEFAULT_PRE_DELETE_SECONDS);
+    setUndoSeconds(DEFAULT_UNDO_SECONDS);
     setError('');
     persist(null);
     executingRef.current = false;
@@ -68,10 +73,12 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     reset();
   }, [reset]);
 
-  const start = useCallback(({ classId: nextClassId, scope: nextScope, message: nextMessage, durationSeconds }) => {
+  const start = useCallback(({ classId: nextClassId, scope: nextScope, message: nextMessage, preDelaySeconds: nextPreDelay, undoSeconds: nextUndoSeconds }) => {
     if (!nextClassId || !nextScope) return;
 
-    const duration = Number.isFinite(durationSeconds) ? Math.max(1, durationSeconds) : DEFAULT_DURATION_SECONDS;
+    const preDelay = Number.isFinite(nextPreDelay) ? Math.max(0, nextPreDelay) : DEFAULT_PRE_DELETE_SECONDS;
+    const undoWindow = Number.isFinite(nextUndoSeconds) ? Math.max(1, nextUndoSeconds) : DEFAULT_UNDO_SECONDS;
+    const duration = Math.max(1, preDelay + undoWindow);
     const endsAt = Date.now() + duration * 1000;
 
     setActive(true);
@@ -80,6 +87,8 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     setMessage(nextMessage || 'Deleting class');
     setEndsAtMs(endsAt);
     setSecondsLeft(duration);
+    setPreDelaySeconds(preDelay);
+    setUndoSeconds(undoWindow);
     setError('');
 
     persist({
@@ -87,7 +96,9 @@ export const DeleteClassCountdownProvider = ({ children }) => {
       classId: nextClassId,
       scope: nextScope,
       message: nextMessage || 'Deleting class',
-      endsAtMs: endsAt
+      endsAtMs: endsAt,
+      preDelaySeconds: preDelay,
+      undoSeconds: undoWindow
     });
   }, [persist]);
 
@@ -127,14 +138,16 @@ export const DeleteClassCountdownProvider = ({ children }) => {
         classId,
         scope,
         message,
-        endsAtMs: Date.now()
+        endsAtMs: Date.now(),
+        preDelaySeconds,
+        undoSeconds
       });
       setSecondsLeft(0);
       setEndsAtMs(Date.now());
     } finally {
       executingRef.current = false;
     }
-  }, [classId, scope, message, reset, clearTimer, persist]);
+  }, [classId, scope, message, preDelaySeconds, undoSeconds, reset, clearTimer, persist]);
 
   // Keep state in sync across browser tabs/windows.
   useEffect(() => {
@@ -153,6 +166,8 @@ export const DeleteClassCountdownProvider = ({ children }) => {
       setMessage(parsed.message || 'Deleting class');
       setEndsAtMs(parsed.endsAtMs);
       setSecondsLeft(restoredSeconds);
+      setPreDelaySeconds(Number.isFinite(parsed.preDelaySeconds) ? parsed.preDelaySeconds : DEFAULT_PRE_DELETE_SECONDS);
+      setUndoSeconds(Number.isFinite(parsed.undoSeconds) ? parsed.undoSeconds : DEFAULT_UNDO_SECONDS);
       setError('');
     };
 
@@ -193,6 +208,8 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     setMessage(parsed.message || 'Deleting class');
     setEndsAtMs(parsed.endsAtMs);
     setSecondsLeft(restoredSeconds);
+    setPreDelaySeconds(Number.isFinite(parsed.preDelaySeconds) ? parsed.preDelaySeconds : DEFAULT_PRE_DELETE_SECONDS);
+    setUndoSeconds(Number.isFinite(parsed.undoSeconds) ? parsed.undoSeconds : DEFAULT_UNDO_SECONDS);
   }, []);
 
   // Drive ticking + completion
@@ -229,10 +246,12 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     secondsLeft,
     message,
     error,
+    preDelaySeconds,
+    undoSeconds,
     start,
     undo,
     dismiss: reset
-  }), [active, secondsLeft, message, error, start, undo, reset]);
+  }), [active, secondsLeft, message, error, preDelaySeconds, undoSeconds, start, undo, reset]);
 
   return (
     <DeleteClassCountdownContext.Provider value={value}>

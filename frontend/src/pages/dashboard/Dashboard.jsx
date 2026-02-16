@@ -33,18 +33,36 @@ import { Menu, X } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import VacationManagementPage from './VacationManagementPage';
 import { DeleteClassCountdownProvider, useDeleteClassCountdown } from '../../contexts/DeleteClassCountdownContext';
+import { DeleteActionCountdownProvider, useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import DeleteCountdownToast from '../../components/ui/DeleteCountdownToast';
 import ToastHost from '../../components/ui/ToastHost';
 import { showToast } from '../../utils/toast';
 
 const DeleteCountdownHost = () => {
-  const { isActive, secondsLeft, message, error, undo } = useDeleteClassCountdown();
+  const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds } = useDeleteClassCountdown();
   return (
     <DeleteCountdownToast
       isActive={isActive}
       countdown={secondsLeft}
       message={message}
       error={error}
+      preDelaySeconds={preDelaySeconds}
+      undoSeconds={undoSeconds}
+      onUndo={undo}
+    />
+  );
+};
+
+const DeleteActionCountdownHost = () => {
+  const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds } = useDeleteActionCountdown();
+  return (
+    <DeleteCountdownToast
+      isActive={isActive}
+      countdown={secondsLeft}
+      message={message}
+      error={error}
+      preDelaySeconds={preDelaySeconds}
+      undoSeconds={undoSeconds}
       onUndo={undo}
     />
   );
@@ -239,6 +257,7 @@ const Dashboard = () => {
     <SearchProvider>
       <DashboardQuerySync />
       <DeleteClassCountdownProvider>
+        <DeleteActionCountdownProvider>
       <div className="flex h-screen bg-background">
       {/* Sidebar */}
         <Sidebar 
@@ -321,7 +340,9 @@ const Dashboard = () => {
   {/* ProfileModal removed - sidebar now navigates to the Profile page */}
     </div>
     <DeleteCountdownHost />
+    <DeleteActionCountdownHost />
     <ToastHost />
+      </DeleteActionCountdownProvider>
     </DeleteClassCountdownProvider>
     </SearchProvider>
   );

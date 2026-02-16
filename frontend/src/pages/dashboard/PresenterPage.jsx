@@ -3,6 +3,7 @@ import LessonStudio from '../../components/lessons/LessonStudio';
 import TestStudio from '../../components/lessons/TestStudio';
 import LessonStudioViewer from '../../components/lessons/LessonStudioViewer';
 import { createLibraryFolder, createLibraryItem, deleteLibraryItem, fetchFolderContents, fetchTree, updateLibraryItem } from '../../api/library';
+import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import { Plus, Folder, Settings, Link2, GripVertical } from 'lucide-react';
 import api from '../../api/axios';
 import { useSearch } from '../../contexts/SearchContext';
@@ -21,6 +22,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
   const [tests, setTests] = useState([]);
   const [selectedTest, setSelectedTest] = useState(null);
   const [saving, setSaving] = useState(false);
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const [status, setStatus] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
   const [testSubjectFilter, setTestSubjectFilter] = useState('');
@@ -491,59 +493,89 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
   const handleDeleteLesson = async (lesson) => {
     if (!lesson) return;
     if (!window.confirm('Delete this lesson?')) return;
-    setSaving(true);
-    try {
-      await deleteLibraryItem(lesson.id || lesson._id);
-      await loadLessons();
-      if (selectedLesson && (selectedLesson.id || selectedLesson._id) === (lesson.id || lesson._id)) {
-        setSelectedLesson(null);
+    const lessonLabel = lesson.title || lesson.displayName || 'lesson';
+    startDeleteCountdown({
+      message: `Deleting ${lessonLabel}`,
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        setSaving(true);
+        try {
+          await deleteLibraryItem(lesson.id || lesson._id);
+          await loadLessons();
+          if (selectedLesson && (selectedLesson.id || selectedLesson._id) === (lesson.id || lesson._id)) {
+            setSelectedLesson(null);
+          }
+        } finally {
+          setSaving(false);
+        }
       }
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   const handleDeleteTest = async (test) => {
     if (!test) return;
     if (!window.confirm('Delete this assessment?')) return;
-    setSaving(true);
-    try {
-      await deleteLibraryItem(test.id || test._id);
-      await loadTests();
-      if (selectedTest && (selectedTest.id || selectedTest._id) === (test.id || test._id)) {
-        setSelectedTest(null);
+    const testLabel = test.title || test.displayName || 'assessment';
+    startDeleteCountdown({
+      message: `Deleting ${testLabel}`,
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        setSaving(true);
+        try {
+          await deleteLibraryItem(test.id || test._id);
+          await loadTests();
+          if (selectedTest && (selectedTest.id || selectedTest._id) === (test.id || test._id)) {
+            setSelectedTest(null);
+          }
+        } finally {
+          setSaving(false);
+        }
       }
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   const handleDeleteSubjectMaterials = async (subjectName) => {
     if (!subjectName) return;
     if (!window.confirm(`Delete all lessons under "${subjectName}"?`)) return;
-    setSaving(true);
-    try {
-      const subjectLessons = lessonsBySubject.get(subjectName) || [];
-      await Promise.all(subjectLessons.map((lesson) => deleteLibraryItem(lesson.id || lesson._id)));
-      await loadLessons();
-      if (subjectFilter === subjectName) setSubjectFilter('');
-    } finally {
-      setSaving(false);
-    }
+    startDeleteCountdown({
+      message: `Deleting lessons in ${subjectName}`,
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        setSaving(true);
+        try {
+          const subjectLessons = lessonsBySubject.get(subjectName) || [];
+          await Promise.all(subjectLessons.map((lesson) => deleteLibraryItem(lesson.id || lesson._id)));
+          await loadLessons();
+          if (subjectFilter === subjectName) setSubjectFilter('');
+        } finally {
+          setSaving(false);
+        }
+      }
+    });
   };
 
   const handleDeleteSubjectTests = async (subjectName) => {
     if (!subjectName) return;
     if (!window.confirm(`Delete all assessments under "${subjectName}"?`)) return;
-    setSaving(true);
-    try {
-      const subjectTests = testsBySubject.get(subjectName) || [];
-      await Promise.all(subjectTests.map((test) => deleteLibraryItem(test.id || test._id)));
-      await loadTests();
-      if (testSubjectFilter === subjectName) setTestSubjectFilter('');
-    } finally {
-      setSaving(false);
-    }
+    startDeleteCountdown({
+      message: `Deleting assessments in ${subjectName}`,
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        setSaving(true);
+        try {
+          const subjectTests = testsBySubject.get(subjectName) || [];
+          await Promise.all(subjectTests.map((test) => deleteLibraryItem(test.id || test._id)));
+          await loadTests();
+          if (testSubjectFilter === subjectName) setTestSubjectFilter('');
+        } finally {
+          setSaving(false);
+        }
+      }
+    });
   };
 
   if (!isActive) return null;

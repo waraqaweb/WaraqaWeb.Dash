@@ -38,6 +38,7 @@ import RefundInvoiceModal from '../../components/invoices/RefundInvoiceModal';
 import CreateGuardianInvoiceModal from '../../components/invoices/CreateGuardianInvoiceModal';
 import ConfirmModal from '../../components/ui/ConfirmModal';
 import Toast from '../../components/ui/Toast';
+import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import { computeInvoiceTotals, resolveInvoiceClassEntries } from '../../utils/invoiceTotals';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
@@ -105,6 +106,7 @@ const InvoicesPage = ({ isActive = true }) => {
   const [downloadingDocId, setDownloadingDocId] = useState(null);
   const [copiedInvoiceId, setCopiedInvoiceId] = useState(null);
   const [toast, setToast] = useState({ show: false, type: '', message: '' });
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const [createInvoiceOpen, setCreateInvoiceOpen] = useState(false);
   const [cardOverrides, setCardOverrides] = useState({});
 
@@ -384,6 +386,7 @@ const InvoicesPage = ({ isActive = true }) => {
       open: true,
       action: 'delete',
       invoiceId: invoice?._id,
+      countdownMessage: `Deleting ${statusLabel} invoice`,
       title: `Delete ${statusLabel} invoice`,
       message: 'Delete this invoice permanently? It will be removed from lists and hours will not change.',
       confirmText: 'Delete',
@@ -411,12 +414,16 @@ const InvoicesPage = ({ isActive = true }) => {
         alert('Invoice deleted permanently');
         fetchInvoices();
         if (isAdmin()) fetchStats();
+        return true;
       } else {
-        alert(data.error || 'Delete failed');
+        const message = data.error || 'Delete failed';
+        alert(message);
+        throw new Error(message);
       }
     } catch (err) {
       console.error('Delete invoice error:', err);
       alert('Delete failed');
+      throw err;
     }
   };
 
@@ -1658,7 +1665,14 @@ const InvoicesPage = ({ isActive = true }) => {
           const action = confirmModal.action;
           const id = confirmModal.invoiceId;
           setConfirmModal((s) => ({ ...s, open: false }));
-          if (action === 'delete') await performDeleteInvoice(id);
+          if (action === 'delete') {
+            startDeleteCountdown({
+              message: confirmModal.countdownMessage || 'Deleting invoice',
+              onDelete: () => performDeleteInvoice(id),
+              preDelaySeconds: 1,
+              undoSeconds: 3
+            });
+          }
           else if (action === 'cancel') await performCancelInvoice(id);
         }}
       />

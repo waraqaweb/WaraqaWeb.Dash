@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 
 const DeleteCountdownToast = ({
   isActive,
@@ -6,32 +6,36 @@ const DeleteCountdownToast = ({
   onUndo,
   message = "Deleting class",
   error = "",
+  preDelaySeconds = 0,
+  undoSeconds = 0,
   className = ""
 }) => {
   if (!isActive) return null;
 
-  const [expanded, setExpanded] = useState(false);
-  const line1 = error ? error : `${message} in ${countdown}s...`;
-  const line2 = error ? 'You can undo or dismiss.' : 'Click undo to cancel';
+  const undoWindow = Number.isFinite(undoSeconds) ? Math.max(0, undoSeconds) : 0;
+  const preDelay = Number.isFinite(preDelaySeconds) ? Math.max(0, preDelaySeconds) : 0;
+  const preCountdown = Math.max(0, countdown - undoWindow);
+  const inPreDelay = preDelay > 0 && preCountdown > 0;
+  const line1 = error
+    ? error
+    : inPreDelay
+      ? `${message} in ${preCountdown}s...`
+      : `${message} in ${countdown}s...`;
+  const line2 = error ? 'Click undo to cancel.' : '';
 
   return (
     <div
       className={`fixed bottom-6 right-24 z-[60] animate-slide-up ${className}`}
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
     >
       <div
         role="status"
-        onClick={() => setExpanded((v) => !v)}
-        className={`flex items-center gap-4 rounded-lg border px-4 py-2.5 shadow-lg transition-all text-left cursor-pointer bg-blue-50/70 border-blue-200/70 backdrop-blur-sm hover:bg-blue-50/80 ${
-          expanded ? 'max-w-[440px]' : 'max-w-[220px]'
-        }`}
+        className="flex w-[480px] max-w-[calc(100vw-3rem)] items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 shadow-lg backdrop-blur-sm"
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-blue-500" aria-hidden />
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden />
           <div className="min-w-0">
-            <p className={`text-sm font-semibold text-blue-900 ${expanded ? '' : 'truncate'}`}>{line1}</p>
-            <p className={`text-xs text-blue-800/80 ${expanded ? '' : 'truncate'}`}>{line2}</p>
+            <p className="text-sm font-semibold text-emerald-900 whitespace-normal break-words">{line1}</p>
+            {line2 && <p className="text-xs text-emerald-800/80 whitespace-normal break-words">{line2}</p>}
           </div>
         </div>
         <button
@@ -40,7 +44,7 @@ const DeleteCountdownToast = ({
             e.stopPropagation();
             onUndo();
           }}
-          className="shrink-0 rounded-md border border-blue-500 bg-white/90 px-3 py-1.5 text-sm font-semibold text-blue-600 transition hover:bg-white"
+          className="shrink-0 rounded-md border border-emerald-500 bg-white/90 px-3 py-1.5 text-sm font-semibold text-emerald-700 transition hover:bg-white"
         >
           Undo
         </button>

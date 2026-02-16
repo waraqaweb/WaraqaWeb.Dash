@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
+import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import TeacherInvoiceDetailModal from '../../components/teacherSalary/TeacherInvoiceDetailModal';
@@ -77,6 +78,7 @@ const TeacherSalaries = () => {
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [summary, setSummary] = useState(null);
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
 
   // Pagination state
   const [page, setPage] = useState(1);
@@ -253,17 +255,24 @@ const TeacherSalaries = () => {
     if (!window.confirm('Delete this invoice? Unpaid invoices will release linked classes so they can be re-invoiced.')) {
       return;
     }
-
-    try {
-      await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`);
-      setInvoices((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
-      setSuccessMessage('✓ Invoice deleted successfully');
-      fetchInvoices();
-      setTimeout(() => setSuccessMessage(null), 5000);
-    } catch (err) {
-      console.error('Error deleting invoice:', err);
-      setError(err.response?.data?.message || 'Failed to delete invoice');
-    }
+    startDeleteCountdown({
+      message: 'Deleting salary invoice',
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        try {
+          await api.delete(`/teacher-salary/admin/invoices/${invoiceId}`);
+          setInvoices((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
+          setSuccessMessage('✓ Invoice deleted successfully');
+          fetchInvoices();
+          setTimeout(() => setSuccessMessage(null), 5000);
+        } catch (err) {
+          console.error('Error deleting invoice:', err);
+          setError(err.response?.data?.message || 'Failed to delete invoice');
+          throw err;
+        }
+      }
+    });
   };
 
   // Format currency

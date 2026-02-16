@@ -909,7 +909,7 @@ class InvoiceService {
           // ✅ Exclude classes already in any invoice (not just paid ones)
           const billedIds = await collectBilledClassIds({
             deleted: { $ne: true },
-            status: { $in: ACTIVE_UNPAID_INVOICE_STATUSES }
+            status: { $nin: ['cancelled', 'refunded'] }
           });
           
           console.log(`[First-Lesson Invoice] Excluded billed class IDs: ${billedIds.length} classes`);

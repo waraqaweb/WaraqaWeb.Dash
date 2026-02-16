@@ -2443,7 +2443,8 @@ fetchClassesRef.current = fetchClasses;
       classId,
       scope,
       message: baseMessage,
-      durationSeconds: 5
+      preDelaySeconds: 2,
+      undoSeconds: 3
     });
   }, [startDeleteCountdown, deleteClass]);
 
@@ -4299,6 +4300,7 @@ fetchClassesRef.current = fetchClasses;
         isOpen={showDeleteModal}
         classId={deleteClass?._id}
         initialClass={deleteClass}
+        currentTab={tabFilter}
         onClose={handleCloseDeleteModal}
         onCountdownStart={handleDeleteCountdownStart}
       />

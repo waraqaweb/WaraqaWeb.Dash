@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import { useSearch } from '../../contexts/SearchContext';
 import api from '../../api/axios';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
@@ -25,6 +26,7 @@ import GuardianStudentVacationModal from '../../components/dashboard/GuardianStu
 
 const VacationManagementPage = () => {
   const { user } = useAuth();
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const { searchTerm, globalFilter } = useSearch();
 
   const toLocalDateInput = (date) => {
@@ -273,22 +275,30 @@ const VacationManagementPage = () => {
 
   const handleDeleteVacation = async (vacation) => {
     if (!window.confirm('Are you sure you want to delete this vacation?')) return;
+    startDeleteCountdown({
+      message: `Deleting ${vacation?.name || 'vacation'}`,
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        try {
+          if (!vacation.name && !['pending', 'rejected'].includes(vacation.status)) {
+            const message = 'Only pending or rejected vacations can be deleted. Consider ending the vacation early instead.';
+            alert(message);
+            throw new Error(message);
+          }
+          const endpoint = vacation.name 
+            ? `/system-vacations/${vacation._id}`
+            : `/vacations/${vacation._id}`;
 
-    try {
-      if (!vacation.name && !['pending', 'rejected'].includes(vacation.status)) {
-        alert('Only pending or rejected vacations can be deleted. Consider ending the vacation early instead.');
-        return;
+          await api.delete(endpoint);
+          await fetchData();
+        } catch (err) {
+          console.error('Error deleting vacation:', err);
+          alert('Error deleting vacation. Please try again.');
+          throw err;
+        }
       }
-      const endpoint = vacation.name 
-        ? `/system-vacations/${vacation._id}`
-        : `/vacations/${vacation._id}`;
-
-      await api.delete(endpoint);
-      await fetchData();
-    } catch (err) {
-      console.error('Error deleting vacation:', err);
-      alert('Error deleting vacation. Please try again.');
-    }
+    });
   };
 
   const handleTerminateSystemVacation = async (vacation) => {

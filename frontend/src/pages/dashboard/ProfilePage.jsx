@@ -3,6 +3,7 @@ import { formatDateDDMMMYYYY } from '../../utils/date';
 import api from "../../api/axios";
 import { useAuth } from "../../contexts/AuthContext";
 import { useSearch } from '../../contexts/SearchContext';
+import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import ProfileEditModal from '../../components/dashboard/ProfileEditModal';
 import FirstClassFeedbackModal from '../../components/feedback/FirstClassFeedbackModal';
 import MonthlyFeedbackModal from '../../components/feedback/MonthlyFeedbackModal';
@@ -31,6 +32,7 @@ export default function ProfilePage() {
   const { searchTerm, globalFilter } = useSearch();
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [infoModalUser, setInfoModalUser] = useState(null);
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
 
   useEffect(() => {
     profileRef.current = profile;
@@ -219,16 +221,26 @@ export default function ProfilePage() {
 
   const doDeleteUser = async () => {
     if (!deleteModalUser || deleteLoading) return;
-    setDeleteLoading(true);
-    setDeleteError(null);
-    try {
-      await api.delete(`/users/${deleteModalUser._id}`);
-      closeDeleteModal();
-      fetchAllUsers();
-    } catch (err) {
-      setDeleteError(err?.response?.data?.message || 'Failed to delete user');
-      setDeleteLoading(false);
-    }
+    const target = deleteModalUser;
+    closeDeleteModal();
+    startDeleteCountdown({
+      message: `Deleting ${target.firstName || ''} ${target.lastName || 'user'}`.trim(),
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        setDeleteLoading(true);
+        setDeleteError(null);
+        try {
+          await api.delete(`/users/${target._id}`);
+          fetchAllUsers();
+        } catch (err) {
+          setDeleteError(err?.response?.data?.message || 'Failed to delete user');
+          throw err;
+        } finally {
+          setDeleteLoading(false);
+        }
+      }
+    });
   };
 
   const toggleActive = async (u) => {

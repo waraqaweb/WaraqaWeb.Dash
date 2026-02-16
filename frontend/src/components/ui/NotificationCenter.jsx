@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
@@ -6,6 +6,15 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Bell, Calendar, X } from 'lucide-react';
 import { formatDateTimeDDMMMYYYYhhmmA } from '../../utils/date';
 import RescheduleRequestDetailsModal from '../dashboard/RescheduleRequestDetailsModal';
+import {
+  bindAudioUnlockOnUserGesture,
+  playClassStartSound,
+  playGeneralNotificationSound,
+} from '../../utils/notificationSounds';
+import {
+  canUseBrowserNotifications,
+  getNotificationPreferences,
+} from '../../utils/notificationPreferences';
 
 const NotificationCenter = () => {
   const { user } = useAuth();
@@ -19,6 +28,10 @@ const NotificationCenter = () => {
   const [rescheduleDetailsOpen, setRescheduleDetailsOpen] = useState(false);
   const [rescheduleDetailsNotification, setRescheduleDetailsNotification] = useState(null);
   const [deleteLoadingId, setDeleteLoadingId] = useState(null);
+  const initializedNotificationsRef = useRef(false);
+  const seenNotificationIdsRef = useRef(new Set());
+  const classAlertedKeysRef = useRef(new Set());
+  const [notificationPrefs, setNotificationPrefs] = useState(() => getNotificationPreferences(user?._id));
   const [resolveUninvoicedState, setResolveUninvoicedState] = useState({
     loading: false,
     message: null,
@@ -33,11 +46,44 @@ const NotificationCenter = () => {
   });
 
   useEffect(() => {
+    bindAudioUnlockOnUserGesture();
+  }, []);
+
+  useEffect(() => {
     if (user) {
       fetchNotifications();
       checkCurrentVacation();
+      checkClassStartAlerts();
     }
   }, [user]);
+
+  useEffect(() => {
+    setNotificationPrefs(getNotificationPreferences(user?._id));
+  }, [user?._id]);
+
+  useEffect(() => {
+    const handlePrefsChanged = (event) => {
+      const changedUserId = event?.detail?.userId;
+      const activeUserId = user?._id || 'anon';
+      if (!changedUserId || String(changedUserId) !== String(activeUserId)) return;
+      setNotificationPrefs(getNotificationPreferences(user?._id));
+    };
+
+    window.addEventListener('notification-preferences-changed', handlePrefsChanged);
+    return () => window.removeEventListener('notification-preferences-changed', handlePrefsChanged);
+  }, [user?._id]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    if (!notificationPrefs.liveAlertsEnabled) return undefined;
+
+    const interval = setInterval(() => {
+      fetchNotifications({ showLoading: false });
+      checkClassStartAlerts();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [user, notificationPrefs.liveAlertsEnabled]);
 
   useEffect(() => {
     if (!isOpen || user?.role !== 'admin') return;
@@ -45,16 +91,104 @@ const NotificationCenter = () => {
     if (hasUninvoicedAlert) fetchUninvoicedLessons();
   }, [isOpen, user?.role, notifications]);
 
-  const fetchNotifications = async () => {
-    setLoading(true);
+  const fetchNotifications = async ({ showLoading = true } = {}) => {
+    if (showLoading) setLoading(true);
     try {
       const res = await api.get('/notifications');
-      setNotifications(res.data.notifications);
-      setUnreadCount(res.data.unreadCount);
+      const nextNotifications = Array.isArray(res.data.notifications) ? res.data.notifications : [];
+      const nextUnreadCount = Number(res.data.unreadCount || 0);
+
+      if (!initializedNotificationsRef.current) {
+        seenNotificationIdsRef.current = new Set(nextNotifications.map((notification) => String(notification._id)));
+        initializedNotificationsRef.current = true;
+      } else {
+        const newUnreadNotifications = nextNotifications.filter((notification) => (
+          !notification.isRead && !seenNotificationIdsRef.current.has(String(notification._id))
+        ));
+
+        if (newUnreadNotifications.length > 0 && notificationPrefs.notificationSoundEnabled) {
+          playGeneralNotificationSound();
+        }
+
+        if (newUnreadNotifications.length > 0 && notificationPrefs.liveAlertsEnabled && canUseBrowserNotifications() && Notification.permission === 'granted') {
+          newUnreadNotifications.slice(0, 3).forEach((notification) => {
+            const title = getNotificationTitleText(notification);
+            const body = getNotificationMessageText(notification) || 'You have a new notification.';
+            try {
+              new Notification(title, { body, tag: `notif-${notification._id}` });
+            } catch (e) {
+              // ignore browser notification failures
+            }
+          });
+        }
+
+        nextNotifications.forEach((notification) => {
+          seenNotificationIdsRef.current.add(String(notification._id));
+        });
+      }
+
+      setNotifications(nextNotifications);
+      setUnreadCount(nextUnreadCount);
     } catch (err) {
       console.error('Error fetching notifications:', err);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
+    }
+  };
+
+  const checkClassStartAlerts = async () => {
+    try {
+      if (!notificationPrefs.liveAlertsEnabled) return;
+      const role = user?.role;
+      if (!['admin', 'teacher', 'guardian'].includes(role)) return;
+
+      const now = Date.now();
+      const res = await api.get('/classes', {
+        params: {
+          filter: 'upcoming',
+          page: 1,
+          limit: 120,
+        },
+      });
+
+      const classes = Array.isArray(res.data?.classes) ? res.data.classes : [];
+      for (const classItem of classes) {
+        const classId = classItem?._id;
+        const scheduledRaw = classItem?.scheduledDate;
+        if (!classId || !scheduledRaw) continue;
+
+        const startMs = new Date(scheduledRaw).getTime();
+        if (!Number.isFinite(startMs)) continue;
+
+        const alertKey = `${classId}:${startMs}`;
+        if (classAlertedKeysRef.current.has(alertKey)) continue;
+
+        const diffMs = now - startMs;
+        const shouldAlert = diffMs >= 0 && diffMs <= 2 * 60 * 1000;
+        if (!shouldAlert) continue;
+
+        classAlertedKeysRef.current.add(alertKey);
+
+        if (canUseBrowserNotifications() && Notification.permission === 'granted') {
+          const studentName = classItem?.student?.studentName || 'Student';
+          const subject = classItem?.subject || 'Class';
+          try {
+            new Notification('Class is starting now', {
+              body: `${subject} • ${studentName}`,
+              tag: `class-start-${classId}`,
+            });
+          } catch (e) {
+            // ignore browser notification failures
+          }
+        }
+
+        const allowClassSound = role !== 'admin' && notificationPrefs.classStartSoundEnabled;
+        if (allowClassSound) {
+          playClassStartSound();
+        }
+      }
+    } catch (err) {
+      // ignore class alert failures to avoid interrupting notification center
     }
   };
 

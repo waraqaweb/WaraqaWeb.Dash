@@ -5,6 +5,7 @@ import api from '../../../api/axios';
 import { Plus, Eye, Pencil, DollarSign } from "lucide-react";
 import { useAuth } from "../../../contexts/AuthContext";
 import { useSearch } from '../../../contexts/SearchContext';
+import { useDeleteActionCountdown } from '../../../contexts/DeleteActionCountdownContext';
 import { formatDateDDMMMYYYY } from '../../../utils/date';
 import SalaryViewModal from "./SalaryViewModal";
 import SalaryEditModal from "./SalaryEditModal";
@@ -20,6 +21,7 @@ const SalariesPage = () => {
 
   const [salaries, setSalaries] = useState([]);
   const [stats, setStats] = useState(null);
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const [loading, setLoading] = useState(true);
   const showLoading = loading;
   const salariesRef = useRef([]);
@@ -201,13 +203,21 @@ const SalariesPage = () => {
 
   const handleDelete = async (salaryId) => {
     if (!window.confirm("Delete this salary record?")) return;
-    try {
-      await api.delete(`/invoices/${salaryId}`);
-      fetchSalaries();
-    } catch (err) {
-      console.error("Delete error:", err);
-      alert(err.response?.data?.message || "Failed to delete salary.");
-    }
+    startDeleteCountdown({
+      message: 'Deleting salary record',
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        try {
+          await api.delete(`/invoices/${salaryId}`);
+          fetchSalaries();
+        } catch (err) {
+          console.error("Delete error:", err);
+          alert(err.response?.data?.message || "Failed to delete salary.");
+          throw err;
+        }
+      }
+    });
   };
 
   const visibleSalaries = useMemo(() => {

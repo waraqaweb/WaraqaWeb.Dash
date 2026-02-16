@@ -13,6 +13,7 @@ import DeleteConfirmModal from '../../components/library/admin/DeleteConfirmModa
 import ShareQueueModal from '../../components/library/admin/ShareQueueModal';
 import useLibraryData from '../../hooks/useLibraryData';
 import { useAuth } from '../../contexts/AuthContext';
+import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import { SearchProvider, useSearch } from '../../contexts/SearchContext';
 import {
   createLibraryFolder,
@@ -281,6 +282,24 @@ const LibraryDashboardContent = () => {
   }, [refreshShareRequests, refreshPendingAdminRequests]);
 
   const pendingAccess = shareRequests?.filter((request) => request.status === 'pending') || [];
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
+
+  const handleConfirmDelete = useCallback((payload) => {
+    if (!payload) return;
+    const { entityType, entity } = payload;
+    const label = entity?.displayName || entity?.name || (entityType === 'folder' ? 'folder' : 'item');
+    startDeleteCountdown({
+      message: `Deleting ${label}`,
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        const result = await submitDelete(payload);
+        if (result?.success === false) {
+          throw new Error(result.message || 'Unable to delete entry');
+        }
+      }
+    });
+  }, [startDeleteCountdown, submitDelete]);
 
   return (
     <div className="h-full w-full">
@@ -402,7 +421,7 @@ const LibraryDashboardContent = () => {
         <DeleteConfirmModal
           open
           onClose={closeActiveModal}
-          onConfirm={() => submitDelete(activeModal.payload)}
+          onConfirm={() => handleConfirmDelete(activeModal.payload)}
           entityType={activeModal.payload?.entityType}
           entity={activeModal.payload?.entity}
         />

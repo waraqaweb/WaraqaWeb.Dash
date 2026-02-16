@@ -8,6 +8,12 @@ import { fetchLibraryStorageUsage } from '../../api/library';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { getSubjectsCatalogCached, saveSubjectsCatalog } from '../../services/subjectsCatalog';
 import { REQUESTS_VISIBILITY_OPTIONS } from '../../utils/requestsVisibility';
+import {
+  canUseBrowserNotifications,
+  getNotificationPreferences,
+  requestBrowserNotificationPermission,
+  setNotificationPreferences,
+} from '../../utils/notificationPreferences';
 
 const parseLinesOrComma = (text) => {
   if (!text) return [];
@@ -65,6 +71,11 @@ const Settings = () => {
   const [savingPresenterAccess, setSavingPresenterAccess] = useState(false);
   const [requestsVisibility, setRequestsVisibility] = useState('all_users');
   const [savingRequestsVisibility, setSavingRequestsVisibility] = useState(false);
+  const [notificationPrefs, setNotificationPrefsState] = useState(() => getNotificationPreferences(user?._id));
+  const [notificationPermission, setNotificationPermission] = useState(() => {
+    if (!canUseBrowserNotifications()) return 'unsupported';
+    return Notification.permission;
+  });
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
@@ -85,6 +96,34 @@ const Settings = () => {
     };
     fetchPresenterAccess();
   }, [user?.role]);
+
+  useEffect(() => {
+    setNotificationPrefsState(getNotificationPreferences(user?._id));
+    if (canUseBrowserNotifications()) {
+      setNotificationPermission(Notification.permission);
+    } else {
+      setNotificationPermission('unsupported');
+    }
+  }, [user?._id]);
+
+  const updateNotificationPreference = useCallback((key, value) => {
+    const next = {
+      ...notificationPrefs,
+      [key]: value,
+    };
+    setNotificationPrefsState(next);
+    setNotificationPreferences(user?._id, next);
+  }, [notificationPrefs, user?._id]);
+
+  const handleEnableBrowserAlerts = useCallback(async () => {
+    const result = await requestBrowserNotificationPermission();
+    setNotificationPermission(result);
+    if (result === 'granted') {
+      setToast({ type: 'success', message: 'Browser alerts enabled' });
+    } else if (result === 'denied') {
+      setToast({ type: 'error', message: 'Browser alerts are blocked in your browser settings' });
+    }
+  }, []);
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
@@ -585,6 +624,74 @@ const Settings = () => {
         {/* Timezone converter moved to floating widget to keep page body cleaner. */}
         {/* Floating widget component will be rendered separately (fixed position). */}
         
+        {activeSection === 'general' && (
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
+            <div className="font-medium mb-2">Notifications & Sounds</div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Live alerts observer</div>
+                  <div className="text-xs text-muted-foreground">Instantly checks and delivers class-time and new-notification alerts.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateNotificationPreference('liveAlertsEnabled', !notificationPrefs.liveAlertsEnabled)}
+                  className={`text-xs px-3 py-1.5 rounded border ${notificationPrefs.liveAlertsEnabled ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+                >
+                  {notificationPrefs.liveAlertsEnabled ? 'Enabled' : 'Disabled'}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">New notification sound</div>
+                  <div className="text-xs text-muted-foreground">Plays a distinct sound when a new notification arrives.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateNotificationPreference('notificationSoundEnabled', !notificationPrefs.notificationSoundEnabled)}
+                  className={`text-xs px-3 py-1.5 rounded border ${notificationPrefs.notificationSoundEnabled ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+                >
+                  {notificationPrefs.notificationSoundEnabled ? 'Enabled' : 'Disabled'}
+                </button>
+              </div>
+
+              {(user?.role === 'teacher' || user?.role === 'guardian') && (
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Class start sound</div>
+                    <div className="text-xs text-muted-foreground">Plays a separate sound when your class start time arrives.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateNotificationPreference('classStartSoundEnabled', !notificationPrefs.classStartSoundEnabled)}
+                    className={`text-xs px-3 py-1.5 rounded border ${notificationPrefs.classStartSoundEnabled ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+                  >
+                    {notificationPrefs.classStartSoundEnabled ? 'Enabled' : 'Disabled'}
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Browser popup permission</div>
+                  <div className="text-xs text-muted-foreground">
+                    {notificationPermission === 'granted' ? 'Browser popups are enabled.' : notificationPermission === 'denied' ? 'Browser popups are blocked.' : 'Enable browser popups for delivery alerts.'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={notificationPermission === 'granted' || notificationPermission === 'unsupported'}
+                  onClick={handleEnableBrowserAlerts}
+                  className={`text-xs px-3 py-1.5 rounded border ${notificationPermission === 'granted' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-card border-border text-foreground disabled:opacity-60'}`}
+                >
+                  {notificationPermission === 'granted' ? 'Allowed' : notificationPermission === 'unsupported' ? 'Unsupported' : 'Allow'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Feedback card */}
         {user?.role === 'admin' && activeSection === 'general' && (
           <div className="space-y-3">

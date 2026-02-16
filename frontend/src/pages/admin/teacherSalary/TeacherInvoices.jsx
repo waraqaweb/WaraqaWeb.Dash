@@ -15,6 +15,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../../api/axios';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useDeleteActionCountdown } from '../../../contexts/DeleteActionCountdownContext';
 import LoadingSpinner from '../../../components/ui/LoadingSpinner';
 import { formatDateDDMMMYYYY } from '../../../utils/date';
 import TeacherInvoiceDetailModal from '../../../components/teacherSalary/TeacherInvoiceDetailModal';
@@ -70,6 +71,7 @@ const TeacherInvoices = () => {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
 
   // Auto-generation prerequisites (for the previous month)
   const [autoGenChecks, setAutoGenChecks] = useState({
@@ -379,25 +381,33 @@ const TeacherInvoices = () => {
     );
     if (!confirmed) return;
 
-    try {
-      setDeletingInvoiceId(invoice._id);
-      setError(null);
-      await api.delete(`/teacher-salary/admin/invoices/${invoice._id}`);
+    startDeleteCountdown({
+      message: `Deleting invoice ${invoice.invoiceNumber || ''}`,
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        try {
+          setDeletingInvoiceId(invoice._id);
+          setError(null);
+          await api.delete(`/teacher-salary/admin/invoices/${invoice._id}`);
 
-      setSuccessMessage(`✓ Invoice ${invoice.invoiceNumber} deleted`);
-      fetchInvoices();
-      setTimeout(() => setSuccessMessage(null), 5000);
+          setSuccessMessage(`✓ Invoice ${invoice.invoiceNumber} deleted`);
+          fetchInvoices();
+          setTimeout(() => setSuccessMessage(null), 5000);
 
-      if (selectedInvoice?._id === invoice._id) {
-        setShowDetailModal(false);
-        setSelectedInvoice(null);
+          if (selectedInvoice?._id === invoice._id) {
+            setShowDetailModal(false);
+            setSelectedInvoice(null);
+          }
+        } catch (err) {
+          console.error('Error deleting invoice:', err);
+          setError(err.response?.data?.message || 'Failed to delete invoice');
+          throw err;
+        } finally {
+          setDeletingInvoiceId(null);
+        }
       }
-    } catch (err) {
-      console.error('Error deleting invoice:', err);
-      setError(err.response?.data?.message || 'Failed to delete invoice');
-    } finally {
-      setDeletingInvoiceId(null);
-    }
+    });
   };
 
   // Calculate summary statistics

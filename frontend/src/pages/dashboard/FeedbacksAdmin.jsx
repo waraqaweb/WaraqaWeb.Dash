@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import { useSearch } from '../../contexts/SearchContext';
 import { Archive, Check, ChevronLeft, ChevronRight, MessageSquare, Search as SearchIcon } from 'lucide-react';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
@@ -283,6 +284,7 @@ const FeedbacksAdmin = () => {
   }, [fetchList]);
 
   const { socket } = useAuth();
+  const { start: startDeleteCountdown } = useDeleteActionCountdown();
 
   useEffect(() => {
     if (!socket) return;
@@ -314,18 +316,26 @@ const FeedbacksAdmin = () => {
 
   const archive = async (id) => {
     if (!window.confirm('Archive this feedback?')) return;
-    try {
-      await api.delete(`/feedbacks/${id}`);
-      fetchList();
-      try {
-        const c = await api.get('/feedbacks/count/unread');
-        if (c.data?.success) setNotifCount(c.data.count || 0);
-      } catch (e) {
-        /* noop */
+    startDeleteCountdown({
+      message: 'Deleting feedback',
+      preDelaySeconds: 1,
+      undoSeconds: 3,
+      onDelete: async () => {
+        try {
+          await api.delete(`/feedbacks/${id}`);
+          fetchList();
+          try {
+            const c = await api.get('/feedbacks/count/unread');
+            if (c.data?.success) setNotifCount(c.data.count || 0);
+          } catch (e) {
+            /* noop */
+          }
+        } catch (err) {
+          console.error('Archive error', err);
+          throw err;
+        }
       }
-    } catch (err) {
-      console.error('Archive error', err);
-    }
+    });
   };
 
   const filteredFeedbacks = useMemo(() => {

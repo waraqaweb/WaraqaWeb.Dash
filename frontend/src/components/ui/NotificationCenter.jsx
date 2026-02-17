@@ -455,7 +455,7 @@ const NotificationCenter = () => {
 
       if (lowerMessage.startsWith(lowerTitle)) {
         message = message.slice(title.length).trim();
-        message = message.replace(/^[-:–—]+\s*/, '');
+        message = message.replace(/^(-|:|–|—)+\s*/, '');
         if (!message) return '';
       } else if (lowerTitle.startsWith(lowerMessage)) {
         return '';

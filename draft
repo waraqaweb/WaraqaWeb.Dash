@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "css file issue"
+git commit -m "hours coverage cap"
 git push origin main
 
 
@@ -15,6 +15,16 @@ cd /opt/waraqa
 chmod +x deploy/scripts/deploy.sh
 ./deploy/scripts/deploy.sh pull
 ./deploy/scripts/deploy.sh auto
+
+./deploy/scripts/deploy.sh all
+
+
+cd /opt/waraqa
+git fetch origin main
+git reset --hard origin/main
+docker compose up -d --build frontend
+
+docker compose up -d --build backend
 
 
 

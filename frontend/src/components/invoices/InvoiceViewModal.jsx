@@ -292,12 +292,13 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     setNoteEdits(nextNotes);
     notesLastSavedRef.current = nextNotes;
     const coverage = inv.coverage || {};
+    const coverageLocked = ['paid', 'refunded'].includes(String(inv?.status || '').toLowerCase());
     const hasMaxHours = typeof coverage.maxHours === 'number' && Number.isFinite(coverage.maxHours);
     const normalizedMax = hasMaxHours ? Math.max(0, coverage.maxHours) : null;
     const normalizedEndDate = coverage.endDate ? formatDateInput(coverage.endDate) : '';
 
-    const nextMaxHours = normalizedMax && normalizedMax > 0 ? String(normalizedMax) : '';
-    const nextCustomEndDate = normalizedEndDate || '';
+    const nextMaxHours = !coverageLocked && normalizedMax && normalizedMax > 0 ? String(normalizedMax) : '';
+    const nextCustomEndDate = !coverageLocked ? (normalizedEndDate || '') : '';
 
     skipNextCoverageSave.current = true;
     setMaxHours(nextMaxHours);
@@ -641,6 +642,10 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     }
 
     const eligibleClasses = constrained.filter((entry) => entry?.isEligible !== false);
+
+    if (isCoverageLocked) {
+      return eligibleClasses;
+    }
 
     const hasCap = maxHours !== '' && maxHours !== null && maxHours !== undefined;
     if (!hasCap) {
@@ -1778,52 +1783,57 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
 
                 {isAdmin && (
                   <div className="mt-4 space-y-4 text-sm text-slate-600">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
-                        <span>Coverage cap (hours)</span>
-                        <input
-                          type="number"
-                          value={maxHours}
-                          onChange={(e) => {
-                            if (isCoverageLocked) return;
-                            const value = e.target.value;
-                            userModifiedFiltersRef.current = true; // Track user modification
-                            setMaxHours(value);
-                            if (value === '' || value === null || value === undefined) {
-                              setCustomEndDate('');
-                              return;
-                            }
-                            const derivedEndDate = computeEndDateFromMaxHours(value);
-                            setCustomEndDate(derivedEndDate);
-                          }}
-                          placeholder="e.g. 10"
-                          disabled={isCoverageLocked}
-                          className="rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                        />
-                        
-                      </label>
-                      <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
-                        <span>End Date</span>
-                        <input
-                          type="date"
-                          value={customEndDate}
-                          onChange={(e) => {
-                            if (isCoverageLocked) return;
-                            const value = e.target.value;
-                            userModifiedFiltersRef.current = true; // Track user modification
-                            setCustomEndDate(value);
-                            if (!value) {
-                              setMaxHours('');
-                              return;
-                            }
-                            const derivedMax = computeMaxHoursFromEndDate(value);
-                            setMaxHours(derivedMax);
-                          }}
-                          disabled={isCoverageLocked}
-                          className="rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                        />
-                      </label>
-                    </div>
+                    {!isCoverageLocked ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
+                          <span>Coverage cap (hours)</span>
+                          <input
+                            type="number"
+                            value={maxHours}
+                            onChange={(e) => {
+                              if (isCoverageLocked) return;
+                              const value = e.target.value;
+                              userModifiedFiltersRef.current = true;
+                              setMaxHours(value);
+                              if (value === '' || value === null || value === undefined) {
+                                setCustomEndDate('');
+                                return;
+                              }
+                              const derivedEndDate = computeEndDateFromMaxHours(value);
+                              setCustomEndDate(derivedEndDate);
+                            }}
+                            placeholder="e.g. 10"
+                            disabled={isCoverageLocked}
+                            className="rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
+                          <span>End Date</span>
+                          <input
+                            type="date"
+                            value={customEndDate}
+                            onChange={(e) => {
+                              if (isCoverageLocked) return;
+                              const value = e.target.value;
+                              userModifiedFiltersRef.current = true;
+                              setCustomEndDate(value);
+                              if (!value) {
+                                setMaxHours('');
+                                return;
+                              }
+                              const derivedMax = computeMaxHoursFromEndDate(value);
+                              setMaxHours(derivedMax);
+                            }}
+                            disabled={isCoverageLocked}
+                            className="rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                        </label>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                        Paid invoice: coverage cap is ignored. Billed hours come from class sessions only.
+                      </div>
+                    )}
                     
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Internal Admin Note</span>

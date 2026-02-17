@@ -10,6 +10,22 @@ services:
       timeout: 5s
       retries: 10
 
+  mongo-express:
+    image: mongo-express:1.0.2
+    restart: unless-stopped
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: ${ME_CONFIG_BASICAUTH_USERNAME:-admin}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${ME_CONFIG_BASICAUTH_PASSWORD:-change-me}
+      ME_CONFIG_SITE_BASEURL: /db-admin/
+    depends_on:
+      - mongo
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8081/db-admin/ >/dev/null 2>&1 || wget -q --spider http://127.0.0.1:8081/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
   backend:
     build:
       context: .
@@ -101,6 +117,7 @@ services:
     depends_on:
       - backend
       - frontend
+      - mongo-express
 
 
 volumes:

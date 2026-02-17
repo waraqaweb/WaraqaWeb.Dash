@@ -359,8 +359,7 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
   const subtotal = items.reduce((sum, item) => sum + (Number(item.amount || 0) || 0), 0);
 
   const coverage = {
-    strategy: normalizedHoursLimit ? 'cap_hours' : 'full_period',
-    maxHours: normalizedHoursLimit || undefined,
+    strategy: 'full_period',
     waiveTransferFee: false
   };
 

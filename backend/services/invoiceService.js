@@ -4278,6 +4278,24 @@ class InvoiceService {
         } catch (markErr) {
           console.warn('Failed to update Payment status to applied', markErr && markErr.message);
         }
+
+        // Enforce strict DB rule: once settled, coverage cap metadata should not persist.
+        try {
+          const settledStatus = String(updatedInvoice?.status || '').toLowerCase();
+          if (['paid', 'refunded'].includes(settledStatus)) {
+            updatedInvoice.coverage = updatedInvoice.coverage && typeof updatedInvoice.coverage === 'object'
+              ? updatedInvoice.coverage
+              : {};
+            if (updatedInvoice.coverage.maxHours !== undefined || updatedInvoice.coverage.endDate !== undefined) {
+              updatedInvoice.coverage.maxHours = undefined;
+              updatedInvoice.coverage.endDate = undefined;
+              updatedInvoice.markModified('coverage');
+              await updatedInvoice.save();
+            }
+          }
+        } catch (coverageCleanupErr) {
+          console.warn('Failed to clear settled invoice coverage cap fields', coverageCleanupErr && coverageCleanupErr.message);
+        }
       } catch (procErr) {
         // Handle already-settled invoice gracefully: mark payment failed and return duplicate-like response
         try {

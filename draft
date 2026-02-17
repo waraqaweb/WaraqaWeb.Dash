@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Notification sound and other improvements"
+git commit -m "repeated payload fix"
 git push origin main
 
 
@@ -17,6 +17,8 @@ chmod +x deploy/scripts/deploy.sh
 ./deploy/scripts/deploy.sh all
 
 
+
+ssl setup on dashboard
 -----------------------------------
 and if I click next show all results in the future this is 
 

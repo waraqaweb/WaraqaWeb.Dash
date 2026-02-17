@@ -31,6 +31,8 @@ const NotificationCenter = () => {
   const initializedNotificationsRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set());
   const classAlertedKeysRef = useRef(new Set());
+  const notificationsInFlightRef = useRef(false);
+  const classAlertsInFlightRef = useRef(false);
   const [notificationPrefs, setNotificationPrefs] = useState(() => getNotificationPreferences(user?._id));
   const [resolveUninvoicedState, setResolveUninvoicedState] = useState({
     loading: false,
@@ -78,9 +80,12 @@ const NotificationCenter = () => {
     if (!notificationPrefs.liveAlertsEnabled) return undefined;
 
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
       fetchNotifications({ showLoading: false });
       checkClassStartAlerts();
-    }, 10000);
+    }, 30000);
 
     return () => clearInterval(interval);
   }, [user, notificationPrefs.liveAlertsEnabled]);
@@ -92,7 +97,9 @@ const NotificationCenter = () => {
   }, [isOpen, user?.role, notifications]);
 
   const fetchNotifications = async ({ showLoading = true } = {}) => {
+    if (notificationsInFlightRef.current) return;
     if (showLoading) setLoading(true);
+    notificationsInFlightRef.current = true;
     try {
       const res = await api.get('/notifications');
       const nextNotifications = Array.isArray(res.data.notifications) ? res.data.notifications : [];
@@ -132,22 +139,29 @@ const NotificationCenter = () => {
     } catch (err) {
       console.error('Error fetching notifications:', err);
     } finally {
+      notificationsInFlightRef.current = false;
       if (showLoading) setLoading(false);
     }
   };
 
   const checkClassStartAlerts = async () => {
+    if (classAlertsInFlightRef.current) return;
+    classAlertsInFlightRef.current = true;
     try {
       if (!notificationPrefs.liveAlertsEnabled) return;
       const role = user?.role;
       if (!['admin', 'teacher', 'guardian'].includes(role)) return;
 
       const now = Date.now();
+      const rangeStart = new Date(now - 5 * 60 * 1000).toISOString();
+      const rangeEnd = new Date(now + 15 * 60 * 1000).toISOString();
       const res = await api.get('/classes', {
         params: {
           filter: 'upcoming',
           page: 1,
-          limit: 120,
+          limit: 30,
+          dateFrom: rangeStart,
+          dateTo: rangeEnd,
         },
       });
 
@@ -189,6 +203,8 @@ const NotificationCenter = () => {
       }
     } catch (err) {
       // ignore class alert failures to avoid interrupting notification center
+    } finally {
+      classAlertsInFlightRef.current = false;
     }
   };
 

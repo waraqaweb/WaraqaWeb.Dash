@@ -186,6 +186,18 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     });
   }, [invoice]);
 
+  const isFeeOnlyInvoice = useMemo(() => {
+    if (!invoice) return false;
+    const items = Array.isArray(invoice.items) ? invoice.items.filter(Boolean) : [];
+    if (items.length > 0) return false;
+
+    const subtotalValue = Number(invoice?.subtotal || 0);
+    const totalValue = Number(invoice?.total ?? invoice?.adjustedTotal ?? invoice?.amount ?? 0);
+    return subtotalValue <= 0 && totalValue > 0;
+  }, [invoice]);
+
+  const hideClassBreakdown = isRefillOnlyInvoice || isFeeOnlyInvoice;
+
   // Admin filters
   const [maxHours, setMaxHours] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -1702,8 +1714,12 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                         )}
                       </div>
                       <div className="mt-3 border-t border-slate-100 pt-3 text-sm text-slate-600">
-                        {isRefillOnlyInvoice ? (
-                          <p className="text-slate-600">Hour refill purchase — no classes yet</p>
+                        {hideClassBreakdown ? (
+                          <p className="text-slate-600">
+                            {isRefillOnlyInvoice
+                              ? 'Hour refill purchase — no classes yet'
+                              : 'Fee-only invoice — no class sessions billed'}
+                          </p>
                         ) : (
                           <>
                             <p>Classes: <span className="font-medium text-slate-900">{filteredClasses.length}</span></p>
@@ -1719,15 +1735,15 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                   <div className="flex flex-col gap-2 text-xs tracking-wide text-slate-500">
                     <p className="font-semibold uppercase text-slate-500">Classes &amp; coverage</p>
                     <div className="flex flex-wrap items-center gap-3 text-slate-500">
-                      {!isRefillOnlyInvoice ? (
+                      {!hideClassBreakdown ? (
                         <div className="flex flex-col text-[13px] leading-tight">
                           <span className="font-semibold text-slate-900">{filteredClasses.length} classes</span>
                           <span className="text-slate-600">{subtotalHoursDisplay}h at ${guardianRate.toFixed(2)} / hr</span>
                         </div>
                       ) : (
                         <div className="flex flex-col text-[13px] leading-tight">
-                          <span className="font-semibold text-slate-900">No classes yet</span>
-                          <span className="text-slate-600">Hour refill only</span>
+                          <span className="font-semibold text-slate-900">No class sessions</span>
+                          <span className="text-slate-600">{isRefillOnlyInvoice ? 'Hour refill only' : 'Fee-only invoice'}</span>
                         </div>
                       )}
                       {/* Only admins can view or edit the waive-transfer-fee control */}
@@ -1764,7 +1780,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                   <div className="mt-4 space-y-4 text-sm text-slate-600">
                     <div className="grid gap-3 sm:grid-cols-2">
                       <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
-                        <span>Max class hours</span>
+                        <span>Coverage cap (hours)</span>
                         <input
                           type="number"
                           value={maxHours}
@@ -1877,7 +1893,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
             </div>
           </div>
 
-          {!isRefillOnlyInvoice && (
+          {!hideClassBreakdown && (
             <div className="px-8 pb-8">
               <div className="flex h-full w-full flex-col rounded-3xl border border-slate-200 bg-white shadow-sm">
                 <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">

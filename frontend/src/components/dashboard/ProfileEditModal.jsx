@@ -42,8 +42,8 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
-  // keep password input separate so browser autofill doesn't populate the saved form value
-  const [passwordInput, setPasswordInput] = useState('');
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const [resetStatus, setResetStatus] = useState(null);
 
   useEffect(() => {
     if (targetUser) {
@@ -121,8 +121,7 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
       }
 
       setForm(formData);
-      // ensure password input is always empty when opening the modal
-      setPasswordInput('');
+      setResetStatus(null);
     } else {
       setForm(null);
     }
@@ -284,7 +283,7 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
   const adminOnly = ['email','role','isActive','isEmailVerified','guardianInfo.hourlyRate','guardianInfo.transferFee','totalHours','lastLogin','loginAttempts','lockUntil'];
     // monthlyHours and bonus removed from modal editing; they are read-only on the profile page
     // bankDetails require special rules: admins can edit, users can edit their own only if they are not guardians
-  const selfEditable = ['firstName','lastName','password','phone','address','profilePicture','dateOfBirth','gender','timezone','notifications','paymentMethod','qualifications','bio','courses','instapayName','googleMeetLink'];
+  const selfEditable = ['firstName','lastName','phone','address','profilePicture','dateOfBirth','gender','timezone','notifications','paymentMethod','qualifications','bio','courses','instapayName','googleMeetLink'];
     // allow users to edit their spoken languages
     selfEditable.push('spokenLanguages');
     // Fields that are strictly teacher-only and must not be editable when editing a guardian
@@ -483,8 +482,7 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
       // Email (admin only)
       if (form.email !== undefined && canEdit('email')) payload.email = form.email;
       
-  // Password (only if user entered a new password)
-  if (passwordInput && passwordInput.trim() && canEdit('password')) payload.password = passwordInput;
+  // Password changes are handled by a dedicated change/reset flow.
       
       // address
       if (form.address && canEdit('address')) payload.address = form.address;
@@ -608,6 +606,22 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
     }
   };
 
+  const handleResetPassword = async () => {
+    if (!form?._id || !isAdmin) return;
+    const confirmed = window.confirm('Reset password to default (waraqa123)?');
+    if (!confirmed) return;
+    try {
+      setResettingPassword(true);
+      setResetStatus(null);
+      const res = await api.post(`/users/${form._id}/reset-password`);
+      setResetStatus({ type: 'success', message: res.data?.message || 'Password reset to default.' });
+    } catch (err) {
+      setResetStatus({ type: 'error', message: err.response?.data?.message || 'Failed to reset password' });
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black bg-opacity-40" onClick={() => onClose && onClose()} />
@@ -697,8 +711,31 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                   </div>
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700">Password</label>
-                  <input name="new-password" autoComplete="new-password" type="password" className="w-full min-w-0 border rounded px-2 py-1" value={passwordInput} onChange={(e)=>setPasswordInput(e.target.value)} disabled={!canEdit('password')} placeholder="Leave blank to keep current" />
+                  {isAdmin ? (
+                    <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium text-amber-900">Reset password</p>
+                          <p className="text-xs text-amber-800">Resets to default: waraqa123</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-secondary text-sm"
+                          onClick={handleResetPassword}
+                          disabled={resettingPassword}
+                        >
+                          {resettingPassword ? 'Resetting...' : 'Reset Password'}
+                        </button>
+                      </div>
+                      {resetStatus?.message ? (
+                        <p className={`mt-2 text-xs ${resetStatus.type === 'success' ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {resetStatus.message}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500">To change your password, use the Change Password action on the Profile page.</p>
+                  )}
                 </div>
               </div>
 

@@ -2588,6 +2588,37 @@ router.post('/:guardianId/students', [
 });
 
 /**
+ * Reset user password (admin only)
+ * POST /api/users/:id/reset-password
+ */
+router.post('/:id/reset-password', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const requested = typeof req.body?.password === 'string' ? req.body.password.trim() : '';
+    const newPassword = requested || 'waraqa123';
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    const user = await User.findById(userId).select('+password');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    user.password = newPassword;
+    user.passwordResetToken = null;
+    user.passwordResetExpires = null;
+    await user.save();
+
+    await user.resetLoginAttempts();
+
+    return res.json({ message: 'Password reset to default.' });
+  } catch (error) {
+    console.error('Reset user password error:', error);
+    return res.status(500).json({ message: 'Failed to reset password', error: error.message });
+  }
+});
+
+/**
  * Update a student in a guardian's account
  * PUT /api/users/:guardianId/students/:studentId
  */

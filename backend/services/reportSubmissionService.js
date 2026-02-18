@@ -239,6 +239,32 @@ class ReportSubmissionService {
 
       await classDoc.save();
 
+      try {
+        const notificationService = require('./notificationService');
+        const teacherId = classDoc.teacher;
+        if (teacherId) {
+          const subjectLabel = classDoc?.subject ? `${classDoc.subject}` : 'Class';
+          const expiresLabel = dayjs(expiresAt).format('MMM DD, YYYY hh:mm A');
+          await notificationService.createNotification({
+            userId: teacherId,
+            title: 'Report deadline extended',
+            message: `${subjectLabel} report is extended until ${expiresLabel}.`,
+            type: 'reminder',
+            relatedTo: 'class',
+            relatedId: classDoc._id,
+            actionRequired: true,
+            actionLink: `/classes/${classDoc._id}/report`,
+            metadata: {
+              kind: 'report_extension',
+              classId: String(classDoc._id),
+              expiresAt: new Date(expiresAt).toISOString(),
+            },
+          });
+        }
+      } catch (notifyErr) {
+        console.warn('Report extension notification failed:', notifyErr?.message || notifyErr);
+      }
+
       return {
         success: true,
         expiresAt,

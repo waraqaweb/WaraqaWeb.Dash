@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "decoration and other edits"
+git commit -m "search classes"
 git push origin main
 
 

@@ -1228,6 +1228,7 @@ const fetchClasses = useCallback(async () => {
         guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
         global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
         search: normalizedSearchTerm || undefined,
+        searchAll: searchMode || undefined,
       }
     );
 
@@ -1313,22 +1314,62 @@ const fetchClasses = useCallback(async () => {
       params.search = normalizedSearchTerm;
     }
 
+    const mergeClasses = (items) => {
+      const map = new Map();
+      (items || []).forEach((c) => {
+        const id = c?._id ? String(c._id) : null;
+        if (id) map.set(id, c);
+      });
+      return Array.from(map.values()).sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+    };
+
     const res = await api.get("/classes", { params, signal: controller.signal });
     if (requestId !== fetchClassesRequestIdRef.current) {
       return;
     }
     const fetchedClasses = res.data.classes || [];
 
+    const apiTotalPages = Number(res.data?.pagination?.totalPages);
+    const normalizedTotalPages = Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1;
+    let resolvedClasses = fetchedClasses;
+
+    if (searchMode && normalizedTotalPages > 1) {
+      const pages = [];
+      for (let page = 2; page <= normalizedTotalPages; page += 1) {
+        pages.push(page);
+      }
+      const pageResults = [];
+      for (const page of pages) {
+        if (requestId !== fetchClassesRequestIdRef.current) {
+          return;
+        }
+        const pageRes = await api.get(
+          "/classes",
+          {
+            params: { ...params, page },
+            signal: controller.signal
+          }
+        );
+        if (requestId !== fetchClassesRequestIdRef.current) {
+          return;
+        }
+        pageResults.push(pageRes.data?.classes || []);
+      }
+      resolvedClasses = mergeClasses([resolvedClasses, ...pageResults].flat());
+      loadedClassPagesRef.current = new Set(pages.concat(1));
+    } else {
+      loadedClassPagesRef.current.add(fetchPage);
+    }
+
     // Backend already sorts by scheduledDate, so no need to sort again
-    setClasses(fetchedClasses);
-    loadedClassPagesRef.current.add(fetchPage);
+    setClasses(resolvedClasses);
     setClassesCorpus((prev) => {
       const map = new Map();
       (prev || []).forEach((c) => {
         const id = c?._id ? String(c._id) : null;
         if (id) map.set(id, c);
       });
-      fetchedClasses.forEach((c) => {
+      resolvedClasses.forEach((c) => {
         const id = c?._id ? String(c._id) : null;
         if (id) map.set(id, c);
       });
@@ -1336,15 +1377,13 @@ const fetchClasses = useCallback(async () => {
       merged.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
       return merged;
     });
-    const apiTotalPages = Number(res.data?.pagination?.totalPages);
-    const normalizedTotalPages = Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1;
     setTotalPages(searchMode ? 1 : normalizedTotalPages);
     setError("");
 
     writeCache(
       cacheKey,
       {
-        classes: fetchedClasses,
+        classes: resolvedClasses,
         totalPages: searchMode ? 1 : normalizedTotalPages,
       },
       { ttlMs: 5 * 60_000, deps: ['classes'] }

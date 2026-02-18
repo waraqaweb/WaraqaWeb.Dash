@@ -349,6 +349,25 @@ class InvoiceService {
     try {
       console.log('🔍 [InvoiceService] Starting zero-hour invoice check...');
 
+      const skippedByReason = new Map();
+      const enqueueSkipped = ({ guardian, reasonCode, reasonLabel, details, actionLink, metadata = {} }) => {
+        if (!guardian?._id) return;
+        const reasonKey = reasonCode || reasonLabel || 'unknown_reason';
+        const existing = skippedByReason.get(reasonKey) || {
+          reasonCode,
+          reasonLabel,
+          details,
+          actionLink,
+          metadata,
+          guardians: []
+        };
+        existing.guardians.push(guardian);
+        if (!existing.reasonLabel && reasonLabel) existing.reasonLabel = reasonLabel;
+        if (!existing.details && details) existing.details = details;
+        if (!existing.actionLink && actionLink) existing.actionLink = actionLink;
+        skippedByReason.set(reasonKey, existing);
+      };
+
       const analyzeGuardianHours = (guardianDoc) => {
         const students = Array.isArray(guardianDoc.guardianInfo?.students)
           ? guardianDoc.guardianInfo.students
@@ -452,7 +471,7 @@ class InvoiceService {
         // If effective total is negative (guardian owes hours) and no future classes exist, create a due-only invoice.
         if (!hasFutureClasses && effectiveTotal === 0) {
           // Do not create invoices for guardians with ZERO balance and NO future classes
-          await notifyInvoiceSkipped({
+          enqueueSkipped({
             guardian,
             reasonCode: 'no_future_classes_zero_balance',
             reasonLabel: 'No future classes and zero balance',
@@ -509,7 +528,7 @@ class InvoiceService {
           await InvoiceService.syncUnpaidInvoiceItems(existingUnpaidInvoice, {
             note: 'Synced unpaid invoice (auto-payg)'
           });
-          await notifyInvoiceSkipped({
+          enqueueSkipped({
             guardian,
             reasonCode: 'existing_unpaid_invoice',
             reasonLabel: 'An unpaid invoice already exists',
@@ -534,7 +553,7 @@ class InvoiceService {
 
           if (remaining > 0.01 || createdWithin48h) {
             console.log(`⏭️  Skipping guardian ${guardian._id} — existing auto-payg invoice ${outstandingAutoInvoice.invoiceNumber} still active (remaining=${remaining})`);
-            await notifyInvoiceSkipped({
+            enqueueSkipped({
               guardian,
               reasonCode: 'existing_auto_payg_invoice',
               reasonLabel: 'An auto-payg invoice is still active',
@@ -596,7 +615,7 @@ class InvoiceService {
 
           // If no future classes and effective total is exactly zero -> skip
           if (!hasFuture && effectiveTotal === 0) {
-            await notifyInvoiceSkipped({
+            enqueueSkipped({
               guardian: guardianDoc,
               reasonCode: 'no_future_classes_zero_balance',
               reasonLabel: 'No future classes and zero balance',
@@ -2888,7 +2907,6 @@ class InvoiceService {
 
       let remaining = coverageHours;
       const paidSet = new Set();
-
       for (const item of sorted) {
         const normalized = normalizeId(item.class);
         if (!normalized) continue;

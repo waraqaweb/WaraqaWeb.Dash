@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "hours coverage cap"
+git commit -m "deployment and salaries page render fix"
 git push origin main
 
 
@@ -23,7 +23,6 @@ cd /opt/waraqa
 git fetch origin main
 git reset --hard origin/main
 docker compose up -d --build frontend
-
 docker compose up -d --build backend
 
 

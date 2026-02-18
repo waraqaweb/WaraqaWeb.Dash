@@ -7,11 +7,14 @@
 
 import React, { useState } from 'react';
 import { SearchProvider } from '../../contexts/SearchContext';
+import { DeleteActionCountdownProvider, useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import Sidebar from './Sidebar';
 import GlobalSearchBar from '../ui/GlobalSearchBar';
+import DeleteCountdownToast from '../ui/DeleteCountdownToast';
 import ImpersonationBanner from '../ui/ImpersonationBanner';
 import SystemVacationBanner from '../ui/SystemVacationBanner';
 import NotificationCenter from '../ui/NotificationCenter';
+import ToastHost from '../ui/ToastHost';
 import { Menu, X } from 'lucide-react';
 
 const VIEW_TITLE_MAP = {
@@ -37,6 +40,21 @@ const formatTitleFromView = (value) => {
   return value
     .replace(/-/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+const DeleteActionCountdownHost = () => {
+  const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds } = useDeleteActionCountdown();
+  return (
+    <DeleteCountdownToast
+      isActive={isActive}
+      countdown={secondsLeft}
+      message={message}
+      error={error}
+      preDelaySeconds={preDelaySeconds}
+      undoSeconds={undoSeconds}
+      onUndo={undo}
+    />
+  );
 };
 
 const DashboardLayoutShell = ({ children, activeView = null, pageTitle }) => {
@@ -120,7 +138,13 @@ const DashboardLayoutShell = ({ children, activeView = null, pageTitle }) => {
 };
 
 const DashboardLayout = ({ provideSearchContext = true, ...props }) => {
-  const content = <DashboardLayoutShell {...props} />;
+  const content = (
+    <DeleteActionCountdownProvider>
+      <DashboardLayoutShell {...props} />
+      <DeleteActionCountdownHost />
+      <ToastHost />
+    </DeleteActionCountdownProvider>
+  );
   if (provideSearchContext) {
     return <SearchProvider>{content}</SearchProvider>;
   }

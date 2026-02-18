@@ -25,6 +25,7 @@ import NextClassCard from '../../components/dashboard/widgets/NextClassCard';
 import PendingReportsList from '../../components/dashboard/widgets/PendingReportsList';
 import FirstClassReminder from '../../components/dashboard/widgets/FirstClassReminder';
 import DashboardChartCard from '../../components/dashboard/widgets/DashboardChartCard';
+import DashboardDecoration from '../../components/dashboard/widgets/DashboardDecoration';
 import {
   ResponsiveContainer,
   LineChart,
@@ -153,10 +154,19 @@ const gregorianToHijriCivil = ({ y, m, d }) => {
   return { year, month, day };
 };
 
-const formatHijriDate = ({ date = new Date(), timeZone, locale }) => {
+const formatHijriDate = ({ date = new Date(), timeZone, locale, offsetDays = 0, offsetByRegion = {} }) => {
   const resolvedLocale = locale || (typeof navigator !== 'undefined' ? navigator.language : 'en-US');
   const resolvedTimeZone = timeZone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined);
   const region = getRegionFromLocale(resolvedLocale) || getRegionFromTimeZone(resolvedTimeZone);
+  const regionKey = region ? String(region).toUpperCase() : null;
+  const appliedOffset = Number(
+    (regionKey && Object.prototype.hasOwnProperty.call(offsetByRegion || {}, regionKey))
+      ? offsetByRegion[regionKey]
+      : offsetDays
+  );
+  const adjustedDate = Number.isFinite(appliedOffset) && appliedOffset !== 0
+    ? new Date(date.getTime() + appliedOffset * 24 * 60 * 60 * 1000)
+    : date;
 
   const candidates = getHijriCalendarCandidates({ region });
   for (const calendar of candidates) {
@@ -169,7 +179,7 @@ const formatHijriDate = ({ date = new Date(), timeZone, locale }) => {
         year: 'numeric',
       });
 
-      const parts = typeof dtf.formatToParts === 'function' ? dtf.formatToParts(date) : null;
+      const parts = typeof dtf.formatToParts === 'function' ? dtf.formatToParts(adjustedDate) : null;
       const dayPart = parts ? parts.find((p) => p.type === 'day')?.value : null;
       const monthPart = parts ? parts.find((p) => p.type === 'month')?.value : null;
       const yearPart = parts ? parts.find((p) => p.type === 'year')?.value : null;
@@ -182,7 +192,7 @@ const formatHijriDate = ({ date = new Date(), timeZone, locale }) => {
 
       return {
         ok: true,
-        formatted: dtf.format(date),
+        formatted: dtf.format(adjustedDate),
         calendar,
         timeZone: resolvedTimeZone,
         region: region || null,
@@ -200,7 +210,7 @@ const formatHijriDate = ({ date = new Date(), timeZone, locale }) => {
 
   // Fallback: civil/tabular Hijri estimate (always available).
   try {
-    const { y, m, d, timeZone: tz } = getGregorianYmdInTimeZone({ date, timeZone: resolvedTimeZone });
+    const { y, m, d, timeZone: tz } = getGregorianYmdInTimeZone({ date: adjustedDate, timeZone: resolvedTimeZone });
     const civil = gregorianToHijriCivil({ y, m, d });
     const monthName = hijriMonthNamesEn[(civil.month || 1) - 1] || 'Hijri';
     const formatted = `${monthName} ${civil.day}, ${civil.year} AH`;
@@ -293,9 +303,41 @@ const MoonPhaseIcon = ({ date = new Date(), size = 56 }) => {
   );
 };
 
-const HijriDateCard = ({ variant = 'card', timeZone, locale }) => {
+const HIJRI_USER_OFFSET_KEY = 'waraqa.hijriUserOffsetDays';
+
+const HijriDateCard = ({ variant = 'card', timeZone, locale, hijriOffset }) => {
+  const [userOffset, setUserOffset] = React.useState(0);
+
+  React.useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(HIJRI_USER_OFFSET_KEY);
+      const parsed = Number(stored);
+      if (Number.isFinite(parsed)) {
+        setUserOffset(parsed);
+      }
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, []);
+
+  const updateUserOffset = (nextValue) => {
+    const safeValue = Number.isFinite(nextValue) ? Math.max(-2, Math.min(2, nextValue)) : 0;
+    setUserOffset(safeValue);
+    try {
+      window.localStorage.setItem(HIJRI_USER_OFFSET_KEY, String(safeValue));
+    } catch (e) {
+      // ignore storage errors
+    }
+  };
+
   const now = new Date();
-  const hijri = formatHijriDate({ date: now, timeZone, locale });
+  const hijri = formatHijriDate({
+    date: now,
+    timeZone,
+    locale,
+    offsetDays: (hijriOffset?.default ?? 0) + userOffset,
+    offsetByRegion: hijriOffset?.byRegion || {},
+  });
   if (!hijri.ok) return null;
 
   if (variant === 'inline') {
@@ -315,6 +357,30 @@ const HijriDateCard = ({ variant = 'card', timeZone, locale }) => {
       <div className="mt-2 text-xs font-medium tracking-wide text-muted-foreground">Hijri date</div>
       <div className="mt-1 text-lg font-semibold text-foreground leading-snug">{hijri.formatted}</div>
       <div className="mt-1 text-sm text-muted-foreground">{formatDateDDMMMYYYY(now)}</div>
+      <div className="mt-3 flex items-center justify-center gap-2 text-xs">
+        <span className="text-muted-foreground">Adjust</span>
+        <button
+          type="button"
+          onClick={() => updateUserOffset(userOffset - 1)}
+          className="rounded-full border border-border px-2 py-0.5 text-foreground hover:bg-muted/40"
+        >
+          -1
+        </button>
+        <button
+          type="button"
+          onClick={() => updateUserOffset(0)}
+          className="rounded-full border border-border px-2 py-0.5 text-foreground hover:bg-muted/40"
+        >
+          0
+        </button>
+        <button
+          type="button"
+          onClick={() => updateUserOffset(userOffset + 1)}
+          className="rounded-full border border-border px-2 py-0.5 text-foreground hover:bg-muted/40"
+        >
+          +1
+        </button>
+      </div>
       <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs">
         {hijri.estimated && (
           <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-muted-foreground">
@@ -346,6 +412,18 @@ const DashboardHome = ({ isActive = true }) => {
   const { user, isAdmin, isTeacher, isGuardian, isStudent } = useAuth();
   const [compactAdmin, setCompactAdmin] = React.useState(false);
   const [requestsTab, setRequestsTab] = React.useState('teachers');
+  const [hijriOffset, setHijriOffset] = React.useState({ default: 0, byRegion: {} });
+  const [decorationConfig, setDecorationConfig] = useState({
+    enabled: true,
+    offsetX: 0,
+    offsetY: 0,
+    items: {
+      crescents: { count: 2, scale: 1 },
+      stars: { count: 4, scale: 1 },
+      dots: { count: 6, scale: 1 },
+      lanterns: { count: 3, scale: 0.8 },
+    },
+  });
 
   const userRole = user?.role;
 
@@ -430,6 +508,49 @@ const DashboardHome = ({ isActive = true }) => {
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .get('/settings/hijri-offset')
+      .then((res) => {
+        if (!active) return;
+        const value = res?.data?.setting?.value;
+        if (value && typeof value === 'object') {
+          setHijriOffset(value);
+        }
+      })
+      .catch(() => {
+        // keep defaults
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .get('/settings/dashboardDecoration')
+      .then((res) => {
+        if (!active) return;
+        const value = res?.data?.setting?.value;
+        if (value && typeof value === 'object') {
+          setDecorationConfig({
+            enabled: true,
+            offsetX: Number(value.offsetX || 0),
+            offsetY: Number(value.offsetY || 0),
+            items: value.items || undefined,
+          });
+        }
+      })
+      .catch(() => {
+        // keep defaults
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Refresh dashboard stats when other screens (e.g., Class Report modal) signal an update
   useEffect(() => {
@@ -858,7 +979,7 @@ const DashboardHome = ({ isActive = true }) => {
                         )}
                       </div>
                   <div className="flex items-center space-x-3">
-                    <HijriDateCard variant="inline" timeZone={user?.timezone} />
+                    <HijriDateCard variant="inline" timeZone={user?.timezone} hijriOffset={hijriOffset} />
                     <div className="text-sm text-muted-foreground">
                       {stats.data && stats.data.timestamps && stats.data.timestamps.computedAt && (() => {
                         const d = new Date(stats.data.timestamps.computedAt);
@@ -1238,7 +1359,7 @@ const DashboardHome = ({ isActive = true }) => {
             </div>
           </div>
           <div className="lg:col-span-1">
-            <HijriDateCard timeZone={user?.timezone} />
+            <HijriDateCard timeZone={user?.timezone} hijriOffset={hijriOffset} />
           </div>
         </div>
 
@@ -1304,25 +1425,22 @@ const DashboardHome = ({ isActive = true }) => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           <div className="lg:col-span-1">
             <NextClassCard nextClass={data.nextClass} />
+            <div className="mt-4 rounded-2xl bg-muted/30 p-4 shadow-sm flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">Monthly Follow-up Meeting</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTeacherSyncModal(true)}
+                className="inline-flex items-center justify-center rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background shadow"
+              >
+                Schedule
+              </button>
+            </div>
           </div>
 
           <div className="lg:col-span-2">
             <div className="space-y-4">
-              <div className="rounded-2xl border border-[#FACC15] bg-[#FFF9DB] p-4 shadow-sm flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="text-[11px] uppercase tracking-[0.25em] text-[#c0680e]">Monthly sync</p>
-                  <div className="text-sm font-semibold text-[#2f2001] truncate">Align with the admin team</div>
-                  <div className="text-xs text-[#5f4506] truncate">Use this yellow slot for escalations or planning.</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowTeacherSyncModal(true)}
-                  className="inline-flex items-center justify-center rounded-full bg-[#2C736C] px-4 py-1.5 text-xs font-semibold text-white shadow"
-                >
-                  Book sync
-                </button>
-              </div>
-
               {((stats.data?.recentActivity || stats.data?.recentActivities || []).length > 0) && (
                 <RecentActivityCard />
               )}
@@ -1386,7 +1504,7 @@ const DashboardHome = ({ isActive = true }) => {
 
           {/* Force placement: start at col 3 / row 1 so it can span both rows */}
           <div className="lg:col-start-3 lg:row-start-1 lg:row-span-2 h-full">
-            <HijriDateCard timeZone={user?.timezone} />
+            <HijriDateCard timeZone={user?.timezone} hijriOffset={hijriOffset} />
           </div>
 
           <div className="lg:col-span-2 lg:row-span-1 rounded-2xl border border-yellow-300/70 bg-yellow-50 p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between shadow-sm">
@@ -1574,7 +1692,7 @@ const DashboardHome = ({ isActive = true }) => {
           </div>
         </div>
         <div className="lg:col-span-1">
-          <HijriDateCard timeZone={user?.timezone} />
+          <HijriDateCard timeZone={user?.timezone} hijriOffset={hijriOffset} />
         </div>
       </div>
 
@@ -1591,6 +1709,13 @@ const DashboardHome = ({ isActive = true }) => {
   if (stats.loading) {
     return (
       <div className="p-4 sm:p-6">
+        <DashboardDecoration
+          enabled={decorationConfig.enabled}
+          offsetX={decorationConfig.offsetX}
+          offsetY={decorationConfig.offsetY}
+          hoverActive={true}
+          items={decorationConfig.items}
+        />
         <div className="animate-pulse space-y-6">
           <div className="h-32 bg-muted rounded-lg"></div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
@@ -1607,6 +1732,13 @@ const DashboardHome = ({ isActive = true }) => {
   if (stats.error) {
     return (
       <div className="p-4 sm:p-6">
+        <DashboardDecoration
+          enabled={decorationConfig.enabled}
+          offsetX={decorationConfig.offsetX}
+          offsetY={decorationConfig.offsetY}
+          hoverActive={true}
+          items={decorationConfig.items}
+        />
         <div className="bg-card rounded-lg border border-border p-6">
           <h3 className="text-lg font-semibold text-foreground mb-2">Failed to load dashboard</h3>
           <p className="text-sm text-muted-foreground mb-4">{stats.error}</p>
@@ -1622,6 +1754,13 @@ const DashboardHome = ({ isActive = true }) => {
   // ----- Final render (role-based) -----
   return (
     <div className="p-3 sm:p-4">
+      <DashboardDecoration
+        enabled={decorationConfig.enabled}
+        offsetX={decorationConfig.offsetX}
+        offsetY={decorationConfig.offsetY}
+        hoverActive={true}
+        items={decorationConfig.items}
+      />
       {latestFeedback && (
         <div className="mb-6 rounded-2xl border border-border bg-card p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">

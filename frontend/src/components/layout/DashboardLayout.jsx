@@ -68,6 +68,7 @@ const DashboardLayoutShell = ({ children, activeView = null, pageTitle }) => {
     ? pageTitle
     : (VIEW_TITLE_MAP[activeView] || formatTitleFromView(activeView));
 
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       {/* Mobile backdrop: keeps sidebar readable, dismissible, and blocks content interaction */}

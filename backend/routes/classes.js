@@ -180,6 +180,25 @@ function enrichClassObj(obj, now = new Date()) {
   return c;
 }
 
+async function buildReportSubmissionForPastClass(scheduledDate, durationMinutes) {
+  if (!scheduledDate || !Number.isFinite(durationMinutes)) return null;
+  const ReportSubmissionService = require('../services/reportSubmissionService');
+  const settings = await ReportSubmissionService.getSubmissionSettings();
+  const teacherDeadline = ReportSubmissionService.calculateTeacherDeadline(
+    scheduledDate,
+    durationMinutes,
+    settings.teacherWindowHours
+  );
+
+  return {
+    status: 'open',
+    teacherDeadline,
+    adminExtension: {
+      granted: false,
+    },
+  };
+}
+
 function isUnknownStudentName(name) {
   const s = String(name || '').trim().toLowerCase();
   return !s || s === 'unknown student';
@@ -650,7 +669,7 @@ async function buildChangePolicy(classDoc, user) {
   const response = {
     ...defaultResponse,
     stats,
-    withinThreeHours,
+    withinThreeHours: role === 'guardian' ? withinThreeHours : false,
     pendingReschedule: sanitizePendingReschedule(pending, role),
   };
 
@@ -667,9 +686,11 @@ async function buildChangePolicy(classDoc, user) {
   }
 
   if (notUpcoming) {
-    response.reasons.reschedule = "Class start time has passed.";
     response.reasons.cancel = "Class start time has passed.";
-    return response;
+    if (role === "guardian") {
+      response.reasons.reschedule = "Class start time has passed.";
+      return response;
+    }
   }
 
   if (pending) {
@@ -2004,6 +2025,17 @@ router.post(
         const scheduledUtc = scheduledDate ? (tzUtils.toUtc ? tzUtils.toUtc(scheduledDate, tzUsed) : new Date(scheduledDate)) : null;
         console.log("Scheduled UTC:", scheduledUtc);
 
+        let reportSubmission = null;
+        const scheduledEnd = scheduledUtc
+          ? new Date(scheduledUtc.getTime() + (Number(duration || 60) * 60000))
+          : null;
+        if (scheduledEnd && scheduledEnd.getTime() <= Date.now()) {
+          reportSubmission = await buildReportSubmissionForPastClass(
+            scheduledUtc,
+            Number(duration || 60)
+          );
+        }
+
         const newClass = new Class({
           title, description, subject, teacher, student: studentForClass,
           scheduledDate: scheduledUtc,
@@ -2014,6 +2046,7 @@ router.post(
           materials: Array.isArray(materials) ? materials : (materials ? [materials] : []),
           createdBy: req.user._id,
           status: "scheduled",
+          ...(reportSubmission ? { reportSubmission } : {}),
         });
 
         console.log("New class object:", JSON.stringify(newClass.toObject(), null, 2));
@@ -2342,6 +2375,12 @@ router.post(
         return res.status(400).json({ message: "Invalid duration supplied" });
       }
 
+      let reportSubmission = null;
+      const scheduledEnd = new Date(scheduledUtc.getTime() + (durationMinutes * 60000));
+      if (scheduledEnd.getTime() <= Date.now()) {
+        reportSubmission = await buildReportSubmissionForPastClass(scheduledUtc, durationMinutes);
+      }
+
       const baseMaterials = Array.isArray(sourceClass.materials)
         ? sourceClass.materials
             .filter((mat) => mat && mat.name && mat.url)
@@ -2386,6 +2425,7 @@ router.post(
         materials,
         createdBy: req.user._id,
         status: "scheduled",
+        ...(reportSubmission ? { reportSubmission } : {}),
       });
 
       await duplicateClass.save();
@@ -2455,20 +2495,39 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
         }
       }
 
+      const resolvedScheduledDate = updates.scheduledDate ? new Date(updates.scheduledDate) : classDoc.scheduledDate;
+      const resolvedDuration = (typeof updates.duration !== "undefined") ? Number(updates.duration) : classDoc.duration;
+
       const updatePayload = {
         title: updates.title,
         description: updates.description,
         subject: updates.subject,
         teacher: updates.teacher,
         student: resolvedStudent,
-        scheduledDate: updates.scheduledDate ? new Date(updates.scheduledDate) : classDoc.scheduledDate,
-        duration: (typeof updates.duration !== "undefined") ? Number(updates.duration) : classDoc.duration,
+        scheduledDate: resolvedScheduledDate,
+        duration: resolvedDuration,
         timezone: updates.timezone || classDoc.timezone,
         meetingLink: updates.meetingLink,
         materials: Array.isArray(updates.materials) ? updates.materials : classDoc.materials,
         lastModifiedBy: req.user._id,
         lastModifiedAt: new Date(),
       };
+
+      const shouldReopenReportWindow = updates.scheduledDate
+        && !classDoc.classReport?.submittedAt
+        && resolvedScheduledDate instanceof Date
+        && Number.isFinite(resolvedScheduledDate.getTime())
+        && new Date(resolvedScheduledDate.getTime() + (Number(resolvedDuration || 0) * 60000)).getTime() <= Date.now();
+
+      if (shouldReopenReportWindow) {
+        const reportSubmission = await buildReportSubmissionForPastClass(
+          resolvedScheduledDate,
+          Number(resolvedDuration || 0)
+        );
+        if (reportSubmission) {
+          updatePayload.reportSubmission = reportSubmission;
+        }
+      }
 
       const updated = await Class.findByIdAndUpdate(req.params.id, updatePayload, { new: true, runValidators: true }).lean();
       

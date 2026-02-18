@@ -19,6 +19,18 @@ const KNOWN_DEFAULTS = {
   admin_extension_hours: 24,
   whiteboardScreenshotRetentionDays: 90,
   requestsVisibility: 'all_users',
+  hijriOffsetDays: { default: 0, byRegion: {} },
+  dashboardDecoration: {
+    enabled: true,
+    offsetX: 0,
+    offsetY: 0,
+    items: {
+      crescents: { count: 2, scale: 1 },
+      stars: { count: 4, scale: 1 },
+      dots: { count: 6, scale: 1 },
+      lanterns: { count: 3, scale: 0.8 },
+    },
+  },
   // add other well-known setting defaults here as needed
 };
 
@@ -27,6 +39,64 @@ const REQUESTS_VISIBILITY_ALLOWED = ['admin_only', 'admin_teacher', 'all_users']
 const normalizeRequestsVisibility = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   return REQUESTS_VISIBILITY_ALLOWED.includes(normalized) ? normalized : 'all_users';
+};
+
+const HIJRI_OFFSET_KEY = 'hijriOffsetDays';
+const normalizeHijriOffsetValue = (value) => {
+  const base = value && typeof value === 'object' ? value : {};
+  const defaultOffset = Number(base.default ?? base.defaultOffset ?? 0);
+  const byRegionRaw = base.byRegion && typeof base.byRegion === 'object' ? base.byRegion : {};
+  const byRegion = {};
+  Object.keys(byRegionRaw).forEach((key) => {
+    const cleaned = String(key || '').trim().toUpperCase();
+    if (!cleaned) return;
+    const offset = Number(byRegionRaw[key]);
+    if (Number.isFinite(offset)) {
+      byRegion[cleaned] = offset;
+    }
+  });
+
+  return {
+    default: Number.isFinite(defaultOffset) ? defaultOffset : 0,
+    byRegion,
+  };
+};
+
+const DASHBOARD_DECORATION_KEY = 'dashboardDecoration';
+const normalizeDashboardDecorationValue = (value) => {
+  const base = value && typeof value === 'object' ? value : {};
+  const offsetX = Number(base.offsetX ?? 0);
+  const offsetY = Number(base.offsetY ?? 0);
+  const items = base.items && typeof base.items === 'object' ? base.items : {};
+  const defaultEnabled = KNOWN_DEFAULTS.dashboardDecoration?.enabled ?? true;
+  const withDefaults = (key, defaults) => {
+    const item = items[key] && typeof items[key] === 'object' ? items[key] : {};
+    const rawCount = Number(item.count ?? defaults.count);
+    const rawScale = Number(item.scale ?? defaults.scale);
+    return {
+      count: Number.isFinite(rawCount) ? Math.max(0, Math.min(12, Math.round(rawCount))) : defaults.count,
+      scale: Number.isFinite(rawScale) ? Math.max(0.3, Math.min(2, rawScale)) : defaults.scale,
+    };
+  };
+
+  const defaults = KNOWN_DEFAULTS.dashboardDecoration?.items || {
+    crescents: { count: 2, scale: 1 },
+    stars: { count: 4, scale: 1 },
+    dots: { count: 6, scale: 1 },
+    lanterns: { count: 3, scale: 0.8 },
+  };
+
+  return {
+    enabled: typeof base.enabled === 'boolean' ? base.enabled : Boolean(defaultEnabled),
+    offsetX: Number.isFinite(offsetX) ? offsetX : 0,
+    offsetY: Number.isFinite(offsetY) ? offsetY : 0,
+    items: {
+      crescents: withDefaults('crescents', defaults.crescents),
+      stars: withDefaults('stars', defaults.stars),
+      dots: withDefaults('dots', defaults.dots),
+      lanterns: withDefaults('lanterns', defaults.lanterns),
+    },
+  };
 };
 
 // Public branding info (logo, title, slogan) — accessible without admin auth so UI can show branding
@@ -157,6 +227,75 @@ router.get('/requestsVisibility', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('Failed to fetch requests visibility', err);
     return res.status(500).json({ message: 'Failed to fetch requests visibility' });
+  }
+});
+
+// Getter for Hijri offset settings (authenticated users)
+router.get('/hijri-offset', authenticateToken, async (req, res) => {
+  try {
+    const s = await Setting.findOne({ key: HIJRI_OFFSET_KEY }).lean();
+    const value = normalizeHijriOffsetValue(s?.value ?? KNOWN_DEFAULTS.hijriOffsetDays);
+    return res.json({
+      success: true,
+      setting: {
+        key: HIJRI_OFFSET_KEY,
+        value,
+      },
+    });
+  } catch (err) {
+    console.error('Failed to fetch Hijri offset setting', err);
+    return res.status(500).json({ message: 'Failed to fetch Hijri offset setting' });
+  }
+});
+
+// Getter for dashboard decoration (authenticated users)
+router.get('/dashboardDecoration', authenticateToken, async (req, res) => {
+  try {
+    const s = await Setting.findOne({ key: DASHBOARD_DECORATION_KEY }).lean();
+    const value = normalizeDashboardDecorationValue(s?.value ?? KNOWN_DEFAULTS.dashboardDecoration);
+    return res.json({
+      success: true,
+      setting: {
+        key: DASHBOARD_DECORATION_KEY,
+        value,
+      },
+    });
+  } catch (err) {
+    console.error('Failed to fetch dashboard decoration setting', err);
+    return res.status(500).json({ message: 'Failed to fetch dashboard decoration setting' });
+  }
+});
+
+// Update dashboard decoration (admin)
+router.put('/dashboardDecoration', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const value = normalizeDashboardDecorationValue(req.body?.value ?? {});
+    const s = await Setting.findOneAndUpdate(
+      { key: DASHBOARD_DECORATION_KEY },
+      { value },
+      { upsert: true, new: true }
+    );
+    return res.json({ success: true, setting: s });
+  } catch (err) {
+    console.error('Failed to update dashboard decoration setting', err);
+    return res.status(500).json({ message: 'Failed to update dashboard decoration setting' });
+  }
+});
+
+// Update Hijri offset settings (admin only)
+router.put('/hijri-offset', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const incoming = req.body?.value ?? req.body ?? {};
+    const value = normalizeHijriOffsetValue(incoming);
+    const s = await Setting.findOneAndUpdate(
+      { key: HIJRI_OFFSET_KEY },
+      { value },
+      { upsert: true, new: true }
+    );
+    return res.json({ success: true, setting: s });
+  } catch (err) {
+    console.error('Failed to update Hijri offset setting', err);
+    return res.status(500).json({ message: 'Failed to update Hijri offset setting' });
   }
 });
 

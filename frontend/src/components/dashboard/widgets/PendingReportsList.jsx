@@ -1,20 +1,23 @@
 import React from 'react';
+import { FileText } from 'lucide-react';
 
-const formatClassDate = (d) => {
-  if (!d) return '—';
+const formatClassParts = (d) => {
+  if (!d) return { timeLabel: '—', dateLabel: '—' };
   const date = typeof d === 'string' || typeof d === 'number' ? new Date(d) : d;
-  if (isNaN(date.getTime())) return '—';
+  if (isNaN(date.getTime())) return { timeLabel: '—', dateLabel: '—' };
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const weekday = days[date.getDay()];
   const day = String(date.getDate()).padStart(2, '0');
   const month = months[date.getMonth()];
-  const year = date.getFullYear();
   let hour = date.getHours();
   const minute = String(date.getMinutes()).padStart(2, '0');
   const ampm = hour >= 12 ? 'PM' : 'AM';
   hour = hour % 12 || 12;
-  return `${weekday}, ${day} ${month} ${year} ${hour}:${minute} ${ampm}`;
+  return {
+    timeLabel: `${hour}:${minute} ${ampm}`,
+    dateLabel: `${weekday}, ${day} ${month}`,
+  };
 };
 
 const PendingReportsList = ({ reports = [], onOpen }) => {
@@ -88,7 +91,15 @@ const PendingReportsList = ({ reports = [], onOpen }) => {
     }
   }
 
-  const visible = deduped.filter((r) => statusFor(r) !== 'submitted');
+  const visible = deduped
+    .filter((r) => statusFor(r) !== 'submitted')
+    .sort((a, b) => {
+      const aWhen = a.scheduledDate ? new Date(a.scheduledDate) : (a.startTime ? new Date(a.startTime) : null);
+      const bWhen = b.scheduledDate ? new Date(b.scheduledDate) : (b.startTime ? new Date(b.startTime) : null);
+      const aTime = aWhen && !isNaN(aWhen.getTime()) ? aWhen.getTime() : 0;
+      const bTime = bWhen && !isNaN(bWhen.getTime()) ? bWhen.getTime() : 0;
+      return aTime - bTime;
+    });
   if (visible.length === 0) {
     return <div className="text-sm text-muted-foreground">No pending reports.</div>;
   }
@@ -96,46 +107,56 @@ const PendingReportsList = ({ reports = [], onOpen }) => {
   return (
     <div className="max-h-[420px] overflow-y-auto pr-2">
       <div className="space-y-2">
-      {visible.slice(0, 50).map((r) => {
+      {visible.slice(0, 50).map((r, index) => {
         const id = r._id || r.id || Math.random();
         const when = r.scheduledDate ? new Date(r.scheduledDate) : (r.startTime ? new Date(r.startTime) : null);
-        const timeLabel = when ? formatClassDate(when) : (r.time || '—');
+        const whenParts = when ? formatClassParts(when) : { timeLabel: '—', dateLabel: '—' };
         const status = statusFor(r);
+        const lastLessonTopic = r.previousReport?.lessonTopic || r.classReport?.lessonTopic || null;
+        const detailParts = [r.duration ? `${r.duration} min` : null, lastLessonTopic].filter(Boolean);
 
-        const rowAccent = status === 'open'
-          ? 'border-violet-200 bg-violet-50/50'
-          : status === 'overdue'
-            ? 'border-amber-200 bg-amber-50/50'
-            : 'border-yellow-200 bg-yellow-50/50';
+        const pastelPalette = [
+          'bg-rose-100/80',
+          'bg-amber-100/80',
+          'bg-lime-100/80',
+          'bg-sky-100/80',
+          'bg-violet-100/80',
+          'bg-teal-100/80',
+        ];
+        const rowAccent = pastelPalette[index % pastelPalette.length];
 
         return (
-          <div key={id} className={`p-3 rounded-xl border ${rowAccent} hover:bg-muted/60 transition-colors flex items-start gap-3`}>
-            <div className="flex-1 min-w-0">
+          <div key={id} className={`p-3 rounded-xl ${rowAccent} shadow-sm hover:shadow-md transition-shadow grid grid-cols-[auto,1fr,auto] items-center gap-3`}>
+            <div className="text-xs text-muted-foreground">
+              <div className="text-sm font-semibold text-foreground tabular-nums">{whenParts.timeLabel}</div>
+              <div className="text-[11px] text-muted-foreground">{whenParts.dateLabel}</div>
+            </div>
+
+            <div className="min-w-0">
               <div className="text-sm font-semibold truncate">{classLabel(r)}</div>
-              <div className="text-xs text-muted-foreground">{timeLabel}</div>
-              <div className="text-xs text-muted-foreground flex items-center gap-2 mt-1">
-                <span>{r.isRecurring ? 'Recurring' : ''}</span>
-                <span>{r.duration ? `${r.duration} min` : ''}</span>
-                {r.subject && <span>• {r.subject}</span>}
+              <div className="text-xs text-muted-foreground truncate">
+                {detailParts.length ? detailParts.join(' • ') : (r.duration ? `${r.duration} min` : '—')}
               </div>
             </div>
 
-            <div className="flex flex-col items-end space-y-2">
-              <div>
-                {status === 'open' && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-violet-100 text-violet-800">Open</span>
-                )}
-                {status === 'pending' && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-800">Pending</span>
-                )}
-                {status === 'overdue' && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800">Overdue</span>
-                )}
-              </div>
-
-              <div>
-                <button onClick={() => onOpen && onOpen(r)} className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-sm hover:opacity-95">Open</button>
-              </div>
+            <div className="flex items-center gap-2">
+              {status === 'open' && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-violet-100 text-violet-800">Open</span>
+              )}
+              {status === 'pending' && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-800">Pending</span>
+              )}
+              {status === 'overdue' && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800">Overdue</span>
+              )}
+              <button
+                onClick={() => onOpen && onOpen(r)}
+                className="rounded-full bg-primary p-2 text-primary-foreground shadow-sm hover:opacity-90"
+                aria-label="Open report"
+                title="Open report"
+              >
+                <FileText className="h-3.5 w-3.5" />
+              </button>
             </div>
           </div>
         );

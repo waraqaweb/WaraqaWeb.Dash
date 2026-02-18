@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "deployment and salaries page render fix"
+git commit -m "decoration and other edits"
 git push origin main
 
 

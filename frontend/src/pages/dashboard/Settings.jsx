@@ -71,6 +71,16 @@ const Settings = () => {
   const [savingPresenterAccess, setSavingPresenterAccess] = useState(false);
   const [requestsVisibility, setRequestsVisibility] = useState('all_users');
   const [savingRequestsVisibility, setSavingRequestsVisibility] = useState(false);
+  const [dashboardDecorationEnabled, setDashboardDecorationEnabled] = useState(false);
+  const [dashboardDecorationOffsetX, setDashboardDecorationOffsetX] = useState(0);
+  const [dashboardDecorationOffsetY, setDashboardDecorationOffsetY] = useState(0);
+  const [dashboardDecorationItems, setDashboardDecorationItems] = useState({
+    crescents: { count: 2, scale: 1 },
+    stars: { count: 4, scale: 1 },
+    dots: { count: 6, scale: 1 },
+    lanterns: { count: 3, scale: 0.8 },
+  });
+  const [savingDashboardDecoration, setSavingDashboardDecoration] = useState(false);
   const [notificationPrefs, setNotificationPrefsState] = useState(() => getNotificationPreferences(user?._id));
   const [notificationPermission, setNotificationPermission] = useState(() => {
     if (!canUseBrowserNotifications()) return 'unsupported';
@@ -144,6 +154,40 @@ const Settings = () => {
       }
     };
     fetchRequestsVisibility();
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchDashboardDecoration = async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:dashboardDecoration');
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          const value = cached.value.value || cached.value;
+          setDashboardDecorationEnabled(Boolean(value?.enabled));
+          setDashboardDecorationOffsetX(Number(value?.offsetX || 0));
+          setDashboardDecorationOffsetY(Number(value?.offsetY || 0));
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/dashboardDecoration');
+        const value = res?.data?.setting?.value || { enabled: true, offsetX: 0, offsetY: 0 };
+        setDashboardDecorationEnabled(Boolean(value.enabled));
+        setDashboardDecorationOffsetX(Number(value.offsetX || 0));
+        setDashboardDecorationOffsetY(Number(value.offsetY || 0));
+        if (value.items && typeof value.items === 'object') {
+          setDashboardDecorationItems((prev) => ({
+            ...prev,
+            ...value.items,
+          }));
+        }
+        writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+      } catch (err) {
+        setDashboardDecorationEnabled(false);
+        setDashboardDecorationOffsetX(0);
+        setDashboardDecorationOffsetY(0);
+      }
+    };
+    fetchDashboardDecoration();
   }, [user?.role]);
 
   useEffect(() => {
@@ -781,6 +825,123 @@ const Settings = () => {
                     }
                   }}
                   className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingRequestsVisibility ? 'opacity-70' : ''}`}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+              <div>
+                <div className="font-medium mb-2">Dashboard Decoration</div>
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setDashboardDecorationEnabled((prev) => !prev)}
+                    className={`text-xs px-3 py-1.5 rounded border ${dashboardDecorationEnabled ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+                  >
+                    {dashboardDecorationEnabled ? 'Visible' : 'Hidden'}
+                  </button>
+                  <div className="text-sm text-muted">Toggle the festive header ornament.</div>
+                </div>
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="text-xs text-muted-foreground">
+                    Horizontal offset (px)
+                    <input
+                      type="number"
+                      value={dashboardDecorationOffsetX}
+                      onChange={(e) => setDashboardDecorationOffsetX(Number(e.target.value))}
+                      className="mt-1 px-3 py-2 border rounded w-full"
+                    />
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Vertical offset (px)
+                    <input
+                      type="number"
+                      value={dashboardDecorationOffsetY}
+                      onChange={(e) => setDashboardDecorationOffsetY(Number(e.target.value))}
+                      className="mt-1 px-3 py-2 border rounded w-full"
+                    />
+                  </label>
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-3">
+                  <div className="text-xs text-muted-foreground">Item counts (1-12) and sizes</div>
+                  {[
+                    { key: 'crescents', label: 'Crescents' },
+                    { key: 'stars', label: 'Stars' },
+                    { key: 'dots', label: 'Dots' },
+                    { key: 'lanterns', label: 'Lanterns' },
+                  ].map((item) => (
+                    <div key={item.key} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="text-sm text-foreground sm:col-span-1">{item.label}</div>
+                      <label className="text-xs text-muted-foreground">
+                        Count
+                        <input
+                          type="number"
+                          min={0}
+                          max={12}
+                          value={dashboardDecorationItems[item.key]?.count ?? 0}
+                          onChange={(e) =>
+                            setDashboardDecorationItems((prev) => ({
+                              ...prev,
+                              [item.key]: {
+                                ...prev[item.key],
+                                count: Number(e.target.value),
+                              },
+                            }))
+                          }
+                          className="mt-1 px-3 py-2 border rounded w-full"
+                        />
+                      </label>
+                      <label className="text-xs text-muted-foreground">
+                        Size (scale)
+                        <input
+                          type="number"
+                          step="0.1"
+                          min={0.3}
+                          max={2}
+                          value={dashboardDecorationItems[item.key]?.scale ?? 1}
+                          onChange={(e) =>
+                            setDashboardDecorationItems((prev) => ({
+                              ...prev,
+                              [item.key]: {
+                                ...prev[item.key],
+                                scale: Number(e.target.value),
+                              },
+                            }))
+                          }
+                          className="mt-1 px-3 py-2 border rounded w-full"
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={savingDashboardDecoration}
+                  onClick={async () => {
+                    try {
+                      setSavingDashboardDecoration(true);
+                      const value = {
+                        enabled: Boolean(dashboardDecorationEnabled),
+                        offsetX: Number(dashboardDecorationOffsetX || 0),
+                        offsetY: Number(dashboardDecorationOffsetY || 0),
+                        items: dashboardDecorationItems,
+                      };
+                      const res = await api.put('/settings/dashboardDecoration', { value });
+                      if (res.data?.success) {
+                        const cacheKey = makeCacheKey('settings:dashboardDecoration');
+                        writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+                        setToast({ type: 'success', message: 'Decoration settings saved' });
+                      }
+                    } catch (err) {
+                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save decoration settings' });
+                    } finally {
+                      setSavingDashboardDecoration(false);
+                    }
+                  }}
+                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingDashboardDecoration ? 'opacity-70' : ''}`}
                 >
                   Save
                 </button>

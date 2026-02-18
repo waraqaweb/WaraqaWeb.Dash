@@ -8,6 +8,7 @@
  */
 
 const express = require('express');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const UserActivity = require('../models/UserActivity');
 const Class = require('../models/Class');
@@ -612,6 +613,69 @@ router.get('/stats', authenticateToken, async (req, res) => {
 
       const pendingReportsDedupe = dedupeByKey(pendingReports);
       const overdueReportsDedupe = dedupeByKey(overdueReports);
+
+      const reportStudentIds = Array.from(
+        new Set(
+          [...pendingReports, ...overdueReports]
+            .map((r) => r?.student?.studentId)
+            .filter(Boolean)
+            .map((id) => String(id))
+        )
+      );
+
+      if (reportStudentIds.length) {
+        try {
+          const reportStudentObjectIds = reportStudentIds
+            .filter((id) => mongoose.Types.ObjectId.isValid(id))
+            .map((id) => new mongoose.Types.ObjectId(id));
+          const reportStudentFallback = reportStudentIds.filter((id) => !mongoose.Types.ObjectId.isValid(id));
+          const reportStudentMatch = {
+            $in: [...reportStudentObjectIds, ...reportStudentFallback],
+          };
+
+          const latestTopics = await Class.aggregate([
+            {
+              $match: {
+                teacher: teacherId,
+                'student.studentId': reportStudentMatch,
+                'classReport.submittedAt': { $exists: true, $ne: null },
+                'classReport.attendance': 'attended',
+              },
+            },
+            { $sort: { scheduledDate: -1 } },
+            {
+              $group: {
+                _id: '$student.studentId',
+                classId: { $first: '$_id' },
+                scheduledDate: { $first: '$scheduledDate' },
+                lessonTopic: { $first: '$classReport.lessonTopic' },
+              },
+            },
+          ]).exec();
+
+          const topicByStudent = new Map(
+            (latestTopics || []).map((row) => [String(row._id), row])
+          );
+
+          const attachTopic = (row) => {
+            const key = row?.student?.studentId ? String(row.student.studentId) : '';
+            if (!key) return;
+            const topic = topicByStudent.get(key);
+            if (topic?.lessonTopic) {
+              row.previousReport = {
+                _id: topic.classId,
+                scheduledDate: topic.scheduledDate,
+                lessonTopic: topic.lessonTopic,
+              };
+            }
+          };
+
+          pendingReports.forEach(attachTopic);
+          overdueReports.forEach(attachTopic);
+        } catch (e) {
+          console.warn('dashboard: last lesson topic lookup failed', e && e.message);
+        }
+      }
 
       // Optional debug output when requested via query param
       if (req.query && req.query.debug === '1') {

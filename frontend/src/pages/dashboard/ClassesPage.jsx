@@ -841,6 +841,7 @@ const ClassesPage = ({ isActive = true }) => {
   }, [
     isActive,
     globalFilter,
+    normalizedSearchTerm,
     sortBy,
     sortOrder,
     statusFilter,
@@ -1275,7 +1276,7 @@ const fetchClasses = useCallback(async () => {
       setLoading(false);
 
       // Background revalidate if cache is getting old (keeps data fresh without blocking UI)
-      if (cached.ageMs < 60_000) {
+      if (cached.ageMs < 60_000 && !searchMode) {
         fetchClassesInFlightRef.current = false;
         setIsFetching(false);
         return;
@@ -1312,6 +1313,7 @@ const fetchClasses = useCallback(async () => {
     }
     if (normalizedSearchTerm) {
       params.search = normalizedSearchTerm;
+      params.searchAll = true;
     }
 
     const mergeClasses = (items) => {

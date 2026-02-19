@@ -15,9 +15,11 @@ const Class = require('../models/Class');
 const Invoice = require('../models/Invoice');
 const Student = require('../models/Student');
 const Vacation = require('../models/Vacation');
+const Meeting = require('../models/Meeting');
 const Setting = require('../models/Setting');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { decodeToken } = require('../utils/jwt');
+const { MEETING_TYPES, MEETING_STATUSES } = require('../constants/meetingConstants');
 
 const resolveQueryResult = async (queryLike, fallbackValue = []) => {
   try {
@@ -380,6 +382,31 @@ router.get('/stats', authenticateToken, async (req, res) => {
       const firstClassWindowHours = Number(firstClassWindowSetting?.value) || 24;
       const teacherReportWindowHours = Number(teacherReportWindowSetting?.value) || 72;
       const teacherReportWindowMs = teacherReportWindowHours * 60 * 60 * 1000;
+      let lastTeacherSync = null;
+      try {
+        lastTeacherSync = await Meeting.findOne({
+          meetingType: MEETING_TYPES.TEACHER_SYNC,
+          teacherId,
+          status: { $ne: MEETING_STATUSES.CANCELLED }
+        })
+          .sort({ scheduledStart: -1, createdAt: -1 })
+          .select('scheduledStart createdAt')
+          .lean();
+      } catch (e) {
+        lastTeacherSync = null;
+      }
+      const teacherSyncScheduledAt = lastTeacherSync?.scheduledStart || null;
+      const teacherSyncCreatedAt = lastTeacherSync?.createdAt || null;
+      const teacherSyncLastMeetingAt = (() => {
+        const scheduledMs = teacherSyncScheduledAt ? new Date(teacherSyncScheduledAt).getTime() : NaN;
+        const createdMs = teacherSyncCreatedAt ? new Date(teacherSyncCreatedAt).getTime() : NaN;
+        if (Number.isFinite(scheduledMs) && Number.isFinite(createdMs)) {
+          return new Date(Math.max(scheduledMs, createdMs)).toISOString();
+        }
+        if (Number.isFinite(scheduledMs)) return new Date(scheduledMs).toISOString();
+        if (Number.isFinite(createdMs)) return new Date(createdMs).toISOString();
+        return null;
+      })();
       // Active student vacations for this teacher's students (last 90 days)
       let studentsOnVacationList = [];
       try {
@@ -765,7 +792,14 @@ router.get('/stats', authenticateToken, async (req, res) => {
           overdueReports,
           pendingFirstClassStudents,
           activeStudentCount,
-          monthlyEarnings
+          monthlyEarnings,
+          followUpPrompt: {
+            teacherSync: {
+              lastMeetingAt: teacherSyncLastMeetingAt,
+              lastScheduledAt: teacherSyncScheduledAt,
+              lastCreatedAt: teacherSyncCreatedAt
+            }
+          }
         }
       });
     }
@@ -775,6 +809,31 @@ router.get('/stats', authenticateToken, async (req, res) => {
     if (role === 'guardian') {
       const guardianId = req.user._id;
       console.log('dashboard: guardian branch start for', guardianId);
+      let lastGuardianFollowUp = null;
+      try {
+        lastGuardianFollowUp = await Meeting.findOne({
+          meetingType: MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP,
+          guardianId,
+          status: { $ne: MEETING_STATUSES.CANCELLED }
+        })
+          .sort({ scheduledStart: -1, createdAt: -1 })
+          .select('scheduledStart createdAt')
+          .lean();
+      } catch (e) {
+        lastGuardianFollowUp = null;
+      }
+      const guardianFollowUpScheduledAt = lastGuardianFollowUp?.scheduledStart || null;
+      const guardianFollowUpCreatedAt = lastGuardianFollowUp?.createdAt || null;
+      const guardianFollowUpLastMeetingAt = (() => {
+        const scheduledMs = guardianFollowUpScheduledAt ? new Date(guardianFollowUpScheduledAt).getTime() : NaN;
+        const createdMs = guardianFollowUpCreatedAt ? new Date(guardianFollowUpCreatedAt).getTime() : NaN;
+        if (Number.isFinite(scheduledMs) && Number.isFinite(createdMs)) {
+          return new Date(Math.max(scheduledMs, createdMs)).toISOString();
+        }
+        if (Number.isFinite(scheduledMs)) return new Date(scheduledMs).toISOString();
+        if (Number.isFinite(createdMs)) return new Date(createdMs).toISOString();
+        return null;
+      })();
 
       // Support both real mongoose Query objects and test stubs that return promises/arrays
       let upcomingClasses = [];
@@ -1082,13 +1141,13 @@ router.get('/stats', authenticateToken, async (req, res) => {
         }));
 
         // attach to data for guardian view
-        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, recentLastClasses, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList } });
+        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, recentLastClasses, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList, followUpPrompt: { guardianFollowUp: { lastMeetingAt: guardianFollowUpLastMeetingAt, lastScheduledAt: guardianFollowUpScheduledAt, lastCreatedAt: guardianFollowUpCreatedAt } } } });
       } catch (e) {
         console.warn('dashboard: failed to build recentLastClasses', e && e.message);
-        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList } });
+        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList, followUpPrompt: { guardianFollowUp: { lastMeetingAt: guardianFollowUpLastMeetingAt, lastScheduledAt: guardianFollowUpScheduledAt, lastCreatedAt: guardianFollowUpCreatedAt } } } });
       }
 
-      return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList } });
+      return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList, followUpPrompt: { guardianFollowUp: { lastMeetingAt: guardianFollowUpLastMeetingAt, lastScheduledAt: guardianFollowUpScheduledAt, lastCreatedAt: guardianFollowUpCreatedAt } } } });
     }
 
     // Student (embedded under guardian) or other roles: provide lightweight view

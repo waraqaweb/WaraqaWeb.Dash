@@ -646,6 +646,34 @@ const DashboardHome = ({ isActive = true }) => {
   const [teacherSyncSuccess, setTeacherSyncSuccess] = useState(null);
   const [feedbackToast, setFeedbackToast] = useState({ show: false, type: 'success', message: '' });
   const [latestFeedback, setLatestFeedback] = useState(null);
+  const [meetingFollowupPrompts, setMeetingFollowupPrompts] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchPromptsSetting = async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:meetingFollowupPrompts');
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          const value = cached.value.value || cached.value;
+          if (!cancelled && value && typeof value === 'object') {
+            setMeetingFollowupPrompts(value);
+          }
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/meetingFollowupPrompts');
+        const value = res?.data?.setting?.value || null;
+        if (!cancelled && value && typeof value === 'object') {
+          setMeetingFollowupPrompts(value);
+          writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+        }
+      } catch (err) {
+        // keep null; prompt logic will skip
+      }
+    };
+    fetchPromptsSetting();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!isActive) return;
@@ -729,20 +757,101 @@ const DashboardHome = ({ isActive = true }) => {
   const handleGuardianFollowUpBooked = React.useCallback((payload) => {
     setGuardianBookingSuccess(payload);
     try {
+      if (user?._id) {
+        localStorage.setItem(`meetingPromptSeen:guardian:${user._id}`, String(Date.now()));
+      }
+    } catch (e) {
+      // ignore storage failures
+    }
+    try {
       fetchStats();
     } catch (err) {
       console.warn('Unable to refresh stats after booking', err);
     }
-  }, [fetchStats]);
+  }, [fetchStats, user?._id]);
 
   const handleTeacherSyncBooked = React.useCallback((payload) => {
     setTeacherSyncSuccess(payload);
+    try {
+      if (user?._id) {
+        localStorage.setItem(`meetingPromptSeen:teacher:${user._id}`, String(Date.now()));
+      }
+    } catch (e) {
+      // ignore storage failures
+    }
     try {
       fetchStats();
     } catch (err) {
       console.warn('Unable to refresh stats after teacher sync booking', err);
     }
-  }, [fetchStats]);
+  }, [fetchStats, user?._id]);
+
+  useEffect(() => {
+    if (!isActive || !meetingFollowupPrompts || !user?._id) return;
+    if (!meetingFollowupPrompts.enabled) return;
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const getLastSeen = (key) => {
+      try {
+        const raw = localStorage.getItem(key);
+        const num = Number(raw);
+        return Number.isFinite(num) ? num : null;
+      } catch (e) {
+        return null;
+      }
+    };
+    const shouldPrompt = ({ typeKey, settings, lastMeetingAt }) => {
+      if (!settings?.enabled) return false;
+      const lookbackDays = Number(settings.lookbackDays || 30);
+      const cadenceDays = Number(settings.cadenceDays || 30);
+      if (lastMeetingAt) {
+        const lastMs = new Date(lastMeetingAt).getTime();
+        if (Number.isFinite(lastMs) && lastMs >= (now - lookbackDays * dayMs)) {
+          return false;
+        }
+      }
+      const storageKey = `meetingPromptSeen:${typeKey}:${user._id}`;
+      const lastSeen = getLastSeen(storageKey);
+      const triggerAt = settings.triggerAt ? new Date(settings.triggerAt).getTime() : null;
+      if (triggerAt && (!lastSeen || lastSeen < triggerAt)) {
+        try { localStorage.setItem(storageKey, String(now)); } catch (e) {}
+        return true;
+      }
+      if (!cadenceDays || cadenceDays <= 0) return false;
+      if (!lastSeen || (now - lastSeen) >= cadenceDays * dayMs) {
+        try { localStorage.setItem(storageKey, String(now)); } catch (e) {}
+        return true;
+      }
+      return false;
+    };
+
+    if (isGuardian && typeof isGuardian === 'function' && isGuardian()) {
+      if (!showGuardianFollowUpModal) {
+        const lastMeetingAt = stats.data?.followUpPrompt?.guardianFollowUp?.lastMeetingAt || null;
+        if (shouldPrompt({ typeKey: 'guardian', settings: meetingFollowupPrompts.guardian, lastMeetingAt })) {
+          setShowGuardianFollowUpModal(true);
+        }
+      }
+    }
+
+    if (isTeacher && typeof isTeacher === 'function' && isTeacher()) {
+      if (!showTeacherSyncModal) {
+        const lastMeetingAt = stats.data?.followUpPrompt?.teacherSync?.lastMeetingAt || null;
+        if (shouldPrompt({ typeKey: 'teacher', settings: meetingFollowupPrompts.teacher, lastMeetingAt })) {
+          setShowTeacherSyncModal(true);
+        }
+      }
+    }
+  }, [
+    isActive,
+    isGuardian,
+    isTeacher,
+    meetingFollowupPrompts,
+    showGuardianFollowUpModal,
+    showTeacherSyncModal,
+    stats.data,
+    user?._id
+  ]);
 
   // StatCard moved to a separate widget component
 

@@ -19,6 +19,21 @@ const KNOWN_DEFAULTS = {
   admin_extension_hours: 24,
   whiteboardScreenshotRetentionDays: 90,
   requestsVisibility: 'all_users',
+  meetingFollowupPrompts: {
+    enabled: true,
+    guardian: {
+      enabled: true,
+      cadenceDays: 30,
+      lookbackDays: 30,
+      triggerAt: null,
+    },
+    teacher: {
+      enabled: true,
+      cadenceDays: 30,
+      lookbackDays: 30,
+      triggerAt: null,
+    },
+  },
   hijriOffsetDays: { default: 0, byRegion: {} },
   dashboardDecoration: {
     enabled: true,
@@ -63,6 +78,44 @@ const normalizeHijriOffsetValue = (value) => {
 };
 
 const DASHBOARD_DECORATION_KEY = 'dashboardDecoration';
+const MEETING_FOLLOWUP_PROMPTS_KEY = 'meetingFollowupPrompts';
+const normalizeMeetingFollowupPrompts = (value) => {
+  const base = value && typeof value === 'object' ? value : {};
+  const normalizeCadence = (v, fallback) => {
+    const num = Number(v);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(7, Math.min(365, Math.round(num)));
+  };
+  const normalizeLookback = (v, fallback) => {
+    const num = Number(v);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(7, Math.min(365, Math.round(num)));
+  };
+  const normalizeTrigger = (v) => {
+    if (!v) return null;
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  };
+  const defaults = KNOWN_DEFAULTS.meetingFollowupPrompts;
+  const guardian = base.guardian && typeof base.guardian === 'object' ? base.guardian : {};
+  const teacher = base.teacher && typeof base.teacher === 'object' ? base.teacher : {};
+
+  return {
+    enabled: typeof base.enabled === 'boolean' ? base.enabled : Boolean(defaults.enabled),
+    guardian: {
+      enabled: typeof guardian.enabled === 'boolean' ? guardian.enabled : Boolean(defaults.guardian.enabled),
+      cadenceDays: normalizeCadence(guardian.cadenceDays, defaults.guardian.cadenceDays),
+      lookbackDays: normalizeLookback(guardian.lookbackDays, defaults.guardian.lookbackDays),
+      triggerAt: normalizeTrigger(guardian.triggerAt),
+    },
+    teacher: {
+      enabled: typeof teacher.enabled === 'boolean' ? teacher.enabled : Boolean(defaults.teacher.enabled),
+      cadenceDays: normalizeCadence(teacher.cadenceDays, defaults.teacher.cadenceDays),
+      lookbackDays: normalizeLookback(teacher.lookbackDays, defaults.teacher.lookbackDays),
+      triggerAt: normalizeTrigger(teacher.triggerAt),
+    },
+  };
+};
 const normalizeDashboardDecorationValue = (value) => {
   const base = value && typeof value === 'object' ? value : {};
   const offsetX = Number(base.offsetX ?? 0);
@@ -266,6 +319,24 @@ router.get('/dashboardDecoration', authenticateToken, async (req, res) => {
   }
 });
 
+// Getter for meeting follow-up prompts (authenticated users)
+router.get('/meetingFollowupPrompts', authenticateToken, async (req, res) => {
+  try {
+    const s = await Setting.findOne({ key: MEETING_FOLLOWUP_PROMPTS_KEY }).lean();
+    const value = normalizeMeetingFollowupPrompts(s?.value ?? KNOWN_DEFAULTS.meetingFollowupPrompts);
+    return res.json({
+      success: true,
+      setting: {
+        key: MEETING_FOLLOWUP_PROMPTS_KEY,
+        value,
+      },
+    });
+  } catch (err) {
+    console.error('Failed to fetch meeting follow-up prompts setting', err);
+    return res.status(500).json({ message: 'Failed to fetch meeting follow-up prompts setting' });
+  }
+});
+
 // Update dashboard decoration (admin)
 router.put('/dashboardDecoration', authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -279,6 +350,22 @@ router.put('/dashboardDecoration', authenticateToken, requireAdmin, async (req, 
   } catch (err) {
     console.error('Failed to update dashboard decoration setting', err);
     return res.status(500).json({ message: 'Failed to update dashboard decoration setting' });
+  }
+});
+
+// Update meeting follow-up prompts (admin only)
+router.put('/meetingFollowupPrompts', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const value = normalizeMeetingFollowupPrompts(req.body?.value ?? {});
+    const s = await Setting.findOneAndUpdate(
+      { key: MEETING_FOLLOWUP_PROMPTS_KEY },
+      { value },
+      { upsert: true, new: true }
+    );
+    return res.json({ success: true, setting: s });
+  } catch (err) {
+    console.error('Failed to update meeting follow-up prompts setting', err);
+    return res.status(500).json({ message: 'Failed to update meeting follow-up prompts setting' });
   }
 });
 

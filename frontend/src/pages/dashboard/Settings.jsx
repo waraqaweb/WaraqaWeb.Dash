@@ -38,7 +38,18 @@ const addItemsToTextList = (text, itemsToAdd) => {
   return joinLines(Array.from(new Set([...(current || []), ...(incoming || [])])));
 };
 
-const SECTION_ORDER = ['general', 'branding', 'library', 'subjectsCatalog'];
+const SECTION_ORDER = [
+  'general',
+  'feedback',
+  'reports',
+  'meetings',
+  'access',
+  'appearance',
+  'cleanup',
+  'branding',
+  'library',
+  'subjectsCatalog',
+];
 
 const formatBytes = (bytes = 0) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -81,6 +92,12 @@ const Settings = () => {
     lanterns: { count: 3, scale: 0.8 },
   });
   const [savingDashboardDecoration, setSavingDashboardDecoration] = useState(false);
+  const [meetingFollowupPrompts, setMeetingFollowupPrompts] = useState({
+    enabled: true,
+    guardian: { enabled: true, cadenceDays: 30, lookbackDays: 30, triggerAt: null },
+    teacher: { enabled: true, cadenceDays: 30, lookbackDays: 30, triggerAt: null },
+  });
+  const [savingMeetingFollowupPrompts, setSavingMeetingFollowupPrompts] = useState(false);
   const [notificationPrefs, setNotificationPrefsState] = useState(() => getNotificationPreferences(user?._id));
   const [notificationPermission, setNotificationPermission] = useState(() => {
     if (!canUseBrowserNotifications()) return 'unsupported';
@@ -135,6 +152,29 @@ const Settings = () => {
     }
   }, []);
 
+  const triggerMeetingFollowup = useCallback(async (target) => {
+    const nowIso = new Date().toISOString();
+    const next = (prev) => ({
+      ...prev,
+      [target]: { ...prev[target], triggerAt: nowIso }
+    });
+    setMeetingFollowupPrompts(next);
+    try {
+      setSavingMeetingFollowupPrompts(true);
+      const value = next(meetingFollowupPrompts);
+      const res = await api.put('/settings/meetingFollowupPrompts', { value });
+      if (res.data?.success) {
+        const cacheKey = makeCacheKey('settings:meetingFollowupPrompts');
+        writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+        setToast({ type: 'success', message: 'Follow-up trigger sent' });
+      }
+    } catch (err) {
+      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to trigger follow-up' });
+    } finally {
+      setSavingMeetingFollowupPrompts(false);
+    }
+  }, [meetingFollowupPrompts]);
+
   useEffect(() => {
     if (user?.role !== 'admin') return;
     const fetchRequestsVisibility = async () => {
@@ -188,6 +228,30 @@ const Settings = () => {
       }
     };
     fetchDashboardDecoration();
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchMeetingFollowupPrompts = async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:meetingFollowupPrompts');
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          const value = cached.value.value || cached.value;
+          if (value && typeof value === 'object') setMeetingFollowupPrompts(value);
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/meetingFollowupPrompts');
+        const value = res?.data?.setting?.value || null;
+        if (value && typeof value === 'object') {
+          setMeetingFollowupPrompts(value);
+          writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+        }
+      } catch (err) {
+        // keep defaults
+      }
+    };
+    fetchMeetingFollowupPrompts();
   }, [user?.role]);
 
   useEffect(() => {
@@ -426,6 +490,12 @@ const Settings = () => {
     if (user?.role !== 'admin') return [{ key: 'general', label: 'General' }];
     return [
       { key: 'general', label: 'General' },
+      { key: 'feedback', label: 'Feedback' },
+      { key: 'reports', label: 'Reports' },
+      { key: 'meetings', label: 'Meetings' },
+      { key: 'access', label: 'Access' },
+      { key: 'appearance', label: 'Appearance' },
+      { key: 'cleanup', label: 'Cleanup' },
       { key: 'branding', label: 'Branding' },
       { key: 'library', label: 'Library' },
       { key: 'subjectsCatalog', label: 'Subjects Catalog' },
@@ -736,105 +806,316 @@ const Settings = () => {
           </div>
         )}
 
-        {/* Feedback card */}
-        {user?.role === 'admin' && activeSection === 'general' && (
-          <div className="space-y-3">
-            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+        {user?.role === 'admin' && activeSection === 'feedback' && (
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <div className="text-sm font-semibold text-foreground">Feedback Prompts</div>
+              <div className="text-xs text-muted-foreground">Timing rules for first-class feedback requests.</div>
+            </div>
+            <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
               <div>
-                <div className="font-medium mb-2">Feedback Settings</div>
-                <div className="flex items-center space-x-3">
-                  <input type="number" min={1} value={firstClassWindowHours} onChange={(e)=>setFirstClassWindowHours(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
-                  <div className="text-sm text-muted">Controls how long after class end the first-class modal can appear.</div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Feedback prompts</div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <input type="number" min={1} value={firstClassWindowHours} onChange={(e)=>setFirstClassWindowHours(Number(e.target.value))} className="px-3 py-2 border rounded w-28" />
+                  <div className="text-sm text-muted">Hours after class end before first-class feedback appears.</div>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button onClick={()=>setConfirmOpen(true)} className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingWindow ? 'opacity-70' : ''}`}>Save</button>
+              <div className="flex items-start justify-end">
+                <button onClick={()=>setConfirmOpen(true)} className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingWindow ? 'opacity-70' : ''}`}>Save</button>
               </div>
             </div>
+          </div>
+        )}
 
-            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
-              <div>
-                <div className="font-medium mb-2">Presenter Platform Access</div>
-                <div className="flex items-center space-x-3">
-                  <select
-                       value={presenterAccess}
-                       onChange={(e) => setPresenterAccess(e.target.value)}
-                       className="px-3 py-2 border rounded w-48 bg-white"
-                  >
-                      <option value="admin">Admin Only</option>
-                      <option value="all">Everyone (Beta)</option>
-                  </select>
-                  <div className="text-sm text-muted">Control who can access the Learning Platform from sidebar.</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button 
-                    disabled={savingPresenterAccess} 
-                    onClick={async () => {
-                        try {
-                            setSavingPresenterAccess(true);
-                            const res = await api.put('/settings/presenterAccess', { value: presenterAccess });
-                            if (res.data?.success) {
-                                const cacheKey = makeCacheKey('settings:presenterAccess');
-                                writeCache(cacheKey, { value: presenterAccess }, { ttlMs: 60_000, deps: ['settings'] });
-                                setToast({ type: 'success', message: 'Presenter access saved' });
-                            }
-                        } catch(e) {
-                            setToast({ type: 'error', message: 'Failed to save' });
-                        } finally {
-                            setSavingPresenterAccess(false);
-                        }
-                    }}
-                    className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingPresenterAccess ? 'opacity-70' : ''}`}
-                >Save</button>
-              </div>
+        {user?.role === 'admin' && activeSection === 'reports' && (
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <div className="text-sm font-semibold text-foreground">Report Submission</div>
+              <div className="text-xs text-muted-foreground">Control report windows and admin extensions.</div>
             </div>
-
-            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+            <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
               <div>
-                <div className="font-medium mb-2">Requests Section Visibility</div>
-                <div className="flex items-center space-x-3">
-                  <select
-                    value={requestsVisibility}
-                    onChange={(e) => setRequestsVisibility(e.target.value)}
-                    className="px-3 py-2 border rounded w-48 bg-white"
-                  >
-                    {REQUESTS_VISIBILITY_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                  <div className="text-sm text-muted">Choose who can access Requests in dashboard.</div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Report submission</div>
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="text-xs text-muted-foreground">
+                    Teacher window (hours)
+                    <input type="number" min={1} value={teacherReportWindowHours} onChange={(e)=>setTeacherReportWindowHours(Number(e.target.value))} className="mt-1 px-3 py-2 border rounded w-full" />
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Admin extension (hours)
+                    <input type="number" min={1} value={adminExtensionHours} onChange={(e)=>setAdminExtensionHours(Number(e.target.value))} className="mt-1 px-3 py-2 border rounded w-full" />
+                  </label>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-start justify-end">
                 <button
-                  disabled={savingRequestsVisibility}
-                  onClick={async () => {
+                  disabled={savingReportWindow}
+                  onClick={async ()=>{
                     try {
-                      setSavingRequestsVisibility(true);
-                      const res = await api.put('/settings/requestsVisibility', { value: requestsVisibility });
-                      if (res.data?.success) {
-                        const cacheKey = makeCacheKey('settings:requestsVisibility');
-                        writeCache(cacheKey, { value: requestsVisibility }, { ttlMs: 60_000, deps: ['settings'] });
-                        setToast({ type: 'success', message: 'Requests visibility saved' });
+                      setSavingReportWindow(true);
+                      const [teacherRes, adminRes] = await Promise.all([
+                        api.put('/settings/teacher_report_window_hours', { value: teacherReportWindowHours }),
+                        api.put('/settings/admin_extension_hours', { value: adminExtensionHours })
+                      ]);
+                      if (teacherRes.data?.success || adminRes.data?.success) {
+                        const teacherKey = makeCacheKey('settings:teacherReportWindowHours', user?._id || 'admin', { key: 'teacher_report_window_hours' });
+                        writeCache(teacherKey, teacherRes.data?.setting || { value: teacherReportWindowHours }, { ttlMs: 5 * 60_000, deps: ['settings'] });
+                        const adminKey = makeCacheKey('settings:adminExtensionHours', user?._id || 'admin', { key: 'admin_extension_hours' });
+                        writeCache(adminKey, adminRes.data?.setting || { value: adminExtensionHours }, { ttlMs: 5 * 60_000, deps: ['settings'] });
+                        setToast({ type: 'success', message: 'Report settings saved' });
                       }
                     } catch (err) {
-                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save requests visibility' });
+                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save report settings' });
                     } finally {
-                      setSavingRequestsVisibility(false);
+                      setSavingReportWindow(false);
                     }
                   }}
-                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingRequestsVisibility ? 'opacity-70' : ''}`}
+                  className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingReportWindow ? 'opacity-70' : ''}`}
                 >
                   Save
                 </button>
               </div>
             </div>
+          </div>
+        )}
 
-            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+        {user?.role === 'admin' && activeSection === 'meetings' && (
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <div className="text-sm font-semibold text-foreground">Meeting Follow-ups</div>
+              <div className="text-xs text-muted-foreground">Cadence and on-demand prompts for guardians and teachers.</div>
+            </div>
+            <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
+              <div className="flex-1">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Meeting follow-ups</div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setMeetingFollowupPrompts((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                    className={`text-xs px-3 py-1.5 rounded border ${meetingFollowupPrompts.enabled ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+                  >
+                    {meetingFollowupPrompts.enabled ? 'Enabled' : 'Disabled'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMeetingFollowupPrompts((prev) => ({
+                      ...prev,
+                      enabled: false,
+                      guardian: { ...prev.guardian, enabled: false },
+                      teacher: { ...prev.teacher, enabled: false },
+                    }))}
+                    className="text-xs px-3 py-1.5 rounded border border-border bg-card text-foreground"
+                  >
+                    Disable all
+                  </button>
+                  <div className="text-xs text-muted-foreground">Show only if no meeting in the last 30 days.</div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="rounded-md border border-border p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-medium">Guardian follow-up</div>
+                      <button
+                        type="button"
+                        onClick={() => setMeetingFollowupPrompts((prev) => ({
+                          ...prev,
+                          guardian: { ...prev.guardian, enabled: !prev.guardian.enabled },
+                        }))}
+                        className={`text-xs px-2 py-1 rounded border ${meetingFollowupPrompts.guardian?.enabled ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-card border-border text-foreground'}`}
+                      >
+                        {meetingFollowupPrompts.guardian?.enabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                    <div className="mt-3 flex items-center gap-3">
+                      <label className="text-xs text-muted-foreground">Cadence</label>
+                      <select
+                        value={meetingFollowupPrompts.guardian?.cadenceDays || 30}
+                        onChange={(e) => setMeetingFollowupPrompts((prev) => ({
+                          ...prev,
+                          guardian: { ...prev.guardian, cadenceDays: Number(e.target.value) }
+                        }))}
+                        className="px-2 py-1 border rounded text-xs bg-white"
+                      >
+                        <option value={7}>Weekly</option>
+                        <option value={30}>Monthly</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => triggerMeetingFollowup('guardian')}
+                        className="text-xs px-2 py-1 rounded border border-border bg-card text-foreground"
+                      >
+                        Trigger now
+                      </button>
+                    </div>
+                    {meetingFollowupPrompts.guardian?.triggerAt && (
+                      <div className="mt-2 text-xs text-muted-foreground">Last trigger: {new Date(meetingFollowupPrompts.guardian.triggerAt).toLocaleString()}</div>
+                    )}
+                  </div>
+
+                  <div className="rounded-md border border-border p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-medium">Teacher sync</div>
+                      <button
+                        type="button"
+                        onClick={() => setMeetingFollowupPrompts((prev) => ({
+                          ...prev,
+                          teacher: { ...prev.teacher, enabled: !prev.teacher.enabled },
+                        }))}
+                        className={`text-xs px-2 py-1 rounded border ${meetingFollowupPrompts.teacher?.enabled ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-card border-border text-foreground'}`}
+                      >
+                        {meetingFollowupPrompts.teacher?.enabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                    <div className="mt-3 flex items-center gap-3">
+                      <label className="text-xs text-muted-foreground">Cadence</label>
+                      <select
+                        value={meetingFollowupPrompts.teacher?.cadenceDays || 30}
+                        onChange={(e) => setMeetingFollowupPrompts((prev) => ({
+                          ...prev,
+                          teacher: { ...prev.teacher, cadenceDays: Number(e.target.value) }
+                        }))}
+                        className="px-2 py-1 border rounded text-xs bg-white"
+                      >
+                        <option value={7}>Weekly</option>
+                        <option value={30}>Monthly</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => triggerMeetingFollowup('teacher')}
+                        className="text-xs px-2 py-1 rounded border border-border bg-card text-foreground"
+                      >
+                        Trigger now
+                      </button>
+                    </div>
+                    {meetingFollowupPrompts.teacher?.triggerAt && (
+                      <div className="mt-2 text-xs text-muted-foreground">Last trigger: {new Date(meetingFollowupPrompts.teacher.triggerAt).toLocaleString()}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-start justify-end">
+                <button
+                  disabled={savingMeetingFollowupPrompts}
+                  onClick={async () => {
+                    try {
+                      setSavingMeetingFollowupPrompts(true);
+                      const value = meetingFollowupPrompts;
+                      const res = await api.put('/settings/meetingFollowupPrompts', { value });
+                      if (res.data?.success) {
+                        const cacheKey = makeCacheKey('settings:meetingFollowupPrompts');
+                        writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+                        setToast({ type: 'success', message: 'Meeting follow-up settings saved' });
+                      }
+                    } catch (err) {
+                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save follow-up settings' });
+                    } finally {
+                      setSavingMeetingFollowupPrompts(false);
+                    }
+                  }}
+                  className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingMeetingFollowupPrompts ? 'opacity-70' : ''}`}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {user?.role === 'admin' && activeSection === 'access' && (
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <div className="text-sm font-semibold text-foreground">Requests & Access</div>
+              <div className="text-xs text-muted-foreground">Configure visibility and presenter permissions.</div>
+            </div>
+            <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
               <div>
-                <div className="font-medium mb-2">Dashboard Decoration</div>
-                <div className="flex items-center space-x-3">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Requests and access</div>
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="text-xs text-muted-foreground">
+                    Requests visibility
+                    <select
+                      value={requestsVisibility}
+                      onChange={(e) => setRequestsVisibility(e.target.value)}
+                      className="mt-1 px-3 py-2 border rounded w-full bg-white"
+                    >
+                      {REQUESTS_VISIBILITY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Presenter access
+                    <select
+                      value={presenterAccess}
+                      onChange={(e) => setPresenterAccess(e.target.value)}
+                      className="mt-1 px-3 py-2 border rounded w-full bg-white"
+                    >
+                      <option value="admin">Admin Only</option>
+                      <option value="all">Everyone (Beta)</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div className="flex items-start justify-end">
+                <div className="flex items-center gap-2">
+                  <button
+                    disabled={savingRequestsVisibility}
+                    onClick={async () => {
+                      try {
+                        setSavingRequestsVisibility(true);
+                        const res = await api.put('/settings/requestsVisibility', { value: requestsVisibility });
+                        if (res.data?.success) {
+                          const cacheKey = makeCacheKey('settings:requestsVisibility');
+                          writeCache(cacheKey, { value: requestsVisibility }, { ttlMs: 60_000, deps: ['settings'] });
+                          setToast({ type: 'success', message: 'Requests visibility saved' });
+                        }
+                      } catch (err) {
+                        setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save requests visibility' });
+                      } finally {
+                        setSavingRequestsVisibility(false);
+                      }
+                    }}
+                    className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingRequestsVisibility ? 'opacity-70' : ''}`}
+                  >
+                    Save
+                  </button>
+                  <button
+                    disabled={savingPresenterAccess}
+                    onClick={async () => {
+                      try {
+                        setSavingPresenterAccess(true);
+                        const res = await api.put('/settings/presenterAccess', { value: presenterAccess });
+                        if (res.data?.success) {
+                          const cacheKey = makeCacheKey('settings:presenterAccess');
+                          writeCache(cacheKey, { value: presenterAccess }, { ttlMs: 60_000, deps: ['settings'] });
+                          setToast({ type: 'success', message: 'Presenter access saved' });
+                        }
+                      } catch(e) {
+                        setToast({ type: 'error', message: 'Failed to save' });
+                      } finally {
+                        setSavingPresenterAccess(false);
+                      }
+                    }}
+                    className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingPresenterAccess ? 'opacity-70' : ''}`}
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {user?.role === 'admin' && activeSection === 'appearance' && (
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <div className="text-sm font-semibold text-foreground">Dashboard Decoration</div>
+              <div className="text-xs text-muted-foreground">Control the festive ornament system and offsets.</div>
+            </div>
+            <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Dashboard decoration</div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
                     onClick={() => setDashboardDecorationEnabled((prev) => !prev)}
@@ -842,7 +1123,7 @@ const Settings = () => {
                   >
                     {dashboardDecorationEnabled ? 'Visible' : 'Hidden'}
                   </button>
-                  <div className="text-sm text-muted">Toggle the festive header ornament.</div>
+                  <div className="text-xs text-muted-foreground">Festive header ornament controls.</div>
                 </div>
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <label className="text-xs text-muted-foreground">
@@ -917,7 +1198,7 @@ const Settings = () => {
                   ))}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-start justify-end">
                 <button
                   disabled={savingDashboardDecoration}
                   onClick={async () => {
@@ -941,118 +1222,80 @@ const Settings = () => {
                       setSavingDashboardDecoration(false);
                     }
                   }}
-                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingDashboardDecoration ? 'opacity-70' : ''}`}
+                  className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingDashboardDecoration ? 'opacity-70' : ''}`}
                 >
                   Save
                 </button>
               </div>
             </div>
+          </div>
+        )}
 
-            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
-              <div>
-                <div className="font-medium mb-2">Class Cleanup</div>
-                <div className="flex items-center space-x-3">
-                  <input type="number" min={1} value={unreportedCleanupDays} onChange={(e)=>setUnreportedCleanupDays(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
-                  <div className="text-sm text-muted">Delete unreported classes after this many days.</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  disabled={savingCleanupDays}
-                  onClick={async ()=>{
-                    try {
-                      setSavingCleanupDays(true);
-                      const res = await api.put('/settings/unreportedClassCleanupDays', { value: unreportedCleanupDays });
-                      if (res.data?.success) {
-                        const cacheKey = makeCacheKey('settings:unreportedCleanupDays', user?._id || 'admin', { key: 'unreportedClassCleanupDays' });
-                        writeCache(cacheKey, res.data.setting || { value: unreportedCleanupDays }, { ttlMs: 5 * 60_000, deps: ['settings'] });
-                        setToast({ type: 'success', message: 'Cleanup settings saved' });
-                      }
-                    } catch (err) {
-                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save cleanup settings' });
-                    } finally {
-                      setSavingCleanupDays(false);
-                    }
-                  }}
-                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingCleanupDays ? 'opacity-70' : ''}`}
-                >
-                  Save
-                </button>
-              </div>
+        {user?.role === 'admin' && activeSection === 'cleanup' && (
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+              <div className="text-sm font-semibold text-foreground">Cleanup & Retention</div>
+              <div className="text-xs text-muted-foreground">Retention windows for unreported classes and whiteboards.</div>
             </div>
-
-            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
+            <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
               <div>
-                <div className="font-medium mb-2">Whiteboard Screenshot Retention</div>
-                <div className="flex items-center space-x-3">
-                  <input type="number" min={1} value={whiteboardRetentionDays} onChange={(e)=>setWhiteboardRetentionDays(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
-                  <div className="text-sm text-muted">Auto-delete whiteboard screenshots after this many days from class time.</div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Cleanup and retention</div>
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="text-xs text-muted-foreground">
+                    Unreported class cleanup (days)
+                    <input type="number" min={1} value={unreportedCleanupDays} onChange={(e)=>setUnreportedCleanupDays(Number(e.target.value))} className="mt-1 px-3 py-2 border rounded w-full" />
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Whiteboard retention (days)
+                    <input type="number" min={1} value={whiteboardRetentionDays} onChange={(e)=>setWhiteboardRetentionDays(Number(e.target.value))} className="mt-1 px-3 py-2 border rounded w-full" />
+                  </label>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  disabled={savingWhiteboardRetention}
-                  onClick={async ()=>{
-                    try {
-                      setSavingWhiteboardRetention(true);
-                      const res = await api.put('/settings/whiteboardScreenshotRetentionDays', { value: whiteboardRetentionDays });
-                      if (res.data?.success) {
-                        const cacheKey = makeCacheKey('settings:whiteboardRetentionDays', user?._id || 'admin', { key: 'whiteboardScreenshotRetentionDays' });
-                        writeCache(cacheKey, res.data.setting || { value: whiteboardRetentionDays }, { ttlMs: 5 * 60_000, deps: ['settings'] });
-                        setToast({ type: 'success', message: 'Whiteboard retention saved' });
+              <div className="flex items-start justify-end">
+                <div className="flex items-center gap-2">
+                  <button
+                    disabled={savingCleanupDays}
+                    onClick={async ()=>{
+                      try {
+                        setSavingCleanupDays(true);
+                        const res = await api.put('/settings/unreportedClassCleanupDays', { value: unreportedCleanupDays });
+                        if (res.data?.success) {
+                          const cacheKey = makeCacheKey('settings:unreportedCleanupDays', user?._id || 'admin', { key: 'unreportedClassCleanupDays' });
+                          writeCache(cacheKey, res.data.setting || { value: unreportedCleanupDays }, { ttlMs: 5 * 60_000, deps: ['settings'] });
+                          setToast({ type: 'success', message: 'Cleanup settings saved' });
+                        }
+                      } catch (err) {
+                        setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save cleanup settings' });
+                      } finally {
+                        setSavingCleanupDays(false);
                       }
-                    } catch (err) {
-                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save retention settings' });
-                    } finally {
-                      setSavingWhiteboardRetention(false);
-                    }
-                  }}
-                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingWhiteboardRetention ? 'opacity-70' : ''}`}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4 flex items-start justify-between">
-              <div>
-                <div className="font-medium mb-2">Report Submission Window</div>
-                <div className="flex items-center space-x-3">
-                  <input type="number" min={1} value={teacherReportWindowHours} onChange={(e)=>setTeacherReportWindowHours(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
-                  <div className="text-xs text-muted-foreground mt-1">Hours teachers have to submit a class report.</div>
-                </div>
-                <div className="mt-3 flex items-center space-x-3">
-                  <input type="number" min={1} value={adminExtensionHours} onChange={(e)=>setAdminExtensionHours(Number(e.target.value))} className="px-3 py-2 border rounded w-32" />
-                  <div className="text-xs text-muted-foreground mt-1">Default extension hours when admins reopen reporting.</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  disabled={savingReportWindow}
-                  onClick={async ()=>{
-                    try {
-                      setSavingReportWindow(true);
-                      const [teacherRes, adminRes] = await Promise.all([
-                        api.put('/settings/teacher_report_window_hours', { value: teacherReportWindowHours }),
-                        api.put('/settings/admin_extension_hours', { value: adminExtensionHours })
-                      ]);
-                      if (teacherRes.data?.success || adminRes.data?.success) {
-                        const teacherKey = makeCacheKey('settings:teacherReportWindowHours', user?._id || 'admin', { key: 'teacher_report_window_hours' });
-                        writeCache(teacherKey, teacherRes.data?.setting || { value: teacherReportWindowHours }, { ttlMs: 5 * 60_000, deps: ['settings'] });
-                        const adminKey = makeCacheKey('settings:adminExtensionHours', user?._id || 'admin', { key: 'admin_extension_hours' });
-                        writeCache(adminKey, adminRes.data?.setting || { value: adminExtensionHours }, { ttlMs: 5 * 60_000, deps: ['settings'] });
-                        setToast({ type: 'success', message: 'Report settings saved' });
+                    }}
+                    className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingCleanupDays ? 'opacity-70' : ''}`}
+                  >
+                    Save
+                  </button>
+                  <button
+                    disabled={savingWhiteboardRetention}
+                    onClick={async ()=>{
+                      try {
+                        setSavingWhiteboardRetention(true);
+                        const res = await api.put('/settings/whiteboardScreenshotRetentionDays', { value: whiteboardRetentionDays });
+                        if (res.data?.success) {
+                          const cacheKey = makeCacheKey('settings:whiteboardRetentionDays', user?._id || 'admin', { key: 'whiteboardScreenshotRetentionDays' });
+                          writeCache(cacheKey, res.data.setting || { value: whiteboardRetentionDays }, { ttlMs: 5 * 60_000, deps: ['settings'] });
+                          setToast({ type: 'success', message: 'Whiteboard retention saved' });
+                        }
+                      } catch (err) {
+                        setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save retention settings' });
+                      } finally {
+                        setSavingWhiteboardRetention(false);
                       }
-                    } catch (err) {
-                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save report settings' });
-                    } finally {
-                      setSavingReportWindow(false);
-                    }
-                  }}
-                  className={`text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingReportWindow ? 'opacity-70' : ''}`}
-                >
-                  Save
-                </button>
+                    }}
+                    className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingWhiteboardRetention ? 'opacity-70' : ''}`}
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
             </div>
           </div>

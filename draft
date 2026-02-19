@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "password reset code and some ui fixes"
+git commit -m "Settings restyling"
 git push origin main
 
 

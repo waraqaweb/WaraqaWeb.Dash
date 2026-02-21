@@ -1432,9 +1432,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     const message = [
       `This invoice covers from ${startDateText} to ${endDateText}.`,
       `This is a link to view all classes covered by this invoice: ${shareUrl}`,
-      'Or visit your account on our dashboard for full details.',
-      'If you find any mistakes please let us know.',
-      'Please contact us immediately if you notice any discrepancies.'
+      'Or visit your account on our dashboard for full details.'
     ].join('\n');
 
     try {

@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Settings restyling"
+git commit -m "Invoices page updates"
 git push origin main
 
 

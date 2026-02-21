@@ -93,6 +93,9 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
         if (!formData.guardianInfo) {
           formData.guardianInfo = {};
         }
+        if (targetUser.guardianInfo?.epithet !== undefined) {
+          formData.guardianInfo.epithet = targetUser.guardianInfo.epithet;
+        }
         if (targetUser.guardianInfo?.hourlyRate !== undefined) {
           formData.guardianInfo.hourlyRate = targetUser.guardianInfo.hourlyRate;
         }
@@ -280,7 +283,7 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
 
   const canEdit = (field) => {
     // Based on the standards shared earlier in chat
-  const adminOnly = ['email','role','isActive','isEmailVerified','guardianInfo.hourlyRate','guardianInfo.transferFee','totalHours','lastLogin','loginAttempts','lockUntil'];
+  const adminOnly = ['email','role','isActive','isEmailVerified','guardianInfo.epithet','guardianInfo.hourlyRate','guardianInfo.transferFee','totalHours','lastLogin','loginAttempts','lockUntil'];
     // monthlyHours and bonus removed from modal editing; they are read-only on the profile page
     // bankDetails require special rules: admins can edit, users can edit their own only if they are not guardians
   const selfEditable = ['firstName','lastName','phone','address','profilePicture','dateOfBirth','gender','timezone','notifications','paymentMethod','qualifications','bio','courses','instapayName','googleMeetLink'];
@@ -568,6 +571,9 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
         const guardianPayload = { ...(payload.guardianInfo || {}) };
 
         if (isAdmin && form.guardianInfo) {
+          if (form.guardianInfo.epithet !== undefined) {
+            guardianPayload.epithet = String(form.guardianInfo.epithet || '').trim();
+          }
           if (form.guardianInfo.hourlyRate !== undefined && form.guardianInfo.hourlyRate !== '') {
             const hrValue = Number(form.guardianInfo.hourlyRate);
             if (Number.isFinite(hrValue)) {
@@ -776,6 +782,17 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {(form.role === 'guardian') && (
                   <>
+                    {isAdmin && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Epithet (admin only)</label>
+                        <input
+                          className="w-full min-w-0 border rounded px-2 py-1"
+                          value={form.guardianInfo?.epithet || ''}
+                          onChange={(e)=>setField('guardianInfo.epithet', e.target.value)}
+                          placeholder="Mr, Mrs, brother, sister"
+                        />
+                      </div>
+                    )}
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Payment Method</label>
                       <select className="w-full min-w-0 border rounded px-2 py-1" value={form.paymentMethod ?? form.guardianInfo?.paymentMethod ?? (form.role === 'guardian' ? 'paypal' : '')} onChange={(e)=>setField('paymentMethod', e.target.value)}>

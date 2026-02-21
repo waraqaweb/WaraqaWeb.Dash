@@ -14,7 +14,7 @@ import {
   XCircle,
   AlertTriangle,
   Send,
-  FileSearch,
+  FileScan,
   Plus,
   RefreshCw,
   FileText,
@@ -597,7 +597,7 @@ const InvoicesPage = ({ isActive = true }) => {
   const buildWhatsappMessage = (invoice, publicLink) => {
     const guardian = invoice?.guardian || {};
     const epithet = formatGuardianEpithet(guardian?.guardianInfo?.epithet);
-    const name = `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim() || 'Guardian';
+    const name = String(guardian.firstName || '').trim() || 'Guardian';
     const greeting = `Assalamu Alaykum ${epithet ? `${epithet} ` : ''}${name},`;
     const referenceLink = String(invoice?.invoiceReferenceLink || '').trim();
 
@@ -847,25 +847,43 @@ const InvoicesPage = ({ isActive = true }) => {
     }
   };
 
-  const handleCopyGuardianContact = useCallback(async (invoice) => {
+  const handleCopyGuardianName = useCallback(async (invoice) => {
     const guardian = invoice?.guardian || {};
     const name = `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim();
-    const email = (guardian.email || '').trim();
-    const payload = [name, email].filter(Boolean).join(' - ');
-    if (!payload) return;
+    if (!name) return;
 
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(payload);
+        await navigator.clipboard.writeText(name);
       } else {
-        const copied = window.prompt('Copy guardian contact:', payload);
+        const copied = window.prompt('Copy guardian name:', name);
         if (copied === null) {
           throw new Error('Copy cancelled');
         }
       }
-      setToast({ show: true, type: 'success', message: 'Guardian copied' });
+      setToast({ show: true, type: 'success', message: 'Guardian name copied' });
     } catch (err) {
-      console.error('Failed to copy guardian contact', err);
+      console.error('Failed to copy guardian name', err);
+      setToast({ show: true, type: 'error', message: 'Copy failed' });
+    }
+  }, []);
+
+  const handleCopyGuardianEmail = useCallback(async (invoice) => {
+    const email = String(invoice?.guardian?.email || '').trim();
+    if (!email) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(email);
+      } else {
+        const copied = window.prompt('Copy guardian email:', email);
+        if (copied === null) {
+          throw new Error('Copy cancelled');
+        }
+      }
+      setToast({ show: true, type: 'success', message: 'Guardian email copied' });
+    } catch (err) {
+      console.error('Failed to copy guardian email', err);
       setToast({ show: true, type: 'error', message: 'Copy failed' });
     }
   }, []);
@@ -1534,17 +1552,26 @@ const InvoicesPage = ({ isActive = true }) => {
                                 <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
                                   {getInitials(invoice.guardian?.firstName, invoice.guardian?.lastName)}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopyGuardianContact(invoice)}
-                                  className="inline-flex min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-left transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
-                                  title="Copy guardian name and email"
-                                >
-                                  <span className="truncate text-slate-700">{invoice.guardian?.firstName} {invoice.guardian?.lastName}</span>
+                                <div className="inline-flex min-w-0 items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyGuardianName(invoice)}
+                                    className="truncate rounded-md px-1 py-0.5 text-left text-slate-700 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                                    title="Copy guardian name"
+                                  >
+                                    {invoice.guardian?.firstName} {invoice.guardian?.lastName}
+                                  </button>
                                   {invoice.guardian?.email && (
-                                    <span className="truncate text-xs text-slate-400">• {invoice.guardian.email}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopyGuardianEmail(invoice)}
+                                      className="truncate rounded-md px-1 py-0.5 text-left text-xs text-slate-400 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                                      title="Copy guardian email"
+                                    >
+                                      • {invoice.guardian.email}
+                                    </button>
                                   )}
-                                </button>
+                                </div>
                               </span>
                               
                               <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-sm text-slate-700">
@@ -1585,33 +1612,34 @@ const InvoicesPage = ({ isActive = true }) => {
 
                           <div className="flex flex-wrap gap-2">
                             <button
-                              onClick={() => handleCopyShareLink(invoice)}
-                              className={`inline-flex items-center justify-center rounded-full border p-2 transition ${
-                                copiedInvoiceId === invoice._id
-                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
-                                  : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900'
-                              }`}
-                              type="button"
-                              aria-label="Copy shareable link"
-                            >
-                              <Link2 className="h-4 w-4" />
-                            </button>
-                            <button
                               onClick={() => openModal('view', invoice)}
-                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-400 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
                               type="button"
                               title="Preview invoice"
                             >
-                              <FileSearch className="h-5 w-5" />
+                              <FileScan className="h-5 w-5" />
                             </button>
                             {isAdmin() && (
                               <>
                                 <button
                                   onClick={() => openModal('payment', invoice)}
-                                  className="inline-flex items-center justify-center rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-400 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
                                   type="button"
+                                  title="Record payment"
                                 >
-                                  <CreditCard className="h-4 w-4" />
+                                  <CreditCard className="h-5 w-5" />
+                                </button>
+                                <button
+                                  onClick={() => handleCopyShareLink(invoice)}
+                                  className={`inline-flex items-center justify-center rounded-full border p-2 transition ${
+                                    copiedInvoiceId === invoice._id
+                                      ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                                      : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900'
+                                  }`}
+                                  type="button"
+                                  aria-label="Copy shareable link"
+                                >
+                                  <Link2 className="h-4 w-4" />
                                 </button>
                                 <button
                                   onClick={() => handleDeleteInvoice(invoice)}
@@ -1639,6 +1667,20 @@ const InvoicesPage = ({ isActive = true }) => {
                                   </button>
                                 )}
                               </>
+                            )}
+                            {!isAdmin() && (
+                              <button
+                                onClick={() => handleCopyShareLink(invoice)}
+                                className={`inline-flex items-center justify-center rounded-full border p-2 transition ${
+                                  copiedInvoiceId === invoice._id
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900'
+                                }`}
+                                type="button"
+                                aria-label="Copy shareable link"
+                              >
+                                <Link2 className="h-4 w-4" />
+                              </button>
                             )}
                             <button
                               onClick={() => toggleExpanded(invoice._id)}

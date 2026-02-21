@@ -314,6 +314,7 @@ const invoiceSchema = new mongoose.Schema({
     default: 'credit_card'
   },
   paymentReference: { type: String, trim: true },
+  invoiceReferenceLink: { type: String, trim: true },
   transactionId: { type: String, trim: true },
   tip: { type: Number, default: 0 },
 

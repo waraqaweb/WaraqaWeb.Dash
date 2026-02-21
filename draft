@@ -14,9 +14,9 @@ git push origin main
 cd /opt/waraqa
 chmod +x deploy/scripts/deploy.sh
 ./deploy/scripts/deploy.sh pull
+./deploy/scripts/deploy.sh all
 ./deploy/scripts/deploy.sh auto
 
-./deploy/scripts/deploy.sh all
 
 
 cd /opt/waraqa

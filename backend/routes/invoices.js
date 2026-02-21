@@ -424,7 +424,7 @@ router.get('/public/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     const invoice = await Invoice.findOne({ invoiceSlug: slug })
-      .populate('guardian', 'firstName lastName email phone')
+      .populate('guardian', 'firstName lastName email phone guardianInfo.epithet')
       .populate('teacher', 'firstName lastName email')
       .populate('items.student', 'firstName lastName email')
       .populate('items.teacher', 'firstName lastName')
@@ -650,7 +650,7 @@ router.get('/', authenticateToken, async (req, res) => {
         invoices = [];
       } else {
         const docs = await Invoice.find({ _id: { $in: ids } })
-          .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+          .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
           .populate('teacher', 'firstName lastName email')
           .populate('items.student', 'firstName lastName')
           .populate('items.teacher', 'firstName lastName')
@@ -662,7 +662,7 @@ router.get('/', authenticateToken, async (req, res) => {
       }
     } else {
       invoices = await Invoice.find(filter)
-        .populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+        .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
         .populate('teacher', 'firstName lastName email')
         .populate('items.student', 'firstName lastName')
         .populate('items.teacher', 'firstName lastName')
@@ -1295,7 +1295,7 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
   try {
     const { identifier } = req.params;
     let invoiceDoc = await Invoice.findOne({ invoiceSlug: identifier })
-      .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee')
+      .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
       .populate('teacher', 'firstName lastName email')
       .populate('items.student', 'firstName lastName')
       .populate('items.teacher', 'firstName lastName')
@@ -1303,7 +1303,7 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
 
     if (!invoiceDoc && mongoose.Types.ObjectId.isValid(identifier)) {
       invoiceDoc = await Invoice.findById(identifier)
-        .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee')
+        .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
         .populate('teacher', 'firstName lastName email')
         .populate('items.student', 'firstName lastName')
         .populate('items.teacher', 'firstName lastName')
@@ -1462,7 +1462,7 @@ router.post('/manual/guardian', authenticateToken, requireAdmin, async (req, res
 
     await invoice.ensureIdentifiers({ forceNameRefresh: false });
     await invoice.save();
-    await invoice.populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee');
+    await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet');
 
     if (result.classIds.length > 0) {
       await Class.updateMany(
@@ -1558,7 +1558,7 @@ router.post('/', authenticateToken, async (req, res) => {
 
     await invoice.ensureIdentifiers({ forceNameRefresh: false });
     await invoice.save();
-  await invoice.populate('guardian', 'firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee');
+  await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet');
 
     await invoice.recordAuditEntry({
       actor: req.user?._id,
@@ -1792,7 +1792,7 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
     invoice.updatedBy = req.user._id;
     await invoice.ensureIdentifiers({ forceNameRefresh: !invoice.invoiceNameManual });
     await invoice.save();
-  await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee');
+  await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet');
     await invoice.populate('items.student', 'firstName lastName');
 
     // Attach dynamicClasses to the returned invoice object so the UI
@@ -1858,7 +1858,7 @@ router.put('/:id/snapshot', authenticateToken, requireAdmin, async (req, res) =>
       paidAmount: invoice.paidAmount,
       guardianFinancial: invoice.guardianFinancial && invoice.guardianFinancial.transferFee ? invoice.guardianFinancial.transferFee : null
     });
-    await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee');
+    await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet');
     await invoice.populate('items.student', 'firstName lastName');
 
     // Mirror GET behavior: attach dynamicClasses so UI receives consistent class list
@@ -1914,6 +1914,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       status: invoice.status,
       dueDate: invoice.dueDate ? invoice.dueDate.toISOString() : null,
       exchangeRate: invoice.exchangeRate,
+      invoiceReferenceLink: invoice.invoiceReferenceLink || '',
       notes: invoice.notes,
       internalNotes: invoice.internalNotes,
       billingPeriod: {
@@ -1968,7 +1969,13 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     if (updateData.status) invoice.status = updateData.status;
     if (updateData.dueDate) invoice.dueDate = new Date(updateData.dueDate);
     if (updateData.notes !== undefined) invoice.notes = updateData.notes;
-  if (updateData.internalNotes !== undefined) invoice.internalNotes = updateData.internalNotes;
+    if (updateData.internalNotes !== undefined) invoice.internalNotes = updateData.internalNotes;
+    if (updateData.invoiceReferenceLink !== undefined) {
+      const incomingLink = typeof updateData.invoiceReferenceLink === 'string'
+        ? updateData.invoiceReferenceLink.trim()
+        : '';
+      invoice.invoiceReferenceLink = incomingLink || '';
+    }
 
     // --- Billing Period
     if (updateData.billingPeriod) {
@@ -1993,6 +2000,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       status: invoice.status,
       dueDate: invoice.dueDate ? invoice.dueDate.toISOString() : null,
       exchangeRate: invoice.exchangeRate,
+      invoiceReferenceLink: invoice.invoiceReferenceLink || '',
       notes: invoice.notes,
       internalNotes: invoice.internalNotes,
       billingPeriod: {
@@ -2041,7 +2049,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     console.log("[Invoices API] Saving invoice...");
     await invoice.save();
     await invoice.populate([
-      { path: 'guardian', select: 'firstName lastName email phone' },
+      { path: 'guardian', select: 'firstName lastName email phone guardianInfo.epithet' },
       { path: 'teacher', select: 'firstName lastName email' },
       { path: 'items.student', select: 'firstName lastName' }
     ]);
@@ -2210,7 +2218,7 @@ router.get('/:id/download-docx', authenticateToken, async (req, res) => {
   try {
     const invoiceId = req.params.id;
     const invoice = await Invoice.findById(invoiceId)
-      .populate('guardian','firstName lastName email guardianInfo.hourlyRate guardianInfo.transferFee')
+      .populate('guardian','firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
       .populate('items.student','firstName lastName email');
     if (!invoice) return res.status(404).json({ success:false, message: 'Invoice not found' });
 

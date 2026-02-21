@@ -205,13 +205,14 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const [coverageStatus, setCoverageStatus] = useState(null);
   const [noteEdits, setNoteEdits] = useState({
     notes: '',
-    internalNotes: ''
+    internalNotes: '',
+    invoiceReferenceLink: ''
   });
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesStatus, setNotesStatus] = useState(null);
   const [waiveTransferFee, setWaiveTransferFee] = useState(false);
 
-  const notesLastSavedRef = useRef({ notes: '', internalNotes: '' });
+  const notesLastSavedRef = useRef({ notes: '', internalNotes: '', invoiceReferenceLink: '' });
   const skipNextNotesSave = useRef(false);
   const coverageLastSavedRef = useRef({ maxHours: '', customEndDate: '', waiveTransferFee: false });
   const skipNextCoverageSave = useRef(false);
@@ -286,7 +287,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     setInvoice(inv);
     const nextNotes = {
       notes: inv?.notes || '',
-      internalNotes: inv?.internalNotes || ''
+      internalNotes: inv?.internalNotes || '',
+      invoiceReferenceLink: inv?.invoiceReferenceLink || ''
     };
     skipNextNotesSave.current = true;
     setNoteEdits(nextNotes);
@@ -1109,7 +1111,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     try {
       const payload = {
         notes: noteEdits.notes,
-        internalNotes: noteEdits.internalNotes
+        internalNotes: noteEdits.internalNotes,
+        invoiceReferenceLink: noteEdits.invoiceReferenceLink
       };
       
       const { data } = await api.put(`/invoices/${targetInvoiceId}`, payload);
@@ -1126,7 +1129,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
       }
       const savedNotes = {
         notes: (updatedInvoice?.notes ?? noteEdits.notes) || '',
-        internalNotes: (updatedInvoice?.internalNotes ?? noteEdits.internalNotes) || ''
+        internalNotes: (updatedInvoice?.internalNotes ?? noteEdits.internalNotes) || '',
+        invoiceReferenceLink: (updatedInvoice?.invoiceReferenceLink ?? noteEdits.invoiceReferenceLink) || ''
       };
       notesLastSavedRef.current = savedNotes;
       setNotesStatus({ type: 'success', message: 'Notes saved' });
@@ -1151,7 +1155,11 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     }
 
     const last = notesLastSavedRef.current;
-    if (noteEdits.notes === last.notes && noteEdits.internalNotes === last.internalNotes) return;
+    if (
+      noteEdits.notes === last.notes
+      && noteEdits.internalNotes === last.internalNotes
+      && noteEdits.invoiceReferenceLink === last.invoiceReferenceLink
+    ) return;
 
     if (savingNotes) return;
 
@@ -1161,7 +1169,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [noteEdits.notes, noteEdits.internalNotes, invoice, handleSaveNotes, savingNotes]);
+  }, [noteEdits.notes, noteEdits.internalNotes, noteEdits.invoiceReferenceLink, invoice, handleSaveNotes, savingNotes]);
 
   // ⚠️ DISABLED: Auto-sync useEffect was causing invoice totals to be recalculated
   // whenever the modal opened. This defeats the purpose of storing fixed invoice totals.
@@ -1843,6 +1851,16 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                         rows={1}
                         placeholder="Private context for the admin team..."
                         className="min-h-[38px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] leading-relaxed text-slate-700 shadow-inner placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 resize-y"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1.5">
+                      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Invoice Reference Link</span>
+                      <input
+                        type="url"
+                        value={noteEdits.invoiceReferenceLink}
+                        onChange={(e) => handleNoteChange('invoiceReferenceLink', e.target.value)}
+                        placeholder="https://..."
+                        className="min-h-[38px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] leading-relaxed text-slate-700 shadow-inner placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                       />
                     </label>
                   </div>

@@ -14,7 +14,7 @@ import {
   XCircle,
   AlertTriangle,
   Send,
-  Eye,
+  FileSearch,
   Plus,
   RefreshCw,
   FileText,
@@ -74,8 +74,23 @@ const InvoicesPage = ({ isActive = true }) => {
   const [checkingZeroHours, setCheckingZeroHours] = useState(false);
   const [confirmModal, setConfirmModal] = useState({ open: false, action: null, invoiceId: null, title: '', message: '', confirmText: 'Confirm', danger: false });
   const [guardianStudentsMap, setGuardianStudentsMap] = useState({});
-  // Default to showing unpaid invoices first per new UX
-  const [activeTab, setActiveTab] = useState('unpaid');
+  // No tab selected by default; treat empty as "all" for filtering.
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('invoices.activeTab');
+      return saved || '';
+    } catch (_) {
+      return '';
+    }
+  });
+  const [deliveryFilter, setDeliveryFilter] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('invoices.deliveryFilter');
+      return saved || '';
+    } catch (_) {
+      return '';
+    }
+  });
   const [modalState, setModalState] = useState({ type: null, invoiceId: null, invoiceSlug: null });
   // FAB open/close state
   const [fabOpen, setFabOpen] = useState(false);
@@ -134,7 +149,8 @@ const InvoicesPage = ({ isActive = true }) => {
   const typeFilter = derivedFilters.type;
   const segmentFilter = derivedFilters.segment;
 
-  const itemsPerPage = 10;
+  const itemsPerPage = 30;
+  const resolvedActiveTab = activeTab || 'all';
 
   const normalizedSearchTerm = useMemo(() => (searchTerm || '').trim().toLowerCase(), [searchTerm]);
 
@@ -180,6 +196,22 @@ const InvoicesPage = ({ isActive = true }) => {
   }, [isActive, normalizedSearchTerm]);
 
   useEffect(() => {
+    try {
+      sessionStorage.setItem('invoices.activeTab', activeTab || '');
+    } catch (_) {
+      // ignore storage errors
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('invoices.deliveryFilter', deliveryFilter || '');
+    } catch (_) {
+      // ignore storage errors
+    }
+  }, [deliveryFilter]);
+
+  useEffect(() => {
     invoicesRef.current = invoices || [];
   }, [invoices]);
 
@@ -188,7 +220,7 @@ const InvoicesPage = ({ isActive = true }) => {
       const requestSignature = JSON.stringify({
         page: normalizedSearchTerm ? 1 : currentPage,
         limit: normalizedSearchTerm ? 500 : itemsPerPage,
-        activeTab,
+        activeTab: resolvedActiveTab,
         statusFilter,
         typeFilter,
         segmentFilter,
@@ -222,7 +254,7 @@ const InvoicesPage = ({ isActive = true }) => {
         {
           page: normalizedSearchTerm ? 1 : currentPage,
           limit: normalizedSearchTerm ? 500 : itemsPerPage,
-          activeTab,
+          activeTab: resolvedActiveTab,
           statusFilter,
           typeFilter,
           segmentFilter,
@@ -261,9 +293,9 @@ const InvoicesPage = ({ isActive = true }) => {
       // - Unpaid tab: show oldest created invoices first (createdAt asc)
       // - Paid tab: show latest paid invoices first (paidAt desc)
       // - All tab (or none): show invoices by latest payment (paidAt desc, fallback createdAt)
-      if (!searchMode && activeTab && activeTab !== 'all') {
-        params.status = activeTab;
-        if (activeTab === 'unpaid') {
+      if (!searchMode && resolvedActiveTab !== 'all') {
+        params.status = resolvedActiveTab;
+        if (resolvedActiveTab === 'unpaid') {
           params.sortBy = 'createdAt';
           params.order = 'asc';
         } else {
@@ -539,10 +571,90 @@ const InvoicesPage = ({ isActive = true }) => {
     }
   }, [location.search]);
 
-  const handleQuickSend = async (invoiceId, method, force = false) => {
+  const formatGuardianEpithet = (epithet) => {
+    const normalized = String(epithet || '').trim().toLowerCase();
+    if (!normalized || normalized === 'none') return '';
+    const map = {
+      mr: 'Mr',
+      mister: 'Mr',
+      mrs: 'Mrs',
+      missus: 'Mrs',
+      ms: 'Ms',
+      miss: 'Ms',
+      brother: 'brother',
+      bro: 'brother',
+      sister: 'sister',
+      sis: 'sister'
+    };
+    return map[normalized] || epithet;
+  };
+
+  const normalizeWhatsappPhone = (value) => {
+    const digits = String(value || '').replace(/\D/g, '');
+    return digits.replace(/^0+/, '');
+  };
+
+  const buildWhatsappMessage = (invoice, publicLink) => {
+    const guardian = invoice?.guardian || {};
+    const epithet = formatGuardianEpithet(guardian?.guardianInfo?.epithet);
+    const name = `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim() || 'Guardian';
+    const greeting = `Assalamu Alaykum ${epithet ? `${epithet} ` : ''}${name},`;
+    const referenceLink = String(invoice?.invoiceReferenceLink || '').trim();
+
+    return [
+      greeting,
+      'This is your new invoice from Waraqa to pay:',
+      referenceLink,
+      'and this is an updated list of the classes covered by this invoice.',
+      publicLink,
+      'Jazak Allah Khier'
+    ].join('\n');
+  };
+
+  const handleQuickSend = async (invoice, method, force = false) => {
+    if (!invoice?._id) return;
+    const invoiceId = invoice._id;
     const key = `${invoiceId}-${method}`;
     setDeliveryLoading((prev) => ({ ...prev, [key]: true }));
     try {
+      if (method === 'whatsapp') {
+        const phone = normalizeWhatsappPhone(invoice?.guardian?.phone);
+        if (!phone) {
+          setToast({ show: true, type: 'error', message: 'Guardian phone is missing.' });
+          return;
+        }
+        const referenceLink = String(invoice?.invoiceReferenceLink || '').trim();
+        if (!referenceLink) {
+          setToast({ show: true, type: 'error', message: 'Add the invoice reference link before sending WhatsApp.' });
+          return;
+        }
+        if (!invoice?.invoiceSlug) {
+          setToast({ show: true, type: 'error', message: 'Invoice public link is not available yet.' });
+          return;
+        }
+
+        const publicLink = `${window.location.origin}/public/invoices/${invoice.invoiceSlug}`;
+        const message = buildWhatsappMessage(invoice, publicLink);
+        const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+        window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+
+        const { data } = await api.post(`/invoices/${invoiceId}/send`, {
+          method,
+          force,
+          meta: {
+            referenceLink,
+            publicLink,
+            phone
+          }
+        });
+        if (!data.success && !data.alreadySent) {
+          alert(data.error || `Send failed (${method})`);
+        }
+        fetchInvoices();
+        if (isAdmin()) fetchStats();
+        return;
+      }
+
       const { data } = await api.post(`/invoices/${invoiceId}/send`, {
         method,
         force
@@ -564,6 +676,14 @@ const InvoicesPage = ({ isActive = true }) => {
     }
   };
 
+  const isInvoiceMarkedSent = useCallback((inv) => {
+    const status = String(inv?.status || '').toLowerCase();
+    if (status === 'sent') return true;
+    if (inv?.sentVia && inv.sentVia !== 'none') return true;
+    const channels = Array.isArray(inv?.delivery?.channels) ? inv.delivery.channels : [];
+    return channels.some((entry) => String(entry?.status || '').toLowerCase() === 'sent');
+  }, []);
+
   // Realtime: subscribe to invoice socket events to reflect changes instantly
   useEffect(() => {
     if (!socket) return;
@@ -574,7 +694,7 @@ const InvoicesPage = ({ isActive = true }) => {
     // other views -> paidAt desc (latest payment first, fallback createdAt)
     const invoiceComparator = (a, b) => {
       try {
-        if (activeTab === 'unpaid') {
+        if (resolvedActiveTab === 'unpaid') {
           return new Date(a.createdAt) - new Date(b.createdAt);
         }
         return getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a);
@@ -586,8 +706,15 @@ const InvoicesPage = ({ isActive = true }) => {
     const matchesActiveTab = (inv) => {
       if (!inv) return false;
       if (searchMode) return true;
-      if (activeTab === 'paid') return ['paid', 'refunded'].includes(inv.status);
-      if (activeTab === 'unpaid') return !['paid', 'refunded'].includes(inv.status);
+      if (resolvedActiveTab === 'paid') return ['paid', 'refunded'].includes(inv.status);
+      if (resolvedActiveTab === 'unpaid') return !['paid', 'refunded'].includes(inv.status);
+      return true;
+    };
+
+    const matchesDeliveryFilter = (inv) => {
+      if (searchMode) return true;
+      if (deliveryFilter === 'sent') return isInvoiceMarkedSent(inv);
+      if (deliveryFilter === 'not_sent') return !isInvoiceMarkedSent(inv);
       return true;
     };
 
@@ -598,7 +725,7 @@ const InvoicesPage = ({ isActive = true }) => {
         const existingIdx = prev.findIndex((i) => i._id === updated._id);
 
         // If update no longer matches current tab, remove it if present
-        const doesMatch = matchesActiveTab(updated);
+        const doesMatch = matchesActiveTab(updated) && matchesDeliveryFilter(updated);
         if (existingIdx !== -1 && !doesMatch) {
           const next = prev.slice();
           next.splice(existingIdx, 1);
@@ -672,7 +799,7 @@ const InvoicesPage = ({ isActive = true }) => {
         socket.off('invoice:permanentlyDeleted', onPermanentlyDeleted);
       } catch (_) {}
     };
-  }, [socket, activeTab, searchTerm]);
+  }, [socket, activeTab, searchTerm, deliveryFilter, resolvedActiveTab, isInvoiceMarkedSent]);
 
   const handleDownloadDocx = async (invoiceId, invoiceNumber) => {
     try {
@@ -719,6 +846,29 @@ const InvoicesPage = ({ isActive = true }) => {
       alert(`Copy failed. Please copy the link manually:\n${shareUrl}`);
     }
   };
+
+  const handleCopyGuardianContact = useCallback(async (invoice) => {
+    const guardian = invoice?.guardian || {};
+    const name = `${guardian.firstName || ''} ${guardian.lastName || ''}`.trim();
+    const email = (guardian.email || '').trim();
+    const payload = [name, email].filter(Boolean).join(' - ');
+    if (!payload) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(payload);
+      } else {
+        const copied = window.prompt('Copy guardian contact:', payload);
+        if (copied === null) {
+          throw new Error('Copy cancelled');
+        }
+      }
+      setToast({ show: true, type: 'success', message: 'Guardian copied' });
+    } catch (err) {
+      console.error('Failed to copy guardian contact', err);
+      setToast({ show: true, type: 'error', message: 'Copy failed' });
+    }
+  }, []);
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(amount || 0));
   const formatDate = useCallback((dateString) => {
@@ -916,7 +1066,7 @@ const InvoicesPage = ({ isActive = true }) => {
     const searchMode = Boolean(normalizedSearchTerm);
 
     // Apply the effective status filter: the active tab takes precedence.
-    const effectiveStatus = activeTab !== 'unpaid' ? activeTab : statusFilter;
+    const effectiveStatus = resolvedActiveTab !== 'unpaid' ? resolvedActiveTab : statusFilter;
     if (!searchMode && effectiveStatus !== 'all') {
       if (effectiveStatus === 'paid') {
         result = result.filter((inv) => ['paid', 'refunded'].includes(inv.status));
@@ -928,6 +1078,12 @@ const InvoicesPage = ({ isActive = true }) => {
       } else {
         result = result.filter((inv) => inv.status === effectiveStatus);
       }
+    }
+
+    if (deliveryFilter === 'sent') {
+      result = result.filter((inv) => isInvoiceMarkedSent(inv));
+    } else if (deliveryFilter === 'not_sent') {
+      result = result.filter((inv) => !isInvoiceMarkedSent(inv));
     }
 
     if (typeFilter !== 'all') {
@@ -962,7 +1118,7 @@ const InvoicesPage = ({ isActive = true }) => {
     }
 
     return result;
-  }, [invoices, activeTab, statusFilter, typeFilter, normalizedSearchTerm]);
+  }, [invoices, resolvedActiveTab, statusFilter, typeFilter, normalizedSearchTerm, deliveryFilter, isInvoiceMarkedSent]);
 
   // Ensure consistent ordering client-side as a fallback in case backend doesn't apply requested sort.
   const displayedInvoices = useMemo(() => {
@@ -983,7 +1139,7 @@ const InvoicesPage = ({ isActive = true }) => {
       return list;
     }
 
-    if (activeTab === 'all') {
+    if (resolvedActiveTab === 'all') {
       const isPaid = (invoice) => ['paid', 'refunded'].includes(String(invoice?.status || '').toLowerCase());
       list.sort((a, b) => {
         const aPaid = isPaid(a);
@@ -994,7 +1150,7 @@ const InvoicesPage = ({ isActive = true }) => {
         }
         return getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a);
       });
-    } else if (activeTab === 'unpaid') {
+    } else if (resolvedActiveTab === 'unpaid') {
       list.sort((a, b) => {
         const weightDiff = getUnpaidSortWeight(a) - getUnpaidSortWeight(b);
         if (weightDiff !== 0) return weightDiff;
@@ -1004,7 +1160,7 @@ const InvoicesPage = ({ isActive = true }) => {
       list.sort((a, b) => getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a));
     }
     return list;
-  }, [filteredInvoices, activeTab]);
+  }, [filteredInvoices, resolvedActiveTab]);
 
   useEffect(() => {
     const visible = (displayedInvoices || []).slice(0, itemsPerPage);
@@ -1206,7 +1362,7 @@ const InvoicesPage = ({ isActive = true }) => {
 
     return (
       <button
-        onClick={() => handleQuickSend(invoice._id, channel, isSent)}
+        onClick={() => handleQuickSend(invoice, channel, isSent)}
         disabled={isLoading}
         className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 ${
           isSent
@@ -1268,6 +1424,25 @@ const InvoicesPage = ({ isActive = true }) => {
                   onClick={() => setActiveTab(key)}
                   className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     activeTab === key
+                      ? 'bg-white text-slate-900 shadow'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-full bg-slate-100/80 p-1">
+              {[
+                { key: 'sent', label: 'Sent' },
+                { key: 'not_sent', label: 'Not sent' }
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setDeliveryFilter((prev) => (prev === key ? '' : key))}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    deliveryFilter === key
                       ? 'bg-white text-slate-900 shadow'
                       : 'text-slate-500 hover:text-slate-800'
                   }`}
@@ -1359,12 +1534,17 @@ const InvoicesPage = ({ isActive = true }) => {
                                 <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
                                   {getInitials(invoice.guardian?.firstName, invoice.guardian?.lastName)}
                                 </span>
-                                <span className="inline-flex min-w-0 items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyGuardianContact(invoice)}
+                                  className="inline-flex min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-left transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                                  title="Copy guardian name and email"
+                                >
                                   <span className="truncate text-slate-700">{invoice.guardian?.firstName} {invoice.guardian?.lastName}</span>
                                   {invoice.guardian?.email && (
                                     <span className="truncate text-xs text-slate-400">• {invoice.guardian.email}</span>
                                   )}
-                                </span>
+                                </button>
                               </span>
                               
                               <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-sm text-slate-700">
@@ -1418,10 +1598,11 @@ const InvoicesPage = ({ isActive = true }) => {
                             </button>
                             <button
                               onClick={() => openModal('view', invoice)}
-                              className="inline-flex items-center justify-center rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
                               type="button"
+                              title="Preview invoice"
                             >
-                              <Eye className="h-4 w-4" />
+                              <FileSearch className="h-5 w-5" />
                             </button>
                             {isAdmin() && (
                               <>

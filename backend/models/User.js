@@ -611,6 +611,10 @@ const userSchema = new mongoose.Schema({
   
   // Guardian-specific Information (only for role: 'guardian')
   guardianInfo: {
+    epithet: {
+      type: String,
+      trim: true
+    },
     relationship: {
       type: String, // parent, guardian, etc.
       default: "parent",

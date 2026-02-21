@@ -5322,10 +5322,18 @@ class InvoiceService {
         adminUserId
       } = info;
 
+      const viaChannel = String(via || info?.delivery?.channel || '').trim().toLowerCase();
+      if (sent === true && viaChannel === 'whatsapp') {
+        const refLink = String(invoice.invoiceReferenceLink || '').trim();
+        if (!refLink) {
+          return { success: false, error: 'Invoice reference link is required before sending via WhatsApp.' };
+        }
+      }
+
       const alreadySent = Boolean(invoice.emailSent && invoice.emailSentDate);
       if (sent === true && alreadySent && !force) {
         await invoice.populate([
-          { path: 'guardian', select: 'firstName lastName email' },
+          { path: 'guardian', select: 'firstName lastName email phone guardianInfo.epithet' },
           { path: 'teacher', select: 'firstName lastName email' },
           { path: 'items.student', select: 'firstName lastName email' }
         ]);
@@ -5402,7 +5410,7 @@ class InvoiceService {
 
       await invoice.save();
       await invoice.populate([
-        { path: 'guardian', select: 'firstName lastName email' },
+        { path: 'guardian', select: 'firstName lastName email phone guardianInfo.epithet' },
         { path: 'teacher', select: 'firstName lastName email' },
         { path: 'items.student', select: 'firstName lastName email' }
       ]);

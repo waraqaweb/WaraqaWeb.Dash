@@ -1495,6 +1495,28 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     setTimeout(() => setNotesStatus(null), 2000);
   }, [latestPaymentReference]);
 
+  const handleCopyInvoiceReference = useCallback(async () => {
+    const referenceValue = String(noteEdits.invoiceReferenceLink || '').trim();
+    if (!referenceValue) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(referenceValue);
+      } else {
+        const copied = window.prompt('Copy invoice reference:', referenceValue);
+        if (copied === null) {
+          throw new Error('Copy cancelled');
+        }
+      }
+      setNotesStatus({ type: 'success', message: 'Invoice reference copied' });
+    } catch (err) {
+      console.error('Failed to copy invoice reference', err);
+      setNotesStatus({ type: 'error', message: 'Copy failed' });
+    }
+
+    setTimeout(() => setNotesStatus(null), 2000);
+  }, [noteEdits.invoiceReferenceLink]);
+
   if (loading) return <LoadingSpinner />;
   if (!invoice) return <div className="p-4 text-center">Invoice not found</div>;
 
@@ -1692,6 +1714,46 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                           <span>Paid</span>
                           <span>${paidAmount.toFixed(2)}</span>
                         </div>
+                        {isAdmin && !isPaidStatus && (
+                          <div className="pt-2">
+                            <input
+                              type="url"
+                              value={noteEdits.invoiceReferenceLink}
+                              onChange={(e) => handleNoteChange('invoiceReferenceLink', e.target.value)}
+                              placeholder="Invoice reference"
+                              className="w-full border-b border-slate-200 bg-transparent px-0 py-1 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
+                            />
+                          </div>
+                        )}
+                        {isAdmin && isPaidStatus && noteEdits.invoiceReferenceLink?.trim() && (
+                          <div className="space-y-1.5 pt-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-slate-600">Invoice reference</span>
+                              <div className="flex items-center gap-1.5">
+                                <a
+                                  href={noteEdits.invoiceReferenceLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                                  title="Open invoice reference"
+                                >
+                                  <Link2 className="h-3 w-3" />
+                                  Open
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={handleCopyInvoiceReference}
+                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                                  title="Copy invoice reference"
+                                >
+                                  <FileText className="h-3 w-3" />
+                                  Copy
+                                </button>
+                              </div>
+                            </div>
+                            <p className="break-all text-xs text-slate-500">{noteEdits.invoiceReferenceLink}</p>
+                          </div>
+                        )}
                         {latestPaymentReference && (
                           <div className="space-y-1.5 pt-2">
                             <div className="flex items-start justify-between gap-2">
@@ -1849,16 +1911,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                         rows={1}
                         placeholder="Private context for the admin team..."
                         className="min-h-[38px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] leading-relaxed text-slate-700 shadow-inner placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 resize-y"
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1.5">
-                      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Invoice Reference Link</span>
-                      <input
-                        type="url"
-                        value={noteEdits.invoiceReferenceLink}
-                        onChange={(e) => handleNoteChange('invoiceReferenceLink', e.target.value)}
-                        placeholder="https://..."
-                        className="min-h-[38px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] leading-relaxed text-slate-700 shadow-inner placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                       />
                     </label>
                   </div>

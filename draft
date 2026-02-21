@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "Invoices page updates"
+git commit -m "Invoices page updates 2"
 git push origin main
 
 

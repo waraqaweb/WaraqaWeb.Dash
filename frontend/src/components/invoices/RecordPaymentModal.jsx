@@ -106,7 +106,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
         setForm({
           amount: formattedAmount,
           paymentMethod: (inv.guardian && inv.guardian.paymentMethod) || inv.paymentMethod || 'paypal',
-          transactionId: '',
+          transactionId: inv.invoiceReferenceLink || '',
           hoursPaid: formattedHours,
           tip: inv.tip ? String(inv.tip) : '',
           paypalInvoiceNumber: inv.paypalInvoiceNumber || ''
@@ -618,17 +618,17 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
 
               
             {/* Payment method + reference on a single row */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
-              <label className="flex flex-col gap-2 text-sm text-slate-600">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="flex flex-col gap-2 text-sm text-slate-600 sm:col-span-1">
                 <span className="flex items-center gap-2 font-medium text-slate-800">
                   <CreditCard className="h-4 w-4 text-slate-400" />
-                  Payment method
+                  Via
                 </span>
                 <select
                   name="paymentMethod"
                   value={form.paymentMethod}
                   onChange={handleChange}
-                  className="rounded-md border border-slate-200 px-3 py-2 text-slate-800 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-100"
+                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-slate-800 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-100"
                   required
                 >
                   <option value="paypal">PayPal</option>
@@ -639,7 +639,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
                 </select>
               </label>
 
-              <label className="flex flex-col gap-2 text-sm text-slate-600 sm:col-span-3">
+              <label className="flex flex-col gap-2 text-sm text-slate-600 sm:col-span-2">
                 <span className="flex items-center gap-2 font-medium text-slate-800">
                   <ClipboardSignature className="h-4 w-4 text-slate-400" />
                   Reference

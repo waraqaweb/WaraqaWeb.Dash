@@ -102,7 +102,6 @@ const GuardiansPage = () => {
   const [accountLogs, setAccountLogs] = useState([]);
   const [accountLogsLoading, setAccountLogsLoading] = useState(false);
   const [accountLogsError, setAccountLogsError] = useState('');
-  const [expandedLogEntries, setExpandedLogEntries] = useState({});
   const [logActionModal, setLogActionModal] = useState({ open: false, log: null, action: '' });
   const [logActionConfirm, setLogActionConfirm] = useState('');
   const [logActionLoading, setLogActionLoading] = useState(false);
@@ -475,8 +474,6 @@ const GuardiansPage = () => {
         email: query && query.includes('@') ? query : (selectedAccountGuardian?.email || undefined),
         userIdOrEmail: query && !query.includes('@') ? query : undefined,
         limit: 500,
-        includeClasses: true,
-        classLimit: 500,
       });
       setAccountLogs(Array.isArray(data?.logs) ? data.logs : []);
     } catch (err) {
@@ -489,9 +486,6 @@ const GuardiansPage = () => {
 
   const buildLogKey = (log, idx) => String(log?.logId || `${log?.timestamp || 't'}-${idx}`);
 
-  const toggleLogClasses = (key) => {
-    setExpandedLogEntries((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
 
   const formatStatusLabel = (value) => {
     if (value === true) return 'Active';
@@ -553,6 +547,10 @@ const GuardiansPage = () => {
         'invoiceNumber',
         'amount',
         'hours',
+        'hoursIndicator',
+        'indicatorLabel',
+        'studentName',
+        'classDate',
         'success',
         'message',
         'reason',
@@ -565,7 +563,6 @@ const GuardiansPage = () => {
         'entityName',
         'billingStart',
         'billingEnd',
-        'classCount',
         'generationSource',
         'logId'
       ]
@@ -578,6 +575,10 @@ const GuardiansPage = () => {
         log.invoiceNumber || '',
         log.amount ?? '',
         log.hours ?? '',
+        log.hoursIndicator || '',
+        log.indicatorLabel || '',
+        log.studentName || '',
+        log.classDate ? new Date(log.classDate).toISOString() : '',
         log.success === false ? 'false' : 'true',
         (log.message || '').replace(/\n/g, ' '),
         (log.reason || '').replace(/\n/g, ' '),
@@ -590,7 +591,6 @@ const GuardiansPage = () => {
         (log.entityName || '').replace(/\n/g, ' '),
         log.billingPeriod?.startDate ? new Date(log.billingPeriod.startDate).toISOString() : '',
         log.billingPeriod?.endDate ? new Date(log.billingPeriod.endDate).toISOString() : '',
-        log.classCount ?? '',
         log.generationSource || '',
         log.logId || ''
       ]);
@@ -1411,10 +1411,17 @@ const GuardiansPage = () => {
                     {accountLogs.map((log, idx) => {
                       const logKey = buildLogKey(log, idx);
                       const hoursDelta = getHoursDelta(log);
+                      const indicatorTone = log.hoursIndicator === 'consumed'
+                        ? 'text-rose-600'
+                        : (log.hoursIndicator === 'added' ? 'text-emerald-600' : '');
+                      const indicatorLabel = log.hoursIndicator === 'consumed'
+                        ? 'Used'
+                        : (log.hoursIndicator === 'added' ? 'Added' : null);
+                      const indicatorDetail = log.studentName || log.indicatorLabel || '';
+                      const indicatorDate = log.classDate ? formatDateDDMMMYYYY(log.classDate) : '';
                       const statusSummary = (log.statusBefore !== undefined || log.statusAfter !== undefined)
                         ? `${log.entityType === 'Student' ? 'Student' : 'User'}${log.entityName ? `: ${log.entityName}` : ''}${log.entityType === 'Student' && log.guardianName ? ` (Guardian: ${log.guardianName})` : ''} ${formatStatusLabel(log.statusBefore)} → ${formatStatusLabel(log.statusAfter)}`
                         : null;
-                      const showClasses = !!expandedLogEntries[logKey];
 
                       return (
                         <li key={logKey} className="p-3 text-xs">
@@ -1475,6 +1482,16 @@ const GuardiansPage = () => {
                                 Hours {hoursDelta.label}
                               </span>
                             ) : null}
+                            {indicatorLabel ? (
+                              <span className={`rounded-md bg-muted/50 px-2 py-0.5 text-[11px] font-semibold ${indicatorTone}`}>
+                                {indicatorLabel}{log.hours ? ` ${formatHours2(Math.abs(log.hours))}h` : ''}
+                              </span>
+                            ) : null}
+                            {(indicatorDetail || indicatorDate) ? (
+                              <span className="rounded-md bg-muted/50 px-2 py-0.5 text-[11px]">
+                                {[indicatorDetail, indicatorDate].filter(Boolean).join(' • ')}
+                              </span>
+                            ) : null}
                             {(log.amount || log.hours) ? (
                               <span className="rounded-md bg-muted/50 px-2 py-0.5 text-[11px]">
                                 {log.amount ? `Amount: ${log.amount}` : ''}
@@ -1496,37 +1513,6 @@ const GuardiansPage = () => {
                             <div className="mt-1 text-muted-foreground">Reason: {log.reason}</div>
                           )}
 
-                          {Array.isArray(log.classEntries) && (log.classEntries.length > 0 || log.classCount > 0) && (
-                            <div className="mt-2">
-                              <button
-                                type="button"
-                                onClick={() => toggleLogClasses(logKey)}
-                                className="text-[11px] font-medium text-primary hover:underline"
-                              >
-                                {showClasses ? 'Hide classes' : 'Show classes'} ({log.classEntries.length}
-                                {log.classCount && log.classCount > log.classEntries.length ? ` of ${log.classCount}` : ''})
-                              </button>
-                              {showClasses ? (
-                                <div className="mt-2 rounded-md border border-border bg-background/60 p-2 text-muted-foreground">
-                                  {log.classEntries.length === 0 ? (
-                                    <div className="text-[11px] text-muted-foreground">No class details available.</div>
-                                  ) : (
-                                    <ul className="space-y-1">
-                                      {log.classEntries.map((entry, entryIndex) => (
-                                        <li key={`${logKey}-class-${entryIndex}`} className="flex flex-wrap gap-2">
-                                          <span>{entry.date ? formatDateDDMMMYYYY(entry.date) : 'Date N/A'}</span>
-                                          {entry.studentName && <span>Student: {entry.studentName}</span>}
-                                          {entry.teacherName && <span>Teacher: {entry.teacherName}</span>}
-                                          {entry.hours !== null && entry.hours !== undefined ? <span>{formatHours2(entry.hours)}h</span> : null}
-                                          {entry.status ? <span>Status: {entry.status}</span> : null}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </div>
-                              ) : null}
-                            </div>
-                          )}
 
                           {log.success === false && (
                             <div className="mt-1 text-destructive">Failed</div>

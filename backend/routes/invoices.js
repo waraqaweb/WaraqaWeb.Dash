@@ -359,7 +359,9 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
   const subtotal = items.reduce((sum, item) => sum + (Number(item.amount || 0) || 0), 0);
 
   const coverage = {
-    strategy: 'full_period',
+    strategy: normalizedHoursLimit ? 'cap_hours' : 'full_period',
+    maxHours: normalizedHoursLimit || undefined,
+    endDate: endDate || undefined,
     waiveTransferFee: false
   };
 
@@ -1071,7 +1073,7 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
         const openInvoice = await Invoice.findOne({
           guardian: guardianId,
           type: 'guardian_invoice',
-          status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] },
+          status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
           deleted: { $ne: true }
         }).sort({ createdAt: 1 });
 
@@ -1214,7 +1216,7 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
     const openInvoice = await Invoice.findOne({
       guardian: guardianId,
       type: 'guardian_invoice',
-      status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] },
+      status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
       deleted: { $ne: true }
     }).sort({ createdAt: 1 });
 
@@ -1619,7 +1621,7 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
   } = req.body || {};
 
   try {
-    const invoice = await Invoice.findById(id);
+    let invoice = await Invoice.findById(id);
     if (!invoice) {
       return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
@@ -1647,6 +1649,8 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
     const allowedStrategies = ['full_period', 'cap_hours', 'custom_end', 'custom'];
     if (typeof strategy === 'string' && strategy.trim()) {
       coverage.strategy = allowedStrategies.includes(strategy) ? strategy : 'custom';
+    } else {
+      coverage.strategy = endDate ? 'custom_end' : (Number.isFinite(Number(maxHours)) && Number(maxHours) > 0 ? 'cap_hours' : 'full_period');
     }
 
     if (maxHours === null || maxHours === undefined) {
@@ -1735,14 +1739,14 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
 
     const prevMaxHours = Number(previousCoverage?.maxHours ?? 0) || 0;
     const nextMaxHours = Number(coverage?.maxHours ?? 0) || 0;
-    const extendedByHours = nextMaxHours > prevMaxHours + 0.0005;
+    const hoursChanged = Math.abs(nextMaxHours - prevMaxHours) > 0.0005;
 
     const prevEndDate = previousCoverage?.endDate ? new Date(previousCoverage.endDate) : null;
     const nextEndDate = coverage?.endDate ? new Date(coverage.endDate) : null;
     const extendedByEndDate = nextEndDate && (!prevEndDate || nextEndDate > prevEndDate);
 
     let appendedDueToExtension = false;
-    if (invoice.type === 'guardian_invoice' && (extendedByHours || extendedByEndDate)) {
+    if (invoice.type === 'guardian_invoice' && extendedByEndDate) {
       try {
         const extendResult = await InvoiceService.extendInvoiceWithScheduledClasses(invoice, {
           targetEndDate: coverage.endDate
@@ -1752,6 +1756,27 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
         }
       } catch (extendErr) {
         console.warn('Auto-extend invoice classes failed:', extendErr?.message || extendErr);
+      }
+    }
+
+    const statusValue = String(invoice?.status || '').toLowerCase();
+    const endDateChanged = (prevEndDate && nextEndDate && prevEndDate.getTime() !== nextEndDate.getTime()) || (!prevEndDate && nextEndDate) || (prevEndDate && !nextEndDate);
+    const shouldSyncItems = invoice.type === 'guardian_invoice'
+      && ['draft', 'pending', 'sent', 'overdue'].includes(statusValue)
+      && (endDateChanged || hoursChanged);
+    if (shouldSyncItems) {
+      try {
+        const syncResult = await InvoiceService.syncUnpaidInvoiceItems(invoice, {
+          adminUserId: req.user._id,
+          note: 'Synced unpaid invoice after coverage end date change',
+          cleanupDuplicates: true,
+          transferOnDuplicate: true
+        });
+        if (syncResult?.invoice) {
+          invoice = syncResult.invoice;
+        }
+      } catch (syncErr) {
+        console.warn('Coverage update: failed to sync unpaid invoice items', syncErr?.message || syncErr);
       }
     }
 
@@ -2384,7 +2409,6 @@ router.post('/:id/payment', authenticateToken, async (req, res) => {
         io.emit('invoice:updated', { invoice: result.invoice });
         const status = String(result.invoice.status || '').toLowerCase();
         if (status === 'paid') io.emit('invoice:paid', { invoice: result.invoice });
-        else if (status === 'partially_paid') io.emit('invoice:partially_paid', { invoice: result.invoice });
       }
     } catch (emitErr) {
       console.warn('Failed to emit invoice payment socket events', emitErr.message);
@@ -2426,7 +2450,7 @@ router.post('/admin/resequence-unpaid', authenticateToken, requireAdmin, async (
     const { startAfterInvoiceId } = req.body; // optional
 
     // Load unpaid invoices sorted by createdAt or sequence
-    const unpaid = await Invoice.find({ status: { $in: ['draft','pending','sent','overdue','partially_paid'] } }).sort({ createdAt: 1 }).exec();
+    const unpaid = await Invoice.find({ status: { $in: ['draft','pending','sent','overdue'] } }).sort({ createdAt: 1 }).exec();
 
     if (!Array.isArray(unpaid) || unpaid.length === 0) {
       return res.json({ success: true, message: 'No unpaid invoices to resequence', updated: 0 });
@@ -2475,17 +2499,17 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
     const preserveHours = (() => {
       const raw = req.query.preserveHours ?? req.body?.preserveHours ?? req.headers['x-preserve-hours'];
       if (raw === undefined || raw === null) {
-        return ['draft', 'pending'].includes(invoice.status) ? false : true;
+        return ['draft', 'pending', 'sent', 'overdue', 'cancelled'].includes(invoice.status) ? false : true;
       }
       const normalized = String(raw).trim().toLowerCase();
       if (!normalized) return true; // treat ?preserveHours as truthy
       if (['0', 'false', 'no', 'n'].includes(normalized)) return false;
       return ['1', 'true', 'yes', 'y'].includes(normalized);
     })();
-    // For safety, allow deleting drafts/pending normally. For paid/sent/overdue, require force to reverse hours.
-    if (!preserveHours && !['draft', 'pending'].includes(invoice.status)) {
+    // For safety, allow deleting unpaid invoices normally. For paid/partially paid/refunded, require force to reverse hours.
+    if (!preserveHours && !['draft', 'pending', 'sent', 'overdue', 'cancelled'].includes(invoice.status)) {
       if (!force) {
-        return res.status(409).json({ success: false, message: 'Invoice is not draft/pending. Use force=true to void and reverse hours.' });
+        return res.status(409).json({ success: false, message: 'Invoice is not an unpaid draft/pending/sent/overdue/cancelled. Use force=true to void and reverse hours.' });
       }
       // If force and invoice has payments, reverse proportionate hours by issuing a refund equal to paidAmount
       try {
@@ -2516,12 +2540,12 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
         if (classIds.length > 0) {
           await Class.updateMany(
             { _id: { $in: classIds }, billedInInvoiceId: invoice._id },
-            { $unset: { billedInInvoiceId: 1, billedAt: 1 } }
+            { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1, billedInInvoiceId: 1, billedAt: 1 } }
           );
-          console.log(`✅ Cleared billedInInvoiceId for ${classIds.length} classes from deleted invoice ${invoice._id}`);
+          console.log(`✅ Cleared billedInInvoiceId + paidByGuardian for ${classIds.length} classes from deleted invoice ${invoice._id}`);
         }
       } catch (clearErr) {
-        console.warn('Failed to clear billedInInvoiceId from classes:', clearErr.message);
+        console.warn('Failed to clear billedInInvoiceId/paidByGuardian from classes:', clearErr.message);
       }
     }
 
@@ -2828,7 +2852,6 @@ router.put('/:id/pay', authenticateToken, async (req, res) => {
         io.emit('invoice:updated', { invoice: result.invoice });
         const status = String(result.invoice.status || '').toLowerCase();
         if (status === 'paid') io.emit('invoice:paid', { invoice: result.invoice });
-        else if (status === 'partially_paid') io.emit('invoice:partially_paid', { invoice: result.invoice });
       }
     } catch (emitErr) {
       console.warn('Failed to emit invoice payment socket events', emitErr.message);

@@ -128,7 +128,7 @@ async function main() {
   let pendingInvoices = [];
   try {
     pendingInvoices = await Invoice.aggregate([
-      { $match: { guardian: guardian._id, status: { $in: ['draft','sent','overdue','partially_paid'] } } },
+      { $match: { guardian: guardian._id, status: { $in: ['draft','sent','overdue'] } } },
       { $limit: 10 }
     ]);
   } catch (e) { pendingInvoices = []; }

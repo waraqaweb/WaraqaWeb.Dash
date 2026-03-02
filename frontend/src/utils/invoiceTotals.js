@@ -141,10 +141,7 @@ const buildClassEntriesFromItems = (sourceItems = [], coverage = {}) => {
       filtered.push(entry);
     }
   }
-
   if (filtered.length === 0 && normalized.length > 0 && capMinutes !== null) {
-    // No entries survived the cap loop (likely because first entry exceeds cap)
-    // In that case just respect the first entry if it matches the boundary.
     const first = normalized[0];
     filtered = first ? [first] : [];
     accumulatedMinutes = first ? first.durationMinutes : 0;

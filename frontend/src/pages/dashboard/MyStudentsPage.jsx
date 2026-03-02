@@ -1057,8 +1057,8 @@ const fetchGuardiansList = async () => {
         </div>
       ) : (
         <div className="space-y-3">
-          {paginatedStudents.map((student) => (
-            <div key={student._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+          {paginatedStudents.map((student, index) => (
+            <div key={`${student._id}-${student.guardianId || student.studentInfo?.guardianId || 'noguardian'}-${index}`} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
               {/* Student Header */}
               <div className="p-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

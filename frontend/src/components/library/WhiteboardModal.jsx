@@ -382,7 +382,8 @@ const WhiteboardModal = ({ open, onClose, classId = null, onSent, inline = false
     if (!boardRef.current) return;
     try {
       setExporting(true);
-      const canvas = await html2canvas(boardRef.current, {
+      await flushPendingEdits();
+      const canvas = await renderSvgToCanvas(2) || await html2canvas(boardRef.current, {
         backgroundColor: '#ffffff',
         logging: false,
         scale: 2
@@ -403,7 +404,8 @@ const WhiteboardModal = ({ open, onClose, classId = null, onSent, inline = false
 
   const buildLightweightImageDataUrl = async () => {
     if (!boardRef.current) return null;
-    const canvas = await html2canvas(boardRef.current, {
+    await flushPendingEdits();
+    const canvas = await renderSvgToCanvas(1) || await html2canvas(boardRef.current, {
       backgroundColor: '#ffffff',
       logging: false,
       scale: 1
@@ -546,6 +548,55 @@ const WhiteboardModal = ({ open, onClose, classId = null, onSent, inline = false
     const cancelTextDraft = useCallback(() => {
       setTextDraft(null);
     }, []);
+
+  const flushPendingEdits = useCallback(async () => {
+    finishDrawing();
+    commitTextDraft();
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  }, [commitTextDraft, finishDrawing]);
+
+  const renderSvgToCanvas = useCallback(async (scale = 1) => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const serializer = new XMLSerializer();
+    let svgText = serializer.serializeToString(svg);
+    if (!svgText.includes('xmlns=')) {
+      svgText = svgText.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+    if (!svgText.includes('width=')) {
+      svgText = svgText.replace('<svg', `<svg width="${SVG_WIDTH}" height="${SVG_HEIGHT}"`);
+    }
+
+    const svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(SVG_WIDTH * scale);
+    canvas.height = Math.round(SVG_HEIGHT * scale);
+
+    return await new Promise((resolve) => {
+      img.onload = () => {
+        try {
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          }
+          resolve(canvas);
+        } catch (e) {
+          resolve(null);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+      img.src = url;
+    });
+  }, []);
   const activeBoardMeta = useMemo(
     () => boards.find((board) => board.id === activeBoard),
     [boards, activeBoard]

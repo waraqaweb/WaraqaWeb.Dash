@@ -999,7 +999,7 @@ router.get('/stats', authenticateToken, async (req, res) => {
       try {
         if (typeof Invoice.aggregate === 'function') {
           const invAgg = await runWithTimeout(Invoice.aggregate([
-            { $match: { guardian: guardianId, status: { $in: ['draft','sent','overdue','partially_paid'] } } },
+            { $match: { guardian: guardianId, status: { $in: ['draft','sent','overdue'] } } },
             { $limit: 10 }
           ]), 400);
           pendingInvoices = Array.isArray(invAgg) ? invAgg : [];

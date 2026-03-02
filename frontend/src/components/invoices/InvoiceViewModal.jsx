@@ -272,7 +272,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
       case 'paid': return 'Paid — payment received';
       case 'overdue': return 'Overdue — payment overdue';
       case 'pending': return 'Pending — awaiting payment';
-      case 'partially_paid': return 'Partially paid — outstanding balance';
       case 'sent': return 'Sent — delivered to guardian';
       case 'cancelled': return 'Cancelled — not payable';
       case 'refunded': return 'Refunded — payment returned';
@@ -298,7 +297,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     const hasMaxHours = typeof coverage.maxHours === 'number' && Number.isFinite(coverage.maxHours);
     const normalizedMax = hasMaxHours ? Math.max(0, coverage.maxHours) : null;
     const normalizedEndDate = coverage.endDate ? formatDateInput(coverage.endDate) : '';
-
     const nextMaxHours = !coverageLocked && normalizedMax && normalizedMax > 0 ? String(normalizedMax) : '';
     const nextCustomEndDate = !coverageLocked ? (normalizedEndDate || '') : '';
 
@@ -387,12 +385,10 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
 
     socket.on('invoice:updated', handleInvoiceUpdate);
     socket.on('invoice:paid', handleInvoiceUpdate);
-    socket.on('invoice:partially_paid', handleInvoiceUpdate);
 
     return () => {
       socket.off('invoice:updated', handleInvoiceUpdate);
       socket.off('invoice:paid', handleInvoiceUpdate);
-      socket.off('invoice:partially_paid', handleInvoiceUpdate);
     };
   }, [socket, resolvedInvoiceId, identifier, syncInvoiceState]);
 
@@ -628,6 +624,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     return normalized || '';
   }, [getEligibleSortedClasses, formatHoursValue]);
 
+
   const filteredClasses = useMemo(() => {
     const sorted = [...(classes || [])].sort((a, b) => {
       if (!(a?.rawDate instanceof Date) || Number.isNaN(a.rawDate?.getTime?.())) return 1;
@@ -680,7 +677,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     }
 
     return capped;
-  }, [classes, maxHours, endDateBoundary]);
+  }, [classes, maxHours, endDateBoundary, isCoverageLocked]);
 
   useEffect(() => {
     if (!invoice) return;
@@ -806,31 +803,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     waiveTransferFee,
     onInvoiceUpdate
   ]);
-
-  useEffect(() => {
-    if (isCoverageLocked) return;
-    if (userModifiedFiltersRef.current) return;
-    const hasCap = maxHours !== '' && maxHours !== null && maxHours !== undefined;
-    if (!hasCap) return;
-
-    const numericMax = Number(maxHours);
-    if (!Number.isFinite(numericMax) || numericMax <= 0) return;
-
-    const actualHours = totalMinutes / 60;
-    if (!Number.isFinite(actualHours) || actualHours <= 0) return;
-
-    const roundedActual = Math.round(actualHours * 100) / 100;
-    const normalizedActualString = formatHoursValue(roundedActual);
-    if (!normalizedActualString) return;
-
-    const normalizedActual = Number(normalizedActualString);
-    if (!Number.isFinite(normalizedActual) || normalizedActual <= 0) return;
-
-    const diff = Math.abs(normalizedActual - numericMax);
-    if (diff > 0.005) {
-      setMaxHours(normalizedActualString);
-    }
-  }, [totalMinutes, maxHours, formatHoursValue, isCoverageLocked]);
 
   const previewTotals = useMemo(() => {
     const hours = Number.isFinite(totalMinutes) ? roundCurrency(totalMinutes / 60) : 0;
@@ -1854,7 +1826,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                     {!isCoverageLocked ? (
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
-                          <span>Coverage cap (hours)</span>
+                          <span>Covered Hours</span>
                           <input
                             type="number"
                             value={maxHours}
@@ -1899,7 +1871,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                       </div>
                     ) : (
                       <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                        Paid invoice: coverage cap is ignored. Billed hours come from class sessions only.
+                        Paid invoice: coverage settings are locked.
                       </div>
                     )}
                     

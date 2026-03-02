@@ -21,6 +21,7 @@ const GuardianHoursAudit = require('../models/GuardianHoursAudit');
 const AccountStatusAudit = require('../models/AccountStatusAudit');
 const Notification = require('../models/Notification');
 const Class = require('../models/Class');
+const { computeGuardianHoursFromPaidInvoices, normalizeId, roundHours } = require('../services/guardianHoursService');
 const { isValidTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 const { 
   authenticateToken, 
@@ -293,18 +294,52 @@ const dedupeStudents = (students = [], options = {}) => {
 const sanitizeStudentHours = (students = []) =>
   students.map((student) => {
     const copy = { ...student };
-    delete copy.hoursRemaining;
     delete copy.hoursConsumed;
     delete copy.totalHours;
     delete copy.cumulativeConsumedHours;
     if (copy.studentInfo && typeof copy.studentInfo === 'object') {
       const info = { ...copy.studentInfo };
-      delete info.hoursRemaining;
       delete info.hoursConsumed;
       copy.studentInfo = info;
     }
     return copy;
   });
+
+const applyComputedStudentHours = (students = [], guardianHoursMap = new Map()) => {
+  return students.map((student) => {
+    const guardianId = normalizeId(student.guardianId || student.guardian);
+    const entry = guardianId ? guardianHoursMap.get(guardianId) : null;
+    const candidateIds = [
+      student.standaloneStudentId,
+      student.studentInfo?.standaloneStudentId,
+      student.studentId,
+      student._id,
+      student.id
+    ].map(normalizeId).filter(Boolean);
+
+    let hours = 0;
+    if (entry) {
+      for (const candidate of candidateIds) {
+        if (entry.studentHours.has(candidate)) {
+          hours = entry.studentHours.get(candidate);
+          break;
+        }
+      }
+    }
+
+    const normalizedHours = roundHours(hours);
+    const nextStudentInfo = {
+      ...(student.studentInfo || {}),
+      hoursRemaining: normalizedHours
+    };
+
+    return {
+      ...student,
+      hoursRemaining: normalizedHours,
+      studentInfo: nextStudentInfo
+    };
+  });
+};
 
 const matchesStudentSearch = (student = {}, needle = '') => {
   if (!needle) return true;
@@ -508,6 +543,24 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
           teacherInfo: {
             ...teacherInfo,
             _computedMonthlyHours: computed,
+          }
+        };
+      });
+    }
+
+    if (String(role || '').toLowerCase() === 'guardian' && Array.isArray(usersPayload)) {
+      const guardianIds = usersPayload.map((u) => normalizeId(u?._id)).filter(Boolean);
+      const guardianHoursMap = await computeGuardianHoursFromPaidInvoices(guardianIds);
+      usersPayload = usersPayload.map((user) => {
+        const guardianId = normalizeId(user?._id);
+        const entry = guardianId ? guardianHoursMap.get(guardianId) : null;
+        if (!entry) return user;
+        const guardianInfo = user.guardianInfo && typeof user.guardianInfo === 'object' ? user.guardianInfo : {};
+        return {
+          ...user,
+          guardianInfo: {
+            ...guardianInfo,
+            totalHours: Number(entry.totalHours || 0)
           }
         };
       });
@@ -844,10 +897,8 @@ router.post('/admin/account-logs', [
   requireAdmin,
 ], async (req, res) => {
   try {
-    const { userId, email, userIdOrEmail, limit, includeClasses, classLimit } = req.body || {};
+    const { userId, email, userIdOrEmail, limit } = req.body || {};
     const maxLimit = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 1000);
-    const includeClassEntries = includeClasses === true || String(includeClasses).toLowerCase() === 'true';
-    const maxClassLimit = Math.min(Math.max(parseInt(classLimit, 10) || 50, 1), 500);
 
     const normalizeName = (userLike = {}) => {
       const name = `${userLike.firstName || ''} ${userLike.lastName || ''}`.trim();
@@ -855,39 +906,17 @@ router.post('/admin/account-logs', [
       return userLike.email || 'Unknown';
     };
 
-    const buildClassEntries = (items = []) => {
-      if (!includeClassEntries || !Array.isArray(items) || items.length === 0) {
-        return { classEntries: [], classCount: Array.isArray(items) ? items.length : 0, classTruncated: false };
-      }
-      const limited = items.slice(0, maxClassLimit);
-      const classEntries = limited.map((item) => {
-        const studentName = item?.studentSnapshot
-          ? `${item.studentSnapshot.firstName || ''} ${item.studentSnapshot.lastName || ''}`.trim()
-          : '';
-        const teacherName = item?.teacherSnapshot
-          ? `${item.teacherSnapshot.firstName || ''} ${item.teacherSnapshot.lastName || ''}`.trim()
-          : '';
-        const durationMinutes = Number(item?.duration || 0) || 0;
-        const quantityHoursRaw = Number(item?.quantityHours || 0);
-        const hours = Number.isFinite(quantityHoursRaw) && quantityHoursRaw > 0
-          ? Math.round(quantityHoursRaw * 1000) / 1000
-          : Math.round((durationMinutes / 60) * 1000) / 1000;
+    const buildStudentName = (student = {}) => {
+      const name = `${student.firstName || ''} ${student.lastName || ''}`.trim();
+      return name || null;
+    };
 
-        return {
-          date: item?.date || null,
-          status: item?.status || item?.attendanceStatus || null,
-          duration: durationMinutes || null,
-          hours,
-          description: item?.description || null,
-          studentName: studentName || null,
-          teacherName: teacherName || null,
-        };
-      });
-      return {
-        classEntries,
-        classCount: items.length,
-        classTruncated: items.length > limited.length
-      };
+    const shouldCountClass = (cls) => {
+      const attendance = cls?.classReport?.attendance || null;
+      if (attendance === 'missed_by_student' && cls?.classReport?.countAbsentForBilling === false) return false;
+      if (attendance && ['attended', 'missed_by_student'].includes(attendance)) return true;
+      const status = cls?.status || null;
+      return ['attended', 'missed_by_student'].includes(status);
     };
 
     let user = null;
@@ -1018,14 +1047,8 @@ router.post('/admin/account-logs', [
         'billingPeriod',
         'generationSource',
         'notes',
-        'type',
-        'items'
+        'type'
       ];
-
-      if (!includeClassEntries) {
-        const idx = invoiceSelect.indexOf('items');
-        if (idx >= 0) invoiceSelect.splice(idx, 1);
-      }
 
       const invoices = await Invoice.find(invoiceFilter)
         .select(invoiceSelect.join(' '))
@@ -1033,7 +1056,6 @@ router.post('/admin/account-logs', [
         .lean();
 
       (invoices || []).forEach((inv) => {
-        const classMeta = buildClassEntries(inv.items || []);
         const hoursCoveredRaw = Number(inv.hoursCovered || 0);
         const hoursCovered = Number.isFinite(hoursCoveredRaw) ? Math.round(hoursCoveredRaw * 1000) / 1000 : undefined;
         const invoiceBase = {
@@ -1045,7 +1067,6 @@ router.post('/admin/account-logs', [
           reason: inv.generationSource === 'legacy-balance'
             ? 'Legacy balance invoice'
             : (inv.notes || null),
-          ...classMeta,
         };
 
         if (inv.createdAt) {
@@ -1083,6 +1104,9 @@ router.post('/admin/account-logs', [
           const balanceAfter = Number.isFinite(Number(p?.snapshot?.guardianBalanceAfter))
             ? Math.round(Number(p.snapshot.guardianBalanceAfter) * 1000) / 1000
             : undefined;
+          const paymentAmount = Number(p?.amount || 0) || 0;
+          const paymentHours = Number.isFinite(Number(p?.paidHours)) ? Number(p.paidHours) : undefined;
+          const isRefund = p?.method === 'refund' || paymentAmount < 0;
           if (p?.processedBy) actorIds.add(String(p.processedBy));
           logs.push({
             timestamp: p.processedAt || inv.paidDate || inv.updatedAt || inv.createdAt,
@@ -1094,13 +1118,53 @@ router.post('/admin/account-logs', [
             message: `Payment ${p.amount} applied to ${inv.invoiceNumber}`,
             actorId: p.processedBy || null,
             amount: p.amount,
-            hours: p.paidHours,
+            hours: paymentHours,
+            hoursIndicator: isRefund ? 'consumed' : 'added',
+            indicatorLabel: isRefund ? 'Refunded hours' : 'Paid hours',
             balanceBefore,
             balanceAfter,
             balanceNote: balanceBefore !== undefined || balanceAfter !== undefined ? 'guardian hours' : undefined,
             invoiceRemainingBefore: p?.snapshot?.invoiceRemainingBefore ?? undefined,
             invoiceRemainingAfter: p?.snapshot?.invoiceRemainingAfter ?? undefined,
           });
+        });
+      });
+    }
+
+    if (user.role === 'guardian') {
+      const classLogs = await Class.find({
+        'student.guardianId': user._id,
+        deleted: { $ne: true },
+        $or: [
+          { status: { $in: ['attended', 'missed_by_student'] } },
+          { 'classReport.attendance': { $in: ['attended', 'missed_by_student'] } }
+        ]
+      })
+        .select('scheduledDate duration status classReport student')
+        .sort({ scheduledDate: -1 })
+        .limit(maxLimit)
+        .lean();
+
+      classLogs.forEach((cls) => {
+        if (!shouldCountClass(cls)) return;
+        const durationMinutes = Number(cls?.duration || 0) || 0;
+        const hours = Number.isFinite(durationMinutes) && durationMinutes > 0
+          ? Math.round((durationMinutes / 60) * 1000) / 1000
+          : 0;
+        if (!hours) return;
+        const studentName = buildStudentName(cls?.student || {});
+        logs.push({
+          timestamp: cls?.scheduledDate || cls?.updatedAt || cls?.createdAt || new Date(),
+          source: 'class',
+          action: 'hours_attended',
+          success: true,
+          message: studentName ? `Class attended (${studentName})` : 'Class attended',
+          hours: -hours,
+          hoursIndicator: 'consumed',
+          indicatorLabel: studentName || null,
+          studentName,
+          classDate: cls?.scheduledDate || null,
+          classId: cls?._id || null,
         });
       });
     }
@@ -1401,7 +1465,31 @@ router.get('/:id', authenticateToken, requireResourceAccess('user'), async (req,
       });
     }
     
-    res.json({ user });
+    let responseUser = user.toObject ? user.toObject() : user;
+
+    if (responseUser?.role === 'guardian') {
+      const guardianId = normalizeId(responseUser._id);
+      const guardianHoursMap = await computeGuardianHoursFromPaidInvoices([guardianId]);
+      const entry = guardianHoursMap.get(guardianId);
+      if (responseUser.guardianInfo && typeof responseUser.guardianInfo === 'object') {
+        const embedded = Array.isArray(responseUser.guardianInfo.students) ? responseUser.guardianInfo.students : [];
+        const normalizedEmbedded = embedded.map((student) => ({
+          ...student,
+          guardianId: guardianId,
+          _source: 'embedded'
+        }));
+        const withHours = applyComputedStudentHours(normalizedEmbedded, guardianHoursMap);
+        responseUser.guardianInfo.students = withHours.map((student) => {
+          const clone = { ...student };
+          delete clone.guardianId;
+          delete clone._source;
+          return clone;
+        });
+        responseUser.guardianInfo.totalHours = Number(entry?.totalHours || 0);
+      }
+    }
+
+    res.json({ user: responseUser });
     
   } catch (error) {
     console.error('Get user error:', error);
@@ -2070,13 +2158,16 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
     }
 
     const combinedStudents = Array.from(byKey.values());
-    const totalHours = combinedStudents.reduce((sum, s) => sum + (Number(s.hoursRemaining) || 0), 0);
+    const guardianHoursMap = await computeGuardianHoursFromPaidInvoices([guardianId]);
+    const studentsWithHours = applyComputedStudentHours(combinedStudents, guardianHoursMap);
+    const guardianHoursEntry = guardianHoursMap.get(String(guardianId));
+    const totalHours = Number(guardianHoursEntry?.totalHours || 0);
     const cumulativeConsumedHours = Number(guardian.guardianInfo?.cumulativeConsumedHours || 0);
 
-    await attachScheduleActiveFlags(combinedStudents);
+    await attachScheduleActiveFlags(studentsWithHours);
 
     const trimmedSearch = (req.query.search || '').trim().toLowerCase();
-    let students = combinedStudents;
+    let students = studentsWithHours;
     if (trimmedSearch) {
       students = students.filter((student) => matchesStudentSearch(student, trimmedSearch));
     }
@@ -2256,6 +2347,10 @@ router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, r
         students = students.slice(0, effectiveLimit);
       }
 
+      const guardianIdsForHours = [...new Set(students.map((student) => normalizeId(student.guardianId || student.guardian)).filter(Boolean))];
+      const guardianHoursMap = await computeGuardianHoursFromPaidInvoices(guardianIdsForHours);
+      students = applyComputedStudentHours(students, guardianHoursMap);
+
       if (!lightMode) {
         await attachScheduleActiveFlags(students);
       } else {
@@ -2309,6 +2404,10 @@ router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, r
     }
 
     let students = dedupeStudents([...embeddedAll, ...standaloneAll]);
+    const guardianIdsForHours = [...new Set(students.map((student) => normalizeId(student.guardianId || student.guardian)).filter(Boolean))];
+    const guardianHoursMap = await computeGuardianHoursFromPaidInvoices(guardianIdsForHours);
+    students = applyComputedStudentHours(students, guardianHoursMap);
+
     if (!lightMode) {
       await attachScheduleActiveFlags(students);
     } else {

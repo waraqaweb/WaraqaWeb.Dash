@@ -99,7 +99,7 @@ async function run() {
   const sinceDate = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
   const filter = {
     deleted: { $ne: true },
-    status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] },
+    status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
     ...(guardianId ? { guardian: guardianId } : {}),
     ...(invoiceId ? { _id: invoiceId } : { createdAt: { $gte: sinceDate } })
   };

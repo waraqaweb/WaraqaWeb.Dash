@@ -22,7 +22,7 @@ const parseArgs = () => {
   return out;
 };
 
-const ACTIVE_UNPAID = ['draft', 'pending', 'sent', 'overdue', 'partially_paid'];
+const ACTIVE_UNPAID = ['draft', 'pending', 'sent', 'overdue'];
 
 async function run() {
   const args = parseArgs();

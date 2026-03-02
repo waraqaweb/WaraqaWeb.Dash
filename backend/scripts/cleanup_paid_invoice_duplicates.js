@@ -53,7 +53,7 @@ async function run() {
   const sinceDate = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
   const unpaidFilter = {
     deleted: { $ne: true },
-    status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] },
+    status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
     ...(guardianId ? { guardian: guardianId } : {}),
     createdAt: { $gte: sinceDate }
   };

@@ -27,7 +27,7 @@ const ensureDate = (value) => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
-const ACTIVE_DUPLICATE_STATUSES = ['draft', 'pending', 'sent', 'overdue', 'paid', 'partially_paid'];
+const ACTIVE_DUPLICATE_STATUSES = ['draft', 'pending', 'sent', 'overdue', 'paid'];
 const MAX_ACTIVITY_LOG_ENTRIES = 200;
 
 const normalizeIdToString = (value) => {
@@ -297,7 +297,7 @@ const invoiceSchema = new mongoose.Schema({
   // Status & payment
   status: {
     type: String,
-    enum: ['draft', 'pending', 'sent', 'overdue', 'paid', 'partially_paid', 'cancelled', 'refunded'],
+    enum: ['draft', 'pending', 'sent', 'overdue', 'paid', 'cancelled', 'refunded'],
     default: 'draft'
   },
   dueDate: { type: Date, required: true },
@@ -540,16 +540,14 @@ invoiceSchema.pre('save', async function(next) {
     const alreadyPaid = roundCurrency(this.paidAmount || 0);
 
     // status auto-update
-    if (remaining <= 0 && alreadyPaid > 0 && this.status !== 'refunded') {
+    if (alreadyPaid > 0 && this.status !== 'refunded') {
       this.status = 'paid';
       if (!this.paidDate) this.paidDate = new Date();
-    } else if (alreadyPaid > 0 && remaining > 0 && this.status !== 'refunded') {
-      this.status = 'partially_paid';
     } else if (this.status === 'draft' && this.billingType !== 'manual') {
       this.status = 'pending';
     }
 
-    if (this.dueDate && this.dueDate < new Date() && ['sent', 'pending', 'partially_paid'].includes(this.status)) {
+    if (this.dueDate && this.dueDate < new Date() && ['sent', 'pending'].includes(this.status)) {
       this.status = 'overdue';
     }
 
@@ -675,34 +673,29 @@ invoiceSchema.methods.recalculateTotals = function() {
     return true;
   });
 
-  // ✅ NEW: Apply coverage.maxHours filter to match frontend calculation
   const maxHours = coverage?.maxHours;
-  
+
   if (typeof maxHours === 'number' && Number.isFinite(maxHours) && maxHours > 0) {
     const maxMinutes = Math.round(maxHours * 60);
     let cumulativeMinutes = 0;
     const cappedItems = [];
-    
-    // Sort items by date (oldest first) before applying cap
+
     const sortedItems = [...effectiveItems].sort((a, b) => {
       const dateA = ensureDate(a.date);
       const dateB = ensureDate(b.date);
       if (!dateA || !dateB) return 0;
       return dateA.getTime() - dateB.getTime();
     });
-    
+
     for (const item of sortedItems) {
       const duration = Number(item?.duration || 0);
-      
-      // Stop adding items once we exceed maxHours cap
       if (cumulativeMinutes + duration > maxMinutes) {
         break;
       }
-      
       cappedItems.push(item);
       cumulativeMinutes += duration;
     }
-    
+
     effectiveItems = cappedItems;
   }
 
@@ -1460,16 +1453,16 @@ invoiceSchema.methods.processPayment = async function(amount, paymentMethod = 'm
   }
 
   const totalDue = this.getDueAmount();
-  const alreadyPaid = roundCurrency(this.paidAmount || 0);
   const remaining = roundCurrency(Math.max(0, totalDue));
 
   if (remaining <= 0) {
     throw new Error('Invoice is already settled');
   }
 
-  const appliedAmount = sanitizedAmount > remaining ? remaining : sanitizedAmount;
+  const targetTotal = roundCurrency(this.adjustedTotal || this.total || 0);
+  const appliedAmount = targetTotal > 0 ? targetTotal : sanitizedAmount;
 
-  this.paidAmount = roundCurrency(alreadyPaid + appliedAmount);
+  this.paidAmount = roundCurrency(appliedAmount);
   const normalizedMethod = paymentMethod || this.paymentMethod || 'manual';
   this.paymentMethod = normalizedMethod;
   if (transactionId) {
@@ -1477,7 +1470,7 @@ invoiceSchema.methods.processPayment = async function(amount, paymentMethod = 'm
   }
 
   const paymentDate = options.paidAt ? ensureDate(options.paidAt) : new Date();
-  if ((!this.paidDate || this.paidAmount >= totalDue) && remaining - appliedAmount <= 0) {
+  if (!this.paidDate) {
     this.paidDate = paymentDate;
   }
 
@@ -1485,7 +1478,7 @@ invoiceSchema.methods.processPayment = async function(amount, paymentMethod = 'm
     this.tip = roundCurrency((this.tip || 0) + roundCurrency(options.tip));
   }
 
-  const invoiceRemainingAfter = this.getDueAmount();
+  const invoiceRemainingAfter = 0;
 
   const logEntry = {
     amount: appliedAmount,
@@ -1531,14 +1524,7 @@ invoiceSchema.methods.processPayment = async function(amount, paymentMethod = 'm
     }
   });
 
-  if (invoiceRemainingAfter <= 0) {
-    this.status = 'paid';
-    if (!this.paidDate) {
-      this.paidDate = paymentDate;
-    }
-  } else if (['draft', 'pending', 'paid', 'partially_paid'].includes(this.status)) {
-    this.status = 'sent';
-  }
+  this.status = 'paid';
 
   await this.save();
   // After saving payment, distribute tip among teachers (exclude items marked excludeFromTeacherPayment)
@@ -1851,21 +1837,13 @@ invoiceSchema.methods.recordRefund = async function(amount, options = {}, adminU
   
   // ✅ Status logic after refund:
   // - Fully refunded (paidAmount = 0): 'refunded'
-  // - Still has balance due: 'partially_paid' (some money paid but not full amount)
-  // - Fully paid after refund: 'paid' (edge case: refund was tip-only or adjustment)
+  // - Otherwise: 'paid'
   if (this.paidAmount <= 0.009) {
     this.status = 'refunded';
     console.log('🔄 [Invoice.recordRefund] Status → refunded (fully refunded)');
-  } else if (dueAfter > 0.009) {
-    this.status = 'partially_paid';
-    console.log('🔄 [Invoice.recordRefund] Status → partially_paid', {
-      paidAmount: this.paidAmount,
-      totalDue: this.total,
-      remaining: dueAfter
-    });
   } else {
     this.status = 'paid';
-    console.log('🔄 [Invoice.recordRefund] Status → paid (still fully covered)');
+    console.log('🔄 [Invoice.recordRefund] Status → paid');
   }
 
   this.updatedBy = adminUserId || this.updatedBy;

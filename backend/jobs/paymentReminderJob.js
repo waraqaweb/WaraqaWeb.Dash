@@ -23,7 +23,7 @@ async function checkOverduePayments() {
     
     // Find unpaid invoices that are past due date
     const overdueInvoices = await Invoice.find({
-      status: { $in: ['pending', 'overdue', 'partially_paid'] },
+      status: { $in: ['pending', 'overdue'] },
       dueDate: { $lt: now },
       $or: [
         { lastReminderSent: { $exists: false } },

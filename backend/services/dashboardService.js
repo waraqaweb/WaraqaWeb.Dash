@@ -180,7 +180,7 @@ async function getInvoiceStats() {
       { $match: { status: { $ne: 'paid' } } },
       { $group: { _id: null, unpaid: { $sum: { $subtract: ['$total', { $ifNull: ['$paidAmount', 0] }] } } } }
     ]);
-    const pendingCount = (await Invoice.aggregate([{ $match: { status: { $in: ['draft','sent','partially_paid','pending'] } } }, { $count: 'count' }]))[0]?.count || 0;
+    const pendingCount = (await Invoice.aggregate([{ $match: { status: { $in: ['draft','sent','pending'] } } }, { $count: 'count' }]))[0]?.count || 0;
     const overdueCount = (await Invoice.aggregate([{ $match: { status: 'overdue' } }, { $count: 'count' }]))[0]?.count || 0;
 
     return {

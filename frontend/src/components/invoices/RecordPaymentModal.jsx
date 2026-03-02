@@ -121,7 +121,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
     };
 
     fetchInvoice();
-  }, [invoiceId, invoice?.coverage?.maxHours, invoice?.coverage?.endDate, invoice?.updatedAt]);
+  }, [invoiceId, invoice?.coverage?.endDate, invoice?.updatedAt]);
 
   // Compute the same billing window used in the view modal and invoices page
   const [billingWindow, setBillingWindow] = useState({ start: null, end: null, loading: true });
@@ -150,7 +150,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
     }
     const boundariesHours = boundariesMinutes.map(m => Math.round((m / 60) * 1000) / 1000);
     setBoundaries({ hours: boundariesHours, dates: boundariesDates });
-    // Billing window from filtered items (respects coverage.maxHours)
+    // Billing window from filtered items (respects coverage end date)
     const hasItems = filteredNormalized.length > 0;
     const start = hasItems ? new Date(Math.min(...filteredNormalized.map(e => e.rawDate.getTime()))) : (localInvoice.billingPeriod?.startDate ? new Date(localInvoice.billingPeriod.startDate) : null);
     const end = hasItems ? new Date(Math.max(...filteredNormalized.map(e => e.rawDate.getTime()))) : (localInvoice.billingPeriod?.endDate ? new Date(localInvoice.billingPeriod.endDate) : null);
@@ -190,6 +190,49 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
     // Show as info only, not as validation error
     setBoundaryHint({ valid: true, nextHours: nextHrs, nextAmount: nextAmt, coveredUntil: coveredDate, isInfo: true });
   }, [form.hoursPaid, boundaries, hourlyRate]);
+
+  const computeEndDateFromHours = React.useCallback((hoursValue) => {
+    const hrs = Number(hoursValue);
+    if (!Number.isFinite(hrs) || hrs <= 0) return '';
+    if (!Array.isArray(boundaries.hours) || boundaries.hours.length === 0) return '';
+    const EPS = 0.005;
+    let idx = boundaries.hours.findIndex((h) => h >= hrs - EPS);
+    if (idx === -1) idx = boundaries.hours.length - 1;
+    const date = boundaries.dates[idx];
+    if (!date) return '';
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) return '';
+    return parsed.toISOString().slice(0, 10);
+  }, [boundaries]);
+
+  useEffect(() => {
+    const status = String(localInvoice?.status || '').toLowerCase();
+    if (['paid', 'refunded'].includes(status)) return;
+    if (!invoiceId) return;
+    const hrs = Number(form.hoursPaid);
+    if (!Number.isFinite(hrs) || hrs <= 0) return;
+
+    const nextEndDate = computeEndDateFromHours(hrs);
+    const payload = {
+      strategy: 'cap_hours',
+      maxHours: Math.round(hrs * 1000) / 1000,
+      endDate: nextEndDate || null
+    };
+
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await api.put(`/invoices/${invoiceId}/coverage`, payload);
+        const updated = data?.invoice || data;
+        if (updated && typeof updated === 'object') {
+          setLocalInvoice(updated);
+        }
+      } catch (err) {
+        console.error('Failed to sync invoice coverage from payment modal', err);
+      }
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [form.hoursPaid, invoiceId, hourlyRate, computeEndDateFromHours]);
 
   const handleChange = e => {
     const { name, value } = e.target;

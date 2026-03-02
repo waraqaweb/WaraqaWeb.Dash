@@ -62,13 +62,6 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
     fetchInvoice();
   }, [invoiceId, onClose]);
 
-  const coverageHours = useMemo(() => {
-    if (!invoice) return 0;
-    const raw = invoice?.coverage?.maxHours;
-    if (!Number.isFinite(raw)) return 0;
-    return roundHours(raw);
-  }, [invoice]);
-
   const hourlyRate = useMemo(() => {
     if (!invoice) return 10;
     const fromInvoice = Number(invoice?.guardianFinancial?.hourlyRate || 0) || 0;
@@ -125,9 +118,8 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
       return base;
     }
     
-    // ✅ MATCH BACKEND LOGIC: Use coverage hours if available, otherwise total invoice hours
-    // Backend: const feeCoverageHours = hasCoverageCap ? coverageBefore : computeInvoiceItemHours(invoice);
-    const feeCoverageHours = coverageHours > 0 ? coverageHours : totalInvoiceHours;
+    // Use total invoice hours for proportional transfer fee calculation
+    const feeCoverageHours = totalInvoiceHours;
     
     // Simple hours-based proportion - match backend logic
     const hoursRatio = feeCoverageHours > 0 ? Math.min(hrs / feeCoverageHours, 1) : 0;
@@ -139,7 +131,6 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
       hourlyRate,
       base,
       transferFeeAmount,
-      coverageHours,
       totalInvoiceHours,
       feeCoverageHours,
       hoursRatio: Math.round(hoursRatio * 10000) / 10000,
@@ -148,7 +139,7 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
     });
     
     return total;
-  }, [hourlyRate, transferFeeAmount, transferFeeStatus, coverageHours, totalInvoiceHours]);
+  }, [hourlyRate, transferFeeAmount, transferFeeStatus, totalInvoiceHours]);
 
   const computeAmountDisplayFromHours = useCallback((hoursValue) => {
     const num = computeAmountNumberFromHours(hoursValue);
@@ -162,8 +153,8 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
     if (hourlyRate > 0) {
       guesses.push(Math.max(0, amt / hourlyRate));
     }
-    if (transferFeeAmount > 0 && coverageHours > 0) {
-      const effectiveRate = hourlyRate + (transferFeeAmount / coverageHours);
+    if (transferFeeAmount > 0 && totalInvoiceHours > 0) {
+      const effectiveRate = hourlyRate + (transferFeeAmount / totalInvoiceHours);
       if (effectiveRate > 0) {
         guesses.push(Math.max(0, amt / effectiveRate));
       }
@@ -173,7 +164,7 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
     let best = null;
     let bestDiff = Number.MAX_SAFE_INTEGER;
     guesses.forEach((guess) => {
-      const clamped = Math.max(0, Math.min(coverageHours, roundHours(guess)));
+      const clamped = Math.max(0, Math.min(totalInvoiceHours, roundHours(guess)));
       const diff = Math.abs(computeAmountNumberFromHours(clamped) - target);
       if (diff < bestDiff) {
         bestDiff = diff;
@@ -181,11 +172,11 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
       }
     });
     return best ?? '';
-  }, [hourlyRate, transferFeeAmount, coverageHours, computeAmountNumberFromHours]);
+  }, [hourlyRate, transferFeeAmount, totalInvoiceHours, computeAmountNumberFromHours]);
 
   useEffect(() => {
-    if (!invoice || coverageHours <= 0) return;
-    const defaultHours = coverageHours;
+    if (!invoice || totalInvoiceHours <= 0) return;
+    const defaultHours = totalInvoiceHours;
     const defaultAmount = computeAmountDisplayFromHours(defaultHours);
     setForm((prev) => ({
       amount: defaultAmount,
@@ -193,7 +184,7 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
       reason: prev.reason || 'Refund issued',
       reference: ''
     }));
-  }, [invoice, coverageHours, computeAmountDisplayFromHours]);
+  }, [invoice, totalInvoiceHours, computeAmountDisplayFromHours]);
 
   const handleHoursChange = (value) => {
     setValidation('');
@@ -207,9 +198,9 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
       setForm((prev) => ({ ...prev, hours: value }));
       return;
     }
-    const clamped = Math.max(0, Math.min(coverageHours, roundHours(numeric)));
-    if (clamped !== roundHours(numeric) || (clamped === coverageHours && numeric > coverageHours)) {
-      setValidation(`Refund hours cannot exceed ${coverageHours}h.`);
+    const clamped = Math.max(0, Math.min(totalInvoiceHours, roundHours(numeric)));
+    if (clamped !== roundHours(numeric) || (clamped === totalInvoiceHours && numeric > totalInvoiceHours)) {
+      setValidation(`Refund hours cannot exceed ${totalInvoiceHours}h.`);
     }
     const amountDisplay = computeAmountDisplayFromHours(clamped);
     setForm((prev) => ({
@@ -236,10 +227,10 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
       setForm((prev) => ({ ...prev, amount: formatCurrencyDisplay(roundCurrency(numeric)) }));
       return;
     }
-    if (derivedHours > coverageHours) {
-      setValidation(`Refund hours cannot exceed ${coverageHours}h.`);
+    if (derivedHours > totalInvoiceHours) {
+      setValidation(`Refund hours cannot exceed ${totalInvoiceHours}h.`);
     }
-    const clamped = Math.max(0, Math.min(coverageHours, roundHours(derivedHours)));
+    const clamped = Math.max(0, Math.min(totalInvoiceHours, roundHours(derivedHours)));
     
     // ✅ NEW: Validate that the amount matches the expected calculation for the derived hours
     const expectedAmount = computeAmountNumberFromHours(clamped);
@@ -289,8 +280,8 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
       setValidation('A refund reason is required.');
       return;
     }
-    if (parsedHours - coverageHours > 0.0005) {
-      setValidation(`Refund hours cannot exceed ${coverageHours}h.`);
+    if (parsedHours - totalInvoiceHours > 0.0005) {
+      setValidation(`Refund hours cannot exceed ${totalInvoiceHours}h.`);
       return;
     }
 
@@ -342,9 +333,9 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
 
   const remainingHours = useMemo(() => {
     const currentHours = Number(form.hours);
-    if (!Number.isFinite(currentHours)) return coverageHours;
-    return Math.max(0, roundHours(coverageHours - currentHours));
-  }, [coverageHours, form.hours]);
+    if (!Number.isFinite(currentHours)) return totalInvoiceHours;
+    return Math.max(0, roundHours(totalInvoiceHours - currentHours));
+  }, [totalInvoiceHours, form.hours]);
 
   if (loading) {
     return (
@@ -376,7 +367,7 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
     );
   }
 
-  const refundDisabled = saving || coverageHours <= 0;
+  const refundDisabled = saving || totalInvoiceHours <= 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
@@ -457,7 +448,7 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
               <span>Summary</span>
             </div>
             <ul className="mt-2 space-y-1 text-sm">
-              <li><span className="font-medium text-slate-700">Covered hours before refund:</span> {coverageHours}h</li>
+              <li><span className="font-medium text-slate-700">Refundable hours before refund:</span> {totalInvoiceHours}h</li>
               <li><span className="font-medium text-slate-700">Covered hours after refund:</span> {remainingHours}h</li>
               <li><span className="font-medium text-slate-700">Hourly rate:</span> ${hourlyRate.toFixed(2)}/hr</li>
               {transferFeeAmount > 0 && (
@@ -466,7 +457,7 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
             </ul>
           </div>
 
-          {coverageHours <= 0 && (
+          {totalInvoiceHours <= 0 && (
             <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-sm text-amber-700">
               This invoice does not have any covered hours to refund.
             </div>

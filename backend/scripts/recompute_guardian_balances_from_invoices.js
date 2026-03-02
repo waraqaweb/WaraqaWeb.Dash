@@ -81,7 +81,7 @@ const computeGuardian = async (guardian) => {
 
     const totalItemHours = itemsAsc.reduce((sum, item) => sum + (Number(item?.duration || 0) || 0) / 60, 0);
     if (totalItemHours <= 0) continue;
-    const isPaid = ['paid', 'partially_paid'].includes(String(invoice.status || ''));
+    const isPaid = ['paid'].includes(String(invoice.status || ''));
     let paidHours = extractPaidHours(invoice, guardian.guardianInfo?.hourlyRate || 0);
     const coverageMax = Number(invoice?.coverage?.maxHours);
     if (Number.isFinite(coverageMax) && coverageMax >= 0) {

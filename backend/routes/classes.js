@@ -1668,7 +1668,7 @@ router.post(
         return res.status(400).json({ message: "Invalid reschedule date" });
       }
 
-      if (rescheduleDate.getTime() <= Date.now()) {
+      if (rescheduleDate.getTime() <= Date.now() && req.user.role !== "admin") {
         return res.status(400).json({ message: "Reschedule date must be in the future" });
       }
 

@@ -39,9 +39,19 @@ const getCalendarMonthEndInclusive = (value) => {
   return new Date(exclusiveEnd.getTime() - 1);
 };
 
+const getFixedWindowEndExclusive = (value, days = 30) => {
+  const base = ensureDate(value) || new Date();
+  return new Date(base.getTime() + (days * 24 * 60 * 60 * 1000));
+};
+
+const getFixedWindowEndInclusive = (value, days = 30) => {
+  const exclusiveEnd = getFixedWindowEndExclusive(value, days);
+  return new Date(exclusiveEnd.getTime() - 1);
+};
+
 const EPSILON_HOURS = 0.0005;
 const EPSILON_CURRENCY = 0.05;
-const ACTIVE_UNPAID_INVOICE_STATUSES = ['draft', 'pending', 'sent', 'overdue', 'partially_paid'];
+const ACTIVE_UNPAID_INVOICE_STATUSES = ['draft', 'pending', 'sent', 'overdue'];
 const INVOICE_DEBUG = String(process.env.INVOICE_DEBUG || '').toLowerCase() === 'true';
 
 const resolveInvoiceHourlyRate = (invoice) => {
@@ -498,7 +508,7 @@ class InvoiceService {
 
       console.log(`📊 Found ${guardiansForOnZero.length} guardians (zero-hour) needing invoices`);
 
-      const activeInvoiceStatuses = ['draft', 'pending', 'sent', 'overdue', 'partially_paid'];
+      const activeInvoiceStatuses = ['draft', 'pending', 'sent', 'overdue'];
 
       // 2) Monthly billing guardians
       const today = new Date();
@@ -724,7 +734,7 @@ class InvoiceService {
           : today;
 
         // Cap auto-generated coverage at the end of the start month
-        const endDate = getCalendarMonthEndExclusive(startDate);
+        const endDate = getFixedWindowEndExclusive(startDate, 30);
 
         // Filter classes to only include those within the current calendar-month boundary
         const selectedClasses = unpaidClasses.filter(cls => {
@@ -848,7 +858,7 @@ class InvoiceService {
         guardian: guardian._id,
         type: 'guardian_invoice',
         deleted: { $ne: true },
-        status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] }
+        status: { $in: ['draft', 'pending', 'sent', 'overdue'] }
       }).sort({ createdAt: 1 });
 
       if (existingUnpaid) {
@@ -887,7 +897,7 @@ class InvoiceService {
       }
       
       // Cap auto-generated coverage at the end of the earliest class month
-      const searchEndDate = getCalendarMonthEndExclusive(billingStartDate);
+      const searchEndDate = getFixedWindowEndExclusive(billingStartDate, 30);
 
       // Build initial item from the reported class
       const duration = Number(classDoc.duration || 60);
@@ -1213,7 +1223,7 @@ class InvoiceService {
 
       // Initialize billing period - will be updated based on unpaid classes
       let billingStart = opts.billingPeriodStart instanceof Date ? opts.billingPeriodStart : now;
-      let billingEnd = opts.billingPeriodEnd instanceof Date ? opts.billingPeriodEnd : getCalendarMonthEndExclusive(billingStart);
+      let billingEnd = opts.billingPeriodEnd instanceof Date ? opts.billingPeriodEnd : getFixedWindowEndExclusive(billingStart, 30);
 
       // Predictive coverage: Find ALL unpaid classes first to determine billing start date
       // from the earliest unpaid class, then include classes until that month boundary
@@ -1256,7 +1266,7 @@ class InvoiceService {
           // Use the earliest unpaid class date as billing start, or today if no classes
           if (allUnpaidClasses.length > 0 && allUnpaidClasses[0].scheduledDate) {
             billingStart = new Date(allUnpaidClasses[0].scheduledDate);
-            billingEnd = getCalendarMonthEndExclusive(billingStart);
+            billingEnd = getFixedWindowEndExclusive(billingStart, 30);
           }
 
           console.log(`🔍 [Zero-Hour PAYG Invoice] Guardian: ${guardian.firstName} ${guardian.lastName}`);
@@ -1991,7 +2001,7 @@ class InvoiceService {
       };
 
       // If invoice is not fully settled yet, modify item directly
-      if (!['paid', 'partially_paid', 'sent', 'overdue'].includes(inv.status)) {
+      if (!['paid', 'sent', 'overdue'].includes(inv.status)) {
         const updates = { modifyItems: [ { _id: String(item._id), duration: newMinutes, ...toAttendance(classDoc.status) } ], note: 'Auto-update from class change' };
         return await InvoiceService.updateInvoiceItems(String(inv._id), updates, null);
       }
@@ -2001,7 +2011,7 @@ class InvoiceService {
         // If moved to a non-attended state, refund this lesson's full amount/hours
         const becameCancelled = String(classDoc.status).startsWith('cancelled') || classDoc.status === 'missed_by_student' || classDoc.status === 'no_show_both';
         const wasAttended = prev.status === 'attended' || item.attended === true;
-        if (becameCancelled && wasAttended && !['paid', 'partially_paid'].includes(inv.status)) {
+        if (becameCancelled && wasAttended && !['paid'].includes(inv.status)) {
           return await InvoiceService.applyPostPaymentAdjustment(String(inv._id), {
             type: 'removeLessons',
             itemIds: [ String(item._id) ],
@@ -2220,17 +2230,18 @@ class InvoiceService {
 
       const invoiceItemHours = computeInvoiceItemHours(invoiceDoc);
       const coverageHoursRaw = Number(invoiceDoc?.coverage?.maxHours);
-      const coverageHours = Number.isFinite(coverageHoursRaw) && coverageHoursRaw > EPSILON_HOURS
+      const hasCoverageCap = Number.isFinite(coverageHoursRaw) && coverageHoursRaw > EPSILON_HOURS;
+      const coverageHours = hasCoverageCap
         ? coverageHoursRaw
         : Math.max(0, invoiceItemHours);
       const isUnpaid = ACTIVE_UNPAID_INVOICE_STATUSES.includes(String(invoiceDoc?.status || '').toLowerCase());
-      const capMinutes = (!isUnpaid && coverageHours > EPSILON_HOURS) ? Math.round(coverageHours * 60) : null;
+      const capMinutes = hasCoverageCap ? Math.round(coverageHours * 60) : null;
 
       const billingStart = ensureDate(invoiceDoc?.billingPeriod?.startDate)
         || ensureDate(invoiceDoc?.createdAt)
         || new Date();
       const billingEnd = ensureDate(invoiceDoc?.billingPeriod?.endDate);
-      const hasCoverageHoursCap = coverageHours > EPSILON_HOURS;
+      const hasCoverageHoursCap = hasCoverageCap;
       let coverageEnd = ensureDate(invoiceDoc?.coverage?.endDate) || null;
       if (coverageEnd) {
         coverageEnd.setHours(23, 59, 59, 999);
@@ -2239,13 +2250,13 @@ class InvoiceService {
         if (coverageEnd) {
           coverageEnd.setHours(23, 59, 59, 999);
         } else if (billingStart) {
-          coverageEnd = getCalendarMonthEndInclusive(billingStart);
+          coverageEnd = getFixedWindowEndInclusive(billingStart, 30);
         }
       }
       if (isUnpaid && billingStart && !hasCoverageHoursCap) {
-        const minEnd = getCalendarMonthEndInclusive(billingStart);
-        if (!coverageEnd || coverageEnd < minEnd) {
-          coverageEnd = minEnd;
+        const fixedEnd = getFixedWindowEndInclusive(billingStart, 30);
+        if (!coverageEnd || (fixedEnd && coverageEnd > fixedEnd)) {
+          coverageEnd = fixedEnd;
         }
       }
 
@@ -2631,7 +2642,7 @@ class InvoiceService {
             guardian: guardianId,
             _id: { $ne: invoice._id },
             deleted: { $ne: true },
-            status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] }
+            status: { $in: ['draft', 'pending', 'sent', 'overdue'] }
           });
 
           for (const other of otherInvoices) {
@@ -2891,68 +2902,23 @@ class InvoiceService {
       }
       if (!allClassIds.length) return;
 
-      const coverageHours = Number(invoiceDoc.coverage?.maxHours || 0) || 0;
-      const coverageEndRaw = invoiceDoc.coverage?.endDate ? new Date(invoiceDoc.coverage.endDate) : null;
-      const coverageEnd = coverageEndRaw && !Number.isNaN(coverageEndRaw.getTime())
-        ? new Date(coverageEndRaw.setHours(23, 59, 59, 999))
-        : null;
+      const status = String(invoiceDoc?.status || '').toLowerCase();
+      const shouldMarkPaid = status === 'paid';
 
-      if (coverageHours <= EPSILON_HOURS) {
+      if (shouldMarkPaid) {
         await Class.updateMany(
           { _id: { $in: allClassIds } },
-          { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1 } }
+          { $set: { paidByGuardian: true, paidByGuardianAt: new Date() } }
         ).exec();
-        return;
-      }
-
-      let remaining = coverageHours;
-      const paidSet = new Set();
-      for (const item of sorted) {
-        const normalized = normalizeId(item.class);
-        if (!normalized) continue;
-        if (coverageEnd) {
-          const itemDate = new Date(item?.date || item?.scheduledDate || 0);
-          if (Number.isNaN(itemDate.getTime()) || itemDate > coverageEnd) {
-            continue;
-          }
-        }
-        const itemHours = Math.max(0, Number(item.duration || 0) / 60);
-        if (itemHours <= 0) continue;
-        if (remaining >= itemHours - EPSILON_HOURS) {
-          paidSet.add(normalized.toString());
-          remaining = Math.max(0, roundHours(remaining - itemHours));
-        }
-      }
-
-      const paidIds = allClassIds.filter((id) => paidSet.has(id.toString()));
-      const unpaidIds = allClassIds.filter((id) => !paidSet.has(id.toString()));
-
-      const ops = [];
-      if (paidIds.length) {
-        ops.push(
-          Class.updateMany(
-            { _id: { $in: paidIds } },
-            { $set: { paidByGuardian: true, paidByGuardianAt: new Date() } }
-          ).exec()
-        );
-      }
-
-      if (unpaidIds.length) {
+      } else {
         const baseUpdate = { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1 } };
-        const status = String(invoiceDoc?.status || '').toLowerCase();
-        if (status === 'paid' || status === 'refunded') {
+        if (status === 'refunded') {
           baseUpdate.$unset = { ...baseUpdate.$unset, billedInInvoiceId: 1, billedAt: 1 };
         }
-        ops.push(
-          Class.updateMany(
-            { _id: { $in: unpaidIds }, billedInInvoiceId: invoiceDoc._id },
-            baseUpdate
-          ).exec()
-        );
-      }
-
-      if (ops.length) {
-        await Promise.all(ops);
+        await Class.updateMany(
+          { _id: { $in: allClassIds } },
+          baseUpdate
+        ).exec();
       }
     } catch (err) {
       console.warn('Failed to sync class paid flags after coverage change', err?.message || err);
@@ -2992,16 +2958,13 @@ class InvoiceService {
       }
 
       // Only recalculate for paid or partially-paid invoices (money is involved)
-      if (!['paid', 'partially_paid'].includes(invoice.status)) {
+      if (!['paid'].includes(invoice.status)) {
         console.log(`💰 [Invoice Recalculation] Invoice ${invoice.invoiceNumber} is ${invoice.status}, skipping (no money involved yet)`);
         return { success: true, skipped: true, reason: 'invoice_not_paid' };
       }
 
-      const coverageHours = Number(invoice.coverage?.maxHours || 0) || 0;
-      if (coverageHours <= 0) {
-        console.log(`💰 [Invoice Recalculation] Invoice ${invoice.invoiceNumber} has no coverage, skipping`);
-        return { success: true, skipped: true, reason: 'no_coverage' };
-      }
+      console.log(`💰 [Invoice Recalculation] Coverage caps disabled; skipping recalculation for ${invoice.invoiceNumber}`);
+      return { success: true, skipped: true, reason: 'coverage_caps_disabled' };
 
       // Get current items sorted chronologically
       const currentItems = Array.isArray(invoice.items) ? invoice.items.filter(it => it && it.class) : [];
@@ -3012,7 +2975,7 @@ class InvoiceService {
       });
 
       // Calculate which classes should be marked as paid based on coverage hours
-      let remaining = coverageHours;
+      let remaining = 0;
       const shouldBePaidSet = new Set();
       const paidClassDetails = [];
 
@@ -3230,7 +3193,7 @@ class InvoiceService {
           { 'items.class': classId },
           { 'items.lessonId': String(classId) }
         ],
-        status: { $in: ['paid', 'partially_paid'] },
+        status: { $in: ['paid'] },
         deleted: { $ne: true }
       });
 
@@ -3301,7 +3264,7 @@ class InvoiceService {
    */
   static async ensureNextInvoiceIfBelowThreshold(guardianOrId, prevInvoice = null) {
     try {
-      const activeInvoiceStatuses = ['draft', 'pending', 'sent', 'overdue', 'partially_paid'];
+      const activeInvoiceStatuses = ['draft', 'pending', 'sent', 'overdue'];
 
       // load guardian
       const guardian = typeof guardianOrId === 'object' && guardianOrId.guardianInfo
@@ -3804,7 +3767,7 @@ class InvoiceService {
     try {
       const invoice = await Invoice.findById(invoiceId).populate('guardian').exec();
       if (!invoice) return { success: false, error: 'Invoice not found' };
-      if (invoice.status !== 'paid' && invoice.status !== 'partially_paid' && invoice.status !== 'sent' && invoice.status !== 'overdue') {
+      if (invoice.status !== 'paid' && invoice.status !== 'sent' && invoice.status !== 'overdue') {
         return { success: false, error: 'Invoice must be paid/partially paid/sent/overdue for post-payment adjustments' };
       }
 
@@ -4130,31 +4093,9 @@ class InvoiceService {
   const eligibleItems = itemsAsc.filter((it) => it && !it.excludeFromStudentBalance && !it.exemptFromGuardian && !(it.flags && (it.flags.notCountForBoth || it.flags.exemptFromGuardian)));
   const eligibleHoursTotal = eligibleItems.reduce((sum, item) => sum + ((Number(item?.duration || 0) || 0) / 60), 0);
 
-        // Determine "already covered" hours
         let currentCovered = 0;
         try {
-          const paymentsPositive = Array.isArray(invoice.paymentLogs)
-            ? invoice.paymentLogs.filter(l => l && typeof l.amount === 'number' && l.amount > 0 && l.method !== 'refund' && l.method !== 'tip_distribution')
-            : [];
-          const sumPaid = paymentsPositive.reduce((s, l) => s + Number(l.amount || 0), 0);
-          const hasAnyPaid = sumPaid > 0.01;
-          if (hasAnyPaid) {
-            if (invoice.coverage && typeof invoice.coverage.maxHours === 'number' && Number.isFinite(invoice.coverage.maxHours) && invoice.coverage.maxHours >= 0) {
-              currentCovered = Math.min(totalSchedHours, Math.max(0, Number(invoice.coverage.maxHours)));
-            } else {
-              const excludedSet = new Set((invoice.excludedClassIds || []).map((id) => id && id.toString()));
-              const classIdsList = itemsAsc.map((it) => (it?.class ? it.class.toString() : null));
-              let included = 0;
-              for (let i = 0; i < hourList.length; i++) {
-                const cid = classIdsList[i];
-                if (cid && excludedSet.has(cid)) continue;
-                included += Number(hourList[i] || 0);
-              }
-              currentCovered = Math.min(totalSchedHours, Math.max(0, included));
-            }
-          } else {
-            currentCovered = 0;
-          }
+          currentCovered = calculatePaidHoursFromLogs(invoice, hourlyRate);
         } catch (_) {
           currentCovered = 0;
         }
@@ -4165,18 +4106,10 @@ class InvoiceService {
           return { success: false, error: 'validation_error', message: 'Paid hours must be greater than zero' };
         }
 
-        const targetTotalHours = Math.round((currentCovered + incrementHours) * 1000) / 1000;
-        const coverageHours = Math.min(targetTotalHours, totalSchedHours);
-
-        // 3) Update invoice coverage with actual paid hours (no boundary enforcement)
-        invoice.coverage = invoice.coverage && typeof invoice.coverage === 'object' ? invoice.coverage : {};
-  invoice.coverage.maxHours = coverageHours;
-        invoice.coverage.updatedAt = new Date();
-        invoice.coverage.updatedBy = adminUserId || invoice.updatedBy;
-        invoice.markModified('coverage');
-  const coverageIncrement = Math.max(0, roundHours(coverageHours - currentCovered));
-  const eligibleRatio = totalSchedHours > EPSILON_HOURS ? Math.min(1, eligibleHoursTotal / totalSchedHours) : 0;
-  eligibleCoverageIncrementHours = roundHours(coverageIncrement * eligibleRatio);
+            const targetTotalHours = Math.round((currentCovered + incrementHours) * 1000) / 1000;
+            const coverageIncrement = Math.max(0, roundHours(incrementHours));
+            const eligibleRatio = totalSchedHours > EPSILON_HOURS ? Math.min(1, eligibleHoursTotal / totalSchedHours) : 0;
+            eligibleCoverageIncrementHours = roundHours(coverageIncrement * eligibleRatio);
         
         // Update billing period to reflect all included items
         try {
@@ -4304,9 +4237,8 @@ class InvoiceService {
             updatedInvoice.coverage = updatedInvoice.coverage && typeof updatedInvoice.coverage === 'object'
               ? updatedInvoice.coverage
               : {};
-            if (updatedInvoice.coverage.maxHours !== undefined || updatedInvoice.coverage.endDate !== undefined) {
+            if (updatedInvoice.coverage.maxHours !== undefined) {
               updatedInvoice.coverage.maxHours = undefined;
-              updatedInvoice.coverage.endDate = undefined;
               updatedInvoice.markModified('coverage');
               await updatedInvoice.save();
             }
@@ -4615,16 +4547,8 @@ class InvoiceService {
         invoice.status = 'sent';
       }
 
-      const coverage = invoice.coverage && typeof invoice.coverage === 'object' ? invoice.coverage : {};
-      if (hoursReverted > 0) {
-        const previousMax = Number(coverage.maxHours || 0) || 0;
-        coverage.maxHours = Math.max(0, roundHours(previousMax - hoursReverted));
-        coverage.updatedAt = new Date();
-        coverage.updatedBy = adminUserId || coverage.updatedBy;
-        invoice.coverage = coverage;
-        invoice.markModified('coverage');
-      } else if (!invoice.coverage) {
-        invoice.coverage = coverage;
+      if (!invoice.coverage || typeof invoice.coverage !== 'object') {
+        invoice.coverage = {};
       }
 
       invoice.recalculateTotals();
@@ -4779,7 +4703,7 @@ class InvoiceService {
 
       const guardianRef = invoice.guardian || (invoice.$locals ? invoice.$locals.guardianRef : null);
 
-      if (!['paid', 'partially_paid', 'sent', 'overdue'].includes(invoice.status)) {
+      if (!['paid', 'sent', 'overdue'].includes(invoice.status)) {
         throw new Error('Only invoices with recorded payments can be refunded');
       }
 
@@ -4798,13 +4722,7 @@ class InvoiceService {
         throw new Error('Refund hours must be greater than zero');
       }
 
-      const rawCoverageBefore = Number(invoice.coverage?.maxHours ?? 0);
-      const coverageBefore = Number.isFinite(rawCoverageBefore) ? rawCoverageBefore : 0;
-      const hasCoverageCap = coverageBefore > EPSILON_HOURS;
-
-      if (hasCoverageCap && normalizedHours - EPSILON_HOURS > coverageBefore) {
-        throw new Error('Refund hours exceed the covered hours on this invoice');
-      }
+      const hasCoverageCap = false;
 
       const hourlyRate = resolveInvoiceHourlyRate(invoice);
       const transferFeeAmount = extractTransferFeeAmount(invoice);
@@ -4816,7 +4734,7 @@ class InvoiceService {
       // When refunding hours (not specific classes), the transfer fee should be proportional to hours
       // Example: Refund 5 out of 5 hours = 100% of transfer fee
       //          Refund 2 out of 5 hours = 40% of transfer fee
-      const feeCoverageHours = hasCoverageCap ? coverageBefore : computeInvoiceItemHours(invoice);
+      const feeCoverageHours = computeInvoiceItemHours(invoice);
       
       let proportionalFee = 0;
       if (transferFeeAmount > 0 && feeCoverageHours > EPSILON_HOURS) {
@@ -5063,24 +4981,7 @@ class InvoiceService {
         }
       }
 
-      const recalculatedCoverageHours = calculatePaidHoursFromLogs(updatedInvoice, hourlyRate);
       const totalItemHours = computeInvoiceItemHours(updatedInvoice);
-      const effectiveCoverage = Math.min(recalculatedCoverageHours, totalItemHours);
-
-      const coverage = updatedInvoice.coverage && typeof updatedInvoice.coverage === 'object' ? updatedInvoice.coverage : {};
-      coverage.maxHours = roundHours(Math.max(0, effectiveCoverage));
-      coverage.updatedAt = new Date();
-      coverage.updatedBy = adminUserId || coverage.updatedBy;
-      updatedInvoice.coverage = coverage;
-      updatedInvoice.markModified('coverage');
-
-      console.log('🛡️ [InvoiceService] Coverage hours recalculated', {
-        coverageBefore,
-        coverageAfter: coverage.maxHours,
-        normalizedHours,
-        totalItemHours,
-        recalculatedCoverageHours
-      });
 
       updatedInvoice.recalculateTotals();
 
@@ -5122,13 +5023,8 @@ class InvoiceService {
         summaryMessageParts.push(`Guardian paid hours were ${formatHoursValue(guardianSummary.before)} and became ${formatHoursValue(guardianSummary.after)}.`);
       }
 
-      const coverageChanged = Math.abs((coverage.maxHours || 0) - (coverageBefore || 0)) > EPSILON_HOURS;
       const rangeLabel = `${invoiceStartDate ? dayjs(invoiceStartDate).format('MMM D, YYYY') : 'N/A'} to ${invoiceEndDate ? dayjs(invoiceEndDate).format('MMM D, YYYY') : 'N/A'}`;
-      summaryMessageParts.push(
-        coverageChanged
-          ? `Invoice coverage now ${formatHourLabel(coverage.maxHours)} (was ${formatHourLabel(coverageBefore)}), spanning ${rangeLabel}.`
-          : `Invoice coverage remains ${formatHourLabel(coverage.maxHours)}, spanning ${rangeLabel}.`
-      );
+      summaryMessageParts.push(`Invoice period spans ${rangeLabel}.`);
 
       if (transferFeeAmount > EPSILON_CURRENCY) {
         const remainingTransferFee = roundCurrency(transferFeeAmount - proportionalFee);
@@ -5148,8 +5044,6 @@ class InvoiceService {
         action: 'refund_adjustment',
         diff: {
           refundHours: normalizedHours,
-          coverageBefore,
-          coverageAfter: coverage.maxHours,
           expectedAmount,
           refundAmount: normalizedAmount
         },
@@ -5188,11 +5082,8 @@ class InvoiceService {
           refunded: proportionalFee > EPSILON_CURRENCY
         },
         coverage: {
-          before: coverageBefore,
-          after: coverage.maxHours,
           normalizedHours,
-          totalItemHours,
-          recalculatedCoverageHours
+          totalItemHours
         },
         invoiceDates: {
           start: invoiceStartDate ? invoiceStartDate.toISOString() : null,

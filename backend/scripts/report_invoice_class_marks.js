@@ -50,7 +50,7 @@ async function run() {
 
   const unpaidInvoices = await Invoice.find({
     deleted: { $ne: true },
-    status: { $in: ['draft', 'pending', 'sent', 'overdue', 'partially_paid'] },
+    status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
     ...(guardianId ? { guardian: guardianId } : {}),
     createdAt: { $gte: sinceDate }
   }).select('invoiceNumber guardian items createdAt').lean();

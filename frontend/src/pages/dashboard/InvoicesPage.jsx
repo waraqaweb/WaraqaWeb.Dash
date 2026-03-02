@@ -769,9 +769,6 @@ const InvoicesPage = ({ isActive = true }) => {
     const onPaid = (payload) => {
       try { upsertInvoice(payload?.invoice); } catch (_) {}
     };
-    const onPartiallyPaid = (payload) => {
-      try { upsertInvoice(payload?.invoice); } catch (_) {}
-    };
     const onRefunded = (payload) => {
       try { upsertInvoice(payload?.invoice); } catch (_) {}
     };
@@ -785,7 +782,6 @@ const InvoicesPage = ({ isActive = true }) => {
     socket.on('invoice:created', onCreated);
     socket.on('invoice:updated', onUpdated);
     socket.on('invoice:paid', onPaid);
-    socket.on('invoice:partially_paid', onPartiallyPaid);
     socket.on('invoice:refunded', onRefunded);
     socket.on('invoice:permanentlyDeleted', onPermanentlyDeleted);
 
@@ -794,7 +790,6 @@ const InvoicesPage = ({ isActive = true }) => {
         socket.off('invoice:created', onCreated);
         socket.off('invoice:updated', onUpdated);
         socket.off('invoice:paid', onPaid);
-        socket.off('invoice:partially_paid', onPartiallyPaid);
         socket.off('invoice:refunded', onRefunded);
         socket.off('invoice:permanentlyDeleted', onPermanentlyDeleted);
       } catch (_) {}
@@ -1026,7 +1021,6 @@ const InvoicesPage = ({ isActive = true }) => {
       case 'refunded':
         return 'brand';
       case 'pending':
-      case 'partially_paid':
         return 'warning';
       case 'draft':
       default:
@@ -1039,7 +1033,6 @@ const InvoicesPage = ({ isActive = true }) => {
       case 'paid': return 'Paid — payment received';
       case 'overdue': return 'Overdue — past due date';
       case 'pending': return 'Pending — awaiting payment';
-      case 'partially_paid': return 'Partially paid — outstanding balance';
       case 'sent': return 'Sent — delivered to guardian';
       case 'cancelled': return 'Cancelled — not payable';
       case 'refunded': return 'Refunded — payment returned';
@@ -1061,7 +1054,6 @@ const InvoicesPage = ({ isActive = true }) => {
       case 'sent':
         return <Send className={iconClass} />;
       case 'pending':
-      case 'partially_paid':
         return <TimerReset className={iconClass} />;
       case 'draft':
       default:
@@ -1071,7 +1063,7 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const getUnpaidSortWeight = (inv) => {
     const status = (inv?.status || '').toLowerCase();
-    const order = ['draft', 'pending', 'sent', 'overdue', 'partially_paid'];
+    const order = ['draft', 'pending', 'sent', 'overdue'];
     const idx = order.indexOf(status);
     return idx === -1 ? order.length : idx;
   };
@@ -1346,7 +1338,6 @@ const InvoicesPage = ({ isActive = true }) => {
           if (Math.round(aFee * 100) !== Math.round(bFee * 100)) changed = true;
         }
 
-        // compare coverage maxHours
         if (!changed) {
           const aMax = Number(cur.coverage?.maxHours ?? 0);
           const bMax = Number(nxt.coverage?.maxHours ?? 0);
@@ -1574,7 +1565,7 @@ const InvoicesPage = ({ isActive = true }) => {
                                 </div>
                               </span>
                               
-                              <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-sm text-slate-700">
+                              <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-700">
                                 <span className="font-medium">{primaryLabel}: {formatCurrency(primaryAmount)}</span>
                                 <span className="hidden h-1 w-1 rounded-full bg-slate-300 sm:inline-block" />
                                 <span>Hours: <span className="font-medium">{invoiceHours.toFixed(2)}</span></span>
@@ -1657,7 +1648,7 @@ const InvoicesPage = ({ isActive = true }) => {
                                     <XCircle className="h-4 w-4" />
                                   </button>
                                 )}
-                                {['paid', 'partially_paid', 'sent', 'overdue'].includes(invoice.status) && (
+                                {['paid', 'sent', 'overdue'].includes(invoice.status) && (
                                   <button
                                     onClick={() => openModal('refund', invoice)}
                                     className="inline-flex items-center justify-center rounded-full border border-violet-100 p-2 text-violet-500 transition hover:border-violet-200 hover:text-violet-700"

@@ -1,7 +1,8 @@
 const Invoice = require('../models/Invoice');
 const Class = require('../models/Class');
 
-const COUNTABLE_CLASS_STATUSES = new Set(['attended', 'missed_by_student', 'absent']);
+const COUNTABLE_CLASS_STATUSES = new Set(['attended', 'missed_by_student']);
+const COUNTABLE_ATTENDANCE = new Set(['attended', 'missed_by_student']);
 
 const roundHours = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 1000) / 1000;
 
@@ -40,6 +41,14 @@ const resolveItemHours = (item) => {
   if (Number.isFinite(qty) && qty > 0) return qty;
   const minutes = Number(item?.duration || 0) || 0;
   return minutes > 0 ? minutes / 60 : 0;
+};
+
+const shouldCountClass = (cls) => {
+  const attendance = cls?.classReport?.attendance || null;
+  if (attendance === 'missed_by_student' && cls?.classReport?.countAbsentForBilling === false) return false;
+  if (attendance && COUNTABLE_ATTENDANCE.has(attendance)) return true;
+  const status = cls?.status || null;
+  return COUNTABLE_CLASS_STATUSES.has(status);
 };
 
 const buildPaidInvoiceAllocations = (invoices = []) => {
@@ -93,14 +102,14 @@ const computeConsumedHours = async (guardianId, studentStartMap) => {
 
   const classDocs = await Class.find({
     'student.guardianId': guardianId,
-    status: { $in: Array.from(COUNTABLE_CLASS_STATUSES) },
     scheduledDate: { $gte: minStart }
   })
-    .select('scheduledDate duration student.studentId')
+    .select('scheduledDate duration status classReport student.studentId student._id')
     .lean();
 
   for (const cls of classDocs || []) {
-    const studentId = normalizeId(cls?.student?.studentId);
+    if (!shouldCountClass(cls)) continue;
+    const studentId = normalizeId(cls?.student?.studentId) || normalizeId(cls?.student?._id);
     if (!studentId) continue;
     const startDate = studentStartMap.get(studentId);
     if (startDate) {
@@ -108,6 +117,31 @@ const computeConsumedHours = async (guardianId, studentStartMap) => {
       if (!clsDate || Number.isNaN(clsDate.getTime()) || clsDate < startDate) continue;
     }
 
+    const minutes = Number(cls?.duration || 0) || 0;
+    if (minutes <= 0) continue;
+    const hours = minutes / 60;
+    consumed.set(studentId, roundHours((consumed.get(studentId) || 0) + hours));
+  }
+
+  return consumed;
+};
+
+const computeConsumedHoursAllTime = async (guardianId) => {
+  const consumed = new Map();
+  const classDocs = await Class.find({
+    'student.guardianId': guardianId,
+    $or: [
+      { status: { $in: Array.from(COUNTABLE_CLASS_STATUSES) } },
+      { 'classReport.attendance': { $in: Array.from(COUNTABLE_ATTENDANCE) } }
+    ]
+  })
+    .select('scheduledDate duration status classReport student.studentId student._id')
+    .lean();
+
+  for (const cls of classDocs || []) {
+    if (!shouldCountClass(cls)) continue;
+    const studentId = normalizeId(cls?.student?.studentId) || normalizeId(cls?.student?._id);
+    if (!studentId) continue;
     const minutes = Number(cls?.duration || 0) || 0;
     if (minutes <= 0) continue;
     const hours = minutes / 60;
@@ -135,12 +169,19 @@ const computeGuardianHoursFromPaidInvoices = async (guardianIds = []) => {
   for (const guardianId of normalized) {
     const allocation = allocations.get(guardianId) || { studentPaid: new Map(), studentStart: new Map() };
     const consumed = await computeConsumedHours(guardianId, allocation.studentStart);
+    const consumedAll = await computeConsumedHoursAllTime(guardianId);
     const studentHours = new Map();
 
     allocation.studentPaid.forEach((paidHours, studentId) => {
       const used = consumed.get(studentId) || 0;
       const remaining = roundHours(paidHours - used);
       studentHours.set(studentId, remaining);
+    });
+
+    consumedAll.forEach((usedHours, studentId) => {
+      if (!studentHours.has(studentId)) {
+        studentHours.set(studentId, roundHours(-usedHours));
+      }
     });
 
     const totalHours = roundHours(Array.from(studentHours.values()).reduce((sum, value) => sum + (Number(value) || 0), 0));

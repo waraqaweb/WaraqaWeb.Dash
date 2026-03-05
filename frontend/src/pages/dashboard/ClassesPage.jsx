@@ -691,6 +691,17 @@ const ClassesPage = ({ isActive = true }) => {
     () => (searchTerm || "").trim().toLowerCase(),
     [searchTerm]
   );
+  const [isSearchPulse, setIsSearchPulse] = useState(false);
+
+  useEffect(() => {
+    if (!normalizedSearchTerm) {
+      setIsSearchPulse(false);
+      return;
+    }
+    setIsSearchPulse(true);
+    const t = setTimeout(() => setIsSearchPulse(false), 250);
+    return () => clearTimeout(t);
+  }, [normalizedSearchTerm]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2861,7 +2872,7 @@ fetchClassesRef.current = fetchClasses;
     return icons[status] || <Clock className="h-4 w-4" />;
   };
 
-  const isListLoading = showLoading || isFetching;
+  const isListLoading = showLoading || isFetching || (Boolean(normalizedSearchTerm) && isSearchPulse);
   const renderClassesList = () => (
     <div className="space-y-4">
       {isListLoading && filteredClasses.length === 0 ? (

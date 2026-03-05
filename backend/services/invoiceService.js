@@ -683,14 +683,6 @@ class InvoiceService {
 
       // Handle monthly guardians
       for (const guardian of guardiansMonthly) {
-        const existing = await Invoice.findOne({
-          guardian: guardian._id,
-          type: 'guardian_invoice',
-          'billingPeriod.month': currentMonth,
-          'billingPeriod.year': currentYear
-        });
-
-        if (existing) continue;
 
         // Get classes that haven't been paid/invoiced (exclude classes already referenced in paid invoices)
         // ✅ Exclude classes that are already in ANY invoice (not just paid ones)
@@ -732,6 +724,18 @@ class InvoiceService {
         const startDate = unpaidClasses.length
           ? (unpaidClasses[0].scheduledDate || unpaidClasses[0].date)
           : today;
+
+        const targetMonth = new Date(startDate).getMonth() + 1;
+        const targetYear = new Date(startDate).getFullYear();
+        const existing = await Invoice.findOne({
+          guardian: guardian._id,
+          type: 'guardian_invoice',
+          deleted: { $ne: true },
+          'billingPeriod.month': targetMonth,
+          'billingPeriod.year': targetYear
+        });
+
+        if (existing) continue;
 
         // Cap auto-generated coverage at the end of the start month
         const endDate = getFixedWindowEndExclusive(startDate, 30);
@@ -1233,6 +1237,15 @@ class InvoiceService {
       // Initialize billing period - will be updated based on unpaid classes
       let billingStart = opts.billingPeriodStart instanceof Date ? opts.billingPeriodStart : now;
       let billingEnd = opts.billingPeriodEnd instanceof Date ? opts.billingPeriodEnd : getFixedWindowEndExclusive(billingStart, 30);
+
+      const resolvedCoverageEnd = (() => {
+        const explicitEnd = ensureDate(opts.billingPeriodEnd || billingEnd);
+        if (explicitEnd) {
+          explicitEnd.setHours(23, 59, 59, 999);
+          return explicitEnd;
+        }
+        return getFixedWindowEndInclusive(billingStart, 30);
+      })();
 
       // Predictive coverage: Find ALL unpaid classes first to determine billing start date
       // from the earliest unpaid class, then include classes until that month boundary

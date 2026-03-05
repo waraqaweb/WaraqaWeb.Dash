@@ -450,7 +450,7 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const performDeleteInvoice = async (invoiceId) => {
     try {
-      const { data } = await api.delete(`/invoices/${invoiceId}`, { params: { preserveHours: true } });
+      const { data } = await api.delete(`/invoices/${invoiceId}`, { params: { preserveHours: false } });
       if (data.success) {
         setInvoices((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
         alert('Invoice deleted permanently');

@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "invoice number entering behavior"
+git commit -m "unmark paid classes without invoices"
 git push origin main
 
 

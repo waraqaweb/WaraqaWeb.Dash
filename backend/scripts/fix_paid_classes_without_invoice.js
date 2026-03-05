@@ -49,8 +49,8 @@ async function run() {
     paidByGuardian: { $in: [true, 'true', 1] },
     $or: [
       { billedInInvoiceId: null },
-      { billedInInvoiceId: '' },
-      { billedInInvoiceId: { $exists: false } }
+      { billedInInvoiceId: { $exists: false } },
+      { billedInInvoiceId: { $type: 'string' } }
     ]
   };
 
@@ -62,10 +62,11 @@ async function run() {
     filter.scheduledDate = { $lt: beforeDate };
   }
 
-  const matches = await Class.find(filter)
+  const matches = (await Class.find(filter)
     .select('_id scheduledDate status student billedInInvoiceId paidByGuardian')
     .sort({ scheduledDate: 1 })
-    .lean();
+    .lean())
+    .filter((cls) => cls.billedInInvoiceId !== '');
 
   if (!matches.length) {
     console.log('No classes found.');

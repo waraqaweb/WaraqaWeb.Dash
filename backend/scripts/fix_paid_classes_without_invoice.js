@@ -46,9 +46,10 @@ async function run() {
   console.log('Connected to MongoDB');
 
   const filter = {
-    paidByGuardian: true,
+    paidByGuardian: { $in: [true, 'true', 1] },
     $or: [
       { billedInInvoiceId: null },
+      { billedInInvoiceId: '' },
       { billedInInvoiceId: { $exists: false } }
     ]
   };

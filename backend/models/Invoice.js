@@ -143,6 +143,7 @@ const invoiceItemSchema = new mongoose.Schema({
       'attended',
       'missed_by_student',
       'cancelled_by_teacher',
+      'cancelled_by_student',
       'cancelled_by_guardian',
       'cancelled_by_admin',
       'no_show_both',

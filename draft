@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "unmark paid classes without invoices"
+git commit -m "invoices fixes"
 git push origin main
 
 

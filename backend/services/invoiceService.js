@@ -3227,9 +3227,19 @@ class InvoiceService {
       const shouldMarkPaid = status === 'paid';
 
       if (shouldMarkPaid) {
+        const invoiceId = invoiceDoc?._id || null;
+        const linkFilter = invoiceId
+          ? { $or: [{ billedInInvoiceId: invoiceId }, { billedInInvoiceId: null }, { billedInInvoiceId: { $exists: false } }] }
+          : {};
         await Class.updateMany(
-          { _id: { $in: allClassIds } },
-          { $set: { paidByGuardian: true, paidByGuardianAt: new Date() } }
+          { _id: { $in: allClassIds }, ...linkFilter },
+          {
+            $set: {
+              paidByGuardian: true,
+              paidByGuardianAt: new Date(),
+              ...(invoiceId ? { billedInInvoiceId: invoiceId, billedAt: new Date() } : {})
+            }
+          }
         ).exec();
       } else {
         const baseUpdate = { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1 } };
@@ -4528,13 +4538,25 @@ class InvoiceService {
           const isFullyCovered = Math.abs(targetTotalHours - totalSchedHours) <= EPS;
           if (isFullyCovered) {
             const Class = require('../models/Class');
+            const invoiceId = invoice?._id || null;
             const classIdsToMark = itemsAsc
               .map((it) => it.class)
               .filter(Boolean);
             if (classIdsToMark.length) {
               await Class.updateMany(
-                { _id: { $in: classIdsToMark } },
-                { $set: { paidByGuardian: true, paidByGuardianAt: new Date() } }
+                {
+                  _id: { $in: classIdsToMark },
+                  ...(invoiceId
+                    ? { $or: [{ billedInInvoiceId: invoiceId }, { billedInInvoiceId: null }, { billedInInvoiceId: { $exists: false } }] }
+                    : {})
+                },
+                {
+                  $set: {
+                    paidByGuardian: true,
+                    paidByGuardianAt: new Date(),
+                    ...(invoiceId ? { billedInInvoiceId: invoiceId, billedAt: new Date() } : {})
+                  }
+                }
               ).exec();
             }
           }

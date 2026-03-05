@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "invoices behavior fixes"
+git commit -m "transfer fees toggle button"
 git push origin main
 
 

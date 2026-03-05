@@ -647,6 +647,23 @@ const DashboardHome = ({ isActive = true }) => {
   const [feedbackToast, setFeedbackToast] = useState({ show: false, type: 'success', message: '' });
   const [latestFeedback, setLatestFeedback] = useState(null);
   const [meetingFollowupPrompts, setMeetingFollowupPrompts] = useState(null);
+  const isAnyPromptOpen = showWelcome || showFirstClassModal || showMonthlyModal || showGuardianFollowUpModal || showTeacherSyncModal;
+
+  const isFirstVisit = React.useMemo(() => {
+    try {
+      if (!user) return false;
+      const key = `welcome_shown_v1_${user._id || 'anon'}`;
+      const already = localStorage.getItem(key) === 'true';
+      if (already) return false;
+      const now = new Date();
+      const lastLogin = user.lastLogin ? new Date(user.lastLogin) : null;
+      const createdAt = user.createdAt ? new Date(user.createdAt) : null;
+      const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+      return !lastLogin || (createdAt && (now.getTime() - createdAt.getTime() <= ONE_WEEK_MS));
+    } catch (e) {
+      return false;
+    }
+  }, [user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -677,6 +694,9 @@ const DashboardHome = ({ isActive = true }) => {
 
   useEffect(() => {
     if (!isActive) return;
+    if (showWelcome || isFirstVisit) return;
+    if (showGuardianFollowUpModal || showTeacherSyncModal) return;
+    if (showFirstClassModal || showMonthlyModal) return;
     if (!promptsLoading) {
       if (firstClassPrompts && firstClassPrompts.length > 0) {
         setActiveFirstPrompt(firstClassPrompts[0]);
@@ -688,7 +708,7 @@ const DashboardHome = ({ isActive = true }) => {
         try { window.history.pushState({ modal: 'monthly' }, ''); } catch(e){}
       }
     }
-  }, [isActive, promptsLoading, firstClassPrompts, monthlyPrompts]);
+  }, [isActive, promptsLoading, firstClassPrompts, monthlyPrompts, showWelcome, isFirstVisit, showGuardianFollowUpModal, showTeacherSyncModal, showFirstClassModal, showMonthlyModal]);
 
   // Welcome modal: show once for new users
   useEffect(() => {
@@ -796,6 +816,9 @@ const DashboardHome = ({ isActive = true }) => {
 
   useEffect(() => {
     if (!isActive || !meetingFollowupPrompts || !user?._id) return;
+    if (showWelcome || isFirstVisit) return;
+    if (showFirstClassModal || showMonthlyModal) return;
+    if (showGuardianFollowUpModal || showTeacherSyncModal) return;
     if (!meetingFollowupPrompts.enabled) return;
     const now = Date.now();
     const dayMs = 24 * 60 * 60 * 1000;
@@ -858,7 +881,11 @@ const DashboardHome = ({ isActive = true }) => {
     showGuardianFollowUpModal,
     showTeacherSyncModal,
     stats.data,
-    user?._id
+    user?._id,
+    showWelcome,
+    isFirstVisit,
+    showFirstClassModal,
+    showMonthlyModal
   ]);
 
   // StatCard moved to a separate widget component

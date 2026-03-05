@@ -1924,7 +1924,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                         </div>
                       )}
                       {/* Only admins can view or edit the waive-transfer-fee control */}
-                      {user?.role === 'guardian' && (
+                      {isAdmin && (
                         <div className="inline-flex shrink-0 items-center gap-2">
                           <span className="text-[11px] font-semibold text-slate-600">Transfer fees</span>
                           <button

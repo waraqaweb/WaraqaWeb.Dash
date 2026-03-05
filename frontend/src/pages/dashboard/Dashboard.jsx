@@ -130,6 +130,57 @@ const Dashboard = () => {
   const [mountedViews, setMountedViews] = useState(['home']);
   const lastDashboardPathRef = React.useRef(null);
 
+  const isPathAllowedForRole = React.useCallback((path) => {
+    const role = user?.role || 'guest';
+    if (role === 'admin') return true;
+
+    const normalized = String(path || '').split('?')[0].replace(/\/+$/, '');
+    const allow = {
+      teacher: [
+        '/dashboard',
+        '/dashboard/home',
+        '/dashboard/profile',
+        '/dashboard/classes',
+        '/dashboard/students',
+        '/dashboard/my-students',
+        '/dashboard/library',
+        '/dashboard/vacation-management',
+        '/dashboard/availability',
+        '/dashboard/salaries',
+        '/dashboard/requests',
+        '/dashboard/settings'
+      ],
+      guardian: [
+        '/dashboard',
+        '/dashboard/home',
+        '/dashboard/profile',
+        '/dashboard/classes',
+        '/dashboard/students',
+        '/dashboard/my-students',
+        '/dashboard/invoices',
+        '/dashboard/library',
+        '/dashboard/vacation-management',
+        '/dashboard/requests',
+        '/dashboard/settings'
+      ],
+      student: [
+        '/dashboard',
+        '/dashboard/home',
+        '/dashboard/profile',
+        '/dashboard/classes',
+        '/dashboard/students',
+        '/dashboard/my-students',
+        '/dashboard/library',
+        '/dashboard/vacation-management',
+        '/dashboard/requests',
+        '/dashboard/settings'
+      ]
+    };
+
+    const allowedList = allow[role] || [];
+    return allowedList.includes(normalized);
+  }, [user?.role]);
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem('dashboard:lastPath');
@@ -148,19 +199,27 @@ const Dashboard = () => {
     if (isRoot || isHome) {
       const saved = lastDashboardPathRef.current;
       if (saved && saved !== location.pathname + (location.search || '')) {
-        navigate(saved, { replace: true });
+        if (isPathAllowedForRole(saved)) {
+          navigate(saved, { replace: true });
+        } else {
+          try { localStorage.removeItem('dashboard:lastPath'); } catch (e) {}
+          lastDashboardPathRef.current = null;
+          navigate('/dashboard/home', { replace: true });
+        }
       }
       return;
     }
 
     try {
       const nextValue = `${location.pathname}${location.search || ''}`;
-      localStorage.setItem('dashboard:lastPath', nextValue);
-      lastDashboardPathRef.current = nextValue;
+      if (isPathAllowedForRole(nextValue)) {
+        localStorage.setItem('dashboard:lastPath', nextValue);
+        lastDashboardPathRef.current = nextValue;
+      }
     } catch (e) {
       // ignore storage errors
     }
-  }, [location.pathname, location.search, navigate]);
+  }, [location.pathname, location.search, navigate, isPathAllowedForRole]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;

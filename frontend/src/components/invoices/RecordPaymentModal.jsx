@@ -610,6 +610,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
   const savedHours = Number.isFinite(Number(localInvoice?.__computedHours))
     ? Number(localInvoice.__computedHours)
     : ((typeof localInvoice?.hoursCovered === 'number') ? localInvoice.hoursCovered : (localInvoice?.paidHours ?? localInvoice?.hoursPaid ?? null));
+  const showSeqInput = seqEditing || !invoiceNameParts.seq;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-8 backdrop-blur-sm">
@@ -630,12 +631,12 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
                 <h2 className="text-xl font-semibold leading-tight">
                   {`${invoiceNameParts.prefix || 'Waraqa'}-${invoiceNameParts.month || ''}-${invoiceNameParts.year || ''}-`}
                 </h2>
-                {seqEditing ? (
+                {showSeqInput ? (
                   <input
                     ref={seqInputRef}
                     value={seqDraft}
                     onChange={(e) => setSeqDraft(e.target.value)}
-                    autoFocus
+                    autoFocus={showSeqInput}
                     onFocus={(e) => e.target.select()}
                     onClick={(e) => e.currentTarget.select()}
                     onBlur={() => {

@@ -305,10 +305,14 @@ const MoonPhaseIcon = ({ date = new Date(), size = 56 }) => {
 
 const HIJRI_USER_OFFSET_KEY = 'waraqa.hijriUserOffsetDays';
 
-const HijriDateCard = ({ variant = 'card', timeZone, locale, hijriOffset }) => {
+const HijriDateCard = ({ variant = 'card', timeZone, locale, hijriOffset, userId, initialUserOffset }) => {
   const [userOffset, setUserOffset] = React.useState(0);
 
   React.useEffect(() => {
+    if (Number.isFinite(initialUserOffset)) {
+      setUserOffset(initialUserOffset);
+      return;
+    }
     try {
       const stored = window.localStorage.getItem(HIJRI_USER_OFFSET_KEY);
       const parsed = Number(stored);
@@ -320,13 +324,20 @@ const HijriDateCard = ({ variant = 'card', timeZone, locale, hijriOffset }) => {
     }
   }, []);
 
-  const updateUserOffset = (nextValue) => {
+  const updateUserOffset = async (nextValue) => {
     const safeValue = Number.isFinite(nextValue) ? Math.max(-2, Math.min(2, nextValue)) : 0;
     setUserOffset(safeValue);
     try {
       window.localStorage.setItem(HIJRI_USER_OFFSET_KEY, String(safeValue));
     } catch (e) {
       // ignore storage errors
+    }
+    if (userId) {
+      try {
+        await api.put(`/users/${userId}`, { uiPreferences: { hijriOffsetDays: safeValue } });
+      } catch (err) {
+        console.error('Failed to save hijri offset preference', err);
+      }
     }
   };
 
@@ -1123,7 +1134,13 @@ const DashboardHome = ({ isActive = true }) => {
                         )}
                       </div>
                   <div className="flex items-center space-x-3">
-                    <HijriDateCard variant="inline" timeZone={user?.timezone} hijriOffset={hijriOffset} />
+                    <HijriDateCard
+                      variant="inline"
+                      timeZone={user?.timezone}
+                      hijriOffset={hijriOffset}
+                      userId={user?._id}
+                      initialUserOffset={user?.uiPreferences?.hijriOffsetDays}
+                    />
                     <div className="text-sm text-muted-foreground">
                       {stats.data && stats.data.timestamps && stats.data.timestamps.computedAt && (() => {
                         const d = new Date(stats.data.timestamps.computedAt);
@@ -1503,7 +1520,12 @@ const DashboardHome = ({ isActive = true }) => {
             </div>
           </div>
           <div className="lg:col-span-1">
-            <HijriDateCard timeZone={user?.timezone} hijriOffset={hijriOffset} />
+            <HijriDateCard
+              timeZone={user?.timezone}
+              hijriOffset={hijriOffset}
+              userId={user?._id}
+              initialUserOffset={user?.uiPreferences?.hijriOffsetDays}
+            />
           </div>
         </div>
 
@@ -1648,7 +1670,12 @@ const DashboardHome = ({ isActive = true }) => {
 
           {/* Force placement: start at col 3 / row 1 so it can span both rows */}
           <div className="lg:col-start-3 lg:row-start-1 lg:row-span-2 h-full">
-            <HijriDateCard timeZone={user?.timezone} hijriOffset={hijriOffset} />
+            <HijriDateCard
+              timeZone={user?.timezone}
+              hijriOffset={hijriOffset}
+              userId={user?._id}
+              initialUserOffset={user?.uiPreferences?.hijriOffsetDays}
+            />
           </div>
 
           <div className="lg:col-span-2 lg:row-span-1 rounded-2xl border border-yellow-300/70 bg-yellow-50 p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between shadow-sm">
@@ -1836,7 +1863,12 @@ const DashboardHome = ({ isActive = true }) => {
           </div>
         </div>
         <div className="lg:col-span-1">
-          <HijriDateCard timeZone={user?.timezone} hijriOffset={hijriOffset} />
+          <HijriDateCard
+            timeZone={user?.timezone}
+            hijriOffset={hijriOffset}
+            userId={user?._id}
+            initialUserOffset={user?.uiPreferences?.hijriOffsetDays}
+          />
         </div>
       </div>
 

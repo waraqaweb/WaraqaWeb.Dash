@@ -37,14 +37,14 @@ const DeleteCountdownToast = ({
 
   return (
     <div
-      className={`fixed bottom-6 right-24 z-[60] animate-slide-up ${className}`}
+      className={`fixed bottom-24 right-6 z-[1100] animate-slide-up ${className}`}
     >
       <div
         role="status"
-        className="flex w-[480px] max-w-[calc(100vw-3rem)] items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 shadow-lg backdrop-blur-sm"
+        className="flex w-[min(420px,calc(100vw-2rem))] flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 shadow-lg backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between"
       >
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden />
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <span className="mt-1 inline-flex h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden />
           <div className="min-w-0">
             <p className="text-sm font-semibold text-emerald-900 whitespace-normal break-words">{line1}</p>
             {line2 && <p className="text-xs text-emerald-800/80 whitespace-normal break-words">{line2}</p>}
@@ -57,7 +57,7 @@ const DeleteCountdownToast = ({
               e.stopPropagation();
               onUndo();
             }}
-            className="shrink-0 rounded-md border border-emerald-500 bg-white/90 px-2 py-0.5 text-xs font-semibold text-emerald-700 leading-tight transition hover:bg-white"
+            className="shrink-0 self-start rounded-md border border-emerald-500 bg-white/90 px-3 py-1 text-xs font-semibold text-emerald-700 leading-tight transition hover:bg-white sm:self-center"
           >
             Undo
           </button>

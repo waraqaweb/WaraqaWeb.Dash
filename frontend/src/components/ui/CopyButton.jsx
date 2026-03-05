@@ -6,14 +6,15 @@
  */
 
 import React, { useState } from 'react';
-import { Copy, Check } from 'lucide-react';
+import { Clipboard, Check, Link2 } from 'lucide-react';
 
 const CopyButton = ({ 
   text, 
   className = "", 
   title = "Copy to clipboard",
   size = "default",
-  variant = "default"
+  variant = "default",
+  icon = "copy"
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -92,6 +93,8 @@ const CopyButton = ({
     }
   };
 
+  const Icon = icon === 'link' ? Link2 : Clipboard;
+
   return (
     <button
       onClick={handleCopy}
@@ -108,7 +111,7 @@ const CopyButton = ({
       {copied ? (
         <Check className={`${getIconSize()} transition-all duration-200`} />
       ) : (
-        <Copy className={`${getIconSize()} transition-all duration-200`} />
+        <Icon className={`${getIconSize()} transition-all duration-200`} />
       )}
     </button>
   );

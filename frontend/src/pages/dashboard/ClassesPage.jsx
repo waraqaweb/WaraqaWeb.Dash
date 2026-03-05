@@ -13,6 +13,7 @@ import {
   ChevronDown, ChevronUp, Video, Clock, CheckCircle,
   XCircle, AlertCircle, Plus, Trash2, Calendar, User, Users, BookOpen,
   Pencil, Copy, Repeat, Star, FileText, RotateCcw, Globe, MessageCircle, Image,
+  CalendarClock
 } from "lucide-react";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import useMinLoading from "../../components/ui/useMinLoading";
@@ -3062,7 +3063,7 @@ fetchClassesRef.current = fetchClasses;
                         <Video className="h-4 w-4" />
                       </button>
                     )}
-                    <CopyButton text={classItem.meetingLink} />
+                    <CopyButton text={classItem.meetingLink} title="Copy meeting link" icon="link" />
                   </div>
                 )}
 
@@ -3096,7 +3097,7 @@ fetchClassesRef.current = fetchClasses;
                         title="Reschedule Class"
                         disabled={policyLoadingForClass}
                       >
-                        <RotateCcw className="h-4 w-4" />
+                        <CalendarClock className="h-4 w-4" />
                       </button>
                     )}
 
@@ -3122,7 +3123,7 @@ fetchClassesRef.current = fetchClasses;
                       className="icon-button icon-button--green"
                       title="Duplicate Class"
                     >
-                      <Repeat className="h-4 w-4" />
+                      <Copy className="h-4 w-4" />
                     </button>
 
                     <button
@@ -3148,7 +3149,7 @@ fetchClassesRef.current = fetchClasses;
                         title={rescheduleDisabledReason || "Request a new time"}
                         disabled={policyLoadingForClass || (!!rescheduleDisabledReason && Boolean(classPolicy))}
                       >
-                        <RotateCcw className="h-3.5 w-3.5" /> Reschedule
+                        <CalendarClock className="h-3.5 w-3.5" /> Reschedule
                       </button>
 
                       <button

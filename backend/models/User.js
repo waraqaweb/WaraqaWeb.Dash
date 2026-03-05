@@ -526,6 +526,16 @@ const userSchema = new mongoose.Schema({
     // ========== END TEACHER SALARY SYSTEM FIELDS ==========
   },
 
+  // User UI preferences
+  uiPreferences: {
+    hijriOffsetDays: {
+      type: Number,
+      default: 0,
+      min: -2,
+      max: 2
+    }
+  },
+
   // Admin-specific meeting configuration
   adminSettings: {
     meetingLink: {

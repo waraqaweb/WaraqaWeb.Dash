@@ -1597,8 +1597,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                   <h2 className="text-3xl font-semibold text-slate-900 flex items-center gap-2">
                     {(['prefix', 'month', 'year', 'seq']).map((partKey, idx) => {
                       const value = invoiceNameParts[partKey] || '';
-                      const isEditing = editingPart === partKey;
                       const isSeq = partKey === 'seq';
+                      const shouldEditSeq = isSeq && isAdmin && !value;
+                      const isEditing = editingPart === partKey || shouldEditSeq;
                       const inputClass = isSeq ? 'w-20' : partKey === 'year' ? 'w-20' : partKey === 'month' ? 'w-16' : 'w-24';
                       return (
                         <React.Fragment key={partKey}>
@@ -1611,6 +1612,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                                 setInvoiceNameParts(next);
                                 setInvoiceNameDraft(buildInvoiceNameFromParts(next));
                               }}
+                              autoFocus={shouldEditSeq}
                               onBlur={() => {
                                 const nextName = buildInvoiceNameFromParts(invoiceNameParts);
                                 setInvoiceNameEditing(false);

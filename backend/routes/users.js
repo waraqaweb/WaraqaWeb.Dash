@@ -1770,6 +1770,23 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
       }
     }
 
+    // Normalize UI preferences (self-service for users)
+    if (Object.prototype.hasOwnProperty.call(updates, 'uiPreferences')) {
+      if (!updates.uiPreferences || typeof updates.uiPreferences !== 'object') {
+        delete updates.uiPreferences;
+      } else {
+        const existingPrefs = (originalUser.uiPreferences && typeof originalUser.uiPreferences === 'object')
+          ? (typeof originalUser.uiPreferences.toObject === 'function' ? originalUser.uiPreferences.toObject() : originalUser.uiPreferences)
+          : {};
+        const nextOffset = Number(updates.uiPreferences.hijriOffsetDays);
+        const safeOffset = Number.isFinite(nextOffset) ? Math.max(-2, Math.min(2, Math.round(nextOffset))) : 0;
+        updates.uiPreferences = {
+          ...existingPrefs,
+          hijriOffsetDays: safeOffset
+        };
+      }
+    }
+
     // If guardianInfo is being updated for a guardian, deep-merge to avoid wiping embedded students
     if (originalUser.role === 'guardian' && updates.guardianInfo && typeof updates.guardianInfo === 'object') {
       try {

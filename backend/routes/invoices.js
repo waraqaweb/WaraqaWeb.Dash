@@ -25,6 +25,16 @@ const roundHours = (value) => {
   return Math.round(numeric * 1000) / 1000;
 };
 
+const getFixedWindowEndExclusive = (value, days = 30) => {
+  const base = value instanceof Date ? value : new Date(value || Date.now());
+  return new Date(base.getTime() + (days * 24 * 60 * 60 * 1000));
+};
+
+const getFixedWindowEndInclusive = (value, days = 30) => {
+  const exclusiveEnd = getFixedWindowEndExclusive(value, days);
+  return new Date(exclusiveEnd.getTime() - 1);
+};
+
 const parseLegacyDate = (value, fallback) => {
   if (!value) return fallback;
   const d = new Date(value);
@@ -236,7 +246,7 @@ const computeTransferFeePreview = ({ baseTotal, guardianFinancial, coverage }) =
   };
 };
 
-const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
+const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit, endDate }) => {
   if (!guardianId) {
     return { error: 'Guardian is required' };
   }
@@ -292,12 +302,33 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
   const normalizedHoursLimit = Number.isFinite(Number(hoursLimit)) && Number(hoursLimit) > 0
     ? Number(hoursLimit)
     : null;
+  const normalizedEndDate = endDate ? new Date(endDate) : null;
+  const hasValidEndDate = normalizedEndDate && !Number.isNaN(normalizedEndDate.getTime());
+
+  if (normalizedHoursLimit && hasValidEndDate) {
+    return { error: 'Choose hours limit or end date (not both)' };
+  }
+
+  if (hasValidEndDate && normalizedEndDate < startDate) {
+    return { error: 'End date must be after the first unpaid class' };
+  }
 
   let selectedClasses = [];
   let totalHours = 0;
-  let endDate = null;
+  let coverageEndDate = null;
 
-  if (normalizedHoursLimit) {
+  if (hasValidEndDate) {
+    normalizedEndDate.setHours(23, 59, 59, 999);
+    selectedClasses = unpaidClasses.filter((cls) => {
+      const clsDate = new Date(cls.scheduledDate || cls.date || 0);
+      return clsDate >= new Date(startDate) && clsDate <= normalizedEndDate;
+    });
+    coverageEndDate = normalizedEndDate;
+    totalHours = selectedClasses.reduce((sum, cls) => {
+      const hours = (Number(cls.duration || 0) || 0) / 60;
+      return sum + (Number.isFinite(hours) ? hours : 0);
+    }, 0);
+  } else if (normalizedHoursLimit) {
     for (const cls of unpaidClasses) {
       const durationMinutes = Number(cls.duration || 0);
       const hours = durationMinutes / 60;
@@ -307,14 +338,15 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
       if (totalHours >= normalizedHoursLimit) break;
     }
     const last = selectedClasses[selectedClasses.length - 1];
-    endDate = last ? (last.scheduledDate || last.date || startDate) : startDate;
+    coverageEndDate = last ? (last.scheduledDate || last.date || startDate) : startDate;
   } else {
-    const defaultEnd = new Date(startDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const defaultEndExclusive = getFixedWindowEndExclusive(startDate, 30);
+    const defaultEndInclusive = getFixedWindowEndInclusive(startDate, 30);
     selectedClasses = unpaidClasses.filter((cls) => {
       const clsDate = new Date(cls.scheduledDate || cls.date);
-      return clsDate >= new Date(startDate) && clsDate < defaultEnd;
+      return clsDate >= new Date(startDate) && clsDate < defaultEndExclusive;
     });
-    endDate = defaultEnd;
+    coverageEndDate = defaultEndInclusive;
     totalHours = selectedClasses.reduce((sum, cls) => {
       const hours = (Number(cls.duration || 0) || 0) / 60;
       return sum + (Number.isFinite(hours) ? hours : 0);
@@ -359,9 +391,9 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
   const subtotal = items.reduce((sum, item) => sum + (Number(item.amount || 0) || 0), 0);
 
   const coverage = {
-    strategy: normalizedHoursLimit ? 'cap_hours' : 'full_period',
+    strategy: hasValidEndDate ? 'custom_end' : (normalizedHoursLimit ? 'cap_hours' : 'full_period'),
     maxHours: normalizedHoursLimit || undefined,
-    endDate: endDate || undefined,
+    endDate: coverageEndDate || undefined,
     waiveTransferFee: false
   };
 
@@ -374,7 +406,7 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit }) => {
     subtotal,
     total: subtotal,
     startDate,
-    endDate,
+    endDate: coverageEndDate,
     totalHours,
     rate,
     classIds: items.map((it) => it.class || it.lessonId).filter(Boolean),
@@ -1003,136 +1035,20 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
   try {
     const { sinceDays, includeCancelled, limit } = req.body || {};
     const audit = require('../services/invoiceAuditService');
-    const lessons = await audit.findUninvoicedLessons({ sinceDays, includeCancelled });
-    const capped = Number.isFinite(Number(limit)) && Number(limit) > 0
-      ? lessons.slice(0, Number(limit))
-      : lessons;
-
-    const summary = {
-      total: lessons.length,
+    const result = await audit.resolveUninvoicedLessons({
+      sinceDays,
+      includeCancelled,
+      limit,
+      adminUserId: req.user?._id
+    });
+    const summary = result?.summary || {
+      total: 0,
       processed: 0,
       attached: 0,
       created: 0,
       skipped: 0,
       errors: []
     };
-
-    for (const lesson of capped) {
-      summary.processed += 1;
-      const classId = lesson?.classId || lesson?._id;
-      if (!classId) {
-        summary.skipped += 1;
-        continue;
-      }
-
-      try {
-        const classDoc = await Class.findById(classId);
-        if (!classDoc) {
-          summary.skipped += 1;
-          continue;
-        }
-
-        // If the class is linked to an invoice that is cancelled/missing/deleted, clear the link
-        // so the lesson can be re-attached to an active invoice.
-        if (classDoc.billedInInvoiceId) {
-          const linked = await Invoice.findById(classDoc.billedInInvoiceId).select('_id deleted status').lean();
-          const isValid = linked && !linked.deleted && String(linked.status || '').toLowerCase() !== 'cancelled';
-          if (isValid) {
-            summary.skipped += 1;
-            continue;
-          }
-          await Class.updateOne(
-            { _id: classDoc._id, billedInInvoiceId: classDoc.billedInInvoiceId },
-            { $set: { billedInInvoiceId: null, billedAt: null } }
-          );
-          classDoc.billedInInvoiceId = null;
-          classDoc.billedAt = null;
-        }
-
-        const alreadyInInvoice = await Invoice.findOne({
-          $or: [
-            { 'items.class': classDoc._id },
-            { 'items.lessonId': String(classDoc._id) }
-          ],
-          deleted: { $ne: true },
-          // Treat refunded as a real invoice attachment (avoid accidental double-invoicing)
-          status: { $nin: ['cancelled'] }
-        });
-
-        if (alreadyInInvoice) {
-          summary.skipped += 1;
-          continue;
-        }
-
-        const guardianId = classDoc.student?.guardianId;
-        if (!guardianId) {
-          summary.skipped += 1;
-          continue;
-        }
-
-        const openInvoice = await Invoice.findOne({
-          guardian: guardianId,
-          type: 'guardian_invoice',
-          status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
-          deleted: { $ne: true }
-        }).sort({ createdAt: 1 });
-
-        if (openInvoice) {
-          const guardian = await User.findById(guardianId).lean();
-          const rate = guardian?.guardianInfo?.hourlyRate || 10;
-          const duration = Number(classDoc.duration || 60);
-          const hours = duration / 60;
-          const amount = Math.round(hours * rate * 100) / 100;
-
-          const studentName = classDoc.student?.studentName || '';
-          const [firstName, ...rest] = String(studentName).trim().split(' ').filter(Boolean);
-          const lastName = rest.join(' ');
-
-          const result = await InvoiceService.updateInvoiceItems(
-            String(openInvoice._id),
-            {
-              addItems: [{
-                lessonId: String(classDoc._id),
-                class: classDoc._id,
-                student: classDoc.student?.studentId || null,
-                studentSnapshot: { firstName: firstName || studentName, lastName: lastName || '', email: '' },
-                teacher: classDoc.teacher || null,
-                description: `${classDoc.subject || 'Class'}`,
-                date: classDoc.scheduledDate || new Date(),
-                duration,
-                rate,
-                amount,
-                attended: classDoc.status === 'attended',
-                status: classDoc.status || 'scheduled'
-              }],
-              note: 'Auto-attach uninvoiced lesson'
-            },
-            req.user._id
-          );
-
-          if (!result?.success) {
-            summary.errors.push({ classId: String(classDoc._id), error: result?.error || 'Failed to attach' });
-            continue;
-          }
-
-          summary.attached += 1;
-          continue;
-        }
-
-        const guardian = await User.findById(guardianId);
-        if (!guardian) {
-          summary.skipped += 1;
-          continue;
-        }
-
-        await InvoiceService.createInvoiceForFirstLesson(guardian, classDoc, {
-          createdBy: req.user._id
-        });
-        summary.created += 1;
-      } catch (innerErr) {
-        summary.errors.push({ classId: String(classId), error: innerErr?.message || 'Failed to attach' });
-      }
-    }
 
     if (summary.attached + summary.created > 0) {
       try {
@@ -1324,9 +1240,12 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
       await invoiceDoc.save();
     }
 
-    const dynamicClasses = await InvoiceService.buildDynamicClassList(invoiceDoc);
     const invoice = invoiceDoc.toObject();
-    invoice.dynamicClasses = dynamicClasses;
+    const isManualInvoice = invoiceDoc?.billingType === 'manual' || invoiceDoc?.generationSource === 'manual';
+    if (!isManualInvoice) {
+      const dynamicClasses = await InvoiceService.buildDynamicClassList(invoiceDoc);
+      invoice.dynamicClasses = dynamicClasses;
+    }
 
     if (Array.isArray(invoice.items)) {
       invoice.items = invoice.items.map((item) => {
@@ -1398,8 +1317,8 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
 // -----------------------------
 router.post('/manual/guardian/preview', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { guardianId, hoursLimit } = req.body || {};
-    const result = await buildManualGuardianInvoiceData({ guardianId, hoursLimit });
+    const { guardianId, hoursLimit, endDate } = req.body || {};
+    const result = await buildManualGuardianInvoiceData({ guardianId, hoursLimit, endDate });
     if (result.error) {
       return res.status(400).json({ success: false, message: result.error });
     }
@@ -1431,8 +1350,8 @@ router.post('/manual/guardian/preview', authenticateToken, requireAdmin, async (
 
 router.post('/manual/guardian', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { guardianId, hoursLimit, dueDate, notes } = req.body || {};
-    const result = await buildManualGuardianInvoiceData({ guardianId, hoursLimit });
+    const { guardianId, hoursLimit, endDate, dueDate, notes } = req.body || {};
+    const result = await buildManualGuardianInvoiceData({ guardianId, hoursLimit, endDate });
     if (result.error) {
       return res.status(400).json({ success: false, message: result.error });
     }
@@ -1780,6 +1699,46 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
       }
     }
 
+    // If using maxHours without an explicit endDate, derive endDate from the
+    // updated dynamic class list so increases can extend the coverage window.
+    const needsDerivedEndDate =
+      invoice.type === 'guardian_invoice'
+      && Number.isFinite(Number(coverage?.maxHours))
+      && Number(coverage.maxHours) > 0
+      && (endDate === undefined || endDate === null || endDate === '');
+    if (needsDerivedEndDate) {
+      try {
+        const dynamicPreview = await InvoiceService.buildDynamicClassList(invoice);
+        const dynamicItems = Array.isArray(dynamicPreview?.items) ? dynamicPreview.items : [];
+        const lastDate = dynamicItems
+          .map((item) => item?.date || item?.scheduledDate || item?.class?.scheduledDate)
+          .filter(Boolean)
+          .map((value) => new Date(value))
+          .filter((dt) => !Number.isNaN(dt.getTime()))
+          .sort((a, b) => a - b)
+          .pop();
+        if (lastDate) {
+          coverage.endDate = lastDate;
+        }
+      } catch (deriveErr) {
+        console.warn('Coverage update: failed to derive endDate from dynamic items', deriveErr?.message || deriveErr);
+      }
+    }
+
+    if (coverage?.endDate) {
+      const nextCoverageEnd = new Date(coverage.endDate);
+      if (!Number.isNaN(nextCoverageEnd.getTime())) {
+        if (!invoice.billingPeriod || typeof invoice.billingPeriod !== 'object') {
+          invoice.billingPeriod = {};
+        }
+        const currentEnd = invoice.billingPeriod.endDate ? new Date(invoice.billingPeriod.endDate) : null;
+        if (!currentEnd || nextCoverageEnd > currentEnd) {
+          invoice.billingPeriod.endDate = nextCoverageEnd;
+          invoice.markModified('billingPeriod');
+        }
+      }
+    }
+
   const hasPreviewTotals = !appendedDueToExtension && previewTotals && typeof previewTotals === 'object';
   console.log('=== [Invoices API] PUT /invoices/:id/coverage - incoming previewTotals ===', { id, hasPreviewTotals, previewTotals });
 
@@ -1824,7 +1783,8 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
     // receives the same dynamic class list as a GET /invoices/:id would.
     let invoiceObj = invoice.toObject({ virtuals: true });
     try {
-      if (invoiceObj.type === 'guardian_invoice') {
+      const isManualInvoice = invoiceObj?.billingType === 'manual' || invoiceObj?.generationSource === 'manual';
+      if (invoiceObj.type === 'guardian_invoice' && !isManualInvoice) {
         const dynamicClasses = await InvoiceService.buildDynamicClassList(invoice);
         invoiceObj.dynamicClasses = dynamicClasses;
       }
@@ -1889,7 +1849,8 @@ router.put('/:id/snapshot', authenticateToken, requireAdmin, async (req, res) =>
     // Mirror GET behavior: attach dynamicClasses so UI receives consistent class list
     let invoiceObj = invoice.toObject({ virtuals: true });
     try {
-      if (invoiceObj.type === 'guardian_invoice') {
+      const isManualInvoice = invoiceObj?.billingType === 'manual' || invoiceObj?.generationSource === 'manual';
+      if (invoiceObj.type === 'guardian_invoice' && !isManualInvoice) {
         const dynamicClasses = await InvoiceService.buildDynamicClassList(invoice);
         invoiceObj.dynamicClasses = dynamicClasses;
       }

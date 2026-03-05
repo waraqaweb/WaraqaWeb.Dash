@@ -25,6 +25,8 @@ export const DeleteClassCountdownProvider = ({ children }) => {
   const [active, setActive] = useState(false);
   const [classId, setClassId] = useState(null);
   const [scope, setScope] = useState(null);
+  const [classPayload, setClassPayload] = useState(null);
+  const [phase, setPhase] = useState('idle');
   const [message, setMessage] = useState('Deleting class');
   const [endsAtMs, setEndsAtMs] = useState(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
@@ -59,6 +61,8 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     setActive(false);
     setClassId(null);
     setScope(null);
+    setClassPayload(null);
+    setPhase('idle');
     setEndsAtMs(null);
     setSecondsLeft(0);
     setMessage('Deleting class');
@@ -69,25 +73,56 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     executingRef.current = false;
   }, [clearTimer, persist]);
 
-  const undo = useCallback(() => {
-    reset();
-  }, [reset]);
+  const normalizeId = (value) => {
+    if (!value) return null;
+    if (typeof value === 'string' || typeof value === 'number') return value.toString();
+    if (typeof value === 'object') {
+      if (value._id) return value._id.toString();
+      if (value.id) return value.id.toString();
+    }
+    return value?.toString?.() || null;
+  };
 
-  const start = useCallback(({ classId: nextClassId, scope: nextScope, message: nextMessage, preDelaySeconds: nextPreDelay, undoSeconds: nextUndoSeconds }) => {
+  const buildRestorePayload = useCallback((payload) => {
+    if (!payload) return null;
+    const teacherId = normalizeId(payload.teacher);
+    const guardianId = normalizeId(payload.student?.guardianId);
+    const studentId = normalizeId(payload.student?.studentId);
+    if (!teacherId || !guardianId || !studentId) return null;
+
+    return {
+      title: payload.title || payload.subject || 'Class',
+      description: payload.description || '',
+      subject: payload.subject || 'Class',
+      teacher: teacherId,
+      student: {
+        guardianId,
+        studentId,
+        studentName: payload.student?.studentName || payload.student?.name || ''
+      },
+      scheduledDate: payload.scheduledDate || payload.date || null,
+      duration: Number(payload.duration || 60),
+      timezone: payload.timezone || payload.scheduledTimezone || 'UTC',
+      isRecurring: false,
+      meetingLink: payload.meetingLink || null,
+      materials: Array.isArray(payload.materials) ? payload.materials : []
+    };
+  }, []);
+
+  const start = useCallback(({ classId: nextClassId, scope: nextScope, message: nextMessage, preDelaySeconds: nextPreDelay, undoSeconds: nextUndoSeconds, classPayload: nextPayload }) => {
     if (!nextClassId || !nextScope) return;
 
-    const preDelay = Number.isFinite(nextPreDelay) ? Math.max(0, nextPreDelay) : DEFAULT_PRE_DELETE_SECONDS;
     const undoWindow = Number.isFinite(nextUndoSeconds) ? Math.max(1, nextUndoSeconds) : DEFAULT_UNDO_SECONDS;
-    const duration = Math.max(1, preDelay + undoWindow);
-    const endsAt = Date.now() + duration * 1000;
 
     setActive(true);
     setClassId(nextClassId);
     setScope(nextScope);
+    setClassPayload(nextPayload || null);
+    setPhase('deleting');
     setMessage(nextMessage || 'Deleting class');
-    setEndsAtMs(endsAt);
-    setSecondsLeft(duration);
-    setPreDelaySeconds(preDelay);
+    setEndsAtMs(null);
+    setSecondsLeft(0);
+    setPreDelaySeconds(Number.isFinite(nextPreDelay) ? Math.max(0, nextPreDelay) : DEFAULT_PRE_DELETE_SECONDS);
     setUndoSeconds(undoWindow);
     setError('');
 
@@ -95,9 +130,11 @@ export const DeleteClassCountdownProvider = ({ children }) => {
       active: true,
       classId: nextClassId,
       scope: nextScope,
+      classPayload: nextPayload || null,
+      phase: 'deleting',
       message: nextMessage || 'Deleting class',
-      endsAtMs: endsAt,
-      preDelaySeconds: preDelay,
+      endsAtMs: null,
+      preDelaySeconds: Number.isFinite(nextPreDelay) ? Math.max(0, nextPreDelay) : DEFAULT_PRE_DELETE_SECONDS,
       undoSeconds: undoWindow
     });
   }, [persist]);
@@ -114,7 +151,33 @@ export const DeleteClassCountdownProvider = ({ children }) => {
       } catch {
         // ignore
       }
-      reset();
+
+      const allowUndo = scope === 'single' && classPayload;
+      if (!allowUndo) {
+        reset();
+        return;
+      }
+
+      const undoWindow = Number.isFinite(undoSeconds) ? Math.max(1, undoSeconds) : DEFAULT_UNDO_SECONDS;
+      const endsAt = Date.now() + undoWindow * 1000;
+      setPhase('undo');
+      setMessage('Deleted class');
+      setEndsAtMs(endsAt);
+      setSecondsLeft(undoWindow);
+      setPreDelaySeconds(0);
+      setError('');
+
+      persist({
+        active: true,
+        classId,
+        scope,
+        classPayload,
+        phase: 'undo',
+        message: 'Deleted class',
+        endsAtMs: endsAt,
+        preDelaySeconds: 0,
+        undoSeconds: undoWindow
+      });
     } catch (err) {
       if (err?.response?.status === 404) {
         // Idempotent delete: treat "not found" as already deleted.
@@ -133,10 +196,13 @@ export const DeleteClassCountdownProvider = ({ children }) => {
       // Keep toast visible until user dismisses/undos.
       setActive(true);
       clearTimer();
+      setPhase('error');
       persist({
         active: true,
         classId,
         scope,
+        classPayload,
+        phase: 'error',
         message,
         endsAtMs: Date.now(),
         preDelaySeconds,
@@ -147,22 +213,58 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     } finally {
       executingRef.current = false;
     }
-  }, [classId, scope, message, preDelaySeconds, undoSeconds, reset, clearTimer, persist]);
+  }, [classId, scope, classPayload, message, preDelaySeconds, undoSeconds, reset, clearTimer, persist]);
+
+  useEffect(() => {
+    if (!active || phase !== 'deleting') return;
+    executeDelete();
+  }, [active, phase, executeDelete]);
+
+  const undo = useCallback(async () => {
+    if (phase !== 'undo') {
+      reset();
+      return;
+    }
+
+    const payload = buildRestorePayload(classPayload);
+    if (!payload) {
+      setError('Cannot undo: missing class details');
+      clearTimer();
+      return;
+    }
+
+    try {
+      await api.post('/classes', payload);
+      try {
+        window.dispatchEvent(new Event(REFRESH_EVENT));
+      } catch {
+        // ignore
+      }
+      reset();
+    } catch (err) {
+      console.error('Undo delete failed', err);
+      const msg = err?.response?.data?.message || 'Failed to undo delete';
+      setError(msg);
+      clearTimer();
+    }
+  }, [phase, classPayload, buildRestorePayload, reset, clearTimer]);
 
   // Keep state in sync across browser tabs/windows.
   useEffect(() => {
     const onStorage = (event) => {
       if (event.key !== STORAGE_KEY) return;
       const parsed = event.newValue ? safeParse(event.newValue) : null;
-      if (!parsed?.active || !parsed?.classId || !parsed?.scope || !parsed?.endsAtMs) {
+      if (!parsed?.active || !parsed?.classId || !parsed?.scope) {
         reset();
         return;
       }
 
-      const restoredSeconds = computeSecondsLeft(parsed.endsAtMs);
+      const restoredSeconds = parsed.endsAtMs ? computeSecondsLeft(parsed.endsAtMs) : 0;
       setActive(true);
       setClassId(parsed.classId);
       setScope(parsed.scope);
+      setClassPayload(parsed.classPayload || null);
+      setPhase(parsed.phase || 'deleting');
       setMessage(parsed.message || 'Deleting class');
       setEndsAtMs(parsed.endsAtMs);
       setSecondsLeft(restoredSeconds);
@@ -186,25 +288,16 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     })();
 
     const parsed = raw ? safeParse(raw) : null;
-    if (!parsed?.active || !parsed?.classId || !parsed?.scope || !parsed?.endsAtMs) {
+    if (!parsed?.active || !parsed?.classId || !parsed?.scope) {
       return;
     }
 
-    const restoredSeconds = computeSecondsLeft(parsed.endsAtMs);
-    if (restoredSeconds <= 0) {
-      // If it already elapsed while the user navigated away, execute immediately.
-      setActive(true);
-      setClassId(parsed.classId);
-      setScope(parsed.scope);
-      setMessage(parsed.message || 'Deleting class');
-      setEndsAtMs(parsed.endsAtMs);
-      setSecondsLeft(0);
-      return;
-    }
-
+    const restoredSeconds = parsed.endsAtMs ? computeSecondsLeft(parsed.endsAtMs) : 0;
     setActive(true);
     setClassId(parsed.classId);
     setScope(parsed.scope);
+    setClassPayload(parsed.classPayload || null);
+    setPhase(parsed.phase || 'deleting');
     setMessage(parsed.message || 'Deleting class');
     setEndsAtMs(parsed.endsAtMs);
     setSecondsLeft(restoredSeconds);
@@ -214,7 +307,7 @@ export const DeleteClassCountdownProvider = ({ children }) => {
 
   // Drive ticking + completion
   useEffect(() => {
-    if (!active || !endsAtMs) {
+    if (!active || phase !== 'undo' || !endsAtMs) {
       clearTimer();
       return;
     }
@@ -234,12 +327,11 @@ export const DeleteClassCountdownProvider = ({ children }) => {
   }, [active, endsAtMs, clearTimer]);
 
   useEffect(() => {
-    if (!active || !endsAtMs) return;
+    if (!active || phase !== 'undo' || !endsAtMs) return;
     if (secondsLeft > 0) return;
     if (error) return;
-    // Countdown finished
-    executeDelete();
-  }, [active, endsAtMs, secondsLeft, error, executeDelete]);
+    reset();
+  }, [active, phase, endsAtMs, secondsLeft, error, reset]);
 
   const value = useMemo(() => ({
     isActive: active,
@@ -248,10 +340,11 @@ export const DeleteClassCountdownProvider = ({ children }) => {
     error,
     preDelaySeconds,
     undoSeconds,
+    phase,
     start,
     undo,
     dismiss: reset
-  }), [active, secondsLeft, message, error, preDelaySeconds, undoSeconds, start, undo, reset]);
+  }), [active, secondsLeft, message, error, preDelaySeconds, undoSeconds, phase, start, undo, reset]);
 
   return (
     <DeleteClassCountdownContext.Provider value={value}>

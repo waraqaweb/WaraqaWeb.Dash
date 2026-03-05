@@ -13,7 +13,7 @@ export default function Modal({ open, onClose, title, children, size = 'lg', foo
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8 bg-slate-950/60 backdrop-blur-sm">
-      <div className={`w-full ${width} rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 overflow-hidden flex flex-col`}>        
+      <div className={`w-full ${width} max-h-[90vh] rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 overflow-hidden flex flex-col`}>
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
           <div className="flex-1">
             {title && <h2 className="text-xl font-semibold text-slate-900">{title}</h2>}

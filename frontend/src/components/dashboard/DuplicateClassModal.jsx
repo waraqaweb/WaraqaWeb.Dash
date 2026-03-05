@@ -468,8 +468,8 @@ const DuplicateClassModal = ({
                             ? `No students found (was ${originalStudentName})`
                             : "No students found"}
                   </option>
-                  {students.map((student) => (
-                    <option key={student._id} value={student._id}>
+                  {students.map((student, index) => (
+                    <option key={`${student._id || 'student'}-${index}`} value={student._id}>
                       {`${student.firstName || ""} ${student.lastName || ""}`.trim() || "Unnamed student"}
                     </option>
                   ))}

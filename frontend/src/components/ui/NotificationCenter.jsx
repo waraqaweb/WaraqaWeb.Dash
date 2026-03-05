@@ -283,6 +283,9 @@ const NotificationCenter = () => {
     const code = lesson?.reasonCode;
     if (code === 'linked_invoice_missing_or_voided') return 'Linked invoice is missing/voided.';
     if (code === 'missing_invoice_link') return 'No invoice item/link found.';
+    if (code === 'missing_guardian') return 'Guardian missing on class.';
+    if (code === 'missing_student') return 'Student missing on class.';
+    if (code === 'paid_flag_without_invoice') return 'Paid flag set without invoice item.';
     return lesson?.reason || 'No invoice item/link found.';
   };
 
@@ -625,6 +628,9 @@ const NotificationCenter = () => {
                                         <div className="text-amber-800">
                                           {getUninvoicedReasonLabel(lesson)}
                                         </div>
+                                        {lesson?.suggestedFix && (
+                                          <div className="text-[11px] text-amber-700">Fix: {lesson.suggestedFix}</div>
+                                        )}
                                       </li>
                                     );
                                   })}

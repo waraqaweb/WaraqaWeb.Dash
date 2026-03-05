@@ -754,6 +754,14 @@ const DashboardHome = ({ isActive = true }) => {
     }
   }, [refresh]);
 
+  const handleFeedbackDismissed = React.useCallback((result) => {
+    refresh();
+    if (!result) return;
+    if (result.action === 'error') {
+      setFeedbackToast({ show: true, type: 'error', message: 'Feedback could not be updated. Please try again.' });
+    }
+  }, [refresh]);
+
   const handleGuardianFollowUpBooked = React.useCallback((payload) => {
     setGuardianBookingSuccess(payload);
     try {
@@ -1988,6 +1996,7 @@ const DashboardHome = ({ isActive = true }) => {
         onClose={() => { setShowFirstClassModal(false); try { window.history.back(); } catch(e){} }}
         prompt={activeFirstPrompt}
         onSubmitted={handleFeedbackSubmitted}
+        onDismissed={handleFeedbackDismissed}
       />
 
       <MonthlyFeedbackModal
@@ -1996,6 +2005,7 @@ const DashboardHome = ({ isActive = true }) => {
         onClose={() => { setShowMonthlyModal(false); try { window.history.back(); } catch(e){} }}
         prompt={activeMonthlyPrompt}
         onSubmitted={handleFeedbackSubmitted}
+        onDismissed={handleFeedbackDismissed}
       />
 
       {feedbackToast.show && (

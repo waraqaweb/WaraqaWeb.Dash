@@ -24,6 +24,8 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
   const [notes, setNotes] = useState('');
   const [dueDate, setDueDate] = useState(formatIsoDate(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)));
   const [hoursLimit, setHoursLimit] = useState('');
+  const [coverageMode, setCoverageMode] = useState('hours');
+  const [coverageEndDate, setCoverageEndDate] = useState('');
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
@@ -42,6 +44,8 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
     setSelectedGuardianId('');
     setDueDate(formatIsoDate(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)));
     setHoursLimit('');
+    setCoverageMode('hours');
+    setCoverageEndDate('');
     setNotes('');
     setError('');
     setPreview(null);
@@ -68,6 +72,14 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
       return;
     }
 
+    if (coverageMode === 'end_date' && coverageEndDate) {
+      const parsedEnd = new Date(coverageEndDate);
+      if (Number.isNaN(parsedEnd.getTime())) {
+        setError('Coverage end date is invalid.');
+        return;
+      }
+    }
+
     setSaving(true);
     setError('');
 
@@ -76,7 +88,8 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
         guardianId: selectedGuardianId,
         dueDate: dueValue,
         notes: notes.trim() || undefined,
-        hoursLimit: hoursLimit ? clampNumber(hoursLimit, 0) : undefined,
+        hoursLimit: coverageMode === 'hours' && hoursLimit ? clampNumber(hoursLimit, 0) : undefined,
+        endDate: coverageMode === 'end_date' && coverageEndDate ? coverageEndDate : undefined,
       };
 
       const { data } = await api.post('/invoices/manual/guardian', payload);
@@ -118,7 +131,8 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
       try {
         const payload = {
           guardianId: selectedGuardianId,
-          hoursLimit: hoursLimit ? clampNumber(hoursLimit, 0) : undefined,
+          hoursLimit: coverageMode === 'hours' && hoursLimit ? clampNumber(hoursLimit, 0) : undefined,
+          endDate: coverageMode === 'end_date' && coverageEndDate ? coverageEndDate : undefined,
         };
         const { data } = await api.post('/invoices/manual/guardian/preview', payload, { signal: controller.signal });
         if (data?.success) {
@@ -141,7 +155,7 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [open, selectedGuardianId, hoursLimit]);
+  }, [open, selectedGuardianId, hoursLimit, coverageMode, coverageEndDate]);
 
   if (!open) return null;
 
@@ -162,8 +176,8 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
           <p className="mt-1 text-sm text-slate-500">Manually create a single-item invoice for a guardian.</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6 border-t border-slate-100 px-6 pb-6 pt-4">
-          <div className="grid gap-4 md:grid-cols-2">
+        <form onSubmit={handleSubmit} className="space-y-4 border-t border-slate-100 px-6 pb-6 pt-4">
+          <div className="grid gap-3 md:grid-cols-2">
             <SearchSelect
               label="Guardian *"
               placeholder="Search guardians by name or email"
@@ -173,8 +187,11 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
               fetchById={fetchGuardianById}
               required
             />
-            <label className="flex flex-col gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Hours limit (optional)</span>
+            <label className="flex flex-col gap-1">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Hours limit</span>
+                <span className="text-[11px] text-slate-400">Optional</span>
+              </div>
               <div className="relative flex items-center">
                 <Clock className="absolute left-3 h-4 w-4 text-slate-400" />
                 <input
@@ -182,13 +199,57 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
                   min="0"
                   step="0.1"
                   inputMode="decimal"
-                  className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-9 pr-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100"
                   value={hoursLimit}
                   onChange={(e) => setHoursLimit(e.target.value)}
-                  placeholder="Leave empty for 30-day period"
+                  disabled={coverageMode !== 'hours'}
+                  placeholder="30-day default"
                 />
               </div>
             </label>
+          </div>
+
+          <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Coverage</span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+                    coverageMode === 'hours'
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                  }`}
+                  onClick={() => setCoverageMode('hours')}
+                >
+                  By hours
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+                    coverageMode === 'end_date'
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                  }`}
+                  onClick={() => {
+                    setCoverageMode('end_date');
+                    setHoursLimit('');
+                  }}
+                >
+                  End date
+                </button>
+              </div>
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr),minmax(0,1.4fr)] md:items-center">
+              <span className="text-[11px] text-slate-400">Starts at first unpaid class. Empty = 30 days.</span>
+              <input
+                type="date"
+                className="w-full rounded-lg border border-slate-200 bg-white py-1.5 px-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                value={coverageEndDate}
+                onChange={(e) => setCoverageEndDate(e.target.value)}
+                disabled={coverageMode !== 'end_date'}
+              />
+            </div>
           </div>
 
           <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
@@ -286,7 +347,9 @@ const CreateGuardianInvoiceModal = ({ open, onClose, onCreated }) => {
               disabled={saving || !preview}
               className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {saving ? <LoadingSpinner size="sm" text="" /> : null}
+              {saving ? (
+                <span className="inline-flex h-4 w-4 animate-spin items-center justify-center rounded-full border-2 border-white/60 border-t-transparent" />
+              ) : null}
               Create invoice
             </button>
           </div>

@@ -7,6 +7,7 @@ import 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatDateDDMMMYYYY } from '../../utils/date';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import {
   X,
   FileDown,
@@ -211,6 +212,13 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesStatus, setNotesStatus] = useState(null);
   const [waiveTransferFee, setWaiveTransferFee] = useState(false);
+  const [invoiceNameEditing, setInvoiceNameEditing] = useState(false);
+  const [invoiceNameDraft, setInvoiceNameDraft] = useState('');
+  const [invoiceNameStatus, setInvoiceNameStatus] = useState(null);
+  const invoiceNameInputRef = useRef(null);
+  const [invoiceNameParts, setInvoiceNameParts] = useState({ prefix: 'Waraqa', month: 'Mar', year: '2026', seq: '' });
+  const [editingPart, setEditingPart] = useState(null);
+  const partInputRefs = useRef({});
 
   const notesLastSavedRef = useRef({ notes: '', internalNotes: '', invoiceReferenceLink: '' });
   const skipNextNotesSave = useRef(false);
@@ -222,6 +230,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const initialClassesFetchedRef = useRef(false);
   // Track if user has made any changes to filters
   const userModifiedFiltersRef = useRef(false);
+  const coverageEditingRef = useRef(false);
 
   const formatDateInput = (value) => {
     if (!value) return '';
@@ -240,32 +249,32 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     return `${day} ${mon} ${yr}`;
   }, []);
 
-  const getReadableInvoiceId = (invoice) => {
-    if (!invoice) return '';
-    const sys = invoice.invoiceNumber || invoice.invoiceName || '';
-    let year = null, month = null, seq = null;
-    const monthMap = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', sept: '09', oct: '10', nov: '11', dec: '12' };
-    const tokens = sys.split(/[-_\s]+/).map(t => t.trim());
-    for (const t of tokens) {
-      const low = t.toLowerCase();
-      if (!year && /^20\d{2}$/.test(t)) year = t;
-      if (!month && monthMap[low]) month = monthMap[low];
-      if (!seq && /\d{3,}$/.test(t)) seq = t.replace(/^0+/, '');
+  const parseInvoiceNameParts = useCallback((name) => {
+    const raw = String(name || '').trim();
+    const chunks = raw.split('-').map((chunk) => chunk.trim()).filter(Boolean);
+    if (chunks.length >= 4) {
+      return {
+        prefix: chunks[0] || 'Waraqa',
+        month: chunks[1] || 'Mar',
+        year: chunks[2] || String(new Date().getUTCFullYear()),
+        seq: chunks.slice(3).join('-')
+      };
     }
-    if (!month) {
-      const m = sys.match(/(20\d{2})[/-]?(\d{1,2})/);
-      if (m) { year = year || m[1]; month = String(m[2]).padStart(2, '0'); }
-    }
-    if (!seq) {
-      const q = sys.match(/(\d{3,})$/);
-      if (q) seq = q[1].replace(/^0+/, '');
-    }
-    const created = new Date(invoice?.createdAt || Date.now());
-    year = year || String(created.getUTCFullYear());
-    month = month || String(created.getUTCMonth() + 1).padStart(2, '0');
-    const seq3 = String(Number(seq || 1)).padStart(3, '0');
-    return `INV-${year}-${month}-${seq3}`;
-  };
+    return {
+      prefix: chunks[0] || 'Waraqa',
+      month: chunks[1] || 'Mar',
+      year: chunks[2] || String(new Date().getUTCFullYear()),
+      seq: ''
+    };
+  }, []);
+
+  const buildInvoiceNameFromParts = useCallback((parts) => {
+    const prefix = String(parts?.prefix || 'Waraqa').trim();
+    const month = String(parts?.month || '').trim();
+    const year = String(parts?.year || '').trim();
+    const seq = String(parts?.seq || '').trim();
+    return [prefix, month, year, seq].filter(Boolean).join('-') + (seq ? '' : '-');
+  }, []);
 
   const getStatusTooltip = (status) => {
     switch (status) {
@@ -300,18 +309,26 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     const nextMaxHours = !coverageLocked && normalizedMax && normalizedMax > 0 ? String(normalizedMax) : '';
     const nextCustomEndDate = !coverageLocked ? (normalizedEndDate || '') : '';
 
-    skipNextCoverageSave.current = true;
-    setMaxHours(nextMaxHours);
-    setCustomEndDate(nextCustomEndDate);
-    const nextWaive = Boolean(coverage.waiveTransferFee);
-    setWaiveTransferFee(nextWaive);
-    userModifiedFiltersRef.current = false;
-    coverageLastSavedRef.current = {
-      maxHours: nextMaxHours,
-      customEndDate: nextCustomEndDate || '',
-      waiveTransferFee: nextWaive
-    };
-  }, []);
+    if (!coverageEditingRef.current) {
+      skipNextCoverageSave.current = true;
+      setMaxHours(nextMaxHours);
+      setCustomEndDate(nextCustomEndDate);
+      const nextWaive = Boolean(coverage.waiveTransferFee);
+      setWaiveTransferFee(nextWaive);
+      userModifiedFiltersRef.current = false;
+      coverageLastSavedRef.current = {
+        maxHours: nextMaxHours,
+        customEndDate: nextCustomEndDate || '',
+        waiveTransferFee: nextWaive
+      };
+    }
+
+    if (!invoiceNameEditing && !editingPart) {
+      const parts = parseInvoiceNameParts(inv?.invoiceName || '');
+      setInvoiceNameParts(parts);
+      setInvoiceNameDraft(buildInvoiceNameFromParts(parts));
+    }
+  }, [invoiceNameEditing]);
 
   const toNumberOr = (value, fallback = 0) => {
     const numeric = Number(value);
@@ -342,12 +359,21 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
         initialClassesFetchedRef.current = false;
         userModifiedFiltersRef.current = false;
         
+        const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: identifier });
+        const cached = readCache(cacheKey, { deps: ['invoices'] });
+        if (cached.hit && cached.value?.invoice) {
+          syncInvoiceState(cached.value.invoice);
+          setResolvedInvoiceId(cached.value.invoice?._id || invoiceId || null);
+          setLoading(false);
+        }
+
         const { data: invRes } = await api.get(`/invoices/${identifier}`);
         if (cancelled) return;
         const inv = invRes.invoice || invRes;
         
         syncInvoiceState(inv);
         setResolvedInvoiceId(inv?._id || invoiceId || null);
+        writeCache(cacheKey, { invoice: inv }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
       } catch (err) {
         if (!cancelled) {
           console.error('Invoice fetch error:', err);
@@ -364,7 +390,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     return () => {
       cancelled = true;
     };
-  }, [identifier, invoiceId, syncInvoiceState]);
+  }, [identifier, invoiceId, syncInvoiceState, user?._id]);
 
   // Listen for real-time invoice updates via socket
   useEffect(() => {
@@ -459,7 +485,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
       return;
     }
 
-    const dynamicItems = Array.isArray(invoice?.dynamicClasses?.items)
+    const allowDynamic = !(invoice?.billingType === 'manual' || invoice?.generationSource === 'manual');
+    const dynamicItems = allowDynamic && Array.isArray(invoice?.dynamicClasses?.items)
       ? invoice.dynamicClasses.items
       : null;
     const usingDynamicPayload = Array.isArray(dynamicItems);
@@ -864,7 +891,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     doc.setFontSize(10);
     doc.text('www.waraqaweb@gmail.com | waraqainc@gmail.com | +20 120 032 4956', 14, 28);
     doc.setFontSize(12);
-    doc.text(`Invoice #${invoice.invoiceNumber}`, 14, 38);
+    const invoiceRef = invoice.invoiceName || invoice.invoiceNumber || '';
+    const invoiceLabel = invoiceRef ? `Invoice #${invoiceRef}` : 'Invoice';
+    doc.text(invoiceLabel, 14, 38);
     doc.text(`Guardian: ${invoice.guardian?.firstName} ${invoice.guardian?.lastName}`, 14, 44);
 
     let yPosition = 50;
@@ -922,7 +951,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
       styles: { font: 'helvetica', fontStyle: 'normal' },
     });
 
-    doc.save(`Invoice-${invoice.invoiceNumber}.pdf`);
+    doc.save(`Invoice-${invoice.invoiceName || invoice.invoiceNumber || invoice._id}.pdf`);
   };
 
   // Excel
@@ -934,7 +963,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     );
 
     const worksheetData = [
-      ['Invoice #', invoice.invoiceNumber],
+      ['Invoice #', invoice.invoiceName || invoice.invoiceNumber || invoice._id],
       ['Guardian', `${invoice.guardian?.firstName} ${invoice.guardian?.lastName}` || '-'],
       ['Students'],
       ...studentLines,
@@ -956,7 +985,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Invoice');
-    XLSX.writeFile(workbook, `Invoice-${invoice.invoiceNumber}.xlsx`);
+    XLSX.writeFile(workbook, `Invoice-${invoice.invoiceName || invoice.invoiceNumber || invoice._id}.xlsx`);
   };
 
   const handleSaveCoverage = useCallback(async () => {
@@ -981,9 +1010,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
         strategy: strategyValue,
         maxHours: parsedMaxHours,
         endDate: customEndDate || null,
-        waiveTransferFee: Boolean(waiveTransferFee),
-        // ✅ Send the calculated totals so they get persisted (use the memoized previewTotals)
-        previewTotals: previewTotals
+        waiveTransferFee: Boolean(waiveTransferFee)
       };
 
   totalsSyncKeyRef.current = null;
@@ -1040,6 +1067,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     if (!isAdmin) return;
     if (!invoice && !resolvedInvoiceId) return;
     if (isCoverageLocked) return;
+    if (coverageEditingRef.current) return;
 
     if (skipNextCoverageSave.current) {
       skipNextCoverageSave.current = false;
@@ -1118,6 +1146,44 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
       }
     }
   }, [invoice, resolvedInvoiceId, noteEdits, syncInvoiceState]);
+
+  const handleSaveInvoiceName = useCallback(async (overrideName) => {
+    if (!isAdmin) return;
+    const targetInvoiceId = invoice?._id || resolvedInvoiceId;
+    if (!targetInvoiceId) return;
+    const trimmed = String(overrideName || invoiceNameDraft || '').trim();
+    if (!trimmed) {
+      setInvoiceNameStatus({ type: 'error', message: 'Invoice name required' });
+      return;
+    }
+
+    setInvoiceNameStatus({ type: 'progress', message: 'Saving…' });
+    try {
+      const { data } = await api.put(`/invoices/${targetInvoiceId}`, { invoiceName: trimmed });
+      const updated = data?.invoice || data;
+      if (updated) {
+        syncInvoiceState(updated);
+        const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: targetInvoiceId });
+        writeCache(cacheKey, { invoice: updated }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
+      }
+      setInvoiceNameEditing(false);
+      setEditingPart(null);
+      setInvoiceNameStatus({ type: 'success', message: 'Saved' });
+      setTimeout(() => setInvoiceNameStatus(null), 1500);
+    } catch (err) {
+      console.error('Invoice name update failed:', err);
+      const message = err?.response?.data?.message || 'Failed to update invoice name';
+      setInvoiceNameStatus({ type: 'error', message });
+    }
+  }, [isAdmin, invoice, resolvedInvoiceId, invoiceNameDraft, syncInvoiceState, user?._id]);
+
+  useEffect(() => {
+    if (!editingPart) return;
+    const input = partInputRefs.current[editingPart];
+    if (input && typeof input.select === 'function') {
+      input.select();
+    }
+  }, [editingPart]);
 
   useEffect(() => {
     if (!invoice) return;
@@ -1527,10 +1593,76 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
             <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
               <div className="space-y-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">Invoice overview</p>
-                <h2 className="text-3xl font-semibold text-slate-900 flex items-center gap-3">
-                  {invoice.invoiceName || `Invoice ${invoice.invoiceNumber}`}
-                  <span className="text-xs rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-500" title={`System ID: ${invoice.invoiceNumber || invoice._id}`}>{getReadableInvoiceId(invoice)}</span>
-                </h2>
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="text-3xl font-semibold text-slate-900 flex items-center gap-2">
+                    {(['prefix', 'month', 'year', 'seq']).map((partKey, idx) => {
+                      const value = invoiceNameParts[partKey] || '';
+                      const isEditing = editingPart === partKey;
+                      const isSeq = partKey === 'seq';
+                      const inputClass = isSeq ? 'w-20' : partKey === 'year' ? 'w-20' : partKey === 'month' ? 'w-16' : 'w-24';
+                      return (
+                        <React.Fragment key={partKey}>
+                          {isEditing ? (
+                            <input
+                              ref={(node) => { partInputRefs.current[partKey] = node; }}
+                              value={value}
+                              onChange={(e) => {
+                                const next = { ...invoiceNameParts, [partKey]: e.target.value };
+                                setInvoiceNameParts(next);
+                                setInvoiceNameDraft(buildInvoiceNameFromParts(next));
+                              }}
+                              onBlur={() => {
+                                const nextName = buildInvoiceNameFromParts(invoiceNameParts);
+                                setInvoiceNameEditing(false);
+                                setEditingPart(null);
+                                handleSaveInvoiceName(nextName);
+                              }}
+                              onFocus={(e) => e.target.select()}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  const nextName = buildInvoiceNameFromParts(invoiceNameParts);
+                                  setInvoiceNameEditing(false);
+                                  setEditingPart(null);
+                                  handleSaveInvoiceName(nextName);
+                                }
+                                if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  const parts = parseInvoiceNameParts(invoice?.invoiceName || '');
+                                  setInvoiceNameParts(parts);
+                                  setInvoiceNameDraft(buildInvoiceNameFromParts(parts));
+                                  setInvoiceNameEditing(false);
+                                  setEditingPart(null);
+                                  setInvoiceNameStatus(null);
+                                }
+                              }}
+                              className={`${inputClass} rounded-lg border border-slate-200 bg-white px-2 py-1 text-lg font-semibold text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200`}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!isAdmin) return;
+                                setInvoiceNameEditing(true);
+                                setEditingPart(partKey);
+                              }}
+                              className={`rounded-md px-1 ${isAdmin ? 'hover:text-slate-700' : ''}`}
+                              title={isAdmin ? 'Click to edit' : undefined}
+                            >
+                              {value || (isSeq ? '' : partKey === 'prefix' ? 'Waraqa' : partKey === 'month' ? 'Mar' : '2026')}
+                            </button>
+                          )}
+                          {idx < 3 && <span className="text-slate-400">-</span>}
+                        </React.Fragment>
+                      );
+                    })}
+                  </h2>
+                  {invoiceNameStatus && (
+                    <span className={`text-xs font-semibold ${invoiceNameStatus.type === 'success' ? 'text-emerald-600' : invoiceNameStatus.type === 'error' ? 'text-rose-600' : 'text-slate-500'}`}>
+                      {invoiceNameStatus.message}
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
                   <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusTone}`} title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>
                     <Sparkles className="h-4 w-4" />
@@ -1793,15 +1925,31 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                       )}
                       {/* Only admins can view or edit the waive-transfer-fee control */}
                       {isAdmin && (
-                        <label className="inline-flex shrink-0 items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium normal-case text-slate-600">
-                          <input
-                            type="checkbox"
-                            checked={waiveTransferFee}
-                            onChange={(e) => setWaiveTransferFee(e.target.checked)}
-                            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
-                          />
-                          <span>Transfer Fees</span>
-                        </label>
+                        <div className="inline-flex shrink-0 items-center gap-2">
+                          <span className="text-[11px] font-semibold text-slate-600">Transfer fees</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isCoverageLocked) return;
+                              setWaiveTransferFee((prev) => !prev);
+                              userModifiedFiltersRef.current = true;
+                            }}
+                            disabled={isCoverageLocked}
+                            aria-pressed={!waiveTransferFee}
+                            className={`inline-flex h-6 w-10 items-center rounded-full border transition ${
+                              waiveTransferFee
+                                ? 'border-slate-200 bg-slate-200'
+                                : 'border-emerald-300 bg-emerald-500'
+                            } ${isCoverageLocked ? 'cursor-not-allowed opacity-60' : ''}`}
+                            title={waiveTransferFee ? 'Transfer fees not applied' : 'Transfer fees applied'}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                                waiveTransferFee ? 'translate-x-1' : 'translate-x-5'
+                              }`}
+                            />
+                          </button>
+                        </div>
                       )}
                     </div>
                     
@@ -1832,6 +1980,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                             value={maxHours}
                             onChange={(e) => {
                               if (isCoverageLocked) return;
+                              coverageEditingRef.current = true;
                               const value = e.target.value;
                               userModifiedFiltersRef.current = true;
                               setMaxHours(value);
@@ -1839,8 +1988,16 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                                 setCustomEndDate('');
                                 return;
                               }
-                              const derivedEndDate = computeEndDateFromMaxHours(value);
-                              setCustomEndDate(derivedEndDate);
+                              setCustomEndDate('');
+                            }}
+                            onFocus={() => {
+                              if (isCoverageLocked) return;
+                              coverageEditingRef.current = true;
+                            }}
+                            onBlur={() => {
+                              if (isCoverageLocked) return;
+                              coverageEditingRef.current = false;
+                              handleSaveCoverage();
                             }}
                             placeholder="e.g. 10"
                             disabled={isCoverageLocked}
@@ -1854,6 +2011,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                             value={customEndDate}
                             onChange={(e) => {
                               if (isCoverageLocked) return;
+                              coverageEditingRef.current = true;
                               const value = e.target.value;
                               userModifiedFiltersRef.current = true;
                               setCustomEndDate(value);
@@ -1863,6 +2021,15 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                               }
                               const derivedMax = computeMaxHoursFromEndDate(value);
                               setMaxHours(derivedMax);
+                            }}
+                            onFocus={() => {
+                              if (isCoverageLocked) return;
+                              coverageEditingRef.current = true;
+                            }}
+                            onBlur={() => {
+                              if (isCoverageLocked) return;
+                              coverageEditingRef.current = false;
+                              handleSaveCoverage();
                             }}
                             disabled={isCoverageLocked}
                             className="rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"

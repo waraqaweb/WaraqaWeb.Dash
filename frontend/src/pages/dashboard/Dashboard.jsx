@@ -39,7 +39,7 @@ import ToastHost from '../../components/ui/ToastHost';
 import { showToast } from '../../utils/toast';
 
 const DeleteCountdownHost = () => {
-  const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds } = useDeleteClassCountdown();
+  const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds, phase } = useDeleteClassCountdown();
   return (
     <DeleteCountdownToast
       isActive={isActive}
@@ -48,13 +48,15 @@ const DeleteCountdownHost = () => {
       error={error}
       preDelaySeconds={preDelaySeconds}
       undoSeconds={undoSeconds}
+      phase={phase === 'undo' ? 'post-delete' : 'pre-delete'}
+      showUndo={phase === 'undo' || Boolean(error)}
       onUndo={undo}
     />
   );
 };
 
 const DeleteActionCountdownHost = () => {
-  const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds } = useDeleteActionCountdown();
+  const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds, phase } = useDeleteActionCountdown();
   return (
     <DeleteCountdownToast
       isActive={isActive}
@@ -63,6 +65,8 @@ const DeleteActionCountdownHost = () => {
       error={error}
       preDelaySeconds={preDelaySeconds}
       undoSeconds={undoSeconds}
+      phase={phase === 'undo' ? 'post-delete' : 'pre-delete'}
+      showUndo={phase === 'undo' || Boolean(error)}
       onUndo={undo}
     />
   );
@@ -124,6 +128,39 @@ const Dashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeView, setActiveView] = useState('home');
   const [mountedViews, setMountedViews] = useState(['home']);
+  const lastDashboardPathRef = React.useRef(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('dashboard:lastPath');
+      lastDashboardPathRef.current = saved || null;
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!location?.pathname) return;
+    const normalized = location.pathname.replace(/\/+$/, '');
+    const isRoot = normalized === '/dashboard';
+    const isHome = normalized === '/dashboard/home';
+
+    if (isRoot || isHome) {
+      const saved = lastDashboardPathRef.current;
+      if (saved && saved !== location.pathname + (location.search || '')) {
+        navigate(saved, { replace: true });
+      }
+      return;
+    }
+
+    try {
+      const nextValue = `${location.pathname}${location.search || ''}`;
+      localStorage.setItem('dashboard:lastPath', nextValue);
+      lastDashboardPathRef.current = nextValue;
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [location.pathname, location.search, navigate]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;

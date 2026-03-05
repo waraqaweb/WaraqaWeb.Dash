@@ -847,7 +847,7 @@ classSchema.post('save', async function(doc) {
                                       isCountable(prev.status) && 
                                       isCountable(doc.status);
     
-    if (isSameStatusResubmission) {
+    if (isSameStatusResubmission && !durationChanged) {
       console.log(`🔒 [Class Post-Save] BLOCKING duplicate hour adjustment for class ${doc._id}`);
       console.log(`🔒 [Class Post-Save] This is a report RE-SUBMISSION with SAME status: ${doc.status}`);
       console.log(`🔒 [Class Post-Save] Previous status: ${prev.status}, Current status: ${doc.status}`);
@@ -861,6 +861,14 @@ classSchema.post('save', async function(doc) {
           console.warn('[Class.postSave] onClassStateChanged failed', err && err.message);
         });
       }
+      return;
+    }
+
+    if (isSameStatusResubmission && durationChanged && doc.billedInInvoiceId) {
+      const InvoiceService = require('../services/invoiceService');
+      InvoiceService.onClassStateChanged(doc.toObject(), { ...prev, skipHourAdjustment: true }).catch((err) => {
+        console.warn('[Class.postSave] onClassStateChanged failed', err && err.message);
+      });
       return;
     }
     

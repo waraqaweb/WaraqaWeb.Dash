@@ -1037,6 +1037,15 @@ class InvoiceService {
       const actualStartDate = itemDates[0] || billingStartDate;
       const actualEndDate = itemDates[itemDates.length - 1] || searchEndDate;
 
+      const resolvedCoverageEnd = (() => {
+        const explicitEnd = ensureDate(opts.billingPeriodEnd || billingEnd);
+        if (explicitEnd) {
+          explicitEnd.setHours(23, 59, 59, 999);
+          return explicitEnd;
+        }
+        return getFixedWindowEndInclusive(billingStart, 30);
+      })();
+
       const invoice = new Invoice({
         type: 'guardian_invoice',
         guardian: guardian._id,
@@ -1385,6 +1394,7 @@ class InvoiceService {
         guardianFinancial: buildGuardianFinancialSnapshot(guardian),
         coverage: {
           strategy: 'full_period',
+          endDate: resolvedCoverageEnd,
           waiveTransferFee: false
         },
         internalNotes: `${triggerSource} • ${dayjs(now).format('MMM D, h:mm A')} • ${guardian.firstName} ${guardian.lastName}`
@@ -1859,6 +1869,13 @@ class InvoiceService {
       // Now handle invoice updates
       // 🔥 NEW: If class is paid in another invoice, remove it from all unpaid invoices
       if (!invoiceId) {
+        const eligibleForInvoice = Boolean(classDoc && isClassEligibleForDynamicInvoice(classDoc, new Date()));
+        if (eligibleForInvoice) {
+          const dominoResult = await InvoiceService.insertClassIntoPaidInvoiceChain(classDoc);
+          if (dominoResult && dominoResult.success && dominoResult.handled) {
+            return { success: true, reason: 'domino_shifted', dominoResult, hoursUpdated: statusChanged && !skipHourAdjustment };
+          }
+        }
         // Class not linked to any invoice yet - check if we should add it to an unpaid invoice
         await InvoiceService.maybeAddClassToUnpaidInvoice(classDoc);
         return { success: true, reason: 'not_linked', hoursUpdated: statusChanged && !skipHourAdjustment };
@@ -2112,8 +2129,10 @@ class InvoiceService {
       const Invoice = require('../models/Invoice');
       const User = require('../models/User');
       
-      // Only add scheduled or in-progress classes
-      if (!['scheduled', 'in_progress'].includes(classDoc.status)) {
+      // Only add countable or scheduled classes
+      const status = String(classDoc.status || '').toLowerCase();
+      const allowedStatuses = ['scheduled', 'in_progress', 'attended', 'missed_by_student', 'absent', 'completed'];
+      if (!allowedStatuses.includes(status)) {
         return { success: false, reason: 'not_scheduled' };
       }
 
@@ -2200,6 +2219,295 @@ class InvoiceService {
     } catch (err) {
       console.warn('[maybeAddClassToUnpaidInvoice] failed:', err && err.message);
       return { success: false, error: err && err.message };
+    }
+  }
+
+  static async insertClassIntoPaidInvoiceChain(classDoc, opts = {}) {
+    try {
+      if (!classDoc || !classDoc._id) {
+        return { success: false, reason: 'invalid_class' };
+      }
+
+      const guardianId = classDoc.student?.guardianId;
+      if (!guardianId) {
+        return { success: false, reason: 'no_guardian' };
+      }
+
+      const classDate = ensureDate(classDoc.scheduledDate || classDoc.date || classDoc.createdAt);
+      if (!classDate) {
+        return { success: false, reason: 'no_date' };
+      }
+
+      const Invoice = require('../models/Invoice');
+      const Class = require('../models/Class');
+
+      const invoices = await Invoice.find({
+        guardian: guardianId,
+        type: 'guardian_invoice',
+        deleted: { $ne: true },
+        status: { $nin: ['cancelled', 'refunded'] }
+      }).sort({ 'billingPeriod.startDate': 1, createdAt: 1 });
+
+      if (!invoices.length) {
+        return { success: false, reason: 'no_invoices' };
+      }
+
+      const targetIndex = invoices.findIndex((inv) => {
+        const start = ensureDate(inv?.billingPeriod?.startDate);
+        const end = ensureDate(inv?.billingPeriod?.endDate) || ensureDate(inv?.coverage?.endDate);
+        if (!start || !end) return false;
+        return classDate >= start && classDate <= end;
+      });
+
+      if (targetIndex < 0) {
+        return { success: false, reason: 'no_matching_period' };
+      }
+
+      const target = invoices[targetIndex];
+      if (String(target?.status || '').toLowerCase() !== 'paid') {
+        return { success: false, reason: 'target_not_paid', invoiceId: target?._id };
+      }
+
+      const normalizeClassId = (value) => {
+        if (!value) return null;
+        if (typeof value === 'string' || typeof value === 'number') return value.toString();
+        if (typeof value === 'object') {
+          if (value._id) return value._id.toString();
+          if (typeof value.toString === 'function') {
+            const str = value.toString();
+            return str && str !== '[object Object]' ? str : null;
+          }
+        }
+        return null;
+      };
+
+      const getItemClassId = (item) => normalizeClassId(item?.class || item?.lessonId || item?.classId);
+
+      const buildItemForClass = (invoiceDoc, cls, existingItem) => {
+        if (!cls || !cls._id) return null;
+        const minutes = Number(cls.duration || 0) || 0;
+        if (minutes <= 0) return null;
+        const rate = resolveInvoiceHourlyRate(invoiceDoc);
+        const amount = Math.round(((minutes / 60) * rate) * 100) / 100;
+        return {
+          lessonId: String(cls._id),
+          class: cls._id,
+          student: cls.student?.studentId || existingItem?.student || null,
+          studentSnapshot: existingItem?.studentSnapshot || resolveStudentSnapshotFromClass(cls),
+          teacher: cls.teacher || existingItem?.teacher || null,
+          teacherSnapshot: existingItem?.teacherSnapshot || null,
+          description: existingItem?.description || cls.subject || 'Class session',
+          date: cls.scheduledDate || existingItem?.date || new Date(),
+          duration: minutes,
+          rate,
+          amount,
+          attended: cls.status === 'attended',
+          status: cls.status || existingItem?.status || 'scheduled'
+        };
+      };
+
+      let carryClasses = [classDoc];
+      const affectedInvoices = [];
+
+      for (let idx = targetIndex; idx < invoices.length && carryClasses.length; idx += 1) {
+        const invoice = invoices[idx];
+        const isPaid = String(invoice?.status || '').toLowerCase() === 'paid';
+
+        const periodStart = ensureDate(invoice?.billingPeriod?.startDate);
+        const periodEnd = ensureDate(invoice?.billingPeriod?.endDate) || ensureDate(invoice?.coverage?.endDate);
+        const withinPeriod = (date) => {
+          if (!date) return false;
+          if (periodStart && date < periodStart) return false;
+          if (periodEnd && date > periodEnd) return false;
+          return true;
+        };
+
+        const coverageHoursRaw = Number(invoice?.coverage?.maxHours);
+        const hasCoverageCap = Number.isFinite(coverageHoursRaw) && coverageHoursRaw > EPSILON_HOURS;
+        let capMinutes = null;
+        if (isPaid) {
+          capMinutes = hasCoverageCap
+            ? Math.round(coverageHoursRaw * 60)
+            : Math.round(Math.max(0, computeInvoiceItemHours(invoice) * 60));
+          if (!Number.isFinite(capMinutes) || capMinutes <= 0) capMinutes = null;
+        } else if (hasCoverageCap) {
+          capMinutes = Math.round(coverageHoursRaw * 60);
+        }
+
+        const existingItems = Array.isArray(invoice.items) ? invoice.items : [];
+        const existingItemMap = new Map();
+        const candidateIds = new Set();
+
+        for (const item of existingItems) {
+          const key = getItemClassId(item);
+          if (!key) continue;
+          if (!existingItemMap.has(key)) {
+            existingItemMap.set(key, item);
+          }
+          candidateIds.add(key);
+        }
+
+        for (const cls of carryClasses) {
+          const key = normalizeClassId(cls?._id);
+          if (!key) continue;
+          candidateIds.add(key);
+        }
+
+        const candidateObjectIds = Array.from(candidateIds)
+          .map((id) => toObjectId(id))
+          .filter(Boolean);
+
+        const classDocs = candidateObjectIds.length
+          ? await Class.find({ _id: { $in: candidateObjectIds } })
+              .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId')
+              .lean()
+          : [];
+
+        const classMap = new Map();
+        for (const doc of classDocs) {
+          if (doc?._id) {
+            classMap.set(doc._id.toString(), doc);
+          }
+        }
+
+        const candidates = [];
+        const seen = new Set();
+        const carryBlocked = [];
+
+        const pushCandidate = (clsId, item, clsDoc) => {
+          if (!clsId || seen.has(clsId)) return;
+          const doc = clsDoc || (clsId ? classMap.get(clsId) : null);
+          const minutes = Number((doc?.duration ?? item?.duration) || 0) || 0;
+          const date = ensureDate(doc?.scheduledDate || item?.date || doc?.dateTime);
+          if (!date || minutes <= 0) return;
+          seen.add(clsId);
+          candidates.push({ classId: clsId, date, duration: minutes, classDoc: doc, item });
+        };
+
+        for (const [clsId, item] of existingItemMap.entries()) {
+          pushCandidate(clsId, item, null);
+        }
+
+        for (const cls of carryClasses) {
+          const clsId = normalizeClassId(cls?._id);
+          if (!clsId) continue;
+          const allow = isClassEligibleForDynamicInvoice(cls, new Date());
+          if (!allow && !existingItemMap.has(clsId)) {
+            continue;
+          }
+          const clsDate = ensureDate(cls?.scheduledDate || cls?.dateTime || cls?.date);
+          if (withinPeriod(clsDate)) {
+            pushCandidate(clsId, null, cls);
+          } else {
+            carryBlocked.push(cls);
+          }
+        }
+
+        candidates.sort((a, b) => a.date - b.date);
+
+        const selectedIds = new Set();
+        const overflow = [];
+        let usedMinutes = 0;
+
+        for (const entry of candidates) {
+          if (capMinutes !== null && usedMinutes + entry.duration > capMinutes + 0.001) {
+            overflow.push(entry);
+            continue;
+          }
+          selectedIds.add(entry.classId);
+          usedMinutes += entry.duration;
+        }
+
+        const removeItemIds = [];
+        for (const [clsId, item] of existingItemMap.entries()) {
+          if (!selectedIds.has(clsId) && item?._id) {
+            removeItemIds.push(String(item._id));
+          }
+        }
+
+        const addItems = [];
+        for (const clsId of selectedIds) {
+          if (existingItemMap.has(clsId)) continue;
+          const clsDoc = classMap.get(clsId);
+          const built = buildItemForClass(invoice, clsDoc, null);
+          if (built) addItems.push(built);
+        }
+
+        if (addItems.length || removeItemIds.length) {
+          const updateResult = await InvoiceService.updateInvoiceItems(
+            String(invoice._id),
+            {
+              addItems,
+              removeItemIds,
+              note: 'Auto-shifted classes after late insert',
+              allowPaidModification: isPaid,
+              transferOnDuplicate: true
+            },
+            null
+          );
+          if (updateResult?.invoice) {
+            const triggerId = classDoc?._id ? String(classDoc._id) : null;
+            const triggerInAdded = triggerId
+              ? addItems.some((item) => item?.class && String(item.class) === triggerId)
+              : false;
+            if (isPaid && triggerInAdded) {
+              try {
+                await updateResult.invoice.recordAuditEntry({
+                  actor: null,
+                  action: 'domino_shift',
+                  diff: {
+                    addedClassIds: addItems.map((item) => item?.class).filter(Boolean),
+                    removedItemIds: removeItemIds,
+                    triggerClassId: triggerId
+                  }
+                });
+                await updateResult.invoice.save();
+              } catch (auditErr) {
+                console.warn('[insertClassIntoPaidInvoiceChain] audit failed:', auditErr?.message || auditErr);
+              }
+            }
+            await InvoiceService.syncInvoiceCoverageClasses(updateResult.invoice);
+          }
+          affectedInvoices.push(String(invoice._id));
+        }
+
+        const combinedOverflow = overflow
+          .map((entry) => entry.classDoc || classMap.get(entry.classId))
+          .filter(Boolean)
+          .concat(carryBlocked);
+
+        carryClasses = combinedOverflow
+          .map((entry) => {
+            if (!entry) return null;
+            if (entry._id) return entry;
+            return entry.classDoc || classMap.get(entry.classId);
+          })
+          .filter(Boolean)
+          .sort((a, b) => {
+            const da = ensureDate(a?.scheduledDate || a?.dateTime) || new Date(0);
+            const db = ensureDate(b?.scheduledDate || b?.dateTime) || new Date(0);
+            return da - db;
+          });
+      }
+
+      if (carryClasses.length) {
+        const ids = carryClasses
+          .map((cls) => normalizeClassId(cls?._id))
+          .filter(Boolean)
+          .map((id) => toObjectId(id))
+          .filter(Boolean);
+        if (ids.length) {
+          await Class.updateMany(
+            { _id: { $in: ids } },
+            { $set: { billedInInvoiceId: null, billedAt: null, flaggedUninvoiced: true, paidByGuardian: false }, $unset: { paidByGuardianAt: 1 } }
+          ).exec();
+        }
+      }
+
+      return { success: true, handled: true, affectedInvoices };
+    } catch (err) {
+      console.warn('[insertClassIntoPaidInvoiceChain] failed:', err?.message || err);
+      return { success: false, error: err?.message || 'domino_failed' };
     }
   }
 
@@ -4077,6 +4385,11 @@ class InvoiceService {
         return { success: false, error: 'validation_error', message: `Mismatch between hours and amount at $${hourlyRate}/hr. Expected $${expectedAmount.toFixed(2)} (base: $${baseAmount.toFixed(2)} + fee: $${transferFee.toFixed(2)}), got $${providedAmount.toFixed(2)}.` };
       }
 
+      // If paidHours is provided, treat it as the authoritative cap for this invoice.
+      const paidHoursCap = Number.isFinite(Number(paymentData.paidHours)) && Number(paymentData.paidHours) > 0
+        ? roundHours(Number(paymentData.paidHours))
+        : null;
+
       // 2) Allow any payment amount - removed class boundary restriction
       // Admin can enter actual hours paid by guardian, which may not align to class boundaries
       const itemsAsc = Array.isArray(invoice.items) ? [...invoice.items].sort((a, b) => {
@@ -4088,10 +4401,79 @@ class InvoiceService {
   const hasClassLinkedItems = itemsAsc.some((it) => Boolean(it?.class) || Boolean(it?.lessonId));
   let eligibleCoverageIncrementHours = 0;
       if (hasClassLinkedItems) {
-  const hourList = itemsAsc.map((it) => (Number(it?.duration || 0) || 0) / 60);
-  const totalSchedHours = hourList.reduce((sum, h) => sum + h, 0);
-  const eligibleItems = itemsAsc.filter((it) => it && !it.excludeFromStudentBalance && !it.exemptFromGuardian && !(it.flags && (it.flags.notCountForBoth || it.flags.exemptFromGuardian)));
-  const eligibleHoursTotal = eligibleItems.reduce((sum, item) => sum + ((Number(item?.duration || 0) || 0) / 60), 0);
+        if (paidHoursCap) {
+          let capMinutes = Math.round(paidHoursCap * 60);
+          let running = 0;
+          const cappedItems = [];
+          const removedItems = [];
+
+          for (const item of itemsAsc) {
+            const minutes = Number(item?.duration || 0) || 0;
+            if (running + minutes > capMinutes) {
+              removedItems.push(item);
+              continue;
+            }
+            cappedItems.push(item);
+            running += minutes;
+          }
+
+          invoice.coverage = invoice.coverage && typeof invoice.coverage === 'object'
+            ? invoice.coverage
+            : {};
+          invoice.coverage.strategy = 'cap_hours';
+          invoice.coverage.maxHours = paidHoursCap;
+          const lastKept = cappedItems.length ? cappedItems[cappedItems.length - 1] : null;
+          const lastDate = lastKept?.date ? new Date(lastKept.date) : null;
+          if (lastDate && !Number.isNaN(lastDate.getTime())) {
+            invoice.coverage.endDate = lastDate;
+          }
+          invoice.coverage.updatedAt = new Date();
+          invoice.coverage.updatedBy = adminUserId || invoice.coverage.updatedBy;
+          invoice.markModified('coverage');
+
+          if (cappedItems.length !== itemsAsc.length) {
+            invoice.items = cappedItems;
+            invoice.markModified('items');
+
+            const removedClassIds = removedItems
+              .map((it) => it?.class || it?.lessonId)
+              .filter(Boolean);
+            if (removedClassIds.length) {
+              try {
+                const Class = require('../models/Class');
+                await Class.updateMany(
+                  { _id: { $in: removedClassIds } },
+                  { $set: { billedInInvoiceId: null, billedAt: null, flaggedUninvoiced: true, paidByGuardian: false }, $unset: { paidByGuardianAt: 1 } }
+                ).exec();
+              } catch (unlinkErr) {
+                console.warn('Failed to unlink classes after paid-hours cap', unlinkErr && unlinkErr.message);
+              }
+            }
+          }
+
+          // Refresh itemsAsc so downstream calculations use the capped set.
+          itemsAsc.length = 0;
+          for (const item of (invoice.items || [])) {
+            itemsAsc.push(item);
+          }
+          itemsAsc.sort((a, b) => {
+            const da = new Date(a?.date || 0).getTime();
+            const db = new Date(b?.date || 0).getTime();
+            return da - db;
+          });
+        }
+
+        const hourList = itemsAsc.map((it) => (Number(it?.duration || 0) || 0) / 60);
+        const totalSchedHours = hourList.reduce((sum, h) => sum + h, 0);
+        if (paidHoursCap && totalSchedHours > EPSILON_HOURS && paidHoursCap > (totalSchedHours + EPSILON_HOURS)) {
+          return {
+            success: false,
+            error: 'validation_error',
+            message: `Paid hours (${paidHoursCap}) exceed available class hours (${roundHours(totalSchedHours)}).`
+          };
+        }
+        const eligibleItems = itemsAsc.filter((it) => it && !it.excludeFromStudentBalance && !it.exemptFromGuardian && !(it.flags && (it.flags.notCountForBoth || it.flags.exemptFromGuardian)));
+        const eligibleHoursTotal = eligibleItems.reduce((sum, item) => sum + ((Number(item?.duration || 0) || 0) / 60), 0);
 
         let currentCovered = 0;
         try {
@@ -4231,21 +4613,7 @@ class InvoiceService {
         }
 
         // Enforce strict DB rule: once settled, coverage cap metadata should not persist.
-        try {
-          const settledStatus = String(updatedInvoice?.status || '').toLowerCase();
-          if (['paid', 'refunded'].includes(settledStatus)) {
-            updatedInvoice.coverage = updatedInvoice.coverage && typeof updatedInvoice.coverage === 'object'
-              ? updatedInvoice.coverage
-              : {};
-            if (updatedInvoice.coverage.maxHours !== undefined) {
-              updatedInvoice.coverage.maxHours = undefined;
-              updatedInvoice.markModified('coverage');
-              await updatedInvoice.save();
-            }
-          }
-        } catch (coverageCleanupErr) {
-          console.warn('Failed to clear settled invoice coverage cap fields', coverageCleanupErr && coverageCleanupErr.message);
-        }
+        // Keep coverage caps as-is after payment so invoices reflect paid-hours decisions.
       } catch (procErr) {
         // Handle already-settled invoice gracefully: mark payment failed and return duplicate-like response
         try {

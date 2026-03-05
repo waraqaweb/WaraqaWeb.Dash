@@ -13,6 +13,7 @@ const computeSecondsLeft = (endsAtMs) => {
 export const DeleteActionCountdownProvider = ({ children }) => {
   const [active, setActive] = useState(false);
   const [message, setMessage] = useState('Deleting item');
+  const [phase, setPhase] = useState('idle');
   const [endsAtMs, setEndsAtMs] = useState(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [preDelaySeconds, setPreDelaySeconds] = useState(DEFAULT_PRE_DELETE_SECONDS);
@@ -36,6 +37,7 @@ export const DeleteActionCountdownProvider = ({ children }) => {
     setEndsAtMs(null);
     setSecondsLeft(0);
     setMessage('Deleting item');
+    setPhase('idle');
     setPreDelaySeconds(DEFAULT_PRE_DELETE_SECONDS);
     setUndoSeconds(DEFAULT_UNDO_SECONDS);
     setError('');
@@ -50,17 +52,15 @@ export const DeleteActionCountdownProvider = ({ children }) => {
   const start = useCallback(({ message: nextMessage, onDelete, preDelaySeconds: nextPreDelay, undoSeconds: nextUndoSeconds }) => {
     if (typeof onDelete !== 'function') return;
 
-    const preDelay = Number.isFinite(nextPreDelay) ? Math.max(0, nextPreDelay) : DEFAULT_PRE_DELETE_SECONDS;
     const undoWindow = Number.isFinite(nextUndoSeconds) ? Math.max(1, nextUndoSeconds) : DEFAULT_UNDO_SECONDS;
-    const duration = Math.max(1, preDelay + undoWindow);
-    const endsAt = Date.now() + duration * 1000;
 
     executeRef.current = onDelete;
     setActive(true);
+    setPhase('deleting');
     setMessage(nextMessage || 'Deleting item');
-    setEndsAtMs(endsAt);
-    setSecondsLeft(duration);
-    setPreDelaySeconds(preDelay);
+    setEndsAtMs(null);
+    setSecondsLeft(0);
+    setPreDelaySeconds(Number.isFinite(nextPreDelay) ? Math.max(0, nextPreDelay) : DEFAULT_PRE_DELETE_SECONDS);
     setUndoSeconds(undoWindow);
     setError('');
   }, []);
@@ -72,22 +72,35 @@ export const DeleteActionCountdownProvider = ({ children }) => {
 
     try {
       await executeRef.current();
-      reset();
+      const undoWindow = Number.isFinite(undoSeconds) ? Math.max(1, undoSeconds) : DEFAULT_UNDO_SECONDS;
+      const endsAt = Date.now() + undoWindow * 1000;
+      setPhase('undo');
+      setMessage('Deleted item');
+      setEndsAtMs(endsAt);
+      setSecondsLeft(undoWindow);
+      setPreDelaySeconds(0);
+      setError('');
     } catch (err) {
       console.error('Delete action failed after countdown', err);
       const msg = err?.response?.data?.message || 'Failed to delete';
       setError(msg);
       setActive(true);
       clearTimer();
+      setPhase('error');
       setSecondsLeft(0);
       setEndsAtMs(Date.now());
     } finally {
       executingRef.current = false;
     }
-  }, [reset, clearTimer]);
+  }, [undoSeconds, reset, clearTimer]);
 
   useEffect(() => {
-    if (!active || !endsAtMs) {
+    if (!active || phase !== 'deleting') return;
+    executeDelete();
+  }, [active, phase, executeDelete]);
+
+  useEffect(() => {
+    if (!active || phase !== 'undo' || !endsAtMs) {
       clearTimer();
       return;
     }
@@ -107,11 +120,11 @@ export const DeleteActionCountdownProvider = ({ children }) => {
   }, [active, endsAtMs, clearTimer]);
 
   useEffect(() => {
-    if (!active || !endsAtMs) return;
+    if (!active || phase !== 'undo' || !endsAtMs) return;
     if (secondsLeft > 0) return;
     if (error) return;
-    executeDelete();
-  }, [active, endsAtMs, secondsLeft, error, executeDelete]);
+    reset();
+  }, [active, phase, endsAtMs, secondsLeft, error, reset]);
 
   const value = useMemo(() => ({
     isActive: active,
@@ -120,10 +133,11 @@ export const DeleteActionCountdownProvider = ({ children }) => {
     error,
     preDelaySeconds,
     undoSeconds,
+    phase,
     start,
     undo,
     dismiss: reset
-  }), [active, secondsLeft, message, error, preDelaySeconds, undoSeconds, start, undo, reset]);
+  }), [active, secondsLeft, message, error, preDelaySeconds, undoSeconds, phase, start, undo, reset]);
 
   return (
     <DeleteActionCountdownContext.Provider value={value}>

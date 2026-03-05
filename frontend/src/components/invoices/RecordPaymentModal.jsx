@@ -1,11 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../../api/axios';
 import { computeInvoiceTotals, resolveInvoiceClassEntries } from '../../utils/invoiceTotals';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import { X, DollarSign, CreditCard, ClipboardSignature } from 'lucide-react';
 import { formatDateDDMMMYYYY } from '../../utils/date';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
+import { useAuth } from '../../contexts/AuthContext';
 
 const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
+  const { user } = useAuth();
   const [localInvoice, setLocalInvoice] = useState(invoice || null);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
@@ -19,6 +22,53 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [activeField, setActiveField] = useState('amount'); // 'amount' | 'hours'
+  const [isDirty, setIsDirty] = useState(false);
+  const [invoiceNameParts, setInvoiceNameParts] = useState({ prefix: 'Waraqa', month: 'Mar', year: '2026', seq: '' });
+  const [seqEditing, setSeqEditing] = useState(false);
+  const [seqDraft, setSeqDraft] = useState('');
+  const [editingPaypal, setEditingPaypal] = useState(false);
+  const seqInputRef = useRef(null);
+  const paypalInputRef = useRef(null);
+  const lastInvoiceIdRef = useRef(null);
+  const isDirtyRef = useRef(false);
+
+  const mergeInvoiceUpdate = React.useCallback((prev, updated) => {
+    if (!updated || typeof updated !== 'object') return prev;
+    if (!prev) return updated;
+    const next = { ...prev, ...updated };
+    if (!updated.items && prev.items) next.items = prev.items;
+    if (!updated.dynamicClasses && prev.dynamicClasses) next.dynamicClasses = prev.dynamicClasses;
+    if (!updated.guardian && prev.guardian) next.guardian = prev.guardian;
+    if (!updated.guardianFinancial && prev.guardianFinancial) next.guardianFinancial = prev.guardianFinancial;
+    return next;
+  }, []);
+
+  const parseInvoiceNameParts = React.useCallback((name) => {
+    const raw = String(name || '').trim();
+    const chunks = raw.split('-').map((chunk) => chunk.trim()).filter(Boolean);
+    if (chunks.length >= 4) {
+      return {
+        prefix: chunks[0] || 'Waraqa',
+        month: chunks[1] || 'Mar',
+        year: chunks[2] || String(new Date().getUTCFullYear()),
+        seq: chunks.slice(3).join('-')
+      };
+    }
+    return {
+      prefix: chunks[0] || 'Waraqa',
+      month: chunks[1] || 'Mar',
+      year: chunks[2] || String(new Date().getUTCFullYear()),
+      seq: ''
+    };
+  }, []);
+
+  const buildInvoiceNameFromParts = React.useCallback((parts) => {
+    const prefix = String(parts?.prefix || 'Waraqa').trim();
+    const month = String(parts?.month || '').trim();
+    const year = String(parts?.year || '').trim();
+    const seq = String(parts?.seq || '').trim();
+    return [prefix, month, year, seq].filter(Boolean).join('-') + (seq ? '' : '-');
+  }, []);
 
   const resolvedClassEntries = useMemo(
     () => resolveInvoiceClassEntries(localInvoice || {}),
@@ -71,15 +121,34 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
 
   useEffect(() => {
     if (invoice) {
-      setLocalInvoice(invoice);
+      setLocalInvoice((prev) => mergeInvoiceUpdate(prev, invoice));
+      if (!seqEditing) {
+        const parts = parseInvoiceNameParts(invoice?.invoiceName || '');
+        setInvoiceNameParts(parts);
+        setSeqDraft(parts.seq || '');
+      }
     }
-  }, [invoice]);
+  }, [invoice, seqEditing]);
 
   useEffect(() => {
     if (!invoiceId) return;
 
     const fetchInvoice = async () => {
       try {
+        const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: invoiceId });
+        const cached = readCache(cacheKey, { deps: ['invoices'] });
+        if (cached.hit && cached.value?.invoice) {
+          const cachedInvoice = cached.value.invoice;
+          const cachedComputed = computeInvoiceTotals(cachedInvoice);
+          setLocalInvoice((prev) => mergeInvoiceUpdate(prev, {
+            ...cachedInvoice,
+            __computedTotal: cachedComputed.total,
+            __computedHours: cachedComputed.hours,
+            __computedTransferFee: cachedComputed.transferFee,
+          }));
+          setLoading(false);
+        }
+
         const { data } = await api.get(`/invoices/${invoiceId}`);
         const inv = data.invoice || data;
         const computed = computeInvoiceTotals(inv);
@@ -89,7 +158,19 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
           __computedHours: computed.hours,
           __computedTransferFee: computed.transferFee,
         };
-        setLocalInvoice(normalizedInvoice);
+        setLocalInvoice((prev) => mergeInvoiceUpdate(prev, normalizedInvoice));
+        if (!seqEditing) {
+          const parts = parseInvoiceNameParts(inv?.invoiceName || '');
+          setInvoiceNameParts(parts);
+          setSeqDraft(parts.seq || '');
+        }
+
+        const isNewInvoice = lastInvoiceIdRef.current !== invoiceId;
+        if (isNewInvoice) {
+          lastInvoiceIdRef.current = invoiceId;
+          setIsDirty(false);
+          isDirtyRef.current = false;
+        }
 
         const computedTotal = Number(computed?.total || 0);
         const computedPaid = Number(computed?.paid || 0);
@@ -103,15 +184,18 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
           ? (Math.round(initialHoursRaw * 100) / 100).toFixed(2)
           : '';
 
-        setForm({
-          amount: formattedAmount,
-          paymentMethod: (inv.guardian && inv.guardian.paymentMethod) || inv.paymentMethod || 'paypal',
-          transactionId: inv.invoiceReferenceLink || '',
-          hoursPaid: formattedHours,
-          tip: inv.tip ? String(inv.tip) : '',
-          paypalInvoiceNumber: inv.paypalInvoiceNumber || ''
-        });
+        if (isNewInvoice || !isDirtyRef.current) {
+          setForm({
+            amount: formattedAmount,
+            paymentMethod: (inv.guardian && inv.guardian.paymentMethod) || inv.paymentMethod || 'paypal',
+            transactionId: inv.invoiceReferenceLink || '',
+            hoursPaid: formattedHours,
+            tip: inv.tip ? String(inv.tip) : '',
+            paypalInvoiceNumber: inv.paypalInvoiceNumber || ''
+          });
+        }
         setError('');
+        writeCache(cacheKey, { invoice: inv }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
       } catch (err) {
         console.error(err);
         setError('Failed to load invoice details');
@@ -121,7 +205,64 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
     };
 
     fetchInvoice();
-  }, [invoiceId, invoice?.coverage?.endDate, invoice?.updatedAt]);
+  }, [invoiceId, mergeInvoiceUpdate, user?._id]);
+
+  useEffect(() => {
+    if (!seqEditing || !seqInputRef.current) return;
+    const target = seqInputRef.current;
+    target.focus();
+    target.select();
+    setTimeout(() => {
+      try {
+        target.focus();
+        target.select();
+      } catch (_) {}
+    }, 0);
+  }, [seqEditing]);
+
+  useEffect(() => {
+    if (!editingPaypal || !paypalInputRef.current) return;
+    const target = paypalInputRef.current;
+    target.focus();
+    target.select();
+    setTimeout(() => {
+      try {
+        target.focus();
+        target.select();
+      } catch (_) {}
+    }, 0);
+  }, [editingPaypal]);
+
+  const handleSaveSeq = async (nextSeqValue) => {
+    const targetInvoiceId = localInvoice?._id || invoiceId;
+    if (!targetInvoiceId) return;
+    const prevName = localInvoice?.invoiceName || '';
+    const nextSeq = typeof nextSeqValue === 'string' ? nextSeqValue : seqDraft;
+    const nextParts = {
+      ...invoiceNameParts,
+      seq: nextSeq
+    };
+    const nextName = buildInvoiceNameFromParts(nextParts);
+    setInvoiceNameParts(parseInvoiceNameParts(nextName));
+    setSeqDraft(nextSeq);
+    setLocalInvoice((prev) => mergeInvoiceUpdate(prev, { invoiceName: nextName }));
+    try {
+      const { data } = await api.put(`/invoices/${targetInvoiceId}`, { invoiceName: nextName });
+      const updated = data?.invoice || data;
+        if (updated) {
+        setLocalInvoice((prev) => mergeInvoiceUpdate(prev, updated));
+        setInvoiceNameParts(parseInvoiceNameParts(updated?.invoiceName || nextName));
+        setSeqDraft(parseInvoiceNameParts(updated?.invoiceName || nextName).seq || '');
+        const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: targetInvoiceId });
+        writeCache(cacheKey, { invoice: updated }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
+      }
+    } catch (err) {
+      console.error('Invoice name update failed:', err);
+      setInvoiceNameParts(parseInvoiceNameParts(prevName));
+      setSeqDraft(parseInvoiceNameParts(prevName).seq || '');
+      setLocalInvoice((prev) => mergeInvoiceUpdate(prev, { invoiceName: prevName }));
+    }
+  };
 
   // Compute the same billing window used in the view modal and invoices page
   const [billingWindow, setBillingWindow] = useState({ start: null, end: null, loading: true });
@@ -224,7 +365,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
         const { data } = await api.put(`/invoices/${invoiceId}/coverage`, payload);
         const updated = data?.invoice || data;
         if (updated && typeof updated === 'object') {
-          setLocalInvoice(updated);
+          setLocalInvoice((prev) => mergeInvoiceUpdate(prev, updated));
         }
       } catch (err) {
         console.error('Failed to sync invoice coverage from payment modal', err);
@@ -232,11 +373,13 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [form.hoursPaid, invoiceId, hourlyRate, computeEndDateFromHours]);
+  }, [form.hoursPaid, invoiceId, hourlyRate, computeEndDateFromHours, mergeInvoiceUpdate]);
 
   const handleChange = e => {
     const { name, value } = e.target;
     if (name === 'amount') {
+      setIsDirty(true);
+      isDirtyRef.current = true;
       setActiveField('amount');
       const hours = computeHoursFromAmount(value);
         setForm(prev => ({
@@ -247,6 +390,8 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
       return;
     }
     if (name === 'hoursPaid') {
+      setIsDirty(true);
+      isDirtyRef.current = true;
       setActiveField('hours');
       const amount = computeAmountFromHours(value);
         setForm(prev => ({
@@ -256,10 +401,11 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
         }));
       return;
     }
+    setIsDirty(true);
+    isDirtyRef.current = true;
     setForm(prev => ({ ...prev, [name]: value }));
   };
 
-  const [editingPaypal, setEditingPaypal] = useState(false);
   const calcTransferFee = (tipValue) => {
     const numeric = Number(tipValue) || 0;
     return Math.round(numeric * 0.05 * 100) / 100;
@@ -277,9 +423,10 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
       const teacherIdRaw = teacherObj?._id || item.teacher || null;
       const teacherId = teacherIdRaw ? String(teacherIdRaw) : null;
 
-      const snapshotFirst = (item?.teacherSnapshot?.firstName || teacherObj?.firstName || '').toString().trim();
-      const snapshotLast = (item?.teacherSnapshot?.lastName || teacherObj?.lastName || '').toString().trim();
-      const teacherName = [snapshotFirst, snapshotLast].filter(Boolean).join(' ').trim() || 'Unknown teacher';
+      const snapshotFirst = (item?.teacherSnapshot?.firstName || teacherObj?.firstName || item?.teacherFirstName || '').toString().trim();
+      const snapshotLast = (item?.teacherSnapshot?.lastName || teacherObj?.lastName || item?.teacherLastName || '').toString().trim();
+      const fallbackName = item?.teacherName || teacherObj?.name || null;
+      const teacherName = [snapshotFirst, snapshotLast].filter(Boolean).join(' ').trim() || fallbackName || 'Unknown teacher';
 
       const key = teacherId || `${snapshotFirst}:${snapshotLast}`;
       if (!key) return;
@@ -407,6 +554,8 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
       const normalizedAmount = Number.isFinite(derivedAmount) ? Math.round(derivedAmount * 100) / 100 : undefined;
       const normalizedHours = Number.isFinite(paidHoursNumeric) && paidHoursNumeric > 0 ? paidHoursNumeric : undefined;
 
+      // Coverage caps are applied by the payment endpoint when paidHours is provided.
+
       const payload = {
         amount: normalizedAmount,
         paymentMethod: form.paymentMethod,
@@ -477,7 +626,52 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
           <div className="flex items-start justify-between">
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-[0.3em] text-white/70">Record payment</p>
-              <h2 className="mt-1 text-xl font-semibold leading-tight truncate">{localInvoice?.invoiceNumber}</h2>
+              <div className="mt-1 flex items-center gap-2">
+                <h2 className="text-xl font-semibold leading-tight">
+                  {`${invoiceNameParts.prefix || 'Waraqa'}-${invoiceNameParts.month || ''}-${invoiceNameParts.year || ''}-`}
+                </h2>
+                {seqEditing ? (
+                  <input
+                    ref={seqInputRef}
+                    value={seqDraft}
+                    onChange={(e) => setSeqDraft(e.target.value)}
+                    autoFocus
+                    onFocus={(e) => e.target.select()}
+                    onClick={(e) => e.currentTarget.select()}
+                    onBlur={() => {
+                      setSeqEditing(false);
+                      handleSaveSeq(seqInputRef.current?.value ?? seqDraft);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        setSeqEditing(false);
+                        handleSaveSeq(e.currentTarget.value);
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        const parts = parseInvoiceNameParts(localInvoice?.invoiceName || '');
+                        setInvoiceNameParts(parts);
+                        setSeqDraft(parts.seq || '');
+                        setSeqEditing(false);
+                      }
+                    }}
+                    className="w-20 rounded-lg border border-emerald-200 bg-white px-2 py-1 text-lg font-semibold text-emerald-900 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSeqDraft(invoiceNameParts.seq || '');
+                      setSeqEditing(true);
+                    }}
+                    className="rounded-md px-1 text-lg font-semibold text-emerald-900 hover:text-emerald-700"
+                    title="Click to edit invoice number"
+                  >
+                    {invoiceNameParts.seq || ''}
+                  </button>
+                )}
+              </div>
 
               {/* Compact guardian info: role • name • email (single compact row, truncated) */}
               <div className="mt-1 flex items-center gap-3 text-sm text-white/90 truncate">
@@ -585,10 +779,13 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
                         </button>
                       ) : (
                         <input
+                          ref={paypalInputRef}
                           type="text"
                           name="paypalInvoiceNumber"
                           value={form.paypalInvoiceNumber}
                           onChange={handleChange}
+                          onFocus={(e) => e.target.select()}
+                          onClick={(e) => e.currentTarget.select()}
                           onBlur={() => setEditingPaypal(false)}
                           className="rounded-md border border-slate-200 px-2 py-1 text-sm text-slate-800"
                         />
@@ -750,7 +947,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Fees</span>
-                  <span className="font-medium text-slate-800">${((typeof localInvoice?.__computedTransferFee === 'number' && localInvoice.__computedTransferFee !== null) ? localInvoice.__computedTransferFee : calcTransferFee(form.tip || 0)).toFixed(2)}</span>
+                  <span className="font-medium text-slate-800">${calcTransferFee(form.tip || 0).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Tip</span>

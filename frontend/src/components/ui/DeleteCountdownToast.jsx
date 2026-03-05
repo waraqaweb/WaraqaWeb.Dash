@@ -8,6 +8,8 @@ const DeleteCountdownToast = ({
   error = "",
   preDelaySeconds = 0,
   undoSeconds = 0,
+  phase = 'pre-delete',
+  showUndo = true,
   className = ""
 }) => {
   if (!isActive) return null;
@@ -16,12 +18,22 @@ const DeleteCountdownToast = ({
   const preDelay = Number.isFinite(preDelaySeconds) ? Math.max(0, preDelaySeconds) : 0;
   const preCountdown = Math.max(0, countdown - undoWindow);
   const inPreDelay = preDelay > 0 && preCountdown > 0;
+  const isPostDelete = phase === 'post-delete';
   const line1 = error
     ? error
-    : inPreDelay
-      ? `${message} in ${preCountdown}s...`
-      : `${message} in ${countdown}s...`;
-  const line2 = error ? 'Click undo to cancel.' : '';
+    : isPostDelete
+      ? message
+      : inPreDelay
+        ? `${message} in ${preCountdown}s...`
+        : countdown > 0
+          ? `${message} in ${countdown}s...`
+          : `${message}...`;
+  const line2 = error
+    ? 'Click undo to cancel.'
+    : isPostDelete && countdown > 0
+      ? `Undo available for ${countdown}s.`
+      : '';
+  const shouldShowUndo = showUndo && (isPostDelete || phase === 'pre-delete' || Boolean(error));
 
   return (
     <div
@@ -38,16 +50,18 @@ const DeleteCountdownToast = ({
             {line2 && <p className="text-xs text-emerald-800/80 whitespace-normal break-words">{line2}</p>}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onUndo();
-          }}
-          className="shrink-0 rounded-md border border-emerald-500 bg-white/90 px-3 py-1.5 text-sm font-semibold text-emerald-700 transition hover:bg-white"
-        >
-          Undo
-        </button>
+        {shouldShowUndo && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onUndo();
+            }}
+            className="shrink-0 rounded-md border border-emerald-500 bg-white/90 px-2 py-0.5 text-xs font-semibold text-emerald-700 leading-tight transition hover:bg-white"
+          >
+            Undo
+          </button>
+        )}
       </div>
     </div>
   );

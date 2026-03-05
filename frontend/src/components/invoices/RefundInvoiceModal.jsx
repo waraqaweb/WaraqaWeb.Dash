@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { X, RefreshCcw, DollarSign, Clock } from 'lucide-react';
 import api from '../../api/axios';
 import LoadingSpinner from '../ui/LoadingSpinner';
+import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
+import { useAuth } from '../../contexts/AuthContext';
 
 const roundCurrency = (value) => {
   const num = Number(value);
@@ -27,6 +29,7 @@ const formatCurrencyDisplay = (value) => {
 };
 
 const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
+  const { user } = useAuth();
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -43,9 +46,17 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
   useEffect(() => {
     const fetchInvoice = async () => {
       try {
+        const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: invoiceId });
+        const cached = readCache(cacheKey, { deps: ['invoices'] });
+        if (cached.hit && cached.value?.invoice) {
+          setInvoice(cached.value.invoice);
+          setLoading(false);
+        }
+
         const { data } = await api.get(`/invoices/${invoiceId}`);
         const inv = data.invoice || data;
         setInvoice(inv);
+        writeCache(cacheKey, { invoice: inv }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
       } catch (err) {
         console.error('Failed to load invoice for refund modal', err);
         // If invoice not found (404), close the modal automatically
@@ -60,7 +71,7 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
       }
     };
     fetchInvoice();
-  }, [invoiceId, onClose]);
+  }, [invoiceId, onClose, user?._id]);
 
   const hourlyRate = useMemo(() => {
     if (!invoice) return 10;

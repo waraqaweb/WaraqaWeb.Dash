@@ -4,7 +4,8 @@ const InvoiceAudit = require('./InvoiceAudit');
 const {
   allocateNextSequence,
   computeMajorityMonth,
-  buildInvoiceIdentifiers
+  buildInvoiceIdentifiers,
+  slugifyInvoiceName
 } = require('../utils/invoiceNaming');
 
 const { Schema, Types } = mongoose;
@@ -237,12 +238,13 @@ const activityEntrySchema = new Schema({
    Main Invoice Schema
 ------------------------- */
 const invoiceSchema = new mongoose.Schema({
-  invoiceNumber: { type: String, required: true, unique: true },
+  invoiceNumber: { type: String, unique: true, sparse: true },
   invoiceSequence: { type: Number, default: null, index: true },
   invoiceName: { type: String, trim: true, default: null },
   invoiceSlug: { type: String, trim: true, unique: true, sparse: true },
   paypalInvoiceNumber: { type: String, trim: true, default: null },
   invoiceNameManual: { type: Boolean, default: false },
+  invoiceNumberManual: { type: Boolean, default: true },
   type: { type: String, enum: ['guardian_invoice', 'teacher_payment'], required: true },
   billingType: {
     type: String,
@@ -565,6 +567,24 @@ invoiceSchema.pre('save', async function(next) {
 
 invoiceSchema.methods.ensureIdentifiers = async function(options = {}) {
   const { forceNameRefresh = false } = options;
+  const shouldSkipAutoNumber = this.invoiceNumberManual === true;
+  if (shouldSkipAutoNumber) {
+    const monthContext = computeMajorityMonth(Array.isArray(this.items) ? this.items : [], this.billingPeriod || {});
+    const prefix = `Waraqa-${monthContext?.monthShort || 'Month'}-${monthContext?.year || new Date().getUTCFullYear()}-`;
+    if (!this.invoiceName || forceNameRefresh) {
+      this.invoiceName = prefix;
+      this.invoiceNameManual = true;
+    }
+    if (!this.invoiceSlug) {
+      this.invoiceSlug = slugifyInvoiceName(this.invoiceName, this.invoiceSequence || Date.now());
+    }
+    return {
+      invoiceNumber: this.invoiceNumber || null,
+      paypalInvoiceNumber: this.paypalInvoiceNumber || null,
+      invoiceSlug: this.invoiceSlug,
+      invoiceName: this.invoiceName
+    };
+  }
   const type = this.type || 'guardian_invoice';
   const currentSequence = Number(this.invoiceSequence);
   let sequence = Number.isFinite(currentSequence) && currentSequence > 0

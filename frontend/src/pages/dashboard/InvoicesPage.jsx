@@ -329,36 +329,46 @@ const InvoicesPage = ({ isActive = true }) => {
       
       setTotalPages(searchMode ? 1 : (data.pagination?.pages || 1));
 
-      const guardianIds = [...new Set(invoiceList.map(inv => inv.guardian?._id).filter(Boolean))];
-      let nextGuardianStudentsMap = {};
-      if (guardianIds.length > 0) {
-        try {
-          const response = await api.post('/users/students/batch', { guardianIds }, { signal: controller.signal });
-          nextGuardianStudentsMap = response.data?.map || {};
-          setGuardianStudentsMap(nextGuardianStudentsMap);
-        } catch (err) {
-          const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
-          const isTimeout = err?.code === 'ECONNABORTED';
-          if (!isCanceled && !isTimeout) {
-            console.error('Failed to fetch guardian students batch', err);
-          }
-          nextGuardianStudentsMap = {};
-          setGuardianStudentsMap(nextGuardianStudentsMap);
-        }
-      } else {
-        nextGuardianStudentsMap = {};
-        setGuardianStudentsMap(nextGuardianStudentsMap);
-      }
+      setLoading(false);
 
       writeCache(
         cacheKey,
         {
           invoices: invoiceList,
           totalPages: searchMode ? 1 : (data.pagination?.pages || 1),
-          guardianStudentsMap: nextGuardianStudentsMap,
+          guardianStudentsMap: {},
         },
         { ttlMs: 5 * 60_000, deps: ['invoices'] }
       );
+
+      const guardianIds = [...new Set(invoiceList.map(inv => inv.guardian?._id).filter(Boolean))];
+      if (guardianIds.length > 0) {
+        (async () => {
+          try {
+            const response = await api.post('/users/students/batch', { guardianIds }, { signal: controller.signal });
+            if (requestId !== fetchInvoicesRequestIdRef.current) return;
+            const nextGuardianStudentsMap = response.data?.map || {};
+            setGuardianStudentsMap(nextGuardianStudentsMap);
+            writeCache(
+              cacheKey,
+              {
+                invoices: invoiceList,
+                totalPages: searchMode ? 1 : (data.pagination?.pages || 1),
+                guardianStudentsMap: nextGuardianStudentsMap,
+              },
+              { ttlMs: 5 * 60_000, deps: ['invoices'] }
+            );
+          } catch (err) {
+            const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+            const isTimeout = err?.code === 'ECONNABORTED';
+            if (!isCanceled && !isTimeout) {
+              console.error('Failed to fetch guardian students batch', err);
+            }
+          }
+        })();
+      } else {
+        setGuardianStudentsMap({});
+      }
     } catch (err) {
       const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
       if (!isCanceled) {
@@ -796,14 +806,14 @@ const InvoicesPage = ({ isActive = true }) => {
     };
   }, [socket, activeTab, searchTerm, deliveryFilter, resolvedActiveTab, isInvoiceMarkedSent]);
 
-  const handleDownloadDocx = async (invoiceId, invoiceNumber) => {
+  const handleDownloadDocx = async (invoiceId, invoiceName) => {
     try {
       setDownloadingDocId(invoiceId);
       const { data } = await api.get(`/invoices/${invoiceId}/download-docx`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `invoice-${invoiceNumber || invoiceId}.docx`);
+      link.setAttribute('download', `invoice-${invoiceName || invoiceId}.docx`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -893,33 +903,6 @@ const InvoicesPage = ({ isActive = true }) => {
     const yr = d.getUTCFullYear();
     return `${day} ${mon} ${yr}`;
   }, []);
-
-  // Human-readable invoice id, e.g., INV-2025-11-001 (parsed from invoice number/name)
-  const getReadableInvoiceId = (invoice) => {
-    const sys = invoice?.invoiceNumber || invoice?.invoiceName || '';
-    let year = null, month = null, seq = null;
-    const monthMap = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', sept: '09', oct: '10', nov: '11', dec: '12' };
-    const tokens = sys.split(/[-_\s]+/).map(t => t.trim());
-    for (const t of tokens) {
-      const low = t.toLowerCase();
-      if (!year && /^20\d{2}$/.test(t)) year = t;
-      if (!month && monthMap[low]) month = monthMap[low];
-      if (!seq && /\d{3,}$/.test(t)) seq = t.replace(/^0+/, '');
-    }
-    if (!month) {
-      const m = sys.match(/(20\d{2})[-/]?(\d{1,2})/);
-      if (m) { year = year || m[1]; month = String(m[2]).padStart(2, '0'); }
-    }
-    if (!seq) {
-      const q = sys.match(/(\d{3,})$/);
-      if (q) seq = q[1].replace(/^0+/, '');
-    }
-    const created = new Date(invoice?.createdAt || Date.now());
-    year = year || String(created.getUTCFullYear());
-    month = month || String(created.getUTCMonth() + 1).padStart(2, '0');
-    const seq3 = String(Number(seq || 1)).padStart(3, '0');
-    return `INV-${year}-${month}-${seq3}`;
-  };
 
   const getInitials = (first, last) => {
     const a = (first || '').trim()[0] || '';
@@ -1525,11 +1508,7 @@ const InvoicesPage = ({ isActive = true }) => {
                               {getStatusIcon(invoice.status)}
                               <span className="capitalize">{invoice.status || 'draft'}</span>
                             </Badge>
-                            <span className="text-sm font-semibold text-slate-700">{invoice.invoiceName || invoice.invoiceNumber}</span>
-                            <span className="text-xs rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-500" title={`System ID: ${invoice.invoiceNumber || invoice._id}`}>{getReadableInvoiceId(invoice)}</span>
-                            {invoice.invoiceNumber && invoice.invoiceNumber !== (invoice.invoiceName || '') && (
-                              <span className="text-xs uppercase tracking-wide text-slate-400"></span>
-                            )}
+                            <span className="text-sm font-semibold text-slate-700">{invoice.invoiceName || 'Invoice'}</span>
                             {invoice.sentVia && invoice.sentVia !== 'none' && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600">
                                 <BadgeCheck className="h-3.5 w-3.5" />
@@ -1587,7 +1566,7 @@ const InvoicesPage = ({ isActive = true }) => {
                             {renderChannelButton(invoice, 'email', 'Email', Mail)}
                             {renderChannelButton(invoice, 'whatsapp', 'WhatsApp', MessageCircle)}
                             <button
-                              onClick={() => handleDownloadDocx(invoice._id, invoice.invoiceNumber)}
+                              onClick={() => handleDownloadDocx(invoice._id, invoice.invoiceName || invoice.invoiceNumber)}
                               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
                               type="button"
                               title="Download DOCX"
@@ -1883,7 +1862,7 @@ const InvoicesPage = ({ isActive = true }) => {
             startDeleteCountdown({
               message: confirmModal.countdownMessage || 'Deleting invoice',
               onDelete: () => performDeleteInvoice(id),
-              preDelaySeconds: 1,
+              preDelaySeconds: 0,
               undoSeconds: 3
             });
           }

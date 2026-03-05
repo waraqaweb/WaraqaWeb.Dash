@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 
-const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
+const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted, onDismissed }) => {
   useAuth();
   const [classStars, setClassStars] = useState(Math.round(8 / 2));
   const [teacherStars, setTeacherStars] = useState(Math.round(8 / 2));
@@ -86,11 +86,11 @@ const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
     try {
       await api.post(`/feedbacks/monthly/dismiss`, { teacherId: teacher._id, classId: prompt.classId });
       // notify parent to refresh prompts, then close
-      onSubmitted && onSubmitted({ action: 'dismissed', type: 'monthly', feedback: buildFeedbackSummary() });
+      onDismissed && onDismissed({ action: 'dismissed', type: 'monthly', feedback: buildFeedbackSummary() });
       onClose();
     } catch (err) {
       console.error('Dismiss monthly prompt error', err);
-      onSubmitted && onSubmitted({ action: 'error', type: 'monthly', error: err });
+      onDismissed && onDismissed({ action: 'error', type: 'monthly', error: err });
       onClose();
     }
   };
@@ -119,23 +119,24 @@ const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black opacity-40" onClick={onClose}></div>
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 z-10" role="dialog" aria-modal="true" aria-labelledby="monthly-title">
-        <div className="flex items-center gap-3 mb-3 justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-full bg-gray-100 flex items-center justify-center text-lg font-semibold">{(teacher.firstName||'T').charAt(0)}</div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose}></div>
+      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[85vh] overflow-hidden z-10 flex flex-col" role="dialog" aria-modal="true" aria-labelledby="monthly-title">
+        <div className="flex items-start gap-3 justify-between px-6 pt-5 pb-3">
+          <div className="flex items-start gap-3">
+            <div className="mt-1 h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center text-lg font-semibold">{(teacher.firstName||'T').charAt(0)}</div>
             <div>
               <h3 id="monthly-title" className="text-lg font-bold">Monthly check-in: How is {teacher.firstName} {teacher.lastName} doing?</h3>
               <p className="text-sm text-muted-foreground">This short follow-up helps us track progress and class quality.</p>
             </div>
           </div>
-          <div className="ml-4">
+          <div className="ml-2">
             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">Monthly</span>
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className="flex-1 overflow-y-auto px-6 pb-4">
+          <div className="space-y-3">
           <StarInput label="Attendance on time" value={classStars} onChange={setClassStars} />
           <StarInput label="Connection quality" value={teacherStars} onChange={setTeacherStars} />
           <label className="block">
@@ -151,9 +152,10 @@ const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted }) => {
             </div>
             <textarea ref={notesRef} value={notes} onChange={(e)=>setNotes(e.target.value)} className="w-full p-2 border rounded-md resize-none" rows={3} placeholder="Share something about progress, teacher, or class logistics..." maxLength={2000} />
           </label>
+          </div>
         </div>
 
-        <div className="mt-4 flex justify-end space-x-2">
+        <div className="border-t border-gray-100 px-6 py-3 flex justify-end gap-2">
           <button onClick={handleRemindLater} className="btn-secondary">Not now</button>
           <button onClick={onClose} className="btn-ghost">Close</button>
           <button onClick={handleSubmit} disabled={submitting} className="btn-submit">{submitting ? 'Sending...' : 'Give feedback'}</button>

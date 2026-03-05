@@ -260,49 +260,51 @@ const GuardianFollowUpModal = ({ open, onClose, students = [], onBooked }) => {
         </>
       )}
     >
-      <div className="space-y-5">
-        <p className="text-sm text-slate-600">
-          {MEETING_TYPE_LABELS[MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]} calls are limited to one per student each month. Pick a time
-          that fits your family and our admin will send the meeting link instantly.
-        </p>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr),minmax(0,1.15fr)]">
+        <div className="space-y-5">
+          <p className="text-sm text-slate-600">
+            {MEETING_TYPE_LABELS[MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]} calls are limited to one per student each month. Pick a time
+            that fits your family and our admin will send the meeting link instantly.
+          </p>
 
-        <Select
-          label="Select student"
-          value={selectedStudentId}
-          onChange={(e) => setSelectedStudentId(e.target.value)}
-        >
-          {studentOptions.length === 0 && <option value="">No students found</option>}
-          {studentOptions.map((student) => (
-            <option key={student.id} value={student.id}>{student.name}</option>
-          ))}
-        </Select>
-
-        <div className="grid gap-3 md:grid-cols-2">
-          <Select label="Timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-            {timezoneChoices.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+          <Select
+            label="Select student"
+            value={selectedStudentId}
+            onChange={(e) => setSelectedStudentId(e.target.value)}
+          >
+            {studentOptions.length === 0 && <option value="">No students found</option>}
+            {studentOptions.map((student) => (
+              <option key={student.id} value={student.id}>{student.name}</option>
             ))}
           </Select>
-          <Input
-            label="Focus for this call"
-            placeholder="Progress check-in, scheduling, homework support..."
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-          <div className="md:col-span-2">
-            <Select
-              label="Calendar preference"
-              value={calendarPreference}
-              onChange={(e) => {
-                setCalendarPreference(e.target.value);
-                storeCalendarPreference(e.target.value);
-              }}
-            >
-              {CALENDAR_PREFERENCE_OPTIONS.map((option) => (
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <Select label="Timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+              {timezoneChoices.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </Select>
-            <p className="mt-1 text-xs text-slate-500">We will open this calendar automatically after booking.</p>
+            <Input
+              label="Focus for this call"
+              placeholder="Progress check-in, scheduling, homework support..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+            <div className="md:col-span-2">
+              <Select
+                label="Calendar preference"
+                value={calendarPreference}
+                onChange={(e) => {
+                  setCalendarPreference(e.target.value);
+                  storeCalendarPreference(e.target.value);
+                }}
+              >
+                {CALENDAR_PREFERENCE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-slate-500">We will open this calendar automatically after booking.</p>
+            </div>
           </div>
         </div>
 

@@ -2475,7 +2475,7 @@ fetchClassesRef.current = fetchClasses;
     setDeleteClass(null);
   };
 
-  const handleDeleteCountdownStart = useCallback((scope, classId) => {
+  const handleDeleteCountdownStart = useCallback((scope, classId, classPayload) => {
     const baseMessage = deleteClass?.subject
       ? `Deleting ${deleteClass.subject}`
       : 'Deleting class';
@@ -2483,8 +2483,9 @@ fetchClassesRef.current = fetchClasses;
     startDeleteCountdown({
       classId,
       scope,
+      classPayload,
       message: baseMessage,
-      preDelaySeconds: 2,
+      preDelaySeconds: 0,
       undoSeconds: 3
     });
   }, [startDeleteCountdown, deleteClass]);
@@ -3025,6 +3026,15 @@ fetchClassesRef.current = fetchClasses;
 
               {/* Action Buttons (not part of clickable row) */}
               <div className="flex w-full flex-wrap items-center justify-start gap-1 sm:w-auto sm:justify-end sm:gap-2">
+                {isAdminUser && supervisorNotesValue && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700"
+                    title="Supervisor note pending review"
+                  >
+                    <Image className="h-3.5 w-3.5" />
+                    Supervisor note
+                  </span>
+                )}
                 {hasPendingReschedule && (
                   <button
                     type="button"

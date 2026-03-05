@@ -3537,6 +3537,8 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
             if ((recentLowScores || []).length >= LOW_SCORE_MIN_OCCURRENCES) {
               const notificationService = require("../services/notificationService");
               const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
+              const DEDUPE_WINDOW_MS = 60 * 60 * 1000;
+              const dedupeSince = new Date(Date.now() - DEDUPE_WINDOW_MS);
               const admins = await User.find({ role: "admin", isActive: true }).select("_id");
               const guardianUser = guardianId ? await User.findById(guardianId).select('firstName lastName email') : null;
               const teacherUser = teacherId ? await User.findById(teacherId).select('firstName lastName email') : null;
@@ -3560,29 +3562,40 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
               const actionLink = `/dashboard/classes?tab=previous&search=${encodeURIComponent(studentName)}`;
 
               await Promise.allSettled((admins || []).map((admin) => (
-                notificationService.createNotification({
-                  userId: admin._id,
-                  title: 'Low performance follow-up needed',
-                  message: `${studentName}${subjectLabel} has repeated low scores (${scoresLabel}). ${guardianName ? `Guardian: ${guardianName}. ` : ''}${teacherName ? `Teacher: ${teacherName}. ` : ''}Consider scheduling a follow-up meeting or intensive support.`,
-                  type: 'warning',
-                  relatedTo: 'class',
-                  relatedId: classDoc._id,
-                  actionRequired: true,
-                  actionLink,
-                  metadata: {
-                    kind: 'low_score_followup',
-                    classId: String(classDoc._id),
-                    studentId: String(studentIdValue),
-                    guardianId: guardianId ? String(guardianId) : undefined,
-                    teacherId: teacherId ? String(teacherId) : undefined,
-                    scores: recentLowScores.map((row) => ({
-                      score: row?.classReport?.classScore ?? null,
-                      date: row?.scheduledDate || null,
-                      subject: row?.subject || null,
-                      classId: String(row?._id || '')
-                    }))
-                  }
-                })
+                (async () => {
+                  const existing = await Notification.findOne({
+                    user: admin._id,
+                    "metadata.kind": "low_score_followup",
+                    "metadata.studentId": String(studentIdValue),
+                    createdAt: { $gte: dedupeSince }
+                  }).select("_id");
+
+                  if (existing) return null;
+
+                  return notificationService.createNotification({
+                    userId: admin._id,
+                    title: 'Low performance follow-up needed',
+                    message: `${studentName}${subjectLabel} has repeated low scores (${scoresLabel}). ${guardianName ? `Guardian: ${guardianName}. ` : ''}${teacherName ? `Teacher: ${teacherName}. ` : ''}Consider scheduling a follow-up meeting or intensive support.`,
+                    type: 'warning',
+                    relatedTo: 'class',
+                    relatedId: classDoc._id,
+                    actionRequired: true,
+                    actionLink,
+                    metadata: {
+                      kind: 'low_score_followup',
+                      classId: String(classDoc._id),
+                      studentId: String(studentIdValue),
+                      guardianId: guardianId ? String(guardianId) : undefined,
+                      teacherId: teacherId ? String(teacherId) : undefined,
+                      scores: recentLowScores.map((row) => ({
+                        score: row?.classReport?.classScore ?? null,
+                        date: row?.scheduledDate || null,
+                        subject: row?.subject || null,
+                        classId: String(row?._id || '')
+                      }))
+                    }
+                  });
+                })()
               )));
             }
           }

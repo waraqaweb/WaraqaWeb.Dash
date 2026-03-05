@@ -166,8 +166,10 @@ export const resolveInvoiceClassEntries = (invoice = {}) => {
     return { items: [], totalMinutes: 0, totalHours: 0 };
   }
 
+  const isManualInvoice = invoice?.billingType === 'manual' || invoice?.generationSource === 'manual';
+
   const dynamicPayload = invoice.dynamicClasses;
-  if (dynamicPayload && Array.isArray(dynamicPayload.items) && dynamicPayload.items.length) {
+  if (!isManualInvoice && dynamicPayload && Array.isArray(dynamicPayload.items) && dynamicPayload.items.length) {
     const filteredDynamic = buildClassEntriesFromItems(dynamicPayload.items, invoice.coverage || {});
     if (filteredDynamic.items.length > 0) {
       return filteredDynamic;

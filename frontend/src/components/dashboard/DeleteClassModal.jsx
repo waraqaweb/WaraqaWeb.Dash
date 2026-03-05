@@ -66,14 +66,14 @@ const DeleteClassModal = ({
     
     // Notify parent that countdown has started
     if (onCountdownStart) {
-      onCountdownStart(targetScope, classId);
+      onCountdownStart(targetScope, classId, classData);
     }
     
     // Close the modal immediately
     if (onClose) {
       onClose();
     }
-  }, [onCountdownStart, onClose, classId]);
+  }, [onCountdownStart, onClose, classId, classData]);
 
   useEffect(() => {
     if (!isOpen) {

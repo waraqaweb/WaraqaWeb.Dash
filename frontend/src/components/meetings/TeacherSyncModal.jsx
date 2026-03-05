@@ -241,59 +241,61 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
         </>
       )}
     >
-      <div className="space-y-5">
-        <p className="text-sm text-slate-600">
-          {MEETING_TYPE_LABELS[MEETING_TYPES.TEACHER_SYNC]} sessions run 30 minutes. Use this time to review tricky cases, ask for
-          additional resources, or align on pacing. We keep the admin calendar highlighted in yellow for these syncs.
-        </p>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr),minmax(0,1.15fr)]">
+        <div className="space-y-5">
+          <p className="text-sm text-slate-600">
+            {MEETING_TYPE_LABELS[MEETING_TYPES.TEACHER_SYNC]} sessions run 30 minutes. Use this time to review tricky cases, ask for
+            additional resources, or align on pacing. We keep the admin calendar highlighted in yellow for these syncs.
+          </p>
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <Input
-            label="Agenda"
-            placeholder="Share progress blockers, parent updates, needs..."
-            value={agenda}
-            onChange={(e) => setAgenda(e.target.value)}
-          />
-          <label className="inline-flex w-full flex-col gap-1 text-xs font-medium text-slate-600">
-            Students you'd like to discuss
-            <textarea
-              className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-[#2C736C] focus:ring-2 focus:ring-[#2C736C]/20"
-              rows={3}
-              placeholder="One name per line"
-              value={studentsNotes}
-              onChange={(e) => setStudentsNotes(e.target.value)}
+          <div className="grid gap-3 md:grid-cols-2">
+            <Input
+              label="Agenda"
+              placeholder="Share progress blockers, parent updates, needs..."
+              value={agenda}
+              onChange={(e) => setAgenda(e.target.value)}
             />
+            <label className="inline-flex w-full flex-col gap-1 text-xs font-medium text-slate-600">
+              Students you'd like to discuss
+              <textarea
+                className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-[#2C736C] focus:ring-2 focus:ring-[#2C736C]/20"
+                rows={3}
+                placeholder="One name per line"
+                value={studentsNotes}
+                onChange={(e) => setStudentsNotes(e.target.value)}
+              />
+            </label>
+          </div>
+
+          <label className="inline-flex w-full flex-col gap-1 text-xs font-medium text-slate-600">
+            Your timezone
+            <select
+              className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-[#2C736C] focus:ring-2 focus:ring-[#2C736C]/20"
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+            >
+              {timezoneChoices.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="inline-flex w-full flex-col gap-1 text-xs font-medium text-slate-600">
+            Preferred calendar
+            <select
+              className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-[#2C736C] focus:ring-2 focus:ring-[#2C736C]/20"
+              value={calendarPreference}
+              onChange={(e) => {
+                setCalendarPreference(e.target.value);
+                storeCalendarPreference(e.target.value);
+              }}
+            >
+              {CALENDAR_PREFERENCE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <span className="text-[11px] text-slate-500">We'll open this calendar automatically after you book.</span>
           </label>
         </div>
-
-        <label className="inline-flex w-full flex-col gap-1 text-xs font-medium text-slate-600">
-          Your timezone
-          <select
-            className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-[#2C736C] focus:ring-2 focus:ring-[#2C736C]/20"
-            value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
-          >
-            {timezoneChoices.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="inline-flex w-full flex-col gap-1 text-xs font-medium text-slate-600">
-          Preferred calendar
-          <select
-            className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-[#2C736C] focus:ring-2 focus:ring-[#2C736C]/20"
-            value={calendarPreference}
-            onChange={(e) => {
-              setCalendarPreference(e.target.value);
-              storeCalendarPreference(e.target.value);
-            }}
-          >
-            {CALENDAR_PREFERENCE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <span className="text-[11px] text-slate-500">We'll open this calendar automatically after you book.</span>
-        </label>
 
         <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
           <div className="flex items-center justify-between">

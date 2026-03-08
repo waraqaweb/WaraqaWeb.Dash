@@ -196,7 +196,7 @@ const Dashboard = () => {
     const isRoot = normalized === '/dashboard';
     const isHome = normalized === '/dashboard/home';
 
-    if (isRoot || isHome) {
+    if (isRoot) {
       const saved = lastDashboardPathRef.current;
       if (saved && saved !== location.pathname + (location.search || '')) {
         if (isPathAllowedForRole(saved)) {
@@ -207,6 +207,10 @@ const Dashboard = () => {
           navigate('/dashboard/home', { replace: true });
         }
       }
+      return;
+    }
+
+    if (isHome) {
       return;
     }
 

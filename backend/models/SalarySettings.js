@@ -275,10 +275,10 @@ salarySettingsSchema.statics.getGlobalSettings = async function() {
       _id: 'global',
       rateModel: 'flat',
       ratePartitions: [
-        { name: '0-50h', minHours: 0, maxHours: 50, rateUSD: 12, description: 'Beginner tier', isActive: true },
-        { name: '51-100h', minHours: 51, maxHours: 100, rateUSD: 15, description: 'Intermediate tier', isActive: true },
-        { name: '101-200h', minHours: 101, maxHours: 200, rateUSD: 18, description: 'Advanced tier', isActive: true },
-        { name: '200+h', minHours: 201, maxHours: 999999, rateUSD: 20, description: 'Expert tier', isActive: true }
+        { name: '0-60 hours', minHours: 0, maxHours: 60, rateUSD: 12, description: 'Hourly rate for 0-60 hours per month', isActive: true },
+        { name: '60.01-100 hours', minHours: 60.01, maxHours: 100, rateUSD: 15, description: 'Hourly rate for 60.01-100 hours per month', isActive: true },
+        { name: '100.01-200 hours', minHours: 100.01, maxHours: 200, rateUSD: 18, description: 'Hourly rate for 100.01-200 hours per month', isActive: true },
+        { name: '200.01+ hours', minHours: 200.01, maxHours: 999999, rateUSD: 20, description: 'Hourly rate for 200.01+ hours per month', isActive: true }
       ],
       defaultTransferFee: {
         model: 'flat',

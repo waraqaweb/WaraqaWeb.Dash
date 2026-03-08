@@ -78,9 +78,9 @@ const InvoicesPage = ({ isActive = true }) => {
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const saved = sessionStorage.getItem('invoices.activeTab');
-      return saved || '';
+      return saved || 'unpaid';
     } catch (_) {
-      return '';
+      return 'unpaid';
     }
   });
   const [deliveryFilter, setDeliveryFilter] = useState(() => {
@@ -92,6 +92,7 @@ const InvoicesPage = ({ isActive = true }) => {
     }
   });
   const [modalState, setModalState] = useState({ type: null, invoiceId: null, invoiceSlug: null });
+  const [modalInvoiceSeed, setModalInvoiceSeed] = useState(null);
   // FAB open/close state
   const [fabOpen, setFabOpen] = useState(false);
   const fabRef = React.useRef(null);
@@ -124,6 +125,62 @@ const InvoicesPage = ({ isActive = true }) => {
   const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const [createInvoiceOpen, setCreateInvoiceOpen] = useState(false);
   const [cardOverrides, setCardOverrides] = useState({});
+  const invoicePrefetchInFlightRef = useRef(new Set());
+  const invoicePrefetchCooldownRef = useRef(new Map());
+  const invoiceCardRefsRef = useRef(new Map());
+
+  const setInvoiceCardRef = useCallback((invoiceId, node) => {
+    if (!invoiceId) return;
+    const key = String(invoiceId);
+    if (node) {
+      invoiceCardRefsRef.current.set(key, node);
+    } else {
+      invoiceCardRefsRef.current.delete(key);
+    }
+  }, []);
+
+  const prefetchInvoiceDetail = useCallback(async (invoiceLike, reason = 'hover') => {
+    const invoiceObject = invoiceLike && typeof invoiceLike === 'object' ? invoiceLike : null;
+    const identifier = invoiceObject?._id || invoiceObject?.invoiceSlug || (typeof invoiceLike === 'string' ? invoiceLike : null);
+    if (!identifier) return;
+
+    const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: identifier });
+    const cached = readCache(cacheKey, { deps: ['invoices'] });
+    if (cached.hit && cached.ageMs < 60_000 && cached.value?.invoice) {
+      return;
+    }
+
+    const inFlightKey = String(identifier);
+    if (invoicePrefetchInFlightRef.current.has(inFlightKey)) {
+      return;
+    }
+
+    invoicePrefetchInFlightRef.current.add(inFlightKey);
+    try {
+      const { data } = await api.get(`/invoices/${identifier}`);
+      const inv = data?.invoice || data;
+      if (inv) {
+        writeCache(cacheKey, { invoice: inv }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
+      }
+    } catch (err) {
+      if (reason !== 'hover') {
+        console.warn('Invoice prefetch failed:', err?.message || err);
+      }
+    } finally {
+      invoicePrefetchInFlightRef.current.delete(inFlightKey);
+    }
+  }, [user?._id]);
+
+  const handleInvoiceActionHover = useCallback((invoiceObject) => {
+    const id = invoiceObject?._id || invoiceObject?.invoiceSlug;
+    if (!id) return;
+    const key = String(id);
+    const now = Date.now();
+    const last = Number(invoicePrefetchCooldownRef.current.get(key) || 0);
+    if (now - last < 15_000) return;
+    invoicePrefetchCooldownRef.current.set(key, now);
+    prefetchInvoiceDetail(invoiceObject, 'hover');
+  }, [prefetchInvoiceDetail]);
 
   const derivedFilters = useMemo(() => {
     if (!globalFilter || globalFilter === 'all') {
@@ -150,7 +207,7 @@ const InvoicesPage = ({ isActive = true }) => {
   const segmentFilter = derivedFilters.segment;
 
   const itemsPerPage = 30;
-  const resolvedActiveTab = activeTab || 'all';
+  const resolvedActiveTab = activeTab || 'unpaid';
 
   const normalizedSearchTerm = useMemo(() => (searchTerm || '').trim().toLowerCase(), [searchTerm]);
 
@@ -218,8 +275,8 @@ const InvoicesPage = ({ isActive = true }) => {
   const fetchInvoices = async () => {
     try {
       const requestSignature = JSON.stringify({
-        page: normalizedSearchTerm ? 1 : currentPage,
-        limit: normalizedSearchTerm ? 500 : itemsPerPage,
+        page: currentPage,
+        limit: itemsPerPage,
         activeTab: resolvedActiveTab,
         statusFilter,
         typeFilter,
@@ -252,8 +309,8 @@ const InvoicesPage = ({ isActive = true }) => {
         'invoices:list',
         user?._id,
         {
-          page: normalizedSearchTerm ? 1 : currentPage,
-          limit: normalizedSearchTerm ? 500 : itemsPerPage,
+          page: currentPage,
+          limit: itemsPerPage,
           activeTab: resolvedActiveTab,
           statusFilter,
           typeFilter,
@@ -279,8 +336,8 @@ const InvoicesPage = ({ isActive = true }) => {
         setLoading(!hasExisting);
       }
       const params = {
-        page: normalizedSearchTerm ? 1 : currentPage,
-        limit: normalizedSearchTerm ? 500 : itemsPerPage,
+        page: currentPage,
+        limit: itemsPerPage,
       };
 
       const searchMode = Boolean(normalizedSearchTerm);
@@ -327,7 +384,7 @@ const InvoicesPage = ({ isActive = true }) => {
       const invoiceList = data.invoices || [];
       setInvoices(invoiceList);
       
-      setTotalPages(searchMode ? 1 : (data.pagination?.pages || 1));
+      setTotalPages(data.pagination?.pages || 1);
 
       setLoading(false);
 
@@ -335,7 +392,7 @@ const InvoicesPage = ({ isActive = true }) => {
         cacheKey,
         {
           invoices: invoiceList,
-          totalPages: searchMode ? 1 : (data.pagination?.pages || 1),
+                totalPages: data.pagination?.pages || 1,
           guardianStudentsMap: {},
         },
         { ttlMs: 5 * 60_000, deps: ['invoices'] }
@@ -353,7 +410,7 @@ const InvoicesPage = ({ isActive = true }) => {
               cacheKey,
               {
                 invoices: invoiceList,
-                totalPages: searchMode ? 1 : (data.pagination?.pages || 1),
+                totalPages: data.pagination?.pages || 1,
                 guardianStudentsMap: nextGuardianStudentsMap,
               },
               { ttlMs: 5 * 60_000, deps: ['invoices'] }
@@ -491,8 +548,26 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const openModal = (type, invoice) => {
     const invoiceObject = invoice && typeof invoice === 'object' ? invoice : null;
-    const invoiceId = invoiceObject?._id || (typeof invoice === 'string' ? invoice : null);
-    const invoiceSlug = invoiceObject?.invoiceSlug || null;
+    const fallbackInvoice = !invoiceObject
+      ? (invoicesRef.current || []).find((inv) => {
+          if (!inv) return false;
+          if (typeof invoice === 'string') {
+            return String(inv._id) === String(invoice) || String(inv.invoiceSlug || '') === String(invoice);
+          }
+          return false;
+        })
+      : null;
+    const resolvedInvoice = invoiceObject || fallbackInvoice || null;
+    const invoiceId = resolvedInvoice?._id || (typeof invoice === 'string' ? invoice : null);
+    const invoiceSlug = resolvedInvoice?.invoiceSlug || null;
+
+    if (resolvedInvoice) {
+      setModalInvoiceSeed(resolvedInvoice);
+    }
+
+    if (resolvedInvoice) {
+      prefetchInvoiceDetail(resolvedInvoice, 'open');
+    }
     
     // Track when the modal was opened so we can ignore very-quick close/open
     // cycles that are typically caused by parent re-renders.
@@ -532,6 +607,7 @@ const InvoicesPage = ({ isActive = true }) => {
 
     // Always clear the modal state first
     setModalState({ type: null, invoiceId: null, invoiceSlug: null });
+    setModalInvoiceSeed(null);
 
     const params = new URLSearchParams(location.search);
     const hadModalParams = params.has('modal') || params.has('invoice') || params.has('invoiceSlug');
@@ -1059,7 +1135,7 @@ const InvoicesPage = ({ isActive = true }) => {
     const searchMode = Boolean(normalizedSearchTerm);
 
     // Apply the effective status filter: the active tab takes precedence.
-    const effectiveStatus = resolvedActiveTab !== 'unpaid' ? resolvedActiveTab : statusFilter;
+    const effectiveStatus = resolvedActiveTab !== 'all' ? resolvedActiveTab : statusFilter;
     if (!searchMode && effectiveStatus !== 'all') {
       if (effectiveStatus === 'paid') {
         result = result.filter((inv) => ['paid', 'refunded'].includes(inv.status));
@@ -1169,7 +1245,7 @@ const InvoicesPage = ({ isActive = true }) => {
       return `${updatedAt}|${maxHours}|${endDate}|${paidAmount}`;
     };
 
-    const fetchOverrides = async () => {
+    const fetchOverridesFromCache = async () => {
       const targets = visible.filter((inv) => {
         const nextSignature = buildSignature(inv);
         const cached = cardOverrides[inv._id];
@@ -1179,14 +1255,15 @@ const InvoicesPage = ({ isActive = true }) => {
       if (!targets.length) return;
 
       const updates = {};
-      await Promise.all(
-        targets.map(async (inv) => {
-          try {
-            const { data } = await api.get(`/invoices/${inv._id}`);
-            const fullInvoice = data?.invoice || data;
-            const computed = computeInvoiceTotals(fullInvoice || {});
+      await Promise.all(targets.map(async (inv) => {
+        try {
+            const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: inv._id });
+            const cached = readCache(cacheKey, { deps: ['invoices'] });
+            const fullInvoice = cached.hit ? (cached.value?.invoice || null) : null;
+            if (!fullInvoice) return;
+            const computed = computeInvoiceTotals(fullInvoice);
 
-            const entries = resolveInvoiceClassEntries(fullInvoice || {});
+            const entries = resolveInvoiceClassEntries(fullInvoice);
             const items = Array.isArray(entries?.items) ? entries.items : [];
             const itemDates = items
               .map((it) => {
@@ -1230,19 +1307,83 @@ const InvoicesPage = ({ isActive = true }) => {
           } catch (_) {
             // Keep fallback values from list payload when detail fetch fails.
           }
-        })
-      );
+        }));
 
       if (cancelled || !Object.keys(updates).length) return;
       setCardOverrides((prev) => ({ ...prev, ...updates }));
     };
 
-    fetchOverrides();
+    fetchOverridesFromCache();
 
     return () => {
       cancelled = true;
     };
-  }, [displayedInvoices, itemsPerPage, formatDate, cardOverrides]);
+  }, [displayedInvoices, itemsPerPage, formatDate, cardOverrides, user?._id]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    if (!displayedInvoices.length) return;
+    if (showLoading) return;
+
+    const now = Date.now();
+    const viewportMargin = 160;
+    const candidates = [];
+
+    for (const inv of displayedInvoices) {
+      if (candidates.length >= 3) break;
+      const id = inv?._id;
+      if (!id) continue;
+
+      const node = invoiceCardRefsRef.current.get(String(id));
+      if (!node || typeof node.getBoundingClientRect !== 'function') continue;
+
+      const rect = node.getBoundingClientRect();
+      const inViewport = rect.bottom >= -viewportMargin && rect.top <= (window.innerHeight + viewportMargin);
+      if (!inViewport) continue;
+
+      const cooldownKey = String(id);
+      const last = Number(invoicePrefetchCooldownRef.current.get(cooldownKey) || 0);
+      if (now - last < 20_000) continue;
+
+      const cacheKey = makeCacheKey('invoices:detail', user?._id, { id });
+      const cached = readCache(cacheKey, { deps: ['invoices'] });
+      if (cached.hit && cached.ageMs < 60_000 && cached.value?.invoice) continue;
+
+      candidates.push(inv);
+    }
+
+    if (!candidates.length) return;
+
+    let cancelled = false;
+    let idleId = null;
+    let timeoutId = null;
+
+    const runPrefetch = () => {
+      if (cancelled) return;
+      for (const inv of candidates) {
+        const id = inv?._id || inv?.invoiceSlug;
+        if (!id) continue;
+        invoicePrefetchCooldownRef.current.set(String(id), Date.now());
+        prefetchInvoiceDetail(inv, 'idle-visible');
+      }
+    };
+
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      idleId = window.requestIdleCallback(() => runPrefetch(), { timeout: 800 });
+    } else {
+      timeoutId = window.setTimeout(runPrefetch, 250);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId && typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [isActive, displayedInvoices, showLoading, user?._id, prefetchInvoiceDetail]);
 
 
   const getChannelInfo = (invoice, channel) => (invoice?.delivery?.channels || []).find((entry) => entry.channel === channel);
@@ -1356,15 +1497,18 @@ const InvoicesPage = ({ isActive = true }) => {
       <button
         onClick={() => handleQuickSend(invoice, channel, isSent)}
         disabled={isLoading}
-        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 ${
+        className={`inline-flex h-9 w-9 items-center justify-center rounded-full border text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 ${
           isSent
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
+            ? 'border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+            : channel === 'email'
+              ? 'border-blue-200 bg-blue-50 text-blue-600 hover:border-blue-300 hover:bg-blue-100 hover:text-blue-700'
+              : 'border-green-200 bg-green-50 text-green-600 hover:border-green-300 hover:bg-green-100 hover:text-green-700'
         }`}
         type="button"
+        aria-label={isSent ? sentLabel : `Send ${label}`}
+        title={isSent ? sentLabel : `Send ${label}`}
       >
-        {isLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
-        <span>{isSent ? sentLabel : `Send ${label}`}</span>
+        {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
       </button>
     );
   };
@@ -1377,27 +1521,40 @@ const InvoicesPage = ({ isActive = true }) => {
             {[
               {
                 label: 'Monthly revenue',
-                value: formatCurrency(stats.monthlyRevenue || 0)
+                value: formatCurrency(stats.monthlyRevenue || 0),
+                icon: DollarSign,
+                tone: 'border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-emerald-100/70 text-emerald-700'
               },
               {
                 label: 'Paid invoices',
-                value: stats.paidInvoices ?? '--'
+                value: stats.paidInvoices ?? '--',
+                icon: CheckCircle2,
+                tone: 'border-blue-200 bg-gradient-to-br from-blue-50 via-white to-blue-100/70 text-blue-700'
               },
               {
                 label: 'Pending review',
-                value: stats.pendingInvoices ?? '--'
+                value: stats.pendingInvoices ?? '--',
+                icon: TimerReset,
+                tone: 'border-amber-200 bg-gradient-to-br from-amber-50 via-white to-amber-100/70 text-amber-700'
               },
               {
                 label: 'Zero-hour guardians',
-                value: stats.zeroHourStudents ?? '--'
+                value: stats.zeroHourStudents ?? '--',
+                icon: Users,
+                tone: 'border-violet-200 bg-gradient-to-br from-violet-50 via-white to-violet-100/70 text-violet-700'
               }
-            ].map(({ label, value }) => (
+            ].map(({ label, value, icon: StatIcon, tone }) => (
               <div
                 key={label}
-                className="flex flex-col items-center justify-center gap-1 rounded-lg bg-white/70 p-2"
+                className={`rounded-2xl border p-4 shadow-sm ${tone}`}
               >
-                <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
-                <span className="text-lg font-semibold text-slate-900">{value}</span>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/80 shadow-sm">
+                    <StatIcon className="h-4 w-4" />
+                  </span>
+                </div>
+                <div className="mt-3 text-2xl font-bold text-slate-900">{value}</div>
               </div>
             ))}
           </div>
@@ -1498,6 +1655,7 @@ const InvoicesPage = ({ isActive = true }) => {
                 return (
                   <div
                     key={invoice._id}
+                    ref={(node) => setInvoiceCardRef(invoice._id, node)}
                     className="rounded-xl border border-slate-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                   >
                     <div className="flex flex-col gap-3 p-4">
@@ -1567,23 +1725,24 @@ const InvoicesPage = ({ isActive = true }) => {
                             {renderChannelButton(invoice, 'whatsapp', 'WhatsApp', MessageCircle)}
                             <button
                               onClick={() => handleDownloadDocx(invoice._id, invoice.invoiceName || invoice.invoiceNumber)}
-                              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-indigo-200 bg-indigo-50 text-indigo-600 transition hover:border-indigo-300 hover:bg-indigo-100 hover:text-indigo-700"
                               type="button"
                               title="Download DOCX"
+                              aria-label="Download DOCX"
                             >
                               {downloadingDocId === invoice._id ? (
-                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                <RefreshCw className="h-4 w-4 animate-spin" />
                               ) : (
-                                <DownloadCloud className="h-3.5 w-3.5" />
+                                <FileText className="h-4 w-4" />
                               )}
-                              <span>DOCX</span>
                             </button>
                           </div>
 
                           <div className="flex flex-wrap gap-2">
                             <button
                               onClick={() => openModal('view', invoice)}
-                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-400 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+                              onMouseEnter={() => handleInvoiceActionHover(invoice)}
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-600 transition hover:border-sky-300 hover:bg-sky-100 hover:text-sky-700"
                               type="button"
                               title="Preview invoice"
                             >
@@ -1593,7 +1752,8 @@ const InvoicesPage = ({ isActive = true }) => {
                               <>
                                 <button
                                   onClick={() => openModal('payment', invoice)}
-                                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-400 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+                                  onMouseEnter={() => handleInvoiceActionHover(invoice)}
+                                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-700"
                                   type="button"
                                   title="Record payment"
                                 >
@@ -1604,10 +1764,11 @@ const InvoicesPage = ({ isActive = true }) => {
                                   className={`inline-flex items-center justify-center rounded-full border p-2 transition ${
                                     copiedInvoiceId === invoice._id
                                       ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
-                                      : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900'
+                                      : 'border-violet-200 bg-violet-50 text-violet-600 hover:border-violet-300 hover:bg-violet-100 hover:text-violet-700'
                                   }`}
                                   type="button"
                                   aria-label="Copy shareable link"
+                                  title="Copy share link"
                                 >
                                   <Link2 className="h-4 w-4" />
                                 </button>
@@ -1644,10 +1805,11 @@ const InvoicesPage = ({ isActive = true }) => {
                                 className={`inline-flex items-center justify-center rounded-full border p-2 transition ${
                                   copiedInvoiceId === invoice._id
                                     ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
-                                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900'
+                                    : 'border-violet-200 bg-violet-50 text-violet-600 hover:border-violet-300 hover:bg-violet-100 hover:text-violet-700'
                                 }`}
                                 type="button"
                                 aria-label="Copy shareable link"
+                                title="Copy share link"
                               >
                                 <Link2 className="h-4 w-4" />
                               </button>
@@ -1752,17 +1914,23 @@ const InvoicesPage = ({ isActive = true }) => {
         <InvoiceViewModal
           invoiceSlug={modalState.invoiceSlug}
           invoiceId={modalState.invoiceId}
+          initialInvoice={modalInvoiceSeed || invoices.find(inv => inv._id === modalState.invoiceId) || null}
+          onOpenRecordPayment={(invoiceLike) => openModal('payment', invoiceLike || modalInvoiceSeed || modalState.invoiceId)}
           onClose={() => closeModal(true)}
           onInvoiceUpdate={handleInvoiceUpdate}
         />
       )}
       {modalState.type === 'payment' && (
         <RecordPaymentModal
-          invoice={invoices.find(inv => inv._id === modalState.invoiceId) || null}
+          invoice={modalInvoiceSeed || invoices.find(inv => inv._id === modalState.invoiceId) || null}
           invoiceId={modalState.invoiceId}
+          onOpenInvoiceOverview={(invoiceLike) => openModal('view', invoiceLike || modalInvoiceSeed || modalState.invoiceId)}
           onClose={() => closeModal()}
-          onUpdated={() => {
+          onUpdated={(payload) => {
             // success toast and refresh list/stats
+            if (payload?.invoice) {
+              setModalInvoiceSeed(payload.invoice);
+            }
             setToast({ show: true, type: 'success', message: 'Payment recorded' });
             closeModal(true);
           }}

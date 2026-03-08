@@ -7,10 +7,16 @@ import { formatDateDDMMMYYYY } from '../../utils/date';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { useAuth } from '../../contexts/AuthContext';
 
-const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
+const isEditableElement = (element) => {
+  if (!element) return false;
+  const tag = String(element.tagName || '').toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(element.isContentEditable);
+};
+
+const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvoiceOverview }) => {
   const { user } = useAuth();
   const [localInvoice, setLocalInvoice] = useState(invoice || null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!invoice);
   const [form, setForm] = useState({
     amount: '',
     paymentMethod: 'cash',
@@ -122,6 +128,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
   useEffect(() => {
     if (invoice) {
       setLocalInvoice((prev) => mergeInvoiceUpdate(prev, invoice));
+      setLoading(false);
       if (!seqEditing) {
         const parts = parseInvoiceNameParts(invoice?.invoiceName || '');
         setInvoiceNameParts(parts);
@@ -346,9 +353,39 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
     return parsed.toISOString().slice(0, 10);
   }, [boundaries]);
 
+  const effectiveInvoiceStatus = useMemo(
+    () => String(localInvoice?.status || invoice?.status || '').toLowerCase(),
+    [localInvoice?.status, invoice?.status]
+  );
+
+  const handlePersistPaypalNumber = React.useCallback(async () => {
+    const targetInvoiceId = localInvoice?._id || invoiceId;
+    if (!targetInvoiceId) return;
+
+    const normalized = String(form.paypalInvoiceNumber || '').trim();
+    const existing = String(localInvoice?.paypalInvoiceNumber || '').trim();
+    if (normalized === existing) return;
+
+    try {
+      const { data } = await api.put(`/invoices/${targetInvoiceId}`, {
+        paypalInvoiceNumber: normalized || null
+      });
+      const updated = data?.invoice || data;
+      if (updated && typeof updated === 'object') {
+        setLocalInvoice((prev) => mergeInvoiceUpdate(prev, updated));
+        setForm((prev) => ({
+          ...prev,
+          paypalInvoiceNumber: String(updated.paypalInvoiceNumber || normalized || '')
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to persist PayPal invoice number', err);
+    }
+  }, [localInvoice?._id, localInvoice?.paypalInvoiceNumber, invoiceId, form.paypalInvoiceNumber, mergeInvoiceUpdate]);
+
   useEffect(() => {
-    const status = String(localInvoice?.status || '').toLowerCase();
-    if (['paid', 'refunded'].includes(status)) return;
+    if (loading) return;
+    if (['paid', 'refunded'].includes(effectiveInvoiceStatus)) return;
     if (!invoiceId) return;
     const hrs = Number(form.hoursPaid);
     if (!Number.isFinite(hrs) || hrs <= 0) return;
@@ -368,12 +405,17 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
           setLocalInvoice((prev) => mergeInvoiceUpdate(prev, updated));
         }
       } catch (err) {
+        const statusCode = Number(err?.response?.status || 0);
+        const message = String(err?.response?.data?.message || '').toLowerCase();
+        if (statusCode === 400 && message.includes('coverage settings are locked')) {
+          return;
+        }
         console.error('Failed to sync invoice coverage from payment modal', err);
       }
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [form.hoursPaid, invoiceId, hourlyRate, computeEndDateFromHours, mergeInvoiceUpdate]);
+  }, [form.hoursPaid, invoiceId, hourlyRate, computeEndDateFromHours, mergeInvoiceUpdate, effectiveInvoiceStatus, loading]);
 
   const handleChange = e => {
     const { name, value } = e.target;
@@ -475,6 +517,22 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
     setTeacherBonusDraft(buildDefaultBonusDraft(netTipAmount, teacherRecipients));
   }, [bonusOverridesEnabled, netTipAmount, teacherRecipients]);
 
+  useEffect(() => {
+    if (typeof onOpenInvoiceOverview !== 'function') return;
+
+    const handleShortcut = (event) => {
+      if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey) return;
+      if (String(event.key || '').toLowerCase() !== 'v') return;
+      if (isEditableElement(document.activeElement)) return;
+
+      event.preventDefault();
+      onOpenInvoiceOverview(localInvoice || invoice || invoiceId);
+    };
+
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [onOpenInvoiceOverview, localInvoice, invoice, invoiceId]);
+
   const effectiveTeacherBonuses = useMemo(() => {
     if (!teacherRecipients.length || netTipAmount <= 0) return [];
 
@@ -563,7 +621,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
         tip: form.tip ? Number(form.tip) : undefined,
         // ✅ Always send paidHours - this is the actual payment amount, not an estimate
         paidHours: normalizedHours,
-        paypalInvoiceNumber: form.paypalInvoiceNumber ? String(form.paypalInvoiceNumber).trim() : undefined,
+        paypalInvoiceNumber: String(form.paypalInvoiceNumber || localInvoice?.paypalInvoiceNumber || '').trim() || undefined,
         teacherBonusAllocations: bonusOverridesEnabled
           ? effectiveTeacherBonuses
               .filter((entry) => entry.include && Number(entry.amount || 0) > 0)
@@ -615,6 +673,14 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-8 backdrop-blur-sm">
   <div className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl bg-white shadow-lg">
+        <button
+          type="button"
+          onClick={() => onOpenInvoiceOverview?.(localInvoice || invoice || invoiceId)}
+          className="absolute right-16 top-6 inline-flex items-center justify-center rounded-full border border-slate-200 bg-white/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600 shadow hover:border-slate-300 hover:text-slate-800"
+          title="Open invoice overview (Alt+Shift+V)"
+        >
+          Invoice overview
+        </button>
         <button
           onClick={onClose}
           className="absolute right-5 top-5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/70 text-slate-500 shadow hover:text-slate-900"
@@ -787,7 +853,10 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated }) => {
                           onChange={handleChange}
                           onFocus={(e) => e.target.select()}
                           onClick={(e) => e.currentTarget.select()}
-                          onBlur={() => setEditingPaypal(false)}
+                          onBlur={async () => {
+                            setEditingPaypal(false);
+                            await handlePersistPaypalNumber();
+                          }}
                           className="rounded-md border border-slate-200 px-2 py-1 text-sm text-slate-800"
                         />
                       )}

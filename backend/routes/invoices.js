@@ -70,6 +70,43 @@ const CLASS_FIELDS_FOR_INVOICE = [
   'student.guardianId'
 ].join(' ');
 
+const INVOICE_LIST_FIELDS = [
+  'invoiceNumber',
+  'invoiceName',
+  'invoiceSlug',
+  'paypalInvoiceNumber',
+  'status',
+  'type',
+  'billingType',
+  'generationSource',
+  'billingPeriod',
+  'coverage',
+  'subtotal',
+  'total',
+  'adjustedTotal',
+  'paidAmount',
+  'hoursCovered',
+  'paidHours',
+  'hoursPaid',
+  'dueDate',
+  'paidAt',
+  'paidDate',
+  'paymentDate',
+  'sentVia',
+  'delivery',
+  'guardianFinancial',
+  'createdAt',
+  'updatedAt',
+  'guardian',
+  'teacher',
+  'items.duration',
+  'items.amount',
+  'items.date',
+  'items.lessonId',
+  'items.class',
+  'items.status'
+].join(' ');
+
 // adjustments removed: no helper to sum adjustments
 
 const applyPreviewTotals = (invoice, preview = {}) => {
@@ -206,6 +243,7 @@ const normalizeInvoiceItemStatus = (status) => {
     'attended',
     'missed_by_student',
     'cancelled_by_teacher',
+    'cancelled_by_student',
     'cancelled_by_guardian',
     'cancelled_by_admin',
     'no_show_both',
@@ -556,45 +594,78 @@ router.get('/', authenticateToken, async (req, res) => {
       // Match on core invoice fields
       const orConditions = [
         { invoiceNumber: regex },
+        { invoiceName: regex },
+        { invoiceSlug: regex },
+        { paypalInvoiceNumber: regex },
         { notes: regex },
         { 'items.description': regex },
       ];
 
+      const monthMap = {
+        jan: 1, january: 1,
+        feb: 2, february: 2,
+        mar: 3, march: 3,
+        apr: 4, april: 4,
+        may: 5,
+        jun: 6, june: 6,
+        jul: 7, july: 7,
+        aug: 8, august: 8,
+        sep: 9, sept: 9, september: 9,
+        oct: 10, october: 10,
+        nov: 11, november: 11,
+        dec: 12, december: 12,
+      };
+      const lowered = normalizedSearch.toLowerCase();
+      const tokens = lowered.split(/\s+/).filter(Boolean);
+      const matchedMonths = [...new Set(tokens.map((t) => monthMap[t]).filter(Boolean))];
+      for (const monthNum of matchedMonths) {
+        orConditions.push({ 'billingPeriod.month': monthNum });
+      }
+      const yearMatch = lowered.match(/\b(20\d{2})\b/);
+      if (yearMatch) {
+        orConditions.push({ 'billingPeriod.year': Number(yearMatch[1]) });
+      }
+
       // Also match guardian/teacher/student names/emails by resolving user ids.
       // This enables "search by name" across tabs/pages.
-      const [guardianMatches, teacherMatches, studentMatches] = await Promise.all([
-        User.find({
-          role: 'guardian',
-          $or: [
-            { firstName: regex },
-            { lastName: regex },
-            { email: regex },
-            { phone: regex },
-          ],
-        }).select('_id').lean(),
-        User.find({
-          role: 'teacher',
-          $or: [
-            { firstName: regex },
-            { lastName: regex },
-            { email: regex },
-            { phone: regex },
-          ],
-        }).select('_id').lean(),
-        User.find({
-          role: 'student',
-          $or: [
-            { firstName: regex },
-            { lastName: regex },
-            { email: regex },
-            { phone: regex },
-          ],
-        }).select('_id').lean(),
-      ]);
+      const userMatches = await User.find({
+        role: { $in: ['guardian', 'teacher', 'student'] },
+        $or: [
+          { firstName: regex },
+          { lastName: regex },
+          { email: regex },
+          { phone: regex },
+          {
+            $expr: {
+              $regexMatch: {
+                input: {
+                  $trim: {
+                    input: {
+                      $concat: [
+                        { $ifNull: ['$firstName', ''] },
+                        ' ',
+                        { $ifNull: ['$lastName', ''] }
+                      ]
+                    }
+                  }
+                },
+                regex: escapeRegExp(normalizedSearch),
+                options: 'i'
+              }
+            }
+          }
+        ],
+      }).select('_id role').lean();
 
-      const guardianIds = (guardianMatches || []).map((u) => u._id);
-      const teacherIds = (teacherMatches || []).map((u) => u._id);
-      const studentIds = (studentMatches || []).map((u) => u._id);
+      const guardianIds = [];
+      const teacherIds = [];
+      const studentIds = [];
+      for (const userRow of userMatches || []) {
+        const roleName = String(userRow?.role || '').toLowerCase();
+        if (roleName === 'guardian') guardianIds.push(userRow._id);
+        else if (roleName === 'teacher') teacherIds.push(userRow._id);
+        else if (roleName === 'student') studentIds.push(userRow._id);
+      }
 
       if (guardianIds.length) {
         orConditions.push({ guardian: { $in: guardianIds } });
@@ -684,11 +755,9 @@ router.get('/', authenticateToken, async (req, res) => {
         invoices = [];
       } else {
         const docs = await Invoice.find({ _id: { $in: ids } })
+          .select(INVOICE_LIST_FIELDS)
           .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
           .populate('teacher', 'firstName lastName email')
-          .populate('items.student', 'firstName lastName')
-          .populate('items.teacher', 'firstName lastName')
-          .populate('items.class', CLASS_FIELDS_FOR_INVOICE)
           .lean();
 
         const byId = new Map((docs || []).map((doc) => [String(doc._id), doc]));
@@ -696,11 +765,9 @@ router.get('/', authenticateToken, async (req, res) => {
       }
     } else {
       invoices = await Invoice.find(filter)
+        .select(INVOICE_LIST_FIELDS)
         .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
         .populate('teacher', 'firstName lastName email')
-        .populate('items.student', 'firstName lastName')
-        .populate('items.teacher', 'firstName lastName')
-        .populate('items.class', CLASS_FIELDS_FOR_INVOICE)
         .sort({ [sortBy]: sortOrder })
         .skip(skip)
         .limit(parseInt(limit))
@@ -1216,16 +1283,14 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
       .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
       .populate('teacher', 'firstName lastName email')
       .populate('items.student', 'firstName lastName')
-      .populate('items.teacher', 'firstName lastName')
-      .populate('items.class', CLASS_FIELDS_FOR_INVOICE);
+      .populate('items.teacher', 'firstName lastName');
 
     if (!invoiceDoc && mongoose.Types.ObjectId.isValid(identifier)) {
       invoiceDoc = await Invoice.findById(identifier)
         .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
         .populate('teacher', 'firstName lastName email')
         .populate('items.student', 'firstName lastName')
-        .populate('items.teacher', 'firstName lastName')
-        .populate('items.class', CLASS_FIELDS_FOR_INVOICE);
+        .populate('items.teacher', 'firstName lastName');
     }
 
     if (!invoiceDoc) return res.status(404).json({ success: false, message: 'Invoice not found' });
@@ -1241,8 +1306,9 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
     }
 
     const invoice = invoiceDoc.toObject();
+    const includeDynamic = ['1', 'true', 'yes'].includes(String(req.query.includeDynamic || '').toLowerCase());
     const isManualInvoice = invoiceDoc?.billingType === 'manual' || invoiceDoc?.generationSource === 'manual';
-    if (!isManualInvoice) {
+    if (includeDynamic && !isManualInvoice) {
       const dynamicClasses = await InvoiceService.buildDynamicClassList(invoiceDoc);
       invoice.dynamicClasses = dynamicClasses;
     }

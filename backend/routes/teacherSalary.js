@@ -818,8 +818,28 @@ router.put('/admin/settings/rate-partitions', authenticateToken, requireAdmin, a
       }
     }
 
+    const normalizedPartitions = ratePartitions
+      .map((partition) => {
+        const minHours = Number(partition.minHours);
+        const maxHours = Number(partition.maxHours);
+        const rateUSD = Number(partition.rateUSD);
+        const isOpenEnded = maxHours >= 99999;
+        const rangeLabel = isOpenEnded ? `${minHours}+` : `${minHours}-${maxHours}`;
+
+        return {
+          ...partition,
+          minHours,
+          maxHours,
+          rateUSD,
+          name: `${rangeLabel} hours`,
+          description: `Hourly rate for ${rangeLabel} hours per month`,
+          isActive: partition.isActive !== false
+        };
+      })
+      .sort((a, b) => a.minHours - b.minHours);
+
     const settings = await SalarySettings.getGlobalSettings();
-    settings.ratePartitions = ratePartitions;
+    settings.ratePartitions = normalizedPartitions;
     settings.updatedBy = req.user._id;
     await settings.save();
 

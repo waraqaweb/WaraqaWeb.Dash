@@ -39,6 +39,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
   const [debugOpen, setDebugOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [ratePartitions, setRatePartitions] = useState([]);
   const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const [deleting, setDeleting] = useState(false);
   
@@ -117,6 +118,15 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
         }
 
         setInvoice(finalInvoice);
+
+        if (user?.role === 'admin') {
+          try {
+            const settingsRes = await api.get('/teacher-salary/admin/settings');
+            setRatePartitions(Array.isArray(settingsRes?.data?.settings?.ratePartitions) ? settingsRes.data.settings.ratePartitions : []);
+          } catch (_err) {
+            setRatePartitions([]);
+          }
+        }
         
         // Initialize edited values with current invoice values (for admin override)
         setEditedValues({
@@ -344,25 +354,42 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
   };
   
   // Format rate tier description
-  const getRateTierDescription = (partition) => {
+  const getRateTierDescription = (partition, rate, hours) => {
+    const numericHours = Number(hours);
+    const numericRate = Number(rate);
+
+    if (Array.isArray(ratePartitions) && ratePartitions.length > 0 && Number.isFinite(numericHours)) {
+      const byHours = ratePartitions.find((p) => numericHours >= Number(p.minHours) && numericHours <= Number(p.maxHours));
+      if (byHours) {
+        const upper = Number(byHours.maxHours) >= 99999 ? '∞' : Number(byHours.maxHours);
+        return `${Number(byHours.minHours)}-${upper}h`;
+      }
+      if (Number.isFinite(numericRate)) {
+        const byRate = ratePartitions.find((p) => Math.abs(Number(p.rateUSD) - numericRate) < 0.0001);
+        if (byRate) {
+          const upper = Number(byRate.maxHours) >= 99999 ? '∞' : Number(byRate.maxHours);
+          return `${Number(byRate.minHours)}-${upper}h`;
+        }
+      }
+    }
+
     if (!partition) return 'Standard Rate';
-    return partition;
+    return String(partition).replace(/hours?/i, 'h');
   };
+
+  const tierDisplay = getRateTierDescription(invoice?.rateSnapshot?.partition, hourlyRate, totalHours);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/60 backdrop-blur-sm p-4">
       <div className="bg-white rounded-[32px] max-w-5xl w-full max-h-[95vh] overflow-hidden flex flex-col shadow-2xl ring-1 ring-black/5">
         
         {/* Header */}
-        <div className="px-6 py-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-200">
+        <div className="px-6 py-4 border-b border-slate-200 bg-white/95">
           <div className="flex items-start justify-between mb-4">
-            <div className="flex items-start gap-4">
-              <div className="p-3 bg-blue-500 rounded-xl shadow-lg">
-                <FileText className="w-7 h-7 text-white" />
-              </div>
+            <div className="flex items-start gap-3">
               <div>
                 <div className="flex items-center gap-3 mb-1">
-                  <h2 className="text-2xl font-semibold text-slate-900 flex items-center gap-3">
+                  <h2 className="text-xl font-semibold text-slate-900 flex items-center gap-2">
                     <span>Invoice {invoice.invoiceNumber || '—'}</span>
                     <Badge tone={invoice.status === 'paid' ? 'success' : invoice.status === 'published' ? 'brand' : 'neutral'} pill>
                       <StatusIcon className="w-3.5 h-3.5" /> {statusInfo.label}
@@ -383,12 +410,12 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <PrimaryButton onClick={handleExportPDF} variant="subtle" size="sm" title="PDF" circle>
-                <Download className="w-5 h-5" />
+                <Download className="w-4 h-4" />
               </PrimaryButton>
               <PrimaryButton onClick={handleExportExcel} variant="subtle" size="sm" title="Excel" circle>
-                <FileSpreadsheet className="w-5 h-5" />
+                <FileSpreadsheet className="w-4 h-4" />
               </PrimaryButton>
               {user?.role === 'admin' && (
                 <PrimaryButton
@@ -399,14 +426,14 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                   circle
                   disabled={saving || deleting}
                 >
-                  <Trash2 className="w-5 h-5" />
+                  <Trash2 className="w-4 h-4" />
                 </PrimaryButton>
               )}
               <PrimaryButton onClick={() => setDebugOpen(d => !d)} variant="subtle" size="sm" title="Debug">
                 Debug
               </PrimaryButton>
               <PrimaryButton onClick={onClose} variant="subtle" size="sm" title="Close" circle>
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </PrimaryButton>
             </div>
           </div>
@@ -429,10 +456,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
               </div>
               <p className="text-2xl font-bold text-slate-900">${hourlyRate.toFixed(2)}</p>
               <p className="text-xs text-slate-500 mt-1">
-                {getRateTierDescription(invoice.rateSnapshot?.partition)}
-              </p>
-              <p className="text-xs text-blue-600 mt-1 font-medium">
-                Based on {totalHours.toFixed(2)}h this month
+                {tierDisplay}
               </p>
             </Card>
 
@@ -517,12 +541,6 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                   </button>
                 </div>
               )}
-            </div>
-
-            {/* Rate Explanation (compact) */}
-            <div className="bg-blue-100 border border-blue-300 rounded-md p-2 mb-2 text-sm text-blue-900">
-              <strong className="font-semibold">Rate Calculation:</strong> based on this month's hours <strong className="font-bold">({totalHours.toFixed(2)} hrs)</strong>.
-              {editMode && <span className="ml-2 text-xs italic">(Click values below to edit)</span>}
             </div>
 
             <div className="space-y-2 bg-white rounded-md p-3 text-sm">

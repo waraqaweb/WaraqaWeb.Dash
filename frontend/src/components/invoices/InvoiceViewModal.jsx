@@ -10,9 +10,11 @@ import { formatDateDDMMMYYYY } from '../../utils/date';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import {
   X,
+  Copy,
   FileDown,
   FileText,
-  Users,
+  User,
+  Mail,
   Calendar,
   Sparkles,
   Link2
@@ -72,6 +74,23 @@ const formatDateWithDay = (date) => {
   const year = date.getFullYear();
   
   return `${dayName}, ${day < 10 ? '0' + day : day} ${month} ${year}`;
+};
+
+const formatClassDateLine = (value) => {
+  if (!value || !(value instanceof Date) || Number.isNaN(value.getTime())) return '-';
+  return value.toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
+};
+
+const formatClassTimeLine = (value) => {
+  if (!value || !(value instanceof Date) || Number.isNaN(value.getTime())) return '-';
+  return value
+    .toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    .toLowerCase();
 };
 
 const roundCurrency = (value) => {
@@ -156,15 +175,21 @@ const resolveDocumentId = (value) => {
   return null;
 };
 
-const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) => {
+const isEditableElement = (element) => {
+  if (!element) return false;
+  const tag = String(element.tagName || '').toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(element.isContentEditable);
+};
+
+const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClose, onInvoiceUpdate, onOpenRecordPayment }) => {
   const { user, socket } = useAuth();
   const isAdmin = user?.role === 'admin';
   const navigate = useNavigate();
   const handleClose = onClose || (() => navigate(-1));
 
-  const [invoice, setInvoice] = useState(null);
+  const [invoice, setInvoice] = useState(initialInvoice || null);
   const [classes, setClasses] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialInvoice);
   const [, setClassPeriod] = useState({ start: '', end: '' });
   const [classesLoading, setClassesLoading] = useState(false);
   const [resolvedInvoiceId, setResolvedInvoiceId] = useState(invoiceId || null);
@@ -218,10 +243,12 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const invoiceNameInputRef = useRef(null);
   const [invoiceNameParts, setInvoiceNameParts] = useState({ prefix: 'Waraqa', month: 'Mar', year: '2026', seq: '' });
   const [editingPart, setEditingPart] = useState(null);
+  const [editingInlineNote, setEditingInlineNote] = useState(null);
   const partInputRefs = useRef({});
 
   const notesLastSavedRef = useRef({ notes: '', internalNotes: '', invoiceReferenceLink: '' });
   const skipNextNotesSave = useRef(false);
+  const suppressSocketRefreshUntilRef = useRef(0);
   const coverageLastSavedRef = useRef({ maxHours: '', customEndDate: '', waiveTransferFee: false });
   const skipNextCoverageSave = useRef(false);
   const totalsSyncKeyRef = useRef(null);
@@ -346,12 +373,21 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
   const identifier = invoiceSlug || invoiceId;
 
   useEffect(() => {
+    if (!initialInvoice) return;
+    syncInvoiceState(initialInvoice);
+    setResolvedInvoiceId(initialInvoice?._id || invoiceId || null);
+    setLoading(false);
+  }, [initialInvoice, invoiceId, syncInvoiceState]);
+
+  useEffect(() => {
     if (!identifier) return;
     let cancelled = false;
 
     const fetchInvoiceDetails = async () => {
       try {
-        setLoading(true);
+        if (!initialInvoice) {
+          setLoading(true);
+        }
         setCoverageStatus(null);
         setResolvedInvoiceId(invoiceId || null);
         
@@ -367,7 +403,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
           setLoading(false);
         }
 
-        const { data: invRes } = await api.get(`/invoices/${identifier}`);
+        const { data: invRes } = await api.get(`/invoices/${identifier}`, { params: { includeDynamic: 1 } });
         if (cancelled) return;
         const inv = invRes.invoice || invRes;
         
@@ -390,17 +426,18 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     return () => {
       cancelled = true;
     };
-  }, [identifier, invoiceId, syncInvoiceState, user?._id]);
+  }, [identifier, invoiceId, syncInvoiceState, user?._id, initialInvoice]);
 
   // Listen for real-time invoice updates via socket
   useEffect(() => {
     if (!socket || !resolvedInvoiceId) return;
 
     const handleInvoiceUpdate = async (updatedInvoice) => {
+      if (Date.now() < suppressSocketRefreshUntilRef.current) return;
       // Only re-fetch if this is the invoice we're viewing
       if (updatedInvoice && updatedInvoice._id === resolvedInvoiceId) {
         try {
-          const { data: invRes } = await api.get(`/invoices/${identifier}`);
+          const { data: invRes } = await api.get(`/invoices/${identifier}`, { params: { includeDynamic: 1 } });
           const inv = invRes.invoice || invRes;
           syncInvoiceState(inv);
         } catch (err) {
@@ -444,6 +481,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     let cancelled = false;
 
     const handleClassUpdated = async (payload) => {
+      if (Date.now() < suppressSocketRefreshUntilRef.current) return;
       try {
         const updatedId = payload?.class?._id || payload?.class?.id || payload?.classId || payload?._id;
         if (!updatedId || !trackedIds.has(String(updatedId))) {
@@ -454,7 +492,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
         if (!cancelled) {
           setClassesLoading(true);
         }
-        const { data: invRes } = await api.get(`/invoices/${identifier}`);
+        const { data: invRes } = await api.get(`/invoices/${identifier}`, { params: { includeDynamic: 1 } });
         const inv = invRes.invoice || invRes;
         if (!cancelled) {
           syncInvoiceState(inv);
@@ -475,6 +513,23 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
       socket.off('class:updated', handleClassUpdated);
     };
   }, [socket, resolvedInvoiceId, invoice, identifier, syncInvoiceState]);
+
+  useEffect(() => {
+    if (!isAdmin || typeof onOpenRecordPayment !== 'function') return;
+
+    const handleShortcut = (event) => {
+      if (!invoice?._id) return;
+      if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey) return;
+      if (String(event.key || '').toLowerCase() !== 'p') return;
+      if (isEditableElement(document.activeElement)) return;
+
+      event.preventDefault();
+      onOpenRecordPayment(invoice);
+    };
+
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [isAdmin, onOpenRecordPayment, invoice]);
 
   useEffect(() => {
     if (!invoice) return;
@@ -868,12 +923,42 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     return acc;
   }, {});
 
+  const uniqueStudents = useMemo(
+    () => [...new Set(filteredClasses.map((c) => String(c.studentName || '-')))],
+    [filteredClasses]
+  );
+  const uniqueTeachers = useMemo(
+    () => [...new Set(filteredClasses.map((c) => String(c.teacherName || '-')))],
+    [filteredClasses]
+  );
+  const hasMultipleStudents = uniqueStudents.length > 1;
+  const hasMultipleTeachers = uniqueTeachers.length > 1;
+
+  const studentTonePalette = ['text-sky-700', 'text-violet-700', 'text-emerald-700', 'text-amber-700', 'text-rose-700', 'text-cyan-700'];
+  const teacherTonePalette = ['text-indigo-700', 'text-teal-700', 'text-fuchsia-700', 'text-orange-700', 'text-lime-700', 'text-pink-700'];
+
+  const studentToneMap = useMemo(() => {
+    const map = {};
+    uniqueStudents.forEach((name, index) => {
+      map[name] = studentTonePalette[index % studentTonePalette.length];
+    });
+    return map;
+  }, [uniqueStudents]);
+
+  const teacherToneMap = useMemo(() => {
+    const map = {};
+    uniqueTeachers.forEach((name, index) => {
+      map[name] = teacherTonePalette[index % teacherTonePalette.length];
+    });
+    return map;
+  }, [uniqueTeachers]);
+
   // Keep the classes table area a fixed, scrollable region to avoid layout
   // shifts when the number of classes changes (which caused the modal to
   // visually jump up/down). Use a sensible min/max height so small lists
   // still look compact while longer lists scroll.
   const classTableOuterClasses = 'flex-1 overflow-hidden';
-  const classTableInnerClasses = 'overflow-y-auto overflow-x-hidden rounded-b-3xl';
+  const classTableInnerClasses = 'overflow-y-auto overflow-x-auto rounded-b-3xl';
   const classTableInnerStyle = {
     maxHeight: '22rem',
     minHeight: '6rem'
@@ -1159,10 +1244,18 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
 
     setInvoiceNameStatus({ type: 'progress', message: 'Saving…' });
     try {
+      suppressSocketRefreshUntilRef.current = Date.now() + 1500;
       const { data } = await api.put(`/invoices/${targetInvoiceId}`, { invoiceName: trimmed });
       const updated = data?.invoice || data;
+      if (updated && typeof updated === 'object') {
+        setInvoice((prev) => (prev ? { ...prev, ...updated, invoiceName: updated.invoiceName || trimmed } : updated));
+      } else {
+        setInvoice((prev) => (prev ? { ...prev, invoiceName: trimmed } : prev));
+      }
+      const nextParts = parseInvoiceNameParts(updated?.invoiceName || trimmed);
+      setInvoiceNameParts(nextParts);
+      setInvoiceNameDraft(buildInvoiceNameFromParts(nextParts));
       if (updated) {
-        syncInvoiceState(updated);
         const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: targetInvoiceId });
         writeCache(cacheKey, { invoice: updated }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
       }
@@ -1175,7 +1268,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
       const message = err?.response?.data?.message || 'Failed to update invoice name';
       setInvoiceNameStatus({ type: 'error', message });
     }
-  }, [isAdmin, invoice, resolvedInvoiceId, invoiceNameDraft, syncInvoiceState, user?._id]);
+  }, [isAdmin, invoice, resolvedInvoiceId, invoiceNameDraft, parseInvoiceNameParts, buildInvoiceNameFromParts, user?._id]);
 
   useEffect(() => {
     if (!editingPart) return;
@@ -1555,6 +1648,50 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     setTimeout(() => setNotesStatus(null), 2000);
   }, [noteEdits.invoiceReferenceLink]);
 
+  const handleCopyGuardianName = useCallback(async () => {
+    const fullName = `${invoice?.guardian?.firstName || ''} ${invoice?.guardian?.lastName || ''}`.trim();
+    if (!fullName) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(fullName);
+      } else {
+        const copied = window.prompt('Copy guardian name:', fullName);
+        if (copied === null) {
+          throw new Error('Copy cancelled');
+        }
+      }
+      setNotesStatus({ type: 'success', message: 'Guardian name copied' });
+    } catch (err) {
+      console.error('Failed to copy guardian name', err);
+      setNotesStatus({ type: 'error', message: 'Copy failed' });
+    }
+
+    setTimeout(() => setNotesStatus(null), 2000);
+  }, [invoice?.guardian?.firstName, invoice?.guardian?.lastName]);
+
+  const handleCopyGuardianEmail = useCallback(async () => {
+    const email = String(invoice?.guardian?.email || '').trim();
+    if (!email) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(email);
+      } else {
+        const copied = window.prompt('Copy guardian email:', email);
+        if (copied === null) {
+          throw new Error('Copy cancelled');
+        }
+      }
+      setNotesStatus({ type: 'success', message: 'Guardian email copied' });
+    } catch (err) {
+      console.error('Failed to copy guardian email', err);
+      setNotesStatus({ type: 'error', message: 'Copy failed' });
+    }
+
+    setTimeout(() => setNotesStatus(null), 2000);
+  }, [invoice?.guardian?.email]);
+
   if (loading) return <LoadingSpinner />;
   if (!invoice) return <div className="p-4 text-center">Invoice not found</div>;
 
@@ -1562,6 +1699,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
     switch (invoice.status) {
       case 'paid':
         return 'bg-emerald-500/20 text-emerald-900 ring-1 ring-emerald-500/30';
+      case 'pending':
+        return 'bg-amber-500/20 text-amber-900 ring-1 ring-amber-500/30';
       case 'sent':
         return 'bg-sky-500/20 text-sky-900 ring-1 ring-sky-500/30';
       case 'overdue':
@@ -1581,7 +1720,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
       <div className="relative flex w-full max-w-6xl max-h-[90vh] flex-col overflow-hidden rounded-[32px] bg-white shadow-2xl">
         <button
           onClick={handleClose}
-          className="absolute right-5 top-5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/70 text-slate-500 shadow hover:text-slate-900"
+          className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow hover:text-slate-900"
           aria-label="Close invoice modal"
         >
           <X className="h-5 w-5" />
@@ -1589,18 +1728,16 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
 
         <div className="flex-1 overflow-y-auto">
           <div className="space-y-8">
-          <div className="border-b border-slate-200 bg-white/95 px-8 py-8">
-            <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
-              <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">Invoice overview</p>
-                <div className="flex flex-wrap items-center gap-3">
-                  <h2 className="text-3xl font-semibold text-slate-900 flex items-center gap-2">
+          <div className="bg-white/95 px-4 py-5 sm:px-8 sm:py-6">
+            <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap pb-1 pr-12 sm:pr-14">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <h2 className="flex min-w-0 items-center gap-1.5 text-xl font-semibold text-slate-900 sm:text-2xl">
                     {(['prefix', 'month', 'year', 'seq']).map((partKey, idx) => {
                       const value = invoiceNameParts[partKey] || '';
                       const isSeq = partKey === 'seq';
                       const shouldEditSeq = isSeq && isAdmin && !value;
                       const isEditing = editingPart === partKey || shouldEditSeq;
-                      const inputClass = isSeq ? 'w-20' : partKey === 'year' ? 'w-20' : partKey === 'month' ? 'w-16' : 'w-24';
+                      const inputClass = isSeq ? 'w-16' : partKey === 'year' ? 'w-14' : partKey === 'month' ? 'w-12' : 'w-20';
                       return (
                         <React.Fragment key={partKey}>
                           {isEditing ? (
@@ -1638,7 +1775,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                                   setInvoiceNameStatus(null);
                                 }
                               }}
-                              className={`${inputClass} rounded-lg border border-slate-200 bg-white px-2 py-1 text-lg font-semibold text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200`}
+                              className={`${inputClass} border-0 border-b border-slate-300 bg-transparent px-0 py-0 text-xl font-semibold text-slate-900 focus:border-slate-500 focus:outline-none sm:text-2xl`}
                             />
                           ) : (
                             <button
@@ -1648,7 +1785,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                                 setInvoiceNameEditing(true);
                                 setEditingPart(partKey);
                               }}
-                              className={`rounded-md px-1 ${isAdmin ? 'hover:text-slate-700' : ''}`}
+                              className={`px-0.5 ${isAdmin ? 'hover:text-slate-700' : ''}`}
                               title={isAdmin ? 'Click to edit' : undefined}
                             >
                               {value || (isSeq ? '' : partKey === 'prefix' ? 'Waraqa' : partKey === 'month' ? 'Mar' : '2026')}
@@ -1658,31 +1795,73 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                         </React.Fragment>
                       );
                     })}
-                  </h2>
-                  {invoiceNameStatus && (
-                    <span className={`text-xs font-semibold ${invoiceNameStatus.type === 'success' ? 'text-emerald-600' : invoiceNameStatus.type === 'error' ? 'text-rose-600' : 'text-slate-500'}`}>
-                      {invoiceNameStatus.message}
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                  <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusTone}`} title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>
-                    <Sparkles className="h-4 w-4" />
-                    {invoice.status}
-                  </span>
-                  <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1">
-                    <Users className="h-4 w-4 text-slate-500" />
-                    <span className="font-medium text-slate-700">{invoice.guardian?.firstName} {invoice.guardian?.lastName}</span>
-                  </span>
-                  <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1">
-                    <Calendar className="h-4 w-4 text-slate-500" />
-                    <span>{formatDateDisplay(invoice.createdAt)}</span>
-                  </span>
-                </div>
+                </h2>
+                <span className={`inline-flex w-16 justify-start text-xs font-semibold leading-4 ${invoiceNameStatus ? (invoiceNameStatus.type === 'success' ? 'text-emerald-600' : invoiceNameStatus.type === 'error' ? 'text-rose-600' : 'text-slate-500') : 'text-transparent'}`}>
+                  {invoiceNameStatus?.message || 'Saved'}
+                </span>
               </div>
 
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-                <div className="flex flex-wrap gap-2">
+              <div className="flex items-center gap-2 text-sm text-slate-600 shrink-0">
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusTone}`} title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {invoice.status}
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs">
+                    <Calendar className="h-3.5 w-3.5 text-slate-500" />
+                    <span>{formatDateDisplay(invoice.createdAt)}</span>
+                </span>
+              </div>
+
+              <div className="ml-auto flex items-center gap-1.5 shrink-0">
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenRecordPayment?.(invoice)}
+                    className="inline-flex h-7 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-2 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100"
+                    title="Open record payment (Alt+Shift+P)"
+                  >
+                    Record payment
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={handleCopyCoverageMessage}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-violet-200 bg-violet-50 text-violet-600 transition hover:border-violet-300 hover:bg-violet-100"
+                    title="Copy message"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {invoice?.invoiceSlug && (
+                  <button
+                    onClick={handleCopyShareLink}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-600 transition hover:border-sky-300 hover:bg-sky-100"
+                    type="button"
+                    title="Copy share link"
+                  >
+                    <Link2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                <button
+                  onClick={downloadPDF}
+                  className="inline-flex h-8 items-center justify-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 text-rose-700 transition hover:border-rose-300 hover:bg-rose-100"
+                  type="button"
+                  title="Download PDF"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  <span className="text-[10px] font-semibold tracking-wide">PDF</span>
+                </button>
+                <button
+                  onClick={downloadExcel}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-amber-700 transition hover:border-amber-300 hover:bg-amber-100"
+                  type="button"
+                  title="Export Excel"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                </button>
+
+                <div className="flex flex-col items-start gap-1 sm:items-end pl-1">
                   {isAdmin && (invoice.status === 'paid' || Number(invoice?.paidAmount || 0) > 0) && (
                     <button
                       onClick={handleMarkInvoiceUnpaid}
@@ -1694,34 +1873,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                       {revertingPayment ? 'Reverting…' : 'Mark unpaid'}
                     </button>
                   )}
-                  {invoice?.invoiceSlug && (
-                    <button
-                      onClick={handleCopyShareLink}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
-                      type="button"
-                    >
-                      <Link2 className="h-4 w-4" />
-                      <span>Copy share link</span>
-                    </button>
-                  )}
-                  <button
-                    onClick={downloadPDF}
-                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
-                    type="button"
-                  >
-                    <FileText className="h-4 w-4" />
-                    <span>Download PDF</span>
-                  </button>
-                  <button
-                    onClick={downloadExcel}
-                    className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-                    type="button"
-                  >
-                    <FileDown className="h-4 w-4" />
-                    <span>Export Excel</span>
-                  </button>
-                </div>
-                <div className="flex flex-col items-start gap-1 sm:items-end">
                   {revertStatus && (
                     <span className={`text-xs font-medium ${revertStatus.type === 'success' ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {revertStatus.message}
@@ -1736,12 +1887,23 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
               </div>
             </div>
 
-            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+            <div className="mt-6 grid items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
               <div className="mt-2 space-y-2">
                       <div>
                         <p className="text-2xl font-semibold text-slate-900">${primaryAmount.toFixed(2)}</p>
                         <p className="text-xs uppercase tracking-wide text-slate-400">{primaryLabel}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700">
+                          {filteredClasses.length} classes
+                        </span>
+                        <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700">
+                          {totalHours.toFixed(2)}h
+                        </span>
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                          ${guardianRate.toFixed(2)} / hr
+                        </span>
                       </div>
                       <div className="space-y-1 text-sm text-slate-600">
                         <div className="flex justify-between">
@@ -1892,33 +2054,15 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                           </div>
                         )}
                       </div>
-                      <div className="mt-3 border-t border-slate-100 pt-3 text-sm text-slate-600">
-                        {hideClassBreakdown ? (
-                          <p className="text-slate-600">
-                            {isRefillOnlyInvoice
-                              ? 'Hour refill purchase — no classes yet'
-                              : 'Fee-only invoice — no class sessions billed'}
-                          </p>
-                        ) : (
-                          <>
-                            <p>Classes: <span className="font-medium text-slate-900">{filteredClasses.length}</span></p>
-                            <p>Total hours: <span className="font-medium text-slate-900">{totalHours.toFixed(2)}</span></p>
-                            <p>Hourly rate: <span className="font-medium text-slate-900">${guardianRate.toFixed(2)}</span></p>
-                          </>
-                        )}
-                      </div>
                     </div>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+              <div className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex flex-col gap-2 text-xs tracking-wide text-slate-500">
                     <p className="font-semibold uppercase text-slate-500">Classes &amp; coverage</p>
                     <div className="flex flex-wrap items-center gap-3 text-slate-500">
                       {!hideClassBreakdown ? (
-                        <div className="flex flex-col text-[13px] leading-tight">
-                          <span className="font-semibold text-slate-900">{filteredClasses.length} classes</span>
-                          <span className="text-slate-600">{subtotalHoursDisplay}h at ${guardianRate.toFixed(2)} / hr</span>
-                        </div>
+                        <></>
                       ) : (
                         <div className="flex flex-col text-[13px] leading-tight">
                           <span className="font-semibold text-slate-900">No class sessions</span>
@@ -1972,11 +2116,11 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                 </div>
 
                 {isAdmin && (
-                  <div className="mt-4 space-y-4 text-sm text-slate-600">
+                  <div className="mt-4 flex-1 space-y-4 text-sm text-slate-600">
                     {!isCoverageLocked ? (
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
-                          <span>Covered Hours</span>
+                          <span className="font-semibold text-slate-600">Covered Hours</span>
                           <input
                             type="number"
                             value={maxHours}
@@ -2003,11 +2147,11 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                             }}
                             placeholder="e.g. 10"
                             disabled={isCoverageLocked}
-                            className="rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                            className="border-0 border-b border-slate-200 bg-transparent px-0 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
                           />
                         </label>
                         <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
-                          <span>End Date</span>
+                          <span className="font-semibold text-slate-600">End Date</span>
                           <input
                             type="date"
                             value={customEndDate}
@@ -2034,7 +2178,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                               handleSaveCoverage();
                             }}
                             disabled={isCoverageLocked}
-                            className="rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                            className="border-0 border-b border-slate-200 bg-transparent px-0 py-2 text-sm text-slate-700 focus:border-slate-400 focus:outline-none"
                           />
                         </label>
                       </div>
@@ -2045,31 +2189,65 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                     )}
                     
                     <label className="flex flex-col gap-1.5">
-                      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Internal Admin Note</span>
-                      <textarea
-                        value={noteEdits.internalNotes}
-                        onChange={(e) => handleNoteChange('internalNotes', e.target.value)}
-                        rows={1}
-                        placeholder="Private context for the admin team..."
-                        className="min-h-[38px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] leading-relaxed text-slate-700 shadow-inner placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 resize-y"
-                      />
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-violet-600"><FileText className="h-3.5 w-3.5" /> admin</span>
+                      {editingInlineNote === 'internal' ? (
+                        <textarea
+                          autoFocus
+                          value={noteEdits.internalNotes}
+                          onChange={(e) => handleNoteChange('internalNotes', e.target.value)}
+                          onBlur={() => setEditingInlineNote(null)}
+                          rows={2}
+                          placeholder="Private context for the admin team..."
+                          className="min-h-[40px] resize-y border-0 border-b border-violet-200 bg-transparent px-0 py-1 text-[13px] leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-violet-400 focus:outline-none"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setEditingInlineNote('internal')}
+                          className="w-full border-b border-violet-100 pb-1 text-left text-[13px] leading-relaxed text-slate-700 hover:border-violet-300"
+                          title="Click to edit internal admin note"
+                        >
+                          {noteEdits.internalNotes?.trim() ? formatNoteText(noteEdits.internalNotes) : <span className="text-slate-400">Click to add internal note…</span>}
+                        </button>
+                      )}
                     </label>
                   </div>
                 )}
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Guardian</p>
-                <p className="mt-2 text-base font-semibold text-slate-900">
+              <div className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                <button
+                  type="button"
+                  onClick={handleCopyGuardianName}
+                  className="mt-2 inline-flex w-fit items-center gap-1.5 text-left text-sm font-semibold text-slate-900"
+                  title="Click to copy guardian name"
+                >
+                  <User className="h-3.5 w-3.5 text-slate-500" />
                   {invoice.guardian?.firstName} {invoice.guardian?.lastName}
-                </p>
-                <p className="text-sm text-slate-600">{invoice.guardian?.email || '—'}</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyGuardianEmail}
+                  className="mt-1 inline-flex w-fit items-center gap-1.5 text-left text-xs text-slate-600"
+                  title="Click to copy guardian email"
+                >
+                  <Mail className="h-3.5 w-3.5 text-slate-500" />
+                  {invoice.guardian?.email || '—'}
+                </button>
                 <div className="mt-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Students</p>
+                  <div className="flex items-center justify-between gap-3 text-xs font-semibold uppercase tracking-wide">
+                    <span className="inline-flex items-center rounded-full bg-violet-50 px-2.5 py-1 text-violet-700">
+                      Students {Object.keys(studentSummary).length}
+                    </span>
+                    <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-sky-700">
+                      Entries {filteredClasses.length}
+                    </span>
+                  </div>
                   <div className="mt-2 space-y-1 text-sm text-slate-600">
                     {Object.entries(studentSummary).map(([name, { count, hours }]) => (
                       <div key={name} className="flex flex-wrap items-center gap-2">
                         <span className="font-medium text-slate-900">{name}</span>
-                        <span className="text-slate-500">• {count} cls • {(hours / 60).toFixed(1)}h</span>
+                        <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">{count} cls</span>
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{(hours / 60).toFixed(1)}h</span>
                       </div>
                     ))}
                     {Object.keys(studentSummary).length === 0 && (
@@ -2079,7 +2257,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                 </div>
                 <div className="mt-4">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Guardian Note</p>
+                    <p className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-sky-600"><FileText className="h-3.5 w-3.5" /> guardian (public)</p>
                     {isAdmin && notesStatus && (
                       <span
                         className={`text-xs font-medium ${
@@ -2095,13 +2273,26 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                     )}
                   </div>
                   {isAdmin ? (
-                    <textarea
-                      value={noteEdits.notes}
-                      onChange={(e) => handleNoteChange('notes', e.target.value)}
-                      rows={1}
-                      placeholder="Visible to guardians on their invoice..."
-                      className="mt-1.5 min-h-[38px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] leading-relaxed text-slate-700 shadow-inner placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 resize-y"
-                    />
+                    editingInlineNote === 'guardian' ? (
+                      <textarea
+                        autoFocus
+                        value={noteEdits.notes}
+                        onChange={(e) => handleNoteChange('notes', e.target.value)}
+                        onBlur={() => setEditingInlineNote(null)}
+                        rows={2}
+                        placeholder="Visible to guardians on their invoice..."
+                        className="mt-1.5 min-h-[40px] w-full resize-y border-0 border-b border-sky-200 bg-transparent px-0 py-1 text-[13px] leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setEditingInlineNote('guardian')}
+                        className="mt-1.5 w-full border-b border-sky-100 pb-1 text-left text-[13px] leading-relaxed text-slate-700 hover:border-sky-300"
+                        title="Click to edit guardian-visible note"
+                      >
+                        {noteEdits.notes?.trim() ? formatNoteText(noteEdits.notes) : <span className="text-slate-400">Click to add guardian-visible note…</span>}
+                      </button>
+                    )
                   ) : (
                     <div className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] leading-relaxed text-slate-600">
                       {noteEdits.notes?.trim() ? formatNoteText(noteEdits.notes) : <span className="text-slate-400">No guardian note yet.</span>}
@@ -2113,27 +2304,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
           </div>
 
           {!hideClassBreakdown && (
-            <div className="px-8 pb-8">
+            <div className="px-4 pb-6 sm:px-8 sm:pb-8">
               <div className="flex h-full w-full flex-col rounded-3xl border border-slate-200 bg-white shadow-sm">
-                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
-                  <h3 className="text-base font-semibold text-slate-900">Class sessions</h3>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs uppercase tracking-wide text-slate-400">
-                      {classesLoading ? 'Refreshing…' : `${filteredClasses.length} entries`}
-                    </span>
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        onClick={handleCopyCoverageMessage}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
-                        title="Copy coverage message"
-                      >
-                        <FileText className="h-3.5 w-3.5" />
-                        <span>Copy message</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
                 {filteredClasses.length === 0 ? (
                   <div className="flex flex-1 items-center justify-center px-5 py-12 text-center text-sm text-slate-500">
                     No classes available for this invoice.
@@ -2141,30 +2313,59 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, onClose, onInvoiceUpdate }) 
                 ) : (
                   <div className={classTableOuterClasses}>
                     <div className={classTableInnerClasses} style={classTableInnerStyle}>
-                      <table className="min-w-full table-fixed divide-y divide-slate-100 text-sm">
+                      <table className="min-w-full table-auto divide-y divide-slate-100 text-sm">
                         <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                           <tr>
-                            <th className="sticky top-0 z-10 w-12 bg-slate-50/95 px-5 py-3 text-center backdrop-blur">#</th>
-                            <th className="sticky top-0 z-10 bg-slate-50/95 px-5 py-3 backdrop-blur">Date &amp; time</th>
-                            <th className="sticky top-0 z-10 bg-slate-50/95 px-5 py-3 backdrop-blur">Student</th>
-                            <th className="sticky top-0 z-10 bg-slate-50/95 px-5 py-3 backdrop-blur">Teacher</th>
-                            <th className="sticky top-0 z-10 bg-slate-50/95 px-5 py-3 backdrop-blur">Subject</th>
-                            <th className="sticky top-0 z-10 bg-slate-50/95 px-5 py-3 backdrop-blur">Duration (mins)</th>
-                            <th className="sticky top-0 z-10 bg-slate-50/95 px-5 py-3 backdrop-blur">Status</th>
+                            <th className="sticky top-0 z-10 w-12 bg-slate-50/95 px-4 py-3 text-center backdrop-blur">#</th>
+                            <th className="sticky top-0 z-10 w-[22%] bg-slate-50/95 px-4 py-3 backdrop-blur">When</th>
+                            <th className="sticky top-0 z-10 w-[20%] bg-slate-50/95 px-4 py-3 backdrop-blur">Student</th>
+                            <th className="sticky top-0 z-10 w-[20%] bg-slate-50/95 px-4 py-3 backdrop-blur">Teacher</th>
+                            <th className="sticky top-0 z-10 w-[26%] bg-slate-50/95 px-4 py-3 backdrop-blur">Subject</th>
+                            <th className="sticky top-0 z-10 w-20 bg-slate-50/95 px-4 py-3 text-center backdrop-blur">Mins</th>
+                            <th className="sticky top-0 z-10 w-28 bg-slate-50/95 px-4 py-3 backdrop-blur">State</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-slate-600">
                           {filteredClasses.map((c, index) => (
                             <tr key={c._id} className={`odd:bg-white even:bg-slate-50/60 ${c.paidByGuardian ? 'outline outline-1 outline-emerald-100' : ''}`}>
-                              <td className="px-5 py-3 text-center text-slate-500">{index + 1}</td>
-                              <td className="px-5 py-3 text-slate-700 whitespace-normal break-words">{`${c.date} ${c.time}`}</td>
-                              <td className="px-5 py-3 text-slate-700 whitespace-normal break-words">{c.studentName}</td>
-                              <td className="px-5 py-3 whitespace-normal break-words">{c.teacherName}</td>
-                              <td className="px-5 py-3 whitespace-normal break-words">{c.subject}</td>
-                              <td className="px-5 py-3 whitespace-normal break-words">{c.duration}</td>
-                              <td className="px-5 py-3 whitespace-normal break-words">
+                              <td className="px-4 py-3 text-center text-slate-500">{index + 1}</td>
+                              <td className="px-4 py-3 text-slate-700">
+                                <span className="flex items-center justify-between gap-3 whitespace-nowrap" title={`${c.date} ${c.time}`}>
+                                  <span className="min-w-0 truncate text-[13px] font-medium">{formatClassDateLine(c.rawDate)}</span>
+                                  <span className="w-[64px] shrink-0 text-right text-xs text-slate-500">{formatClassTimeLine(c.rawDate)}</span>
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-slate-700">
+                                <span
+                                  className={`inline-flex max-w-[240px] truncate whitespace-nowrap text-xs font-semibold ${hasMultipleStudents ? (studentToneMap[c.studentName] || 'text-slate-700') : 'text-slate-700'}`}
+                                  title={c.studentName}
+                                >
+                                  {c.studentName}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span
+                                  className={`inline-flex max-w-[240px] truncate whitespace-nowrap text-xs font-semibold ${hasMultipleTeachers ? (teacherToneMap[c.teacherName] || 'text-slate-700') : 'text-slate-700'}`}
+                                  title={c.teacherName}
+                                >
+                                  {c.teacherName}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="block max-w-[320px] truncate whitespace-nowrap" title={c.subject}>{c.subject}</span>
+                              </td>
+                              <td className="px-4 py-3 text-center whitespace-nowrap">{c.duration}</td>
+                              <td className="px-4 py-3 whitespace-nowrap">
                                 <span className="inline-flex items-center gap-2">
-                                  <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-medium capitalize text-slate-600">
+                                  <span
+                                    className={`inline-flex rounded-full px-3 py-1 text-xs font-medium capitalize ${(() => {
+                                      const normalized = String(c.status || '').toLowerCase();
+                                      if (normalized.includes('attended') || normalized === 'completed') return 'bg-emerald-50 text-emerald-700';
+                                      if (normalized.includes('scheduled') || normalized === 'in_progress') return 'bg-amber-50 text-amber-700';
+                                      if (normalized.includes('missed')) return 'bg-rose-50 text-rose-700';
+                                      return 'bg-slate-100 text-slate-600';
+                                    })()}`}
+                                  >
                                     {c.status.replace(/_/g, ' ')}
                                   </span>
                                   {c.paidByGuardian && (

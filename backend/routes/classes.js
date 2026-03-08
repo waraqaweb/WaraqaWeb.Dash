@@ -3537,8 +3537,6 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
             if ((recentLowScores || []).length >= LOW_SCORE_MIN_OCCURRENCES) {
               const notificationService = require("../services/notificationService");
               const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
-              const DEDUPE_WINDOW_MS = 60 * 60 * 1000;
-              const dedupeSince = new Date(Date.now() - DEDUPE_WINDOW_MS);
               const admins = await User.find({ role: "admin", isActive: true }).select("_id");
               const guardianUser = guardianId ? await User.findById(guardianId).select('firstName lastName email') : null;
               const teacherUser = teacherId ? await User.findById(teacherId).select('firstName lastName email') : null;
@@ -3566,8 +3564,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
                   const existing = await Notification.findOne({
                     user: admin._id,
                     "metadata.kind": "low_score_followup",
-                    "metadata.studentId": String(studentIdValue),
-                    createdAt: { $gte: dedupeSince }
+                    "metadata.studentId": String(studentIdValue)
                   }).select("_id");
 
                   if (existing) return null;

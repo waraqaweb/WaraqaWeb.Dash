@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../../api/axios';
-import { Plus, Eye, Pencil, DollarSign } from "lucide-react";
+import { Plus, Eye, Pencil, DollarSign, CalendarDays, Tag, UserRound } from "lucide-react";
 import { useAuth } from "../../../contexts/AuthContext";
 import { useSearch } from '../../../contexts/SearchContext';
 import { useDeleteActionCountdown } from '../../../contexts/DeleteActionCountdownContext';
@@ -244,6 +244,53 @@ const SalariesPage = () => {
     }
   };
 
+  const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  const getTierTone = (hourlyRate) => {
+    const rate = Number(hourlyRate || 0);
+    if (!Number.isFinite(rate) || rate <= 0) return 'bg-slate-50 text-slate-600 border border-slate-200';
+    if (rate <= 3.0) return 'bg-cyan-50 text-cyan-700 border border-cyan-200';
+    if (rate <= 3.25) return 'bg-indigo-50 text-indigo-700 border border-indigo-200';
+    if (rate <= 3.5) return 'bg-violet-50 text-violet-700 border border-violet-200';
+    if (rate <= 3.75) return 'bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200';
+    if (rate <= 4.0) return 'bg-amber-50 text-amber-700 border border-amber-200';
+    if (rate <= 4.25) return 'bg-orange-50 text-orange-700 border border-orange-200';
+    return 'bg-rose-50 text-rose-700 border border-rose-200';
+  };
+
+  const getMonthTone = (monthNumber) => {
+    const tones = {
+      1: 'text-sky-700',
+      2: 'text-indigo-700',
+      3: 'text-emerald-700',
+      4: 'text-lime-700',
+      5: 'text-amber-700',
+      6: 'text-orange-700',
+      7: 'text-rose-700',
+      8: 'text-fuchsia-700',
+      9: 'text-violet-700',
+      10: 'text-purple-700',
+      11: 'text-teal-700',
+      12: 'text-cyan-700'
+    };
+    return tones[Number(monthNumber) || 0] || 'text-slate-700';
+  };
+
+  const resolvePaymentMonthLabel = (salary) => {
+    const paidAt = salary?.paidAt || salary?.paymentDate || null;
+    const date = paidAt ? new Date(paidAt) : null;
+    if (date && !Number.isNaN(date.getTime())) {
+      const month = date.getMonth() + 1;
+      return { label: `${monthNamesShort[month - 1]} ${date.getFullYear()}`, month };
+    }
+    const month = Number(salary?.billingPeriod?.month || 0);
+    const year = Number(salary?.billingPeriod?.year || 0);
+    if (month >= 1 && month <= 12 && year > 0) {
+      return { label: `${monthNamesShort[month - 1]} ${year}`, month };
+    }
+    return { label: 'N/A', month: 0 };
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
       <div className="mx-auto w-full max-w-7xl px-6 py-8 space-y-8">
@@ -314,6 +361,11 @@ const SalariesPage = () => {
                 const billingStart = salary.billingPeriod?.startDate || salary.billingPeriod?.start;
                 const billingEnd = salary.billingPeriod?.endDate || salary.billingPeriod?.end;
                 const total = salary.internalTotals?.totalUSD ?? salary.total ?? salary.amount ?? 0;
+                const hourlyRate = Number(salary?.teacherPayment?.hourlyRate || 0);
+                const bonus = Number(salary?.teacherPayment?.bonus || 0);
+                const tierTone = getTierTone(hourlyRate);
+                const paymentMonth = resolvePaymentMonthLabel(salary);
+                const paymentMonthTone = getMonthTone(paymentMonth.month);
 
                 return (
                   <div key={salary._id} className="rounded-2xl border border-slate-100 bg-gradient-to-br from-white via-white to-slate-50 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
@@ -324,6 +376,14 @@ const SalariesPage = () => {
                             <span className="capitalize">{salary.status || 'draft'}</span>
                           </span>
                           <span className="text-sm font-semibold text-slate-700">{salary.invoiceName || salary.invoiceNumber || `Salary ${String(salary._id).slice(-6)}`}</span>
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${tierTone}`}>
+                            <Tag className="h-3 w-3" />
+                            Tier ${hourlyRate.toFixed(2)}/h
+                          </span>
+                          <span className={`inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold border border-slate-200 ${paymentMonthTone}`}>
+                            <CalendarDays className="h-3 w-3" />
+                            {paymentMonth.label}
+                          </span>
                         </div>
 
                         <div className="space-y-1 text-sm text-slate-600">
@@ -332,12 +392,19 @@ const SalariesPage = () => {
                               <span className="font-medium">Teacher</span>
                               <span className="text-sm text-slate-500">{salary.teacher?.firstName} {salary.teacher?.lastName}</span>
                             </div>
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                              <UserRound className="h-3 w-3" />
+                              {salary.teacher?.firstName || 'Teacher'}
+                            </span>
                             <div className="inline-flex items-center gap-2">
                               <span className="text-sm text-slate-500">{formatDate(billingStart)} → {formatDate(billingEnd)}</span>
                             </div>
                             <div className="inline-flex items-center gap-2">
                               <span className="font-medium text-slate-700">{formatCurrency(total)}</span>
                             </div>
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold border ${bonus > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                              Bonus ${bonus.toFixed(2)}
+                            </span>
                           </div>
                           {salary.guardian?.email && <p className="text-xs text-slate-400">{salary.guardian.email}</p>}
                         </div>
@@ -345,7 +412,7 @@ const SalariesPage = () => {
 
                       <div className="flex flex-col items-start gap-3 lg:items-end">
                         <div className="flex flex-wrap gap-2">
-                          <button onClick={() => handleOpenView(salary)} className="inline-flex items-center justify-center rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-900" type="button" aria-label="View salary">
+                          <button onClick={() => handleOpenView(salary)} className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 p-2 text-sky-600 transition hover:border-sky-300 hover:bg-sky-100 hover:text-sky-700" type="button" aria-label="View salary" title="View invoice">
                             <Eye className="h-4 w-4" />
                           </button>
                           {isAdmin() && (

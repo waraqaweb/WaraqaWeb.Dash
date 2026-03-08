@@ -19,9 +19,64 @@ const safeDate = (value) => {
 
 async function allocateNextSequence(type = 'guardian_invoice') {
   const key = sequenceKeyForType(type);
+  const Invoice = require('../models/Invoice');
+
+  const maxBySequenceRow = await Invoice.findOne({
+    type,
+    invoiceSequence: { $type: 'number' }
+  })
+    .select('invoiceSequence')
+    .sort({ invoiceSequence: -1 })
+    .lean();
+
+  const numberPrefixes = type === 'teacher_payment'
+    ? ['TCH', 'PAY']
+    : ['INV'];
+
+  const numberRegex = new RegExp(`^(?:${numberPrefixes.join('|')})-\\d{6}-(\\d+)$`, 'i');
+  const numberedRows = await Invoice.find({
+    type,
+    invoiceNumber: { $exists: true, $ne: null }
+  })
+    .select('invoiceNumber')
+    .lean();
+
+  let maxByNumber = 0;
+  for (const row of numberedRows || []) {
+    const raw = String(row?.invoiceNumber || '').trim();
+    const match = raw.match(numberRegex);
+    if (!match) continue;
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed) && parsed > maxByNumber) {
+      maxByNumber = parsed;
+    }
+  }
+
+  const maxExisting = Math.max(
+    safeNumber(maxBySequenceRow?.invoiceSequence, 0),
+    maxByNumber,
+    DEFAULT_SEQUENCE_START - 1
+  );
+
   const updated = await Setting.findOneAndUpdate(
     { key },
-    { $inc: { value: 1 } },
+    [
+      {
+        $set: {
+          value: {
+            $add: [
+              {
+                $max: [
+                  { $ifNull: ['$value', 0] },
+                  maxExisting
+                ]
+              },
+              1
+            ]
+          }
+        }
+      }
+    ],
     {
       upsert: true,
       new: true,
@@ -159,7 +214,7 @@ function buildInvoiceIdentifiers({
   const seqNumeric = safeNumber(sequence, DEFAULT_SEQUENCE_START);
   const seqDisplay = formatSequence(seqNumeric);
   const monthInfo = monthContext || computeMajorityMonth();
-  const accountPrefix = type === 'teacher_payment' ? 'PAY' : 'INV';
+  const accountPrefix = type === 'teacher_payment' ? 'TCH' : 'INV';
   const monthNumeric = monthInfo?.monthNumeric || '01';
   const year = monthInfo?.year || new Date().getUTCFullYear();
   const basePaypal = paypalInvoiceNumber && typeof paypalInvoiceNumber === 'string'

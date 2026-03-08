@@ -11,6 +11,7 @@ const SalaryEditModal = ({ salary, onClose, onUpdated }) => {
     navigate(-1);
   };
   const [form, setForm] = useState({
+    invoiceNumber: salary.invoiceNumber || "",
     bonus: salary.teacherPayment?.bonus || 0,
     bonusReason: salary.teacherPayment?.bonusReason || "",
     deductions: salary.teacherPayment?.deductions || 0,
@@ -32,6 +33,7 @@ const SalaryEditModal = ({ salary, onClose, onUpdated }) => {
     try {
       setLoading(true);
       await api.put(`/invoices/${salary._id}`, {
+        invoiceNumber: form.invoiceNumber || undefined,
         teacherPayment: {
           bonus: Number(form.bonus || 0),
           bonusReason: form.bonusReason,
@@ -118,7 +120,7 @@ const SalaryEditModal = ({ salary, onClose, onUpdated }) => {
           {/* Invoice Number (read-only) */}
           <div>
             <label className="block text-sm font-medium">Invoice #</label>
-            <input type="text" value={salary.invoiceNumber || ""} disabled className="border rounded px-2 py-1 w-full bg-gray-100" />
+            <input type="text" name="invoiceNumber" value={form.invoiceNumber} onChange={handleChange} className="border rounded px-2 py-1 w-full" placeholder="e.g. TCH-202603-1001" />
           </div>
 
           {/* Billing Period */}

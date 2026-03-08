@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "invoice page buttons"
+git commit -m "slaries page styling"
 git push origin main
 
 
@@ -24,7 +24,8 @@ git fetch origin main
 git reset --hard origin/main
 docker compose up -d --build frontend
 docker compose up -d --build backend
-
+./deploy/scripts/deploy.sh auto
+./deploy/scripts/deploy.sh all
 
 
 ssl setup on dashboard

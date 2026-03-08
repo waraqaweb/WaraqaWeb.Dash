@@ -620,10 +620,13 @@ router.get('/', authenticateToken, async (req, res) => {
       const matchedMonths = [...new Set(tokens.map((t) => monthMap[t]).filter(Boolean))];
       for (const monthNum of matchedMonths) {
         orConditions.push({ 'billingPeriod.month': monthNum });
+        orConditions.push({ $expr: { $eq: [{ $month: '$paidAt' }, monthNum] } });
       }
       const yearMatch = lowered.match(/\b(20\d{2})\b/);
       if (yearMatch) {
-        orConditions.push({ 'billingPeriod.year': Number(yearMatch[1]) });
+        const parsedYear = Number(yearMatch[1]);
+        orConditions.push({ 'billingPeriod.year': parsedYear });
+        orConditions.push({ $expr: { $eq: [{ $year: '$paidAt' }, parsedYear] } });
       }
 
       // Also match guardian/teacher/student names/emails by resolving user ids.
@@ -1007,6 +1010,7 @@ router.post("/teacherInvoices", authenticateToken, requireAdmin, async (req, res
       dueDate: dueDate || new Date(),
       notes: notes || `Draft salary invoice for ${teacher.firstName} ${teacher.lastName}`,
       type: "teacher_payment",
+      invoiceNumberManual: false,
       status: "draft", // ✅ Start as draft
       billingPeriod: {
         year,
@@ -1051,6 +1055,7 @@ router.post("/teacherInvoices/generate", authenticateToken, requireAdmin, async 
         dueDate: dueDate || new Date(),
         notes: notes || `Auto-generated salary for ${teacher.firstName} ${teacher.lastName}`,
         type: "teacher_payment",
+        invoiceNumberManual: false,
         status: "draft",
         billingPeriod: {
           year,
@@ -2005,6 +2010,39 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
         ? updateData.paypalInvoiceNumber.trim()
         : '';
       invoice.paypalInvoiceNumber = incomingPaypal || null;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updateData, 'invoiceNumber')) {
+      const incomingInvoiceNumber = typeof updateData.invoiceNumber === 'string'
+        ? updateData.invoiceNumber.trim().toUpperCase()
+        : '';
+
+      if (incomingInvoiceNumber) {
+        const existingDuplicate = await Invoice.findOne({
+          _id: { $ne: invoice._id },
+          invoiceNumber: incomingInvoiceNumber
+        }).select('_id').lean();
+
+        if (existingDuplicate) {
+          return res.status(409).json({
+            success: false,
+            message: 'Invoice number already exists'
+          });
+        }
+
+        invoice.invoiceNumber = incomingInvoiceNumber;
+        invoice.invoiceNumberManual = true;
+
+        const seqMatch = incomingInvoiceNumber.match(/(\d+)(?!.*\d)/);
+        const manualSequence = seqMatch ? Number(seqMatch[1]) : null;
+        if (Number.isFinite(manualSequence) && manualSequence > 0) {
+          invoice.invoiceSequence = manualSequence;
+          await ensureSequenceAtLeast(invoice.type || 'guardian_invoice', manualSequence);
+        }
+      } else {
+        invoice.invoiceNumber = null;
+        invoice.invoiceNumberManual = false;
+      }
     }
 
     // --- Teacher Payment

@@ -533,6 +533,11 @@ const userSchema = new mongoose.Schema({
       default: 0,
       min: -2,
       max: 2
+    },
+    timezoneCountry: {
+      type: String,
+      trim: true,
+      default: ''
     }
   },
 

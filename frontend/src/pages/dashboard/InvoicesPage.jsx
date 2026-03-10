@@ -14,7 +14,7 @@ import {
   XCircle,
   AlertTriangle,
   Send,
-  FileScan,
+  Eye,
   Plus,
   RefreshCw,
   FileText,
@@ -122,6 +122,25 @@ const InvoicesPage = ({ isActive = true }) => {
   const [downloadingDocId, setDownloadingDocId] = useState(null);
   const [copiedInvoiceId, setCopiedInvoiceId] = useState(null);
   const [toast, setToast] = useState({ show: false, type: '', message: '' });
+  const [bulkWhatsappOpen, setBulkWhatsappOpen] = useState(false);
+  const [bulkComposer, setBulkComposer] = useState({
+    greeting: 'Assalamu Alaykum {{guardianEpithet}} {{guardianFirstName}},',
+    bodyIntro: '',
+    bodyMessage1: 'This is your new invoice from Waraqa to pay:',
+    bodyLink1Type: 'paypal',
+    bodyMessage2: 'This is an updated list of the classes covered by this invoice:',
+    bodyLink2Type: 'invoice',
+    endMessage: 'Jazak Allah Khier',
+  });
+  const [bulkIncludeMarkSent, setBulkIncludeMarkSent] = useState(true);
+  const [bulkOpenWhatsappChats, setBulkOpenWhatsappChats] = useState(false);
+  const [bulkSending, setBulkSending] = useState(false);
+  const [bulkDraftRows, setBulkDraftRows] = useState([]);
+  const greetingEditorRef = useRef(null);
+  const bodyIntroEditorRef = useRef(null);
+  const bodyMessage1EditorRef = useRef(null);
+  const bodyMessage2EditorRef = useRef(null);
+  const endMessageEditorRef = useRef(null);
   const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const [createInvoiceOpen, setCreateInvoiceOpen] = useState(false);
   const [cardOverrides, setCardOverrides] = useState({});
@@ -462,7 +481,24 @@ const InvoicesPage = ({ isActive = true }) => {
 
       if (data.success) {
         if (data.invoicesCreated > 0) {
-          alert(`Successfully created ${data.invoicesCreated} new zero-hour invoices.`);
+          const debugRows = Array.isArray(data.createdDebug) ? data.createdDebug : [];
+          const debugMessage = debugRows.length
+            ? `\n\nDebug:\n${debugRows
+                .map((row, index) => {
+                  const start = row?.billingStart ? new Date(row.billingStart).toLocaleDateString() : '-';
+                  const end = row?.billingEnd ? new Date(row.billingEnd).toLocaleDateString() : '-';
+                  return `${index + 1}) ${row?.invoiceNumber || row?.invoiceSlug || row?.id || 'Invoice'} | ${start} -> ${end} | classes: ${row?.selectedClassCount ?? 0}`;
+                })
+                .join('\n')}`
+            : '';
+
+          if (debugRows.length) {
+            try {
+              console.table(debugRows);
+            } catch (_) {}
+          }
+
+          alert(`Successfully created ${data.invoicesCreated} new zero-hour invoices.${debugMessage}`);
           fetchInvoices();
           if (isAdmin()) fetchStats();
         } else {
@@ -680,21 +716,77 @@ const InvoicesPage = ({ isActive = true }) => {
     return digits.replace(/^0+/, '');
   };
 
-  const buildWhatsappMessage = (invoice, publicLink) => {
+  const buildWhatsappMessage = (invoice, publicLink, options = {}) => {
     const guardian = invoice?.guardian || {};
     const epithet = formatGuardianEpithet(guardian?.guardianInfo?.epithet);
     const name = String(guardian.firstName || '').trim() || 'Guardian';
     const greeting = `Assalamu Alaykum ${epithet ? `${epithet} ` : ''}${name},`;
     const referenceLink = String(invoice?.invoiceReferenceLink || '').trim();
+    const composer = options?.composer && typeof options.composer === 'object' ? options.composer : null;
 
-    return [
+    const classEntries = resolveInvoiceClassEntries(invoice);
+    const classItems = Array.isArray(classEntries?.items) ? classEntries.items : [];
+    const studentNames = Array.from(new Set(
+      classItems
+        .map((item) => String(item?.studentName || item?.student?.firstName || '').trim())
+        .filter(Boolean)
+    ));
+    const guardianIsStudent = String(guardian?.role || '').toLowerCase() === 'student' || Boolean(guardian?.isStudent);
+    const studentTargets = guardianIsStudent
+      ? 'you'
+      : (studentNames.length ? studentNames.join(', ') : `${epithet ? `${epithet} ` : ''}${name}`.trim());
+
+    const tokenMap = {
+      guardianName: name,
+      guardianFirstName: name,
+      guardianEpithet: epithet,
       greeting,
-      'This is your new invoice from Waraqa to pay:',
+      invoiceLink: referenceLink,
+      paypalLink: referenceLink,
+      publicLink,
+      studentTargets,
+      youOrGuardian: guardianIsStudent ? 'you' : `${epithet ? `${epithet} ` : ''}${name}`.trim(),
+    };
+
+    const applyTokens = (value) => {
+      let result = String(value || '');
+      Object.entries(tokenMap).forEach(([key, tokenValue]) => {
+        result = result.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'gi'), String(tokenValue || ''));
+      });
+      return result.replace(/\s{2,}/g, ' ').trim();
+    };
+
+    if (composer) {
+      const resolveSelectedLink = (type) => {
+        const normalizedType = String(type || '').toLowerCase();
+        if (normalizedType === 'invoice') return publicLink;
+        return referenceLink;
+      };
+
+      const lines = [
+        applyTokens(composer.greeting),
+        applyTokens(composer.bodyIntro),
+        applyTokens(composer.bodyMessage1),
+        resolveSelectedLink(composer.bodyLink1Type),
+        applyTokens(composer.bodyMessage2),
+        resolveSelectedLink(composer.bodyLink2Type),
+        applyTokens(composer.endMessage),
+      ];
+
+      return lines.filter((line) => String(line || '').trim()).join('\n\n');
+    }
+
+    const introLine = 'This is your new invoice from Waraqa to pay:';
+    const lines = [
+      greeting,
+      introLine,
       referenceLink,
       'and this is an updated list of the classes covered by this invoice.',
       publicLink,
       'Jazak Allah Khier'
-    ].join('\n');
+    ];
+
+    return lines.join('\n');
   };
 
   const handleQuickSend = async (invoice, method, force = false) => {
@@ -704,23 +796,45 @@ const InvoicesPage = ({ isActive = true }) => {
     setDeliveryLoading((prev) => ({ ...prev, [key]: true }));
     try {
       if (method === 'whatsapp') {
-        const phone = normalizeWhatsappPhone(invoice?.guardian?.phone);
+        let latestInvoice = invoice;
+        let phone = normalizeWhatsappPhone(latestInvoice?.guardian?.phone);
+        let referenceLink = String(latestInvoice?.invoiceReferenceLink || '').trim();
+        let invoiceSlug = String(latestInvoice?.invoiceSlug || '').trim();
+
+        if (!phone || !referenceLink || !invoiceSlug) {
+          try {
+            const { data: detailRes } = await api.get(`/invoices/${invoiceId}`);
+            const fetched = detailRes?.invoice || detailRes;
+            if (fetched && typeof fetched === 'object') {
+              latestInvoice = fetched;
+              setInvoices((prev) => (prev || []).map((inv) => (
+                String(inv?._id) === String(invoiceId) ? { ...inv, ...fetched } : inv
+              )));
+            }
+          } catch (detailErr) {
+            console.warn('Failed to refresh invoice before WhatsApp send', detailErr?.message || detailErr);
+          }
+
+          phone = normalizeWhatsappPhone(latestInvoice?.guardian?.phone);
+          referenceLink = String(latestInvoice?.invoiceReferenceLink || '').trim();
+          invoiceSlug = String(latestInvoice?.invoiceSlug || '').trim();
+        }
+
         if (!phone) {
           setToast({ show: true, type: 'error', message: 'Guardian phone is missing.' });
           return;
         }
-        const referenceLink = String(invoice?.invoiceReferenceLink || '').trim();
         if (!referenceLink) {
           setToast({ show: true, type: 'error', message: 'Add the invoice reference link before sending WhatsApp.' });
           return;
         }
-        if (!invoice?.invoiceSlug) {
+        if (!invoiceSlug) {
           setToast({ show: true, type: 'error', message: 'Invoice public link is not available yet.' });
           return;
         }
 
-        const publicLink = `${window.location.origin}/public/invoices/${invoice.invoiceSlug}`;
-        const message = buildWhatsappMessage(invoice, publicLink);
+        const publicLink = `${window.location.origin}/public/invoices/${invoiceSlug}`;
+        const message = buildWhatsappMessage(latestInvoice, publicLink);
         const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
         window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
 
@@ -1231,6 +1345,121 @@ const InvoicesPage = ({ isActive = true }) => {
     return list;
   }, [filteredInvoices, resolvedActiveTab]);
 
+  const bulkWhatsappCandidates = useMemo(() => {
+    return (displayedInvoices || []).map((invoice) => {
+      const phone = normalizeWhatsappPhone(invoice?.guardian?.phone);
+      const referenceLink = String(invoice?.invoiceReferenceLink || '').trim();
+      const invoiceSlug = String(invoice?.invoiceSlug || '').trim();
+      const publicLink = invoiceSlug ? `${window.location.origin}/public/invoices/${invoiceSlug}` : '';
+      const ready = Boolean(phone && referenceLink && invoiceSlug);
+      return {
+        invoice,
+        invoiceId: invoice?._id,
+        guardianName: `${invoice?.guardian?.firstName || ''} ${invoice?.guardian?.lastName || ''}`.trim() || 'Guardian',
+        phone,
+        referenceLink,
+        invoiceSlug,
+        publicLink,
+        ready
+      };
+    }).filter((row) => row.invoiceId);
+  }, [displayedInvoices]);
+
+  const handlePrepareBulkDrafts = useCallback(() => {
+    const rows = bulkWhatsappCandidates.map((row) => {
+      const message = buildWhatsappMessage(row.invoice, row.publicLink, { composer: bulkComposer });
+      return {
+        ...row,
+        message,
+      };
+    });
+    setBulkDraftRows(rows);
+    setToast({ show: true, type: 'success', message: `Prepared ${rows.length} draft messages.` });
+  }, [bulkWhatsappCandidates, buildWhatsappMessage, bulkComposer]);
+
+  const handleSendBulkWhatsapp = useCallback(async () => {
+    const rows = (bulkDraftRows.length ? bulkDraftRows : bulkWhatsappCandidates.map((row) => ({
+      ...row,
+      message: buildWhatsappMessage(row.invoice, row.publicLink, { composer: bulkComposer })
+    })));
+
+    const readyRows = rows.filter((row) => row.ready);
+    if (!readyRows.length) {
+      setToast({ show: true, type: 'error', message: 'No ready invoices to send. Please ensure phone, link, and public invoice link are available.' });
+      return;
+    }
+
+    setBulkSending(true);
+    let sentCount = 0;
+    let failedCount = 0;
+
+    try {
+      for (const row of readyRows) {
+        try {
+          if (bulkOpenWhatsappChats) {
+            const whatsappUrl = `https://wa.me/${row.phone}?text=${encodeURIComponent(row.message)}`;
+            window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+          }
+
+          if (bulkIncludeMarkSent) {
+            await api.post(`/invoices/${row.invoiceId}/send`, {
+              method: 'whatsapp',
+              force: true,
+              meta: {
+                referenceLink: row.referenceLink,
+                publicLink: row.publicLink,
+                phone: row.phone,
+                bulk: true
+              }
+            });
+          }
+
+          sentCount += 1;
+        } catch (rowErr) {
+          failedCount += 1;
+          console.warn('Bulk WhatsApp send failed for invoice', row.invoiceId, rowErr?.message || rowErr);
+        }
+      }
+
+      fetchInvoices();
+      if (isAdmin()) fetchStats();
+      setToast({
+        show: true,
+        type: failedCount ? 'error' : 'success',
+        message: failedCount
+          ? `Bulk send completed: ${sentCount} sent, ${failedCount} failed.`
+          : `Bulk send completed: ${sentCount} sent.`
+      });
+    } finally {
+      setBulkSending(false);
+    }
+  }, [bulkDraftRows, bulkWhatsappCandidates, buildWhatsappMessage, bulkComposer, bulkOpenWhatsappChats, bulkIncludeMarkSent, fetchInvoices, isAdmin, fetchStats]);
+
+  const insertComposerToken = useCallback((editorRef, key) => {
+    const token = `{{${key}}}`;
+    const node = editorRef?.current;
+    if (!node) return;
+
+    const value = String(node.value || '');
+    const start = Number(node.selectionStart ?? value.length);
+    const end = Number(node.selectionEnd ?? value.length);
+    const nextValue = `${value.slice(0, start)}${token}${value.slice(end)}`;
+
+    const stateKey = node.getAttribute('data-composer-key');
+    if (!stateKey) return;
+
+    setBulkComposer((prev) => ({ ...prev, [stateKey]: nextValue }));
+    requestAnimationFrame(() => {
+      try {
+        node.focus();
+        const caret = start + token.length;
+        node.setSelectionRange(caret, caret);
+      } catch (e) {
+        // ignore selection errors
+      }
+    });
+  }, []);
+
   useEffect(() => {
     const visible = (displayedInvoices || []).slice(0, itemsPerPage);
     if (!visible.length) return;
@@ -1412,7 +1641,7 @@ const InvoicesPage = ({ isActive = true }) => {
           ? {
               ...(inv.coverage || {}),
               maxHours: update.coverage.maxHours ?? inv.coverage?.maxHours,
-              endDate: update.coverage.customEndDate ?? inv.coverage?.endDate,
+              endDate: update.coverage.endDate ?? update.coverage.customEndDate ?? inv.coverage?.endDate,
               waiveTransferFee: update.coverage.waiveTransferFee
             }
           : inv.coverage;
@@ -1485,6 +1714,9 @@ const InvoicesPage = ({ isActive = true }) => {
     const info = getChannelInfo(invoice, channel);
     const key = `${invoice._id}-${channel}`;
     const isLoading = Boolean(deliveryLoading[key]);
+    const hasReferenceLink = String(invoice?.invoiceReferenceLink || '').trim().length > 0;
+    const missingWhatsappLink = channel === 'whatsapp' && !hasReferenceLink;
+    const isDisabled = isLoading || missingWhatsappLink;
     const isSent = info?.status === 'sent';
     const sentLabel = (() => {
       // derive a compact sent label like 'Email sent' from 'by Email'
@@ -1496,17 +1728,20 @@ const InvoicesPage = ({ isActive = true }) => {
     return (
       <button
         onClick={() => handleQuickSend(invoice, channel, isSent)}
-        disabled={isLoading}
-        className={`inline-flex h-9 w-9 items-center justify-center rounded-full border text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 ${
+        disabled={isDisabled}
+        className={`inline-flex h-10 w-10 items-center justify-center rounded-full text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 ${
+          isDisabled
+            ? 'cursor-not-allowed text-slate-300'
+            :
           isSent
-            ? 'border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+            ? 'text-emerald-600 hover:bg-slate-100'
             : channel === 'email'
-              ? 'border-blue-200 bg-blue-50 text-blue-600 hover:border-blue-300 hover:bg-blue-100 hover:text-blue-700'
-              : 'border-green-200 bg-green-50 text-green-600 hover:border-green-300 hover:bg-green-100 hover:text-green-700'
+              ? 'text-blue-600 hover:bg-slate-100'
+              : 'text-green-600 hover:bg-slate-100'
         }`}
         type="button"
         aria-label={isSent ? sentLabel : `Send ${label}`}
-        title={isSent ? sentLabel : `Send ${label}`}
+        title={missingWhatsappLink ? 'Add invoice reference link before sending WhatsApp' : (isSent ? sentLabel : `Send ${label}`)}
       >
         {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
       </button>
@@ -1523,34 +1758,34 @@ const InvoicesPage = ({ isActive = true }) => {
                 label: 'Monthly revenue',
                 value: formatCurrency(stats.monthlyRevenue || 0),
                 icon: DollarSign,
-                tone: 'border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-emerald-100/70 text-emerald-700'
+                tone: 'border-t-2 border-t-emerald-500 text-emerald-600'
               },
               {
                 label: 'Paid invoices',
                 value: stats.paidInvoices ?? '--',
                 icon: CheckCircle2,
-                tone: 'border-blue-200 bg-gradient-to-br from-blue-50 via-white to-blue-100/70 text-blue-700'
+                tone: 'border-t-2 border-t-blue-500 text-blue-600'
               },
               {
                 label: 'Pending review',
                 value: stats.pendingInvoices ?? '--',
                 icon: TimerReset,
-                tone: 'border-amber-200 bg-gradient-to-br from-amber-50 via-white to-amber-100/70 text-amber-700'
+                tone: 'border-t-2 border-t-amber-500 text-amber-600'
               },
               {
                 label: 'Zero-hour guardians',
                 value: stats.zeroHourStudents ?? '--',
                 icon: Users,
-                tone: 'border-violet-200 bg-gradient-to-br from-violet-50 via-white to-violet-100/70 text-violet-700'
+                tone: 'border-t-2 border-t-violet-500 text-violet-600'
               }
             ].map(({ label, value, icon: StatIcon, tone }) => (
               <div
                 key={label}
-                className={`rounded-2xl border p-4 shadow-sm ${tone}`}
+                className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${tone}`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/80 shadow-sm">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-50">
                     <StatIcon className="h-4 w-4" />
                   </span>
                 </div>
@@ -1601,6 +1836,17 @@ const InvoicesPage = ({ isActive = true }) => {
                 </button>
               ))}
             </div>
+            {isAdmin() && (
+              <button
+                type="button"
+                onClick={() => setBulkWhatsappOpen(true)}
+                className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50"
+                title="Prepare or send WhatsApp messages for all visible invoices"
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                Bulk WhatsApp
+              </button>
+            )}
           </div>
           {error && (
             <div className="mt-6 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-600">
@@ -1660,7 +1906,7 @@ const InvoicesPage = ({ isActive = true }) => {
                   >
                     <div className="flex flex-col gap-3 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="flex-1 space-y-3">
+                        <div className="min-w-0 flex-1 space-y-3">
                           <div className="flex flex-wrap items-center gap-3">
                             <Badge tone={statusTone} pill title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>
                               {getStatusIcon(invoice.status)}
@@ -1675,7 +1921,7 @@ const InvoicesPage = ({ isActive = true }) => {
                             )}
                           </div>
                           <div className="space-y-1.5 text-sm text-slate-600">
-                            <div className="flex items-center gap-4">
+                            <div className="flex flex-wrap items-center gap-3">
                               <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-slate-700">
                                 <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
                                   {getInitials(invoice.guardian?.firstName, invoice.guardian?.lastName)}
@@ -1702,7 +1948,7 @@ const InvoicesPage = ({ isActive = true }) => {
                                 </div>
                               </span>
                               
-                              <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-700">
+                              <span className="inline-flex items-center gap-x-2 gap-y-1 whitespace-nowrap text-sm text-slate-700">
                                 <span className="font-medium">{primaryLabel}: {formatCurrency(primaryAmount)}</span>
                                 <span className="hidden h-1 w-1 rounded-full bg-slate-300 sm:inline-block" />
                                 <span>Hours: <span className="font-medium">{invoiceHours.toFixed(2)}</span></span>
@@ -1719,13 +1965,13 @@ const InvoicesPage = ({ isActive = true }) => {
                           </div>
                         </div>
 
-                        <div className="flex flex-col items-start gap-3 lg:items-end">
-                          <div className="flex flex-wrap gap-2">
+                        <div className="shrink-0 flex flex-col items-start gap-3 lg:items-end">
+                          <div className="flex flex-nowrap gap-2">
                             {renderChannelButton(invoice, 'email', 'Email', Mail)}
                             {renderChannelButton(invoice, 'whatsapp', 'WhatsApp', MessageCircle)}
                             <button
                               onClick={() => handleDownloadDocx(invoice._id, invoice.invoiceName || invoice.invoiceNumber)}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-indigo-200 bg-indigo-50 text-indigo-600 transition hover:border-indigo-300 hover:bg-indigo-100 hover:text-indigo-700"
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-full text-indigo-600 transition hover:bg-slate-100 hover:text-indigo-700"
                               type="button"
                               title="Download DOCX"
                               aria-label="Download DOCX"
@@ -1738,22 +1984,22 @@ const InvoicesPage = ({ isActive = true }) => {
                             </button>
                           </div>
 
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-nowrap gap-2">
                             <button
                               onClick={() => openModal('view', invoice)}
                               onMouseEnter={() => handleInvoiceActionHover(invoice)}
-                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-600 transition hover:border-sky-300 hover:bg-sky-100 hover:text-sky-700"
+                              className="inline-flex h-11 w-11 items-center justify-center rounded-full text-sky-600 transition hover:bg-slate-100 hover:text-sky-700"
                               type="button"
                               title="Preview invoice"
                             >
-                              <FileScan className="h-5 w-5" />
+                              <Eye className="h-5 w-5" />
                             </button>
                             {isAdmin() && (
                               <>
                                 <button
                                   onClick={() => openModal('payment', invoice)}
                                   onMouseEnter={() => handleInvoiceActionHover(invoice)}
-                                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-700"
+                                  className="inline-flex h-11 w-11 items-center justify-center rounded-full text-emerald-600 transition hover:bg-slate-100 hover:text-emerald-700"
                                   type="button"
                                   title="Record payment"
                                 >
@@ -1761,10 +2007,10 @@ const InvoicesPage = ({ isActive = true }) => {
                                 </button>
                                 <button
                                   onClick={() => handleCopyShareLink(invoice)}
-                                  className={`inline-flex items-center justify-center rounded-full border p-2 transition ${
+                                  className={`inline-flex h-11 w-11 items-center justify-center rounded-full transition ${
                                     copiedInvoiceId === invoice._id
-                                      ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
-                                      : 'border-violet-200 bg-violet-50 text-violet-600 hover:border-violet-300 hover:bg-violet-100 hover:text-violet-700'
+                                      ? 'text-emerald-600 bg-slate-100'
+                                      : 'text-violet-600 hover:bg-slate-100 hover:text-violet-700'
                                   }`}
                                   type="button"
                                   aria-label="Copy shareable link"
@@ -1774,7 +2020,7 @@ const InvoicesPage = ({ isActive = true }) => {
                                 </button>
                                 <button
                                   onClick={() => handleDeleteInvoice(invoice)}
-                                  className="inline-flex items-center justify-center rounded-full border border-rose-100 p-2 text-rose-500 transition hover:border-rose-200 hover:text-rose-700"
+                                  className="inline-flex h-11 w-11 items-center justify-center rounded-full text-rose-500 transition hover:bg-slate-100 hover:text-rose-700"
                                   type="button"
                                 >
                                   <XCircle className="h-4 w-4" />
@@ -1782,7 +2028,7 @@ const InvoicesPage = ({ isActive = true }) => {
                                 {invoice.status === 'sent' && (
                                   <button
                                     onClick={() => handleCancelInvoice(invoice._id)}
-                                    className="inline-flex items-center justify-center rounded-full border border-amber-100 p-2 text-amber-500 transition hover:border-amber-200 hover:text-amber-700"
+                                    className="inline-flex h-11 w-11 items-center justify-center rounded-full text-amber-500 transition hover:bg-slate-100 hover:text-amber-700"
                                     type="button"
                                   >
                                     <XCircle className="h-4 w-4" />
@@ -1791,7 +2037,7 @@ const InvoicesPage = ({ isActive = true }) => {
                                 {['paid', 'sent', 'overdue'].includes(invoice.status) && (
                                   <button
                                     onClick={() => openModal('refund', invoice)}
-                                    className="inline-flex items-center justify-center rounded-full border border-violet-100 p-2 text-violet-500 transition hover:border-violet-200 hover:text-violet-700"
+                                    className="inline-flex h-11 w-11 items-center justify-center rounded-full text-violet-500 transition hover:bg-slate-100 hover:text-violet-700"
                                     type="button"
                                   >
                                     <RefreshCw className="h-4 w-4" />
@@ -1802,10 +2048,10 @@ const InvoicesPage = ({ isActive = true }) => {
                             {!isAdmin() && (
                               <button
                                 onClick={() => handleCopyShareLink(invoice)}
-                                className={`inline-flex items-center justify-center rounded-full border p-2 transition ${
+                                className={`inline-flex h-11 w-11 items-center justify-center rounded-full transition ${
                                   copiedInvoiceId === invoice._id
-                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
-                                    : 'border-violet-200 bg-violet-50 text-violet-600 hover:border-violet-300 hover:bg-violet-100 hover:text-violet-700'
+                                    ? 'text-emerald-600 bg-slate-100'
+                                    : 'text-violet-600 hover:bg-slate-100 hover:text-violet-700'
                                 }`}
                                 type="button"
                                 aria-label="Copy shareable link"
@@ -1816,15 +2062,12 @@ const InvoicesPage = ({ isActive = true }) => {
                             )}
                             <button
                               onClick={() => toggleExpanded(invoice._id)}
-                              className="inline-flex items-center justify-center rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                              className="inline-flex items-center justify-center rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
                               type="button"
                             >
                               {expandedInvoice === invoice._id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                             </button>
                           </div>
-                          {copiedInvoiceId === invoice._id && (
-                            <span className="text-[11px] font-medium text-emerald-600">Link copied</span>
-                          )}
                         </div>
                       </div>
 
@@ -1963,6 +2206,173 @@ const InvoicesPage = ({ isActive = true }) => {
           message={toast.message || ''}
           onClose={() => setToast({ show: false, type: '', message: '' })}
         />
+      )}
+      {bulkWhatsappOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-3xl border border-indigo-100 bg-gradient-to-br from-white via-indigo-50/30 to-emerald-50/30 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-indigo-100 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Bulk WhatsApp for visible invoices</h3>
+                <p className="text-xs text-slate-500">Build one smart template with tags, then apply it to all ready invoices.</p>
+              </div>
+              <button type="button" onClick={() => setBulkWhatsappOpen(false)} className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:text-slate-900">Close</button>
+            </div>
+            <div className="grid gap-4 overflow-y-auto px-6 py-5 lg:grid-cols-[1.2fr_0.8fr]">
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-sm">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-indigo-600">1) Greeting</div>
+                  <textarea
+                    ref={greetingEditorRef}
+                    data-composer-key="greeting"
+                    value={bulkComposer.greeting}
+                    onChange={(e) => setBulkComposer((prev) => ({ ...prev, greeting: e.target.value }))}
+                    rows={2}
+                    className="w-full rounded-xl border border-indigo-100 px-3 py-2 text-sm focus:border-indigo-300 focus:outline-none"
+                    placeholder="Greeting line"
+                  />
+                </div>
+
+                <div className="rounded-2xl border border-emerald-100 bg-white/90 p-4 shadow-sm">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-600">2) Body</div>
+                  <label className="text-xs text-slate-600">Extra message (optional)</label>
+                  <textarea
+                    ref={bodyIntroEditorRef}
+                    data-composer-key="bodyIntro"
+                    value={bulkComposer.bodyIntro}
+                    onChange={(e) => setBulkComposer((prev) => ({ ...prev, bodyIntro: e.target.value }))}
+                    rows={2}
+                    className="mt-1 w-full rounded-xl border border-emerald-100 px-3 py-2 text-sm focus:border-emerald-300 focus:outline-none"
+                    placeholder="Optional extra message"
+                  />
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-3">
+                      <label className="text-xs text-slate-600">Message block 1</label>
+                      <textarea
+                        ref={bodyMessage1EditorRef}
+                        data-composer-key="bodyMessage1"
+                        value={bulkComposer.bodyMessage1}
+                        onChange={(e) => setBulkComposer((prev) => ({ ...prev, bodyMessage1: e.target.value }))}
+                        rows={2}
+                        className="mt-1 w-full rounded-lg border border-emerald-100 px-3 py-2 text-sm focus:border-emerald-300 focus:outline-none"
+                      />
+                      <label className="mt-2 block text-xs text-slate-600">Link 1 type</label>
+                      <select
+                        value={bulkComposer.bodyLink1Type}
+                        onChange={(e) => setBulkComposer((prev) => ({ ...prev, bodyLink1Type: e.target.value }))}
+                        className="mt-1 w-full rounded-lg border border-emerald-100 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="paypal">PayPal link</option>
+                        <option value="invoice">Invoice link</option>
+                      </select>
+                    </div>
+
+                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-3">
+                      <label className="text-xs text-slate-600">Message block 2</label>
+                      <textarea
+                        ref={bodyMessage2EditorRef}
+                        data-composer-key="bodyMessage2"
+                        value={bulkComposer.bodyMessage2}
+                        onChange={(e) => setBulkComposer((prev) => ({ ...prev, bodyMessage2: e.target.value }))}
+                        rows={2}
+                        className="mt-1 w-full rounded-lg border border-emerald-100 px-3 py-2 text-sm focus:border-emerald-300 focus:outline-none"
+                      />
+                      <label className="mt-2 block text-xs text-slate-600">Link 2 type</label>
+                      <select
+                        value={bulkComposer.bodyLink2Type}
+                        onChange={(e) => setBulkComposer((prev) => ({ ...prev, bodyLink2Type: e.target.value }))}
+                        className="mt-1 w-full rounded-lg border border-emerald-100 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="paypal">PayPal link</option>
+                        <option value="invoice">Invoice link</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-violet-100 bg-white/90 p-4 shadow-sm">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-violet-600">3) End message</div>
+                  <textarea
+                    ref={endMessageEditorRef}
+                    data-composer-key="endMessage"
+                    value={bulkComposer.endMessage}
+                    onChange={(e) => setBulkComposer((prev) => ({ ...prev, endMessage: e.target.value }))}
+                    rows={2}
+                    className="w-full rounded-xl border border-violet-100 px-3 py-2 text-sm focus:border-violet-300 focus:outline-none"
+                    placeholder="Closing message"
+                  />
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+                  <p className="text-xs font-medium text-slate-600">Send options</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-4 text-sm">
+                    <label className="inline-flex items-center gap-2">
+                      <input type="checkbox" checked={bulkIncludeMarkSent} onChange={(e) => setBulkIncludeMarkSent(e.target.checked)} />
+                      Mark invoices as sent
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <input type="checkbox" checked={bulkOpenWhatsappChats} onChange={(e) => setBulkOpenWhatsappChats(e.target.checked)} />
+                      Open WhatsApp chats
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-amber-100 bg-white/95 p-4 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">Variable tags</p>
+                  <p className="mt-1 text-xs text-slate-500">Insert variables into any editor field as text tags.</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => insertComposerToken(greetingEditorRef, 'guardianEpithet')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{guardianEpithet}}</button>
+                    <button type="button" onClick={() => insertComposerToken(greetingEditorRef, 'guardianFirstName')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{guardianFirstName}}</button>
+                    <button type="button" onClick={() => insertComposerToken(bodyIntroEditorRef, 'studentTargets')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{studentTargets}}</button>
+                    <button type="button" onClick={() => insertComposerToken(bodyIntroEditorRef, 'youOrGuardian')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{youOrGuardian}}</button>
+                    <button type="button" onClick={() => insertComposerToken(bodyMessage1EditorRef, 'paypalLink')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{paypalLink}}</button>
+                    <button type="button" onClick={() => insertComposerToken(bodyMessage2EditorRef, 'publicLink')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{publicLink}}</button>
+                    <button type="button" onClick={() => insertComposerToken(endMessageEditorRef, 'guardianFirstName')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{guardianFirstName}}</button>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white/95">
+                  <div className="border-b border-slate-200 px-3 py-2 text-xs text-slate-600">
+                    Visible invoices: {bulkWhatsappCandidates.length} • Ready: {bulkWhatsappCandidates.filter((r) => r.ready).length}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {bulkWhatsappCandidates.map((row) => (
+                      <div key={row.invoiceId} className="flex items-center justify-between gap-3 border-b border-slate-100 px-3 py-2 text-xs">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-slate-800">{row.guardianName} • {row.invoice?.invoiceNumber || row.invoice?.invoiceName || row.invoiceId}</p>
+                          <p className="truncate text-slate-500">{row.referenceLink || 'No PayPal link'}</p>
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${row.ready ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                          {row.ready ? 'Ready' : 'Missing data'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-indigo-100 bg-white/80 px-6 py-4">
+              <button
+                type="button"
+                onClick={handlePrepareBulkDrafts}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                disabled={bulkSending}
+              >
+                Prepare drafts
+              </button>
+              <button
+                type="button"
+                onClick={handleSendBulkWhatsapp}
+                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                disabled={bulkSending}
+              >
+                {bulkSending ? 'Sending…' : 'Send to all ready guardians'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {/* Floating action buttons (bottom-right) */}
       {isAdmin() && (

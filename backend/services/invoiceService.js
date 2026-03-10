@@ -832,10 +832,27 @@ class InvoiceService {
       }
 
       console.log(`🎉 Finished. Total invoices created: ${invoicesCreated.length}`);
+      const createdDebug = invoicesCreated.map((invoiceDoc) => {
+        const linkedClassCount = Array.isArray(invoiceDoc?.items)
+          ? invoiceDoc.items.filter((it) => Boolean(it?.class || it?.lessonId)).length
+          : 0;
+        return {
+          id: invoiceDoc?._id ? String(invoiceDoc._id) : null,
+          invoiceNumber: invoiceDoc?.invoiceNumber || null,
+          invoiceSlug: invoiceDoc?.invoiceSlug || null,
+          generationSource: invoiceDoc?.generationSource || null,
+          billingStart: invoiceDoc?.billingPeriod?.startDate || null,
+          billingEnd: invoiceDoc?.billingPeriod?.endDate || null,
+          selectedClassCount: linkedClassCount,
+          itemCount: Array.isArray(invoiceDoc?.items) ? invoiceDoc.items.length : 0,
+        };
+      });
+
       return {
         success: true,
         invoicesCreated: invoicesCreated.length,
         invoices: invoicesCreated,
+        createdDebug,
         guardiansConsidered: guardiansForOnZero.length,
         zeroHourGuardians: zeroHourGuardians.length
       };
@@ -1166,7 +1183,7 @@ class InvoiceService {
    */
   static async createZeroHourInvoice(guardian, zeroHourStudents = [], opts = {}) {
     try {
-  const now = new Date();
+      const now = new Date();
       const month = now.getMonth() + 1;
       const year = now.getFullYear();
       const defaultPackageHours = guardian.guardianInfo?.defaultPackageHours || 10;
@@ -1176,6 +1193,7 @@ class InvoiceService {
       const triggerSource = opts.triggeredBy === 'auto-payg' ? 'auto-payg' : 'manual';
       // If caller requested to invoice only due hours (guardian has negative balance)
       const dueOnlyHours = Number.isFinite(Number(opts.dueOnlyHours)) && Number(opts.dueOnlyHours) > 0 ? Number(opts.dueOnlyHours) : 0;
+      const isAutoPayg = triggerSource === 'auto-payg';
       let items = [];
       if (dueOnlyHours > 0) {
         const amount = Math.round((dueOnlyHours * defaultRate) * 100) / 100;
@@ -1192,7 +1210,7 @@ class InvoiceService {
           amount,
           attended: false
         });
-      } else {
+      } else if (!isAutoPayg) {
         items = zeroHourStudents.map(s => {
           const amount = defaultPackageHours * defaultRate;
           return {
@@ -1214,7 +1232,7 @@ class InvoiceService {
       const shouldForceGuardianTopUp = opts.reason === 'threshold_followup';
 
       // Guardian-level top-up if guardian totalHours <= 0 and no students listed
-      if (!dueOnlyHours && (((guardian.guardianInfo?.totalHours || 0) <= 0 && zeroHourStudents.length === 0) || (shouldForceGuardianTopUp && zeroHourStudents.length === 0))) {
+      if (!dueOnlyHours && !isAutoPayg && (((guardian.guardianInfo?.totalHours || 0) <= 0 && zeroHourStudents.length === 0) || (shouldForceGuardianTopUp && zeroHourStudents.length === 0))) {
         const amount = defaultPackageHours * defaultRate;
         items.push({
           lessonId: null,
@@ -1238,14 +1256,7 @@ class InvoiceService {
       let billingStart = opts.billingPeriodStart instanceof Date ? opts.billingPeriodStart : now;
       let billingEnd = opts.billingPeriodEnd instanceof Date ? opts.billingPeriodEnd : getFixedWindowEndExclusive(billingStart, 30);
 
-      const resolvedCoverageEnd = (() => {
-        const explicitEnd = ensureDate(opts.billingPeriodEnd || billingEnd);
-        if (explicitEnd) {
-          explicitEnd.setHours(23, 59, 59, 999);
-          return explicitEnd;
-        }
-        return getFixedWindowEndInclusive(billingStart, 30);
-      })();
+      let resolvedCoverageEnd = null;
 
       // Predictive coverage: Find ALL unpaid classes first to determine billing start date
       // from the earliest unpaid class, then include classes until that month boundary
@@ -1383,6 +1394,22 @@ class InvoiceService {
       } catch (predictErr) {
         console.warn('Predictive coverage fallback (using top-up items):', predictErr && predictErr.message);
       }
+
+      // For auto-payg zero-trigger invoices, only create invoices from real due classes (or explicit dueOnlyHours).
+      // Do not create empty fallback invoices anchored to "today".
+      if (isAutoPayg && dueOnlyHours <= 0 && (!Array.isArray(items) || items.length === 0)) {
+        console.log(`⏭️ [Zero-Hour PAYG Invoice] Skipping ${guardian.firstName} ${guardian.lastName} - no unpaid classes found in derived 30-day window.`);
+        return null;
+      }
+
+      resolvedCoverageEnd = (() => {
+        const explicitEnd = ensureDate(opts.billingPeriodEnd || billingEnd);
+        if (explicitEnd) {
+          explicitEnd.setHours(23, 59, 59, 999);
+          return explicitEnd;
+        }
+        return getFixedWindowEndInclusive(billingStart, 30);
+      })();
 
       const invoice = new Invoice({
         type: 'guardian_invoice',

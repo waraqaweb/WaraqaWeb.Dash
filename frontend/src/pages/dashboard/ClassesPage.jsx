@@ -687,9 +687,14 @@ const ClassesPage = ({ isActive = true }) => {
     return { id, label, haystack };
   }, []);
 
-  const normalizedSearchTerm = useMemo(
-    () => (searchTerm || "").trim().toLowerCase(),
+  const rawSearchTermLower = useMemo(
+    () => String(searchTerm || "").toLowerCase(),
     [searchTerm]
+  );
+
+  const normalizedSearchTerm = useMemo(
+    () => rawSearchTermLower.trim(),
+    [rawSearchTermLower]
   );
   const [isSearchPulse, setIsSearchPulse] = useState(false);
 
@@ -775,24 +780,53 @@ const ClassesPage = ({ isActive = true }) => {
 
     if (normalizedSearchTerm) {
       const searchParts = normalizedSearchTerm.split(/\s+/).filter(Boolean);
+      const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const matchesNameToken = (value = '', token = '') => {
+        if (!value || !token) return false;
+        const regex = new RegExp(`(^|\\s)${escapeRegExp(token)}`, 'i');
+        return regex.test(String(value));
+      };
+
       working = working.filter((cls) => {
         const studentName = String(cls?.student?.studentName || '').toLowerCase().trim();
+        const studentParts = studentName.split(/\s+/).filter(Boolean);
+        const studentFirst = studentParts[0] || '';
+        const studentLast = studentParts.length > 1 ? studentParts[studentParts.length - 1] : '';
+
         const teacherFirst = String(cls?.teacher?.firstName || '').toLowerCase().trim();
         const teacherLast = String(cls?.teacher?.lastName || '').toLowerCase().trim();
         const teacherName = `${teacherFirst} ${teacherLast}`.trim();
 
-        const haystack = [
+        const guardianObj = cls?.student?.guardianId;
+        const guardianFirst = String(guardianObj?.firstName || '').toLowerCase().trim();
+        const guardianLast = String(guardianObj?.lastName || '').toLowerCase().trim();
+        const guardianName = `${guardianFirst} ${guardianLast}`.trim() || String(cls?.student?.guardianName || '').toLowerCase().trim();
+
+        const nameValues = [
           studentName,
+          studentFirst,
+          studentLast,
           teacherFirst,
           teacherLast,
           teacherName,
+          guardianFirst,
+          guardianLast,
+          guardianName,
+        ].filter(Boolean);
+
+        const haystack = [
           String(cls?.subject || '').toLowerCase(),
           String(cls?.title || '').toLowerCase(),
           String(cls?.description || '').toLowerCase(),
           String(cls?.classCode || '').toLowerCase(),
+          ...nameValues,
         ].filter(Boolean);
 
-        return searchParts.every((part) => haystack.some((value) => value.includes(part)));
+        return searchParts.every((part) => {
+          const matchedByName = nameValues.some((value) => matchesNameToken(value, part));
+          if (matchedByName) return true;
+          return haystack.some((value) => value.includes(part));
+        });
       });
     }
 

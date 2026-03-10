@@ -75,6 +75,7 @@ const INVOICE_LIST_FIELDS = [
   'invoiceName',
   'invoiceSlug',
   'paypalInvoiceNumber',
+  'invoiceReferenceLink',
   'status',
   'type',
   'billingType',

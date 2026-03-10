@@ -38,6 +38,7 @@ import {
   Bar,
 } from 'recharts';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
+import { getHomepageAnnouncementContainerClass, getHomepageAnnouncementTextClass } from '../../utils/homepageAnnouncement';
 
 const formatClassDate = (d) => {
   if (!d) return '—';
@@ -435,6 +436,16 @@ const DashboardHome = ({ isActive = true }) => {
       lanterns: { count: 3, scale: 0.8 },
     },
   });
+  const [homepageAnnouncement, setHomepageAnnouncement] = useState({
+    message: '',
+    fontSize: 'text-sm',
+    fontWeight: 'font-medium',
+    italic: false,
+    align: 'left',
+    tone: 'default',
+    backgroundColor: 'card',
+    borderColor: 'default',
+  });
 
   const userRole = user?.role;
 
@@ -553,6 +564,25 @@ const DashboardHome = ({ isActive = true }) => {
             offsetY: Number(value.offsetY || 0),
             items: value.items || undefined,
           });
+        }
+      })
+      .catch(() => {
+        // keep defaults
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .get('/settings/homepage-announcement')
+      .then((res) => {
+        if (!active) return;
+        const value = res?.data?.setting?.value;
+        if (value && typeof value === 'object') {
+          setHomepageAnnouncement((prev) => ({ ...prev, ...value }));
         }
       })
       .catch(() => {
@@ -1928,6 +1958,20 @@ const DashboardHome = ({ isActive = true }) => {
   }
 
   // ----- Final render (role-based) -----
+  const announcementMessage = String(homepageAnnouncement?.message || '').trim();
+  const announcementContainerClass = getHomepageAnnouncementContainerClass({
+    tone: homepageAnnouncement?.tone,
+    align: homepageAnnouncement?.align,
+    backgroundColor: homepageAnnouncement?.backgroundColor,
+    borderColor: homepageAnnouncement?.borderColor,
+    baseClassName: 'mb-4 rounded-xl border px-4 py-3',
+  });
+  const announcementTextClass = getHomepageAnnouncementTextClass({
+    fontSize: homepageAnnouncement?.fontSize,
+    fontWeight: homepageAnnouncement?.fontWeight,
+    italic: homepageAnnouncement?.italic,
+  });
+
   return (
     <div className="p-3 sm:p-4">
       <DashboardDecoration
@@ -1937,6 +1981,13 @@ const DashboardHome = ({ isActive = true }) => {
         hoverActive={true}
         items={decorationConfig.items}
       />
+      {announcementMessage && (
+        <div className={announcementContainerClass}>
+          <p className={announcementTextClass}>
+            {announcementMessage}
+          </p>
+        </div>
+      )}
       {latestFeedback && (
         <div className="mb-6 rounded-2xl border border-border bg-card p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">

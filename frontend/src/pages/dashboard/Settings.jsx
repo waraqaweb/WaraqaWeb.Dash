@@ -14,6 +14,7 @@ import {
   requestBrowserNotificationPermission,
   setNotificationPreferences,
 } from '../../utils/notificationPreferences';
+import { getHomepageAnnouncementContainerClass, getHomepageAnnouncementTextClass } from '../../utils/homepageAnnouncement';
 
 const parseLinesOrComma = (text) => {
   if (!text) return [];
@@ -59,6 +60,47 @@ const formatBytes = (bytes = 0) => {
   return `${value.toFixed(value >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
 };
 
+const SETTINGS_SECTION_STORAGE_KEY = 'waraqa.settings.activeSection.v1';
+const BRANDING_TAB_STORAGE_KEY = 'waraqa.settings.brandingTab.v1';
+const WHATSAPP_DRAFT_STORAGE_PREFIX = 'waraqa.settings.whatsappDraft.v1';
+
+const normalizeWhatsappPhone = (value) => String(value || '').replace(/\D+/g, '');
+
+const normalizeWhatsappPhoneWithCountryCode = (value) => {
+  const digits = normalizeWhatsappPhone(value);
+  if (!digits) return '';
+  if (digits.startsWith('00')) return digits.slice(2);
+  return digits;
+};
+
+const validateWhatsappPhone = (value) => {
+  const normalized = normalizeWhatsappPhoneWithCountryCode(value);
+  if (!normalized) {
+    return { ok: false, normalized, reason: 'Missing number' };
+  }
+  if (!/^[1-9][0-9]{7,14}$/.test(normalized)) {
+    return {
+      ok: false,
+      normalized,
+      reason: 'Invalid format (must include country code and digits only)',
+    };
+  }
+  return { ok: true, normalized, reason: null };
+};
+
+const interpolateWhatsappTemplate = (template, recipient) => {
+  const values = {
+    firstName: recipient?.firstName || '',
+    lastName: recipient?.lastName || '',
+    fullName: `${recipient?.firstName || ''} ${recipient?.lastName || ''}`.trim(),
+    epithet: recipient?.epithet || '',
+    timezone: recipient?.timezone || '',
+    country: recipient?.country || '',
+  };
+
+  return String(template || '').replace(/\{\{\s*(firstName|lastName|fullName|epithet|timezone|country)\s*\}\}/g, (_, key) => values[key] || '');
+};
+
 const Settings = () => {
   const { user, socket } = useAuth();
 
@@ -67,7 +109,13 @@ const Settings = () => {
 
   // Compact/condensed layout toggle (defaults to condensed for dense Google-like UI)
   const [condensed, setCondensed] = useState(true);
-  const [activeSection, setActiveSection] = useState('general');
+  const [activeSection, setActiveSection] = useState(() => {
+    try {
+      return localStorage.getItem(SETTINGS_SECTION_STORAGE_KEY) || 'general';
+    } catch (e) {
+      return 'general';
+    }
+  });
   const [firstClassWindowHours, setFirstClassWindowHours] = useState(24);
   const [savingWindow, setSavingWindow] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -92,6 +140,17 @@ const Settings = () => {
     lanterns: { count: 3, scale: 0.8 },
   });
   const [savingDashboardDecoration, setSavingDashboardDecoration] = useState(false);
+  const [homepageAnnouncement, setHomepageAnnouncement] = useState({
+    message: '',
+    fontSize: 'text-sm',
+    fontWeight: 'font-medium',
+    italic: false,
+    align: 'left',
+    tone: 'default',
+    backgroundColor: 'card',
+    borderColor: 'default',
+  });
+  const [savingHomepageAnnouncement, setSavingHomepageAnnouncement] = useState(false);
   const [meetingFollowupPrompts, setMeetingFollowupPrompts] = useState({
     enabled: true,
     guardian: { enabled: true, cadenceDays: 30, lookbackDays: 30, triggerAt: null },
@@ -228,6 +287,32 @@ const Settings = () => {
       }
     };
     fetchDashboardDecoration();
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchHomepageAnnouncement = async () => {
+      try {
+        const cacheKey = makeCacheKey('settings:homepageAnnouncement');
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          const value = cached.value.value || cached.value;
+          if (value && typeof value === 'object') {
+            setHomepageAnnouncement((prev) => ({ ...prev, ...value }));
+          }
+          if (cached.ageMs < 60_000) return;
+        }
+        const res = await api.get('/settings/homepage-announcement');
+        const value = res?.data?.setting?.value || null;
+        if (value && typeof value === 'object') {
+          setHomepageAnnouncement((prev) => ({ ...prev, ...value }));
+          writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+        }
+      } catch (err) {
+        // keep defaults
+      }
+    };
+    fetchHomepageAnnouncement();
   }, [user?.role]);
 
   useEffect(() => {
@@ -377,6 +462,35 @@ const Settings = () => {
   const [branding, setBranding] = useState({ logo: null, title: 'Waraqa', slogan: '' });
   const [logoFile, setLogoFile] = useState(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [brandingTab, setBrandingTab] = useState(() => {
+    try {
+      return localStorage.getItem(BRANDING_TAB_STORAGE_KEY) || 'branding';
+    } catch (e) {
+      return 'branding';
+    }
+  });
+
+  const [waAudience, setWaAudience] = useState('active_guardians');
+  const [waTimezoneFilter, setWaTimezoneFilter] = useState('');
+  const [waCountryFilter, setWaCountryFilter] = useState('');
+  const [waRecipients, setWaRecipients] = useState([]);
+  const [waRecipientOptions, setWaRecipientOptions] = useState({ guardianTimezones: [], guardianCountries: [] });
+  const [waLoadingRecipients, setWaLoadingRecipients] = useState(false);
+  const [waSending, setWaSending] = useState(false);
+  const [waRetryingFailed, setWaRetryingFailed] = useState(false);
+  const [waSendProgress, setWaSendProgress] = useState(null);
+  const [waSelectedRecipientIds, setWaSelectedRecipientIds] = useState([]);
+  const [waPhoneEdits, setWaPhoneEdits] = useState({});
+  const [waSavingPhoneId, setWaSavingPhoneId] = useState(null);
+  const [waLastSendReport, setWaLastSendReport] = useState(null);
+  const [waMessageDraft, setWaMessageDraft] = useState({
+    welcome: 'Assalamu Alaikum',
+    body: '',
+    regards: 'Jazak Allah Khair',
+    imageUrl: '',
+  });
+  const [waImageFile, setWaImageFile] = useState(null);
+  const [waUploadingImage, setWaUploadingImage] = useState(false);
   const [toast, setToast] = useState(null);
 
   // Maintenance (admin)
@@ -403,6 +517,19 @@ const Settings = () => {
   const [topicsActiveSubject, setTopicsActiveSubject] = useState('');
   const [quickAddSubjects, setQuickAddSubjects] = useState('');
   const [quickAddLevels, setQuickAddLevels] = useState('');
+
+  const homepageAnnouncementPreviewContainerClass = getHomepageAnnouncementContainerClass({
+    tone: homepageAnnouncement?.tone,
+    align: homepageAnnouncement?.align,
+    backgroundColor: homepageAnnouncement?.backgroundColor,
+    borderColor: homepageAnnouncement?.borderColor,
+    baseClassName: 'mt-2 rounded-xl border px-4 py-3',
+  });
+  const homepageAnnouncementPreviewTextClass = getHomepageAnnouncementTextClass({
+    fontSize: homepageAnnouncement?.fontSize,
+    fontWeight: homepageAnnouncement?.fontWeight,
+    italic: homepageAnnouncement?.italic,
+  });
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
@@ -486,6 +613,98 @@ const Settings = () => {
     setActiveSection('general');
   }, [user?.role]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_SECTION_STORAGE_KEY, activeSection);
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [activeSection]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(BRANDING_TAB_STORAGE_KEY, brandingTab);
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [brandingTab]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin' || !user?._id) return;
+    try {
+      const raw = localStorage.getItem(`${WHATSAPP_DRAFT_STORAGE_PREFIX}:${user._id}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.messageDraft && typeof parsed.messageDraft === 'object') {
+          setWaMessageDraft((prev) => ({ ...prev, ...parsed.messageDraft }));
+        }
+        if (parsed.audience) setWaAudience(String(parsed.audience));
+        if (typeof parsed.timezone === 'string') setWaTimezoneFilter(parsed.timezone);
+        if (typeof parsed.country === 'string') setWaCountryFilter(parsed.country);
+        if (parsed.brandingTab === 'branding' || parsed.brandingTab === 'whatsapp') {
+          setBrandingTab(parsed.brandingTab);
+        }
+      }
+    } catch (e) {
+      // ignore corrupted draft
+    }
+  }, [user?._id, user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin' || !user?._id) return;
+    try {
+      localStorage.setItem(
+        `${WHATSAPP_DRAFT_STORAGE_PREFIX}:${user._id}`,
+        JSON.stringify({
+          messageDraft: waMessageDraft,
+          audience: waAudience,
+          timezone: waTimezoneFilter,
+          country: waCountryFilter,
+          brandingTab,
+        })
+      );
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [user?._id, user?.role, waMessageDraft, waAudience, waTimezoneFilter, waCountryFilter, brandingTab]);
+
+  const fetchWhatsappRecipients = useCallback(async () => {
+    if (user?.role !== 'admin') return;
+    setWaLoadingRecipients(true);
+    try {
+      const params = {
+        audience: waAudience,
+      };
+      if (waAudience === 'guardians_timezone' && waTimezoneFilter) params.timezone = waTimezoneFilter;
+      if (waAudience === 'guardians_country' && waCountryFilter) params.country = waCountryFilter;
+
+      const res = await api.get('/settings/whatsapp-recipients', { params });
+      const recipients = Array.isArray(res?.data?.recipients) ? res.data.recipients : [];
+      setWaRecipients(recipients);
+      setWaRecipientOptions({
+        guardianTimezones: Array.isArray(res?.data?.options?.guardianTimezones) ? res.data.options.guardianTimezones : [],
+        guardianCountries: Array.isArray(res?.data?.options?.guardianCountries) ? res.data.options.guardianCountries : [],
+      });
+      setWaSelectedRecipientIds((prev) => {
+        const validIds = new Set(recipients.map((r) => r.id));
+        const retained = (prev || []).filter((id) => validIds.has(id));
+        if (retained.length) return retained;
+        return recipients.map((r) => r.id);
+      });
+    } catch (err) {
+      setWaRecipients([]);
+      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to load WhatsApp recipients' });
+    } finally {
+      setWaLoadingRecipients(false);
+    }
+  }, [user?.role, waAudience, waTimezoneFilter, waCountryFilter]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin' || activeSection !== 'branding' || brandingTab !== 'whatsapp') return;
+    fetchWhatsappRecipients();
+  }, [user?.role, activeSection, brandingTab, fetchWhatsappRecipients]);
+
   const adminSections = useMemo(() => {
     if (user?.role !== 'admin') return [{ key: 'general', label: 'General' }];
     return [
@@ -504,6 +723,253 @@ const Settings = () => {
 
   const subjectsList = useMemo(() => parseLinesOrComma(catalogSubjectsText), [catalogSubjectsText]);
   const levelsList = useMemo(() => parseLinesOrComma(catalogLevelsText), [catalogLevelsText]);
+  const waSelectedIdSet = useMemo(() => new Set(waSelectedRecipientIds), [waSelectedRecipientIds]);
+  const waSelectedRecipients = useMemo(
+    () => waRecipients.filter((r) => waSelectedIdSet.has(r.id)),
+    [waRecipients, waSelectedIdSet]
+  );
+  const waPreviewRecipient = waSelectedRecipients[0] || waRecipients[0] || null;
+  const waInvalidSelectedRecipients = useMemo(
+    () => waSelectedRecipients
+      .map((recipient) => ({
+        recipient,
+        validation: validateWhatsappPhone(recipient.phone),
+      }))
+      .filter((entry) => !entry.validation.ok),
+    [waSelectedRecipients]
+  );
+
+  const buildWhatsappMessageForRecipient = useCallback((recipient) => {
+    const welcomePrefix = interpolateWhatsappTemplate(waMessageDraft.welcome, recipient).trim();
+    const firstName = String(recipient?.firstName || '').trim();
+    const epithet = String(recipient?.epithet || '').trim();
+    const salutationName = [epithet, firstName].filter(Boolean).join(' ').trim();
+    const welcomeLine = [welcomePrefix, salutationName].filter(Boolean).join(' ').trim();
+    const body = interpolateWhatsappTemplate(waMessageDraft.body, recipient).trim();
+    const regards = interpolateWhatsappTemplate(waMessageDraft.regards, recipient).trim();
+    const imageUrl = String(waMessageDraft.imageUrl || '').trim();
+
+    return [welcomeLine, body, regards, imageUrl].filter(Boolean).join('\n\n');
+  }, [waMessageDraft]);
+
+  const handleUploadWhatsappImage = useCallback(async () => {
+    if (!waImageFile) {
+      setToast({ type: 'error', message: 'Select an image first' });
+      return;
+    }
+    try {
+      setWaUploadingImage(true);
+      const fd = new FormData();
+      fd.append('file', waImageFile);
+      const res = await api.post('/settings/whatsapp-broadcast/image', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const imageUrl = res?.data?.image?.url || '';
+      if (!imageUrl) {
+        setToast({ type: 'error', message: 'Upload failed: no image URL returned' });
+        return;
+      }
+      setWaMessageDraft((prev) => ({ ...prev, imageUrl }));
+      setToast({ type: 'success', message: 'Image uploaded for WhatsApp message' });
+    } catch (err) {
+      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to upload image' });
+    } finally {
+      setWaUploadingImage(false);
+    }
+  }, [waImageFile]);
+
+  const handleSendTestToAdminWhatsapp = useCallback(() => {
+    const adminRecipient = {
+      firstName: user?.firstName || 'Admin',
+      lastName: user?.lastName || '',
+      epithet: user?.guardianInfo?.epithet || '',
+      timezone: user?.timezone || '',
+      country: user?.uiPreferences?.timezoneCountry || '',
+    };
+    const validation = validateWhatsappPhone(user?.phone);
+    if (!validation.ok) {
+      setToast({ type: 'error', message: `Admin phone is not ready for WhatsApp: ${validation.reason}` });
+      return;
+    }
+    const message = buildWhatsappMessageForRecipient(adminRecipient);
+    const url = `https://wa.me/${validation.normalized}?text=${encodeURIComponent(message)}`;
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      setToast({ type: 'error', message: 'Popup blocked. Allow popups and try again.' });
+      return;
+    }
+    setToast({ type: 'success', message: 'Opened test WhatsApp chat to admin number' });
+  }, [user, buildWhatsappMessageForRecipient]);
+
+  const handleSaveRecipientPhone = useCallback(async (recipientId) => {
+    const draftPhone = waPhoneEdits[recipientId];
+    const validation = validateWhatsappPhone(draftPhone);
+    if (!validation.ok) {
+      setToast({ type: 'error', message: `Cannot save phone: ${validation.reason}` });
+      return;
+    }
+
+    try {
+      setWaSavingPhoneId(recipientId);
+      await api.put(`/users/${recipientId}`, { phone: `+${validation.normalized}` });
+      setWaRecipients((prev) => prev.map((recipient) => (
+        recipient.id === recipientId
+          ? { ...recipient, phone: validation.normalized }
+          : recipient
+      )));
+      setWaPhoneEdits((prev) => ({ ...prev, [recipientId]: validation.normalized }));
+      setToast({ type: 'success', message: 'Phone updated successfully' });
+    } catch (err) {
+      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save phone' });
+    } finally {
+      setWaSavingPhoneId(null);
+    }
+  }, [waPhoneEdits]);
+
+  const askWhatsappSendStatus = useCallback((recipient) => {
+    const recipientName = `${recipient.firstName || ''} ${recipient.lastName || ''}`.trim() || 'this recipient';
+    const sent = window.confirm(
+      `After sending in WhatsApp, click OK if the message was sent to ${recipientName}.\nClick Cancel to mark as not sent.`
+    );
+
+    if (sent) {
+      return {
+        ok: true,
+      };
+    }
+
+    const reasonInput = window.prompt(
+      `Marking ${recipientName} as not sent. Optional reason:`,
+      'Not confirmed as sent'
+    );
+
+    return {
+      ok: false,
+      reason: String(reasonInput || '').trim() || 'Not confirmed as sent',
+    };
+  }, []);
+
+  const runWhatsappSendAttempt = useCallback(async (recipients) => {
+    const selected = Array.isArray(recipients) ? recipients : [];
+    const sent = [];
+    const failed = [];
+
+    for (let index = 0; index < selected.length; index += 1) {
+      const recipient = selected[index];
+      setWaSendProgress({
+        current: index + 1,
+        total: selected.length,
+        name: `${recipient.firstName || ''} ${recipient.lastName || ''}`.trim() || 'Unknown recipient',
+      });
+
+      const validation = validateWhatsappPhone(recipient.phone);
+      if (!validation.ok) {
+        failed.push({
+          id: recipient.id,
+          name: `${recipient.firstName || ''} ${recipient.lastName || ''}`.trim(),
+          role: recipient.role,
+          reason: validation.reason,
+          currentPhone: recipient.phone || '',
+          suggestedPhone: validation.normalized || '',
+        });
+        continue;
+      }
+
+      const message = buildWhatsappMessageForRecipient(recipient);
+      const url = `https://wa.me/${validation.normalized}?text=${encodeURIComponent(message)}`;
+      const openedWindow = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!openedWindow) {
+        failed.push({
+          id: recipient.id,
+          name: `${recipient.firstName || ''} ${recipient.lastName || ''}`.trim(),
+          role: recipient.role,
+          reason: 'Popup blocked while opening WhatsApp tab',
+          currentPhone: recipient.phone || '',
+          suggestedPhone: validation.normalized || '',
+        });
+        continue;
+      }
+
+      const status = askWhatsappSendStatus(recipient);
+      if (!status.ok) {
+        failed.push({
+          id: recipient.id,
+          name: `${recipient.firstName || ''} ${recipient.lastName || ''}`.trim(),
+          role: recipient.role,
+          reason: status.reason || 'Not sent',
+          currentPhone: recipient.phone || '',
+          suggestedPhone: validation.normalized || '',
+        });
+        continue;
+      }
+
+      sent.push({
+        id: recipient.id,
+        name: `${recipient.firstName || ''} ${recipient.lastName || ''}`.trim(),
+        role: recipient.role,
+        phone: validation.normalized,
+      });
+    }
+
+    return {
+      attempted: selected.length,
+      sent,
+      failed,
+    };
+  }, [askWhatsappSendStatus, buildWhatsappMessageForRecipient]);
+
+  const handleSendWhatsappCampaign = useCallback(async () => {
+    const selected = waSelectedRecipients;
+    if (!selected.length) {
+      setToast({ type: 'error', message: 'No selected recipients with valid WhatsApp numbers' });
+      return;
+    }
+
+    setWaSending(true);
+    try {
+      const result = await runWhatsappSendAttempt(selected);
+      setWaLastSendReport({ timestamp: new Date().toISOString(), ...result });
+      setToast({
+        type: result.failed.length ? 'error' : 'success',
+        message: result.failed.length
+          ? `Sent ${result.sent.length}/${result.attempted}. ${result.failed.length} not sent — see report below.`
+          : `Sent ${result.sent.length} WhatsApp message${result.sent.length === 1 ? '' : 's'} successfully.`,
+      });
+    } finally {
+      setWaSendProgress(null);
+      setWaSending(false);
+    }
+  }, [waSelectedRecipients, runWhatsappSendAttempt]);
+
+  const handleRetryFailedOnly = useCallback(async () => {
+    const failedIds = Array.isArray(waLastSendReport?.failed) ? waLastSendReport.failed.map((f) => f.id) : [];
+    if (!failedIds.length) {
+      setToast({ type: 'error', message: 'No failed recipients to retry' });
+      return;
+    }
+
+    const failedSet = new Set(failedIds);
+    const retryTargets = waRecipients.filter((recipient) => failedSet.has(recipient.id));
+    if (!retryTargets.length) {
+      setToast({ type: 'error', message: 'Failed recipients are no longer in the current list. Reload recipients first.' });
+      return;
+    }
+
+    setWaRetryingFailed(true);
+    try {
+      const result = await runWhatsappSendAttempt(retryTargets);
+      setWaLastSendReport({ timestamp: new Date().toISOString(), ...result });
+      setToast({
+        type: result.failed.length ? 'error' : 'success',
+        message: result.failed.length
+          ? `Retry sent ${result.sent.length}/${result.attempted}. ${result.failed.length} still not sent.`
+          : `Retry succeeded for all ${result.sent.length} recipient${result.sent.length === 1 ? '' : 's'}.`,
+      });
+    } finally {
+      setWaSendProgress(null);
+      setWaRetryingFailed(false);
+    }
+  }, [waLastSendReport, waRecipients, runWhatsappSendAttempt]);
 
   const ensureTopicsMapSync = useCallback((nextSubjects) => {
     setCatalogTopicsBySubjectText((prev) => {
@@ -1107,125 +1573,266 @@ const Settings = () => {
         )}
 
         {user?.role === 'admin' && activeSection === 'appearance' && (
-          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
-            <div className="px-4 py-3 border-b border-border">
-              <div className="text-sm font-semibold text-foreground">Dashboard Decoration</div>
-              <div className="text-xs text-muted-foreground">Control the festive ornament system and offsets.</div>
-            </div>
-            <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">Dashboard decoration</div>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setDashboardDecorationEnabled((prev) => !prev)}
-                    className={`text-xs px-3 py-1.5 rounded border ${dashboardDecorationEnabled ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
-                  >
-                    {dashboardDecorationEnabled ? 'Visible' : 'Hidden'}
-                  </button>
-                  <div className="text-xs text-muted-foreground">Festive header ornament controls.</div>
-                </div>
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-4">
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <div className="text-sm font-semibold text-foreground">Homepage Message Banner</div>
+                <div className="text-xs text-muted-foreground">Shown to all users (including admins) on the dashboard homepage only. Hidden when message is empty.</div>
+              </div>
+              <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
+                <div>
                   <label className="text-xs text-muted-foreground">
-                    Horizontal offset (px)
-                    <input
-                      type="number"
-                      value={dashboardDecorationOffsetX}
-                      onChange={(e) => setDashboardDecorationOffsetX(Number(e.target.value))}
+                    Message
+                    <textarea
+                      rows={4}
+                      value={homepageAnnouncement.message}
+                      onChange={(e) => setHomepageAnnouncement((prev) => ({ ...prev, message: e.target.value }))}
+                      placeholder="Write a message for all users..."
                       className="mt-1 px-3 py-2 border rounded w-full"
                     />
                   </label>
-                  <label className="text-xs text-muted-foreground">
-                    Vertical offset (px)
-                    <input
-                      type="number"
-                      value={dashboardDecorationOffsetY}
-                      onChange={(e) => setDashboardDecorationOffsetY(Number(e.target.value))}
-                      className="mt-1 px-3 py-2 border rounded w-full"
-                    />
-                  </label>
-                </div>
-                <div className="mt-4 grid grid-cols-1 gap-3">
-                  <div className="text-xs text-muted-foreground">Item counts (1-12) and sizes</div>
-                  {[
-                    { key: 'crescents', label: 'Crescents' },
-                    { key: 'stars', label: 'Stars' },
-                    { key: 'dots', label: 'Dots' },
-                    { key: 'lanterns', label: 'Lanterns' },
-                  ].map((item) => (
-                    <div key={item.key} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="text-sm text-foreground sm:col-span-1">{item.label}</div>
-                      <label className="text-xs text-muted-foreground">
-                        Count
-                        <input
-                          type="number"
-                          min={0}
-                          max={12}
-                          value={dashboardDecorationItems[item.key]?.count ?? 0}
-                          onChange={(e) =>
-                            setDashboardDecorationItems((prev) => ({
-                              ...prev,
-                              [item.key]: {
-                                ...prev[item.key],
-                                count: Number(e.target.value),
-                              },
-                            }))
-                          }
-                          className="mt-1 px-3 py-2 border rounded w-full"
-                        />
-                      </label>
-                      <label className="text-xs text-muted-foreground">
-                        Size (scale)
-                        <input
-                          type="number"
-                          step="0.1"
-                          min={0.3}
-                          max={2}
-                          value={dashboardDecorationItems[item.key]?.scale ?? 1}
-                          onChange={(e) =>
-                            setDashboardDecorationItems((prev) => ({
-                              ...prev,
-                              [item.key]: {
-                                ...prev[item.key],
-                                scale: Number(e.target.value),
-                              },
-                            }))
-                          }
-                          className="mt-1 px-3 py-2 border rounded w-full"
-                        />
-                      </label>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <label className="text-xs text-muted-foreground">
+                      Font size
+                      <select
+                        value={homepageAnnouncement.fontSize}
+                        onChange={(e) => setHomepageAnnouncement((prev) => ({ ...prev, fontSize: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full bg-card"
+                      >
+                        <option value="text-sm">Small</option>
+                        <option value="text-base">Medium</option>
+                        <option value="text-lg">Large</option>
+                      </select>
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Font weight
+                      <select
+                        value={homepageAnnouncement.fontWeight}
+                        onChange={(e) => setHomepageAnnouncement((prev) => ({ ...prev, fontWeight: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full bg-card"
+                      >
+                        <option value="font-normal">Normal</option>
+                        <option value="font-medium">Medium</option>
+                        <option value="font-semibold">Semibold</option>
+                      </select>
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Alignment
+                      <select
+                        value={homepageAnnouncement.align}
+                        onChange={(e) => setHomepageAnnouncement((prev) => ({ ...prev, align: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full bg-card"
+                      >
+                        <option value="left">Left</option>
+                        <option value="center">Center</option>
+                        <option value="right">Right</option>
+                      </select>
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Background color
+                      <select
+                        value={homepageAnnouncement.backgroundColor || 'card'}
+                        onChange={(e) => setHomepageAnnouncement((prev) => ({ ...prev, backgroundColor: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full bg-card"
+                      >
+                        <option value="card">Card</option>
+                        <option value="muted">Muted</option>
+                        <option value="primary">Primary</option>
+                        <option value="success">Success</option>
+                        <option value="warning">Warning</option>
+                        <option value="info">Info</option>
+                      </select>
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Border color
+                      <select
+                        value={homepageAnnouncement.borderColor || 'default'}
+                        onChange={(e) => setHomepageAnnouncement((prev) => ({ ...prev, borderColor: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full bg-card"
+                      >
+                        <option value="default">Default</option>
+                        <option value="primary">Primary</option>
+                        <option value="success">Success</option>
+                        <option value="warning">Warning</option>
+                        <option value="info">Info</option>
+                        <option value="muted">Muted</option>
+                      </select>
+                    </label>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={() => setHomepageAnnouncement((prev) => ({ ...prev, italic: !prev.italic }))}
+                        className={`text-xs px-3 py-2 rounded border ${homepageAnnouncement.italic ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+                      >
+                        {homepageAnnouncement.italic ? 'Italic enabled' : 'Italic disabled'}
+                      </button>
                     </div>
-                  ))}
+                  </div>
+                  <div className="mt-4">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Live preview</div>
+                    <div className={homepageAnnouncementPreviewContainerClass}>
+                      <p className={homepageAnnouncementPreviewTextClass}>
+                        {String(homepageAnnouncement.message || '').trim() || 'Your message preview appears here.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-start justify-end">
+                  <button
+                    disabled={savingHomepageAnnouncement}
+                    onClick={async () => {
+                      try {
+                        setSavingHomepageAnnouncement(true);
+                        const value = {
+                          message: String(homepageAnnouncement.message || ''),
+                          fontSize: homepageAnnouncement.fontSize || 'text-sm',
+                          fontWeight: homepageAnnouncement.fontWeight || 'font-medium',
+                          italic: Boolean(homepageAnnouncement.italic),
+                          align: homepageAnnouncement.align || 'left',
+                          tone: homepageAnnouncement.tone || 'default',
+                          backgroundColor: homepageAnnouncement.backgroundColor || 'card',
+                          borderColor: homepageAnnouncement.borderColor || 'default',
+                        };
+                        const res = await api.put('/settings/homepage-announcement', { value });
+                        if (res.data?.success) {
+                          const cacheKey = makeCacheKey('settings:homepageAnnouncement');
+                          writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+                          setToast({ type: 'success', message: 'Homepage message saved' });
+                        }
+                      } catch (err) {
+                        setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save homepage message' });
+                      } finally {
+                        setSavingHomepageAnnouncement(false);
+                      }
+                    }}
+                    className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingHomepageAnnouncement ? 'opacity-70' : ''}`}
+                  >
+                    Save
+                  </button>
                 </div>
               </div>
-              <div className="flex items-start justify-end">
-                <button
-                  disabled={savingDashboardDecoration}
-                  onClick={async () => {
-                    try {
-                      setSavingDashboardDecoration(true);
-                      const value = {
-                        enabled: Boolean(dashboardDecorationEnabled),
-                        offsetX: Number(dashboardDecorationOffsetX || 0),
-                        offsetY: Number(dashboardDecorationOffsetY || 0),
-                        items: dashboardDecorationItems,
-                      };
-                      const res = await api.put('/settings/dashboardDecoration', { value });
-                      if (res.data?.success) {
-                        const cacheKey = makeCacheKey('settings:dashboardDecoration');
-                        writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
-                        setToast({ type: 'success', message: 'Decoration settings saved' });
+            </div>
+
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <div className="text-sm font-semibold text-foreground">Dashboard Decoration</div>
+                <div className="text-xs text-muted-foreground">Control the festive ornament system and offsets.</div>
+              </div>
+              <div className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">Dashboard decoration</div>
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setDashboardDecorationEnabled((prev) => !prev)}
+                      className={`text-xs px-3 py-1.5 rounded border ${dashboardDecorationEnabled ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+                    >
+                      {dashboardDecorationEnabled ? 'Visible' : 'Hidden'}
+                    </button>
+                    <div className="text-xs text-muted-foreground">Festive header ornament controls.</div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="text-xs text-muted-foreground">
+                      Horizontal offset (px)
+                      <input
+                        type="number"
+                        value={dashboardDecorationOffsetX}
+                        onChange={(e) => setDashboardDecorationOffsetX(Number(e.target.value))}
+                        className="mt-1 px-3 py-2 border rounded w-full"
+                      />
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Vertical offset (px)
+                      <input
+                        type="number"
+                        value={dashboardDecorationOffsetY}
+                        onChange={(e) => setDashboardDecorationOffsetY(Number(e.target.value))}
+                        className="mt-1 px-3 py-2 border rounded w-full"
+                      />
+                    </label>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-3">
+                    <div className="text-xs text-muted-foreground">Item counts (1-12) and sizes</div>
+                    {[
+                      { key: 'crescents', label: 'Crescents' },
+                      { key: 'stars', label: 'Stars' },
+                      { key: 'dots', label: 'Dots' },
+                      { key: 'lanterns', label: 'Lanterns' },
+                    ].map((item) => (
+                      <div key={item.key} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="text-sm text-foreground sm:col-span-1">{item.label}</div>
+                        <label className="text-xs text-muted-foreground">
+                          Count
+                          <input
+                            type="number"
+                            min={0}
+                            max={12}
+                            value={dashboardDecorationItems[item.key]?.count ?? 0}
+                            onChange={(e) =>
+                              setDashboardDecorationItems((prev) => ({
+                                ...prev,
+                                [item.key]: {
+                                  ...prev[item.key],
+                                  count: Number(e.target.value),
+                                },
+                              }))
+                            }
+                            className="mt-1 px-3 py-2 border rounded w-full"
+                          />
+                        </label>
+                        <label className="text-xs text-muted-foreground">
+                          Size (scale)
+                          <input
+                            type="number"
+                            step="0.1"
+                            min={0.3}
+                            max={2}
+                            value={dashboardDecorationItems[item.key]?.scale ?? 1}
+                            onChange={(e) =>
+                              setDashboardDecorationItems((prev) => ({
+                                ...prev,
+                                [item.key]: {
+                                  ...prev[item.key],
+                                  scale: Number(e.target.value),
+                                },
+                              }))
+                            }
+                            className="mt-1 px-3 py-2 border rounded w-full"
+                          />
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-start justify-end">
+                  <button
+                    disabled={savingDashboardDecoration}
+                    onClick={async () => {
+                      try {
+                        setSavingDashboardDecoration(true);
+                        const value = {
+                          enabled: Boolean(dashboardDecorationEnabled),
+                          offsetX: Number(dashboardDecorationOffsetX || 0),
+                          offsetY: Number(dashboardDecorationOffsetY || 0),
+                          items: dashboardDecorationItems,
+                        };
+                        const res = await api.put('/settings/dashboardDecoration', { value });
+                        if (res.data?.success) {
+                          const cacheKey = makeCacheKey('settings:dashboardDecoration');
+                          writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+                          setToast({ type: 'success', message: 'Decoration settings saved' });
+                        }
+                      } catch (err) {
+                        setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save decoration settings' });
+                      } finally {
+                        setSavingDashboardDecoration(false);
                       }
-                    } catch (err) {
-                      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save decoration settings' });
-                    } finally {
-                      setSavingDashboardDecoration(false);
-                    }
-                  }}
-                  className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingDashboardDecoration ? 'opacity-70' : ''}`}
-                >
-                  Save
-                </button>
+                    }}
+                    className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingDashboardDecoration ? 'opacity-70' : ''}`}
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1304,56 +1911,359 @@ const Settings = () => {
         {/* Branding card */}
         {user?.role === 'admin' && activeSection === 'branding' && (
           <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
-            <div className="flex items-start justify-between">
-              <div className="font-medium">Branding</div>
-              <div className="flex items-center gap-2">
-                <button onClick={async ()=>{ try { await api.put('/settings/branding.title', {value: branding.title}); await api.put('/settings/branding.slogan', {value: branding.slogan}); setToast({type:'success', message:'Branding saved'}); if (socket && socket.emit) socket.emit('branding:updated', {branding:{...branding}}); } catch(err){ console.error(err); setToast({type:'error', message:'Save failed'}); } }} className="text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded">Save</button>
-              </div>
+            <div className="flex items-center gap-2 border-b border-border pb-3 mb-4">
+              <button
+                type="button"
+                onClick={() => setBrandingTab('branding')}
+                className={`text-xs px-3 py-1.5 rounded border ${brandingTab === 'branding' ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+              >
+                Branding Assets
+              </button>
+              <button
+                type="button"
+                onClick={() => setBrandingTab('whatsapp')}
+                className={`text-xs px-3 py-1.5 rounded border ${brandingTab === 'whatsapp' ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+              >
+                WhatsApp Messaging
+              </button>
             </div>
 
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-              <div className="md:col-span-1 flex items-center justify-center">
-                <div className="h-28 w-28 bg-card rounded border border-border overflow-hidden flex items-center justify-center">
-                  {branding.logo?.url ? (
-                    <img src={branding.logo.url} alt="logo" className="h-full w-full object-contain" />
-                  ) : branding.logo?.dataUri ? (
-                    <img src={branding.logo.dataUri} alt="logo" className="h-full w-full object-contain" />
-                  ) : (
-                    <div className="text-xs text-muted-foreground">No logo</div>
-                  )}
+            {brandingTab === 'branding' && (
+              <>
+                <div className="flex items-start justify-between">
+                  <div className="font-medium">Branding</div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={async ()=>{ try { await api.put('/settings/branding.title', {value: branding.title}); await api.put('/settings/branding.slogan', {value: branding.slogan}); setToast({type:'success', message:'Branding saved'}); if (socket && socket.emit) socket.emit('branding:updated', {branding:{...branding}}); } catch(err){ console.error(err); setToast({type:'error', message:'Save failed'}); } }} className="text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded">Save</button>
+                  </div>
                 </div>
+
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+                  <div className="md:col-span-1 flex items-center justify-center">
+                    <div className="h-28 w-28 bg-card rounded border border-border overflow-hidden flex items-center justify-center">
+                      {branding.logo?.url ? (
+                        <img src={branding.logo.url} alt="logo" className="h-full w-full object-contain" />
+                      ) : branding.logo?.dataUri ? (
+                        <img src={branding.logo.dataUri} alt="logo" className="h-full w-full object-contain" />
+                      ) : (
+                        <div className="text-xs text-muted-foreground">No logo</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
+                      <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e)=>{
+                        const f = e.target.files && e.target.files[0];
+                        if (f) {
+                          const allowed = ['image/png','image/jpeg','image/webp'];
+                          const maxBytes = 5*1024*1024;
+                          if (!allowed.includes(f.type)) { setToast({type:'error', message:'Unsupported file type.'}); setLogoFile(null); return; }
+                          if (f.size > maxBytes) { setToast({type:'error', message:'File too large (max 5MB).'}); setLogoFile(null); return; }
+                        }
+                        setLogoFile(f);
+                      }} className="text-sm" />
+
+                      <button onClick={async ()=>{
+                        if (!logoFile) { setToast({type:'error', message:'Select file first.'}); return; }
+                        setUploadingLogo(true);
+                        try {
+                          const fd = new FormData(); fd.append('file', logoFile);
+                          const res = await api.post('/settings/branding/logo', fd, { headers: {'Content-Type':'multipart/form-data'} });
+                          if (res.data?.success) { setBranding(b=>({...b, logo: res.data.setting.value})); setToast({type:'success', message: res.data.fallback? 'Saved (fallback)' : 'Uploaded'}); if (socket && socket.emit) socket.emit('branding:updated', {branding:{...branding, logo: res.data.setting.value}}); }
+                        } catch(err){ console.error('Logo upload failed', err); setToast({type:'error', message: err.response?.data?.message || err.message || 'Upload failed'}); } finally { setUploadingLogo(false); }
+                      }} className="text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded">{uploadingLogo? 'Uploading' : 'Upload'}</button>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input type="text" value={branding.title||''} onChange={(e)=>setBranding(b=>({...b, title: e.target.value}))} className="px-3 py-2 border rounded w-full truncate" placeholder="Site title" />
+                      <input type="text" value={branding.slogan||''} onChange={(e)=>setBranding(b=>({...b, slogan: e.target.value}))} className="px-3 py-2 border rounded w-full truncate" placeholder="Slogan" />
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {brandingTab === 'whatsapp' && (
+              <div className="space-y-4">
+                <div>
+                  <div className="font-medium">WhatsApp Messaging</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Build a personalized message (welcome + body + regards), target recipients, and open WhatsApp chats instantly.
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="rounded-lg border border-border p-3 space-y-3">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Recipients</div>
+                    <label className="text-xs text-muted-foreground block">
+                      Audience
+                      <select value={waAudience} onChange={(e) => setWaAudience(e.target.value)} className="mt-1 px-3 py-2 border rounded w-full bg-card">
+                        <option value="active_guardians">Active guardians</option>
+                        <option value="inactive_guardians">Inactive guardians</option>
+                        <option value="all_guardians">All guardians</option>
+                        <option value="active_teachers">Active teachers only</option>
+                        <option value="inactive_teachers">Inactive teachers only</option>
+                        <option value="guardians_timezone">Guardians from a specific timezone</option>
+                        <option value="guardians_country">Guardians from a specific country (from timezone)</option>
+                      </select>
+                    </label>
+
+                    {waAudience === 'guardians_timezone' && (
+                      <label className="text-xs text-muted-foreground block">
+                        Timezone
+                        <select value={waTimezoneFilter} onChange={(e) => setWaTimezoneFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded w-full bg-card">
+                          <option value="">Select timezone</option>
+                          {waRecipientOptions.guardianTimezones.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                        </select>
+                      </label>
+                    )}
+
+                    {waAudience === 'guardians_country' && (
+                      <label className="text-xs text-muted-foreground block">
+                        Country
+                        <select value={waCountryFilter} onChange={(e) => setWaCountryFilter(e.target.value)} className="mt-1 px-3 py-2 border rounded w-full bg-card">
+                          <option value="">Select country</option>
+                          {waRecipientOptions.guardianCountries.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </label>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={fetchWhatsappRecipients} className="text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded" disabled={waLoadingRecipients}>
+                        {waLoadingRecipients ? 'Loading...' : 'Load recipients'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWaSelectedRecipientIds(waRecipients.map((r) => r.id))}
+                        className="text-xs px-3 py-1.5 border border-border rounded"
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWaSelectedRecipientIds([])}
+                        className="text-xs px-3 py-1.5 border border-border rounded"
+                      >
+                        Clear
+                      </button>
+                    </div>
+
+                    <div className="text-xs text-muted-foreground">
+                      Loaded: {waRecipients.length} • Selected: {waSelectedRecipients.length} • Valid phones: {waRecipients.filter((r) => validateWhatsappPhone(r.phone).ok).length}
+                    </div>
+                    {waInvalidSelectedRecipients.length > 0 && (
+                      <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                        {waInvalidSelectedRecipients.length} selected recipient(s) need phone fixes before sending.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-border p-3 space-y-3">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Message template</div>
+                    <label className="text-xs text-muted-foreground block">
+                      Welcome (before epithet + first name)
+                      <input
+                        type="text"
+                        value={waMessageDraft.welcome}
+                        onChange={(e) => setWaMessageDraft((prev) => ({ ...prev, welcome: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full"
+                        placeholder="Assalamu Alaikum"
+                      />
+                    </label>
+                    <label className="text-xs text-muted-foreground block">
+                      Message body
+                      <textarea
+                        rows={5}
+                        value={waMessageDraft.body}
+                        onChange={(e) => setWaMessageDraft((prev) => ({ ...prev, body: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full"
+                        placeholder="Your main message..."
+                      />
+                    </label>
+                    <label className="text-xs text-muted-foreground block">
+                      Regards / closing
+                      <input
+                        type="text"
+                        value={waMessageDraft.regards}
+                        onChange={(e) => setWaMessageDraft((prev) => ({ ...prev, regards: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full"
+                        placeholder="Jazak Allah Khair"
+                      />
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-end">
+                      <label className="text-xs text-muted-foreground block">
+                        Image URL (optional)
+                        <input
+                          type="text"
+                          value={waMessageDraft.imageUrl}
+                          onChange={(e) => setWaMessageDraft((prev) => ({ ...prev, imageUrl: e.target.value }))}
+                          className="mt-1 px-3 py-2 border rounded w-full"
+                          placeholder="https://..."
+                        />
+                      </label>
+                      <div className="flex flex-col gap-2">
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          onChange={(e) => setWaImageFile(e.target.files?.[0] || null)}
+                          className="text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleUploadWhatsappImage}
+                          disabled={waUploadingImage}
+                          className="text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded"
+                        >
+                          {waUploadingImage ? 'Uploading...' : 'Upload image'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-muted-foreground">
+                      Supports variables: {'{{firstName}}'}, {'{{lastName}}'}, {'{{fullName}}'}, {'{{epithet}}'}, {'{{timezone}}'}, {'{{country}}'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="rounded-lg border border-border p-3">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Preview</div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      {waPreviewRecipient
+                        ? `Preview for ${waPreviewRecipient.firstName} ${waPreviewRecipient.lastName}${waPreviewRecipient.epithet ? ` (${waPreviewRecipient.epithet})` : ''}`
+                        : 'Load recipients to preview'}
+                    </div>
+                    <pre className="mt-2 whitespace-pre-wrap rounded border border-border bg-muted/30 p-3 text-sm text-foreground">
+                      {waPreviewRecipient ? buildWhatsappMessageForRecipient(waPreviewRecipient) : 'No preview available.'}
+                    </pre>
+                  </div>
+
+                  <div className="rounded-lg border border-border p-3">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Recipients</div>
+                    <div className="mt-2 max-h-64 overflow-auto space-y-2">
+                      {waRecipients.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">No recipients loaded.</div>
+                      ) : waRecipients.map((recipient) => {
+                        const checked = waSelectedIdSet.has(recipient.id);
+                        const hasPhone = Boolean(normalizeWhatsappPhone(recipient.phone));
+                        return (
+                          <label key={recipient.id} className="flex items-start gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                setWaSelectedRecipientIds((prev) => {
+                                  if (e.target.checked) return Array.from(new Set([...(prev || []), recipient.id]));
+                                  return (prev || []).filter((id) => id !== recipient.id);
+                                });
+                              }}
+                            />
+                            <span className="text-foreground">
+                              {recipient.firstName} {recipient.lastName}
+                              {recipient.epithet ? ` • ${recipient.epithet}` : ''}
+                              {recipient.timezone ? ` • ${recipient.timezone}` : ''}
+                              {recipient.country ? ` • ${recipient.country}` : ''}
+                              {!hasPhone ? ' • No WhatsApp number' : ''}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSendTestToAdminWhatsapp}
+                    className="text-xs px-3 py-1.5 rounded border bg-card border-border text-foreground"
+                  >
+                    Send test to admin WhatsApp
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSendWhatsappCampaign}
+                    disabled={waSending}
+                    className={`text-xs px-3 py-1.5 rounded border ${waSending ? 'opacity-60' : ''} bg-primary text-primary-foreground border-primary`}
+                  >
+                    {waSending ? 'Sending one by one...' : 'Send via WhatsApp'}
+                  </button>
+                  <div className="text-xs text-muted-foreground">
+                    {waSendProgress
+                      ? `In progress: ${waSendProgress.current}/${waSendProgress.total} • ${waSendProgress.name}`
+                      : 'Messages are sent one by one with confirmation after each recipient.'}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border p-3 text-xs text-muted-foreground">
+                  Suggestions: test with one recipient first, use timezone/country filters for focused campaigns, and keep your body short with a clear next step. If you include an image URL, it is added into the message so recipients can open it from WhatsApp.
+                </div>
+
+                {waLastSendReport && (
+                  <div className="rounded-lg border border-border p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-medium text-foreground">Last send report</div>
+                      {waLastSendReport.failed.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleRetryFailedOnly}
+                          disabled={waRetryingFailed}
+                          className={`text-xs px-3 py-1.5 rounded border border-border bg-card text-foreground ${waRetryingFailed ? 'opacity-60' : ''}`}
+                        >
+                          {waRetryingFailed ? 'Retrying...' : 'Retry failed only'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Attempted: {waLastSendReport.attempted} • Sent: {waLastSendReport.sent.length} • Not sent: {waLastSendReport.failed.length}
+                    </div>
+
+                    {waLastSendReport.failed.length > 0 ? (
+                      <div className="space-y-3">
+                        {waLastSendReport.failed.map((entry) => {
+                          const recipient = waRecipients.find((r) => r.id === entry.id);
+                          const draftValue = waPhoneEdits[entry.id] ?? recipient?.phone ?? entry.currentPhone ?? '';
+                          const validation = validateWhatsappPhone(draftValue);
+                          return (
+                            <div key={`wa-failure-${entry.id}`} className="rounded border border-rose-200 bg-rose-50 p-3">
+                              <div className="text-sm font-medium text-rose-800">{entry.name || 'Unknown user'}</div>
+                              <div className="mt-1 text-xs text-rose-700">Reason: {entry.reason}</div>
+                              <div className="mt-1 text-xs text-rose-700">Current: {entry.currentPhone || '—'}</div>
+                              <div className="mt-2 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-end">
+                                <label className="text-xs text-rose-800">
+                                  Fix phone (with country code)
+                                  <input
+                                    type="text"
+                                    value={draftValue}
+                                    onChange={(e) => setWaPhoneEdits((prev) => ({ ...prev, [entry.id]: e.target.value }))}
+                                    className="mt-1 px-3 py-2 border rounded w-full bg-white"
+                                    placeholder="e.g. +9665..."
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveRecipientPhone(entry.id)}
+                                  disabled={waSavingPhoneId === entry.id || !validation.ok}
+                                  className={`text-xs px-3 py-2 rounded border ${waSavingPhoneId === entry.id ? 'opacity-60' : ''} bg-white border-rose-300 text-rose-700`}
+                                >
+                                  {waSavingPhoneId === entry.id ? 'Saving...' : 'Save number'}
+                                </button>
+                              </div>
+                              {!validation.ok && (
+                                <div className="mt-1 text-[11px] text-rose-700">{validation.reason}</div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-emerald-700">All selected recipients were marked as sent.</div>
+                    )}
+                  </div>
+                )}
               </div>
-
-              <div className="md:col-span-2">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
-                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e)=>{
-                    const f = e.target.files && e.target.files[0];
-                    if (f) {
-                      const allowed = ['image/png','image/jpeg','image/webp'];
-                      const maxBytes = 5*1024*1024;
-                      if (!allowed.includes(f.type)) { setToast({type:'error', message:'Unsupported file type.'}); setLogoFile(null); return; }
-                      if (f.size > maxBytes) { setToast({type:'error', message:'File too large (max 5MB).'}); setLogoFile(null); return; }
-                    }
-                    setLogoFile(f);
-                  }} className="text-sm" />
-
-                  <button onClick={async ()=>{
-                    if (!logoFile) { setToast({type:'error', message:'Select file first.'}); return; }
-                    setUploadingLogo(true);
-                    try {
-                      const fd = new FormData(); fd.append('file', logoFile);
-                      const res = await api.post('/settings/branding/logo', fd, { headers: {'Content-Type':'multipart/form-data'} });
-                      if (res.data?.success) { setBranding(b=>({...b, logo: res.data.setting.value})); setToast({type:'success', message: res.data.fallback? 'Saved (fallback)' : 'Uploaded'}); if (socket && socket.emit) socket.emit('branding:updated', {branding:{...branding, logo: res.data.setting.value}}); }
-                    } catch(err){ console.error('Logo upload failed', err); setToast({type:'error', message: err.response?.data?.message || err.message || 'Upload failed'}); } finally { setUploadingLogo(false); }
-                  }} className="text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-200 rounded">{uploadingLogo? 'Uploading' : 'Upload'}</button>
-                </div>
-
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <input type="text" value={branding.title||''} onChange={(e)=>setBranding(b=>({...b, title: e.target.value}))} className="px-3 py-2 border rounded w-full truncate" placeholder="Site title" />
-                  <input type="text" value={branding.slogan||''} onChange={(e)=>setBranding(b=>({...b, slogan: e.target.value}))} className="px-3 py-2 border rounded w-full truncate" placeholder="Slogan" />
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         )}
 

@@ -258,6 +258,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   // Track if user has made any changes to filters
   const userModifiedFiltersRef = useRef(false);
   const coverageEditingRef = useRef(false);
+  const seededInitialInvoiceIdRef = useRef(null);
 
   const formatDateInput = (value) => {
     if (!value) return '';
@@ -374,10 +375,16 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
 
   useEffect(() => {
     if (!initialInvoice) return;
+    const incomingId = initialInvoice?._id || invoiceId || null;
+    if (incomingId && seededInitialInvoiceIdRef.current === incomingId && invoice?._id === incomingId) {
+      return;
+    }
+
     syncInvoiceState(initialInvoice);
-    setResolvedInvoiceId(initialInvoice?._id || invoiceId || null);
+    setResolvedInvoiceId(incomingId);
+    seededInitialInvoiceIdRef.current = incomingId;
     setLoading(false);
-  }, [initialInvoice, invoiceId, syncInvoiceState]);
+  }, [initialInvoice, invoiceId, syncInvoiceState, invoice?._id]);
 
   useEffect(() => {
     if (!identifier) return;
@@ -867,6 +874,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
       guardianRate,
       coverage: {
         maxHours: Number.isFinite(normalizedMaxHours) ? normalizedMaxHours : null,
+        endDate: customEndDate || null,
         customEndDate: customEndDate || null,
         waiveTransferFee
       }

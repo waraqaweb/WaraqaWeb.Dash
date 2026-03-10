@@ -244,6 +244,7 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb'
 })
 .then(() => {
   console.log('✅ Connected to MongoDB successfully');
+  startDatabaseDependentJobs();
 })
 .catch((error) => {
   console.error('❌ MongoDB connection error:', error);
@@ -344,113 +345,119 @@ app.use('/api/system-vacations', systemVacationRoutes);
 const notificationRoutes = require('./routes/notifications');
 app.use('/api/notifications', notificationRoutes);
 
-// Vacation status management - check every hour
-const vacationService = require('./services/vacationService');
-const systemVacationService = require('./services/systemVacationService');
+let databaseJobsStarted = false;
+const startDatabaseDependentJobs = () => {
+  if (databaseJobsStarted) return;
+  databaseJobsStarted = true;
 
-setInterval(async () => {
-  try {
-    await vacationService.updateTeacherVacationStatuses();
-    await systemVacationService.checkAndRestoreExpiredSystemVacations();
-  } catch (error) {
-    console.error('Error in vacation status update:', error);
-  }
-}, 60 * 60 * 1000); // Run every hour
+  // Vacation status management - check every hour
+  const vacationService = require('./services/vacationService');
+  const systemVacationService = require('./services/systemVacationService');
 
-// Run vacation status check on startup
-vacationService.updateTeacherVacationStatuses().catch(console.error);
-systemVacationService.checkAndRestoreExpiredSystemVacations().catch(console.error);
-
-// Start DST monitoring jobs
-const { startScheduledJobs } = require('./jobs/timezoneJobs');
-startScheduledJobs();
-
-// Schedule dashboard precomputation job (hourly) and run once on startup
-try {
-  const cron = require('node-cron');
-  const { recomputeDashboardStats } = require('./jobs/recomputeDashboardStats');
-  // Run on the top of every hour
-  cron.schedule('0 * * * *', async () => {
+  setInterval(async () => {
     try {
-      await recomputeDashboardStats();
-    } catch (e) { console.error('Scheduled recompute failed:', e && e.message); }
-  });
-  // Run once at startup (non-blocking)
-  recomputeDashboardStats().catch((e) => console.warn('Initial dashboard recompute failed:', e && e.message));
-} catch (e) {
-  console.warn('Failed to start dashboard scheduled job:', e && e.message);
-}
-
-// Schedule recurring-classes generation job (daily at 05:00)
-try {
-  const cron = require('node-cron');
-  const { runGenerateRecurringClasses } = require('./jobs/generateRecurringClassesJob');
-  cron.schedule('0 5 * * *', async () => {
-    try {
-      await runGenerateRecurringClasses();
-    } catch (e) { console.error('Scheduled generateRecurringClasses failed:', e && e.message); }
-  }, { timezone: 'Africa/Cairo' });
-  // Run once on startup (non-blocking) to ensure initial generation happens
-  runGenerateRecurringClasses().catch((e) => console.warn('Initial generateRecurringClasses failed:', e && e.message));
-} catch (e) {
-  console.warn('Failed to start recurring-classes scheduled job:', e && e.message);
-}
-
-// Schedule uninvoiced lessons audit (daily at 02:15) and run once on startup
-try {
-  const cron = require('node-cron');
-  const { runUninvoicedLessonsAudit } = require('./jobs/uninvoicedLessonsAudit');
-  cron.schedule('15 2 * * *', async () => {
-    try {
-      await runUninvoicedLessonsAudit();
-    } catch (e) { console.error('Scheduled uninvoiced-lessons audit failed:', e && e.message); }
-  });
-  // Run once at startup (non-blocking)
-  runUninvoicedLessonsAudit().catch((e) => console.warn('Initial uninvoiced-lessons audit failed:', e && e.message));
-} catch (e) {
-  console.warn('Failed to schedule uninvoiced-lessons audit job:', e && e.message);
-}
-
-// Schedule whiteboard screenshot cleanup (daily at 03:10)
-try {
-  const cron = require('node-cron');
-  const { runWhiteboardScreenshotCleanup } = require('./jobs/whiteboardScreenshotCleanup');
-  cron.schedule('10 3 * * *', async () => {
-    try {
-      await runWhiteboardScreenshotCleanup();
-    } catch (e) {
-      console.error('Scheduled whiteboard screenshot cleanup failed:', e && e.message);
+      await vacationService.updateTeacherVacationStatuses();
+      await systemVacationService.checkAndRestoreExpiredSystemVacations();
+    } catch (error) {
+      console.error('Error in vacation status update:', error);
     }
-  });
-  runWhiteboardScreenshotCleanup().catch((e) => console.warn('Initial whiteboard cleanup failed:', e && e.message));
-} catch (e) {
-  console.warn('Failed to schedule whiteboard screenshot cleanup job:', e && e.message);
-}
+  }, 60 * 60 * 1000); // Run every hour
 
-// Schedule mark unreported classes job (hourly)
-try {
-  const cron = require('node-cron');
-  const { runJob: runMarkUnreportedJob } = require('./jobs/markUnreportedClassesJob');
-  // Run every hour at minute 15
-  cron.schedule('15 * * * *', async () => {
-    try {
-      await runMarkUnreportedJob();
-    } catch (e) { console.error('Scheduled mark-unreported-classes job failed:', e && e.message); }
-  });
-  // Run once at startup (non-blocking)
-  runMarkUnreportedJob().catch((e) => console.warn('Initial mark-unreported-classes job failed:', e && e.message));
-} catch (e) {
-  console.warn('Failed to schedule mark-unreported-classes job:', e && e.message);
-}
+  // Run vacation status check on startup
+  vacationService.updateTeacherVacationStatuses().catch(console.error);
+  systemVacationService.checkAndRestoreExpiredSystemVacations().catch(console.error);
 
-// Schedule teacher invoice generation job (monthly on 1st at 00:05)
-try {
-  const cron = require('node-cron');
-  const { startInvoiceGenerationJob } = require('./jobs/generateTeacherInvoicesJob');
-  startInvoiceGenerationJob();
-} catch (e) {
-  console.warn('Failed to start teacher invoice generation job:', e && e.message);
-}
+  // Start DST monitoring jobs
+  const { startScheduledJobs } = require('./jobs/timezoneJobs');
+  startScheduledJobs();
+
+  // Schedule dashboard precomputation job (hourly) and run once on startup
+  try {
+    const cron = require('node-cron');
+    const { recomputeDashboardStats } = require('./jobs/recomputeDashboardStats');
+    // Run on the top of every hour
+    cron.schedule('0 * * * *', async () => {
+      try {
+        await recomputeDashboardStats();
+      } catch (e) { console.error('Scheduled recompute failed:', e && e.message); }
+    });
+    // Run once at startup (non-blocking)
+    recomputeDashboardStats().catch((e) => console.warn('Initial dashboard recompute failed:', e && e.message));
+  } catch (e) {
+    console.warn('Failed to start dashboard scheduled job:', e && e.message);
+  }
+
+  // Schedule recurring-classes generation job (daily at 05:00)
+  try {
+    const cron = require('node-cron');
+    const { runGenerateRecurringClasses } = require('./jobs/generateRecurringClassesJob');
+    cron.schedule('0 5 * * *', async () => {
+      try {
+        await runGenerateRecurringClasses();
+      } catch (e) { console.error('Scheduled generateRecurringClasses failed:', e && e.message); }
+    }, { timezone: 'Africa/Cairo' });
+    // Run once on startup (non-blocking) to ensure initial generation happens
+    runGenerateRecurringClasses().catch((e) => console.warn('Initial generateRecurringClasses failed:', e && e.message));
+  } catch (e) {
+    console.warn('Failed to start recurring-classes scheduled job:', e && e.message);
+  }
+
+  // Schedule uninvoiced lessons audit (daily at 02:15) and run once on startup
+  try {
+    const cron = require('node-cron');
+    const { runUninvoicedLessonsAudit } = require('./jobs/uninvoicedLessonsAudit');
+    cron.schedule('15 2 * * *', async () => {
+      try {
+        await runUninvoicedLessonsAudit();
+      } catch (e) { console.error('Scheduled uninvoiced-lessons audit failed:', e && e.message); }
+    });
+    // Run once at startup (non-blocking)
+    runUninvoicedLessonsAudit().catch((e) => console.warn('Initial uninvoiced-lessons audit failed:', e && e.message));
+  } catch (e) {
+    console.warn('Failed to schedule uninvoiced-lessons audit job:', e && e.message);
+  }
+
+  // Schedule whiteboard screenshot cleanup (daily at 03:10)
+  try {
+    const cron = require('node-cron');
+    const { runWhiteboardScreenshotCleanup } = require('./jobs/whiteboardScreenshotCleanup');
+    cron.schedule('10 3 * * *', async () => {
+      try {
+        await runWhiteboardScreenshotCleanup();
+      } catch (e) {
+        console.error('Scheduled whiteboard screenshot cleanup failed:', e && e.message);
+      }
+    });
+    runWhiteboardScreenshotCleanup().catch((e) => console.warn('Initial whiteboard cleanup failed:', e && e.message));
+  } catch (e) {
+    console.warn('Failed to schedule whiteboard screenshot cleanup job:', e && e.message);
+  }
+
+  // Schedule mark unreported classes job (hourly)
+  try {
+    const cron = require('node-cron');
+    const { runJob: runMarkUnreportedJob } = require('./jobs/markUnreportedClassesJob');
+    // Run every hour at minute 15
+    cron.schedule('15 * * * *', async () => {
+      try {
+        await runMarkUnreportedJob();
+      } catch (e) { console.error('Scheduled mark-unreported-classes job failed:', e && e.message); }
+    });
+    // Run once at startup (non-blocking)
+    runMarkUnreportedJob().catch((e) => console.warn('Initial mark-unreported-classes job failed:', e && e.message));
+  } catch (e) {
+    console.warn('Failed to schedule mark-unreported-classes job:', e && e.message);
+  }
+
+  // Schedule teacher invoice generation job (monthly on 1st at 00:05)
+  try {
+    const cron = require('node-cron');
+    const { startInvoiceGenerationJob } = require('./jobs/generateTeacherInvoicesJob');
+    startInvoiceGenerationJob();
+  } catch (e) {
+    console.warn('Failed to start teacher invoice generation job:', e && e.message);
+  }
+};
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

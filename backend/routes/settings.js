@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Setting = require('../models/Setting');
+const User = require('../models/User');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const multer = require('multer');
 const { uploadImage } = require('../services/cloudinaryService');
@@ -46,6 +47,16 @@ const KNOWN_DEFAULTS = {
       lanterns: { count: 3, scale: 0.8 },
     },
   },
+  homepageAnnouncement: {
+    message: '',
+    fontSize: 'text-sm',
+    fontWeight: 'font-medium',
+    italic: false,
+    align: 'left',
+    tone: 'default',
+    backgroundColor: 'card',
+    borderColor: 'default',
+  },
   // add other well-known setting defaults here as needed
 };
 
@@ -79,6 +90,132 @@ const normalizeHijriOffsetValue = (value) => {
 
 const DASHBOARD_DECORATION_KEY = 'dashboardDecoration';
 const MEETING_FOLLOWUP_PROMPTS_KEY = 'meetingFollowupPrompts';
+const HOMEPAGE_ANNOUNCEMENT_KEY = 'homepageAnnouncement';
+const WHATSAPP_AUDIENCE_ALLOWED = new Set([
+  'active_guardians',
+  'inactive_guardians',
+  'all_guardians',
+  'active_teachers',
+  'inactive_teachers',
+  'guardians_timezone',
+  'guardians_country',
+]);
+
+const timezoneCountryAliasMap = {
+  cairo: 'Egypt',
+  alexandria: 'Egypt',
+  riyadh: 'Saudi Arabia',
+  jeddah: 'Saudi Arabia',
+  mecca: 'Saudi Arabia',
+  makkah: 'Saudi Arabia',
+  dammam: 'Saudi Arabia',
+  dubai: 'United Arab Emirates',
+  abu_dhabi: 'United Arab Emirates',
+  sharjah: 'United Arab Emirates',
+  doha: 'Qatar',
+  kuwait: 'Kuwait',
+  bahrain: 'Bahrain',
+  muscat: 'Oman',
+  amman: 'Jordan',
+  beirut: 'Lebanon',
+  damascus: 'Syria',
+  baghdad: 'Iraq',
+  jerusalem: 'Palestine',
+  gaza: 'Palestine',
+  istanbul: 'Turkey',
+  london: 'United Kingdom',
+  paris: 'France',
+  berlin: 'Germany',
+  rome: 'Italy',
+  madrid: 'Spain',
+  lisbon: 'Portugal',
+  dublin: 'Ireland',
+  new_york: 'United States',
+  chicago: 'United States',
+  denver: 'United States',
+  los_angeles: 'United States',
+  toronto: 'Canada',
+  vancouver: 'Canada',
+  sydney: 'Australia',
+  melbourne: 'Australia',
+  auckland: 'New Zealand',
+  karachi: 'Pakistan',
+  lahore: 'Pakistan',
+  islamabad: 'Pakistan',
+  delhi: 'India',
+  kolkata: 'India',
+  mumbai: 'India',
+  dhaka: 'Bangladesh',
+  jakarta: 'Indonesia',
+  kuala_lumpur: 'Malaysia',
+  singapore: 'Singapore',
+};
+
+const normalizeWhatsappPhone = (value) => String(value || '').replace(/\D+/g, '');
+
+const deriveCountryFromTimezone = (timezone) => {
+  const tz = String(timezone || '').trim();
+  if (!tz || !tz.includes('/')) return '';
+  const cityPart = tz.split('/').slice(1).join('/').toLowerCase();
+  const candidateKey = cityPart.replace(/\s+/g, '_');
+  if (timezoneCountryAliasMap[candidateKey]) return timezoneCountryAliasMap[candidateKey];
+
+  const simple = candidateKey.split('/').pop();
+  if (timezoneCountryAliasMap[simple]) return timezoneCountryAliasMap[simple];
+
+  const fallback = simple.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return fallback || '';
+};
+
+const resolveAudienceFilter = ({ audience, timezone, country }) => {
+  const normalizedAudience = WHATSAPP_AUDIENCE_ALLOWED.has(audience) ? audience : 'active_guardians';
+
+  if (normalizedAudience === 'active_guardians') {
+    return { role: 'guardian', isActive: true };
+  }
+  if (normalizedAudience === 'inactive_guardians') {
+    return { role: 'guardian', isActive: false };
+  }
+  if (normalizedAudience === 'all_guardians') {
+    return { role: 'guardian' };
+  }
+  if (normalizedAudience === 'active_teachers') {
+    return { role: 'teacher', isActive: true };
+  }
+  if (normalizedAudience === 'inactive_teachers') {
+    return { role: 'teacher', isActive: false };
+  }
+  if (normalizedAudience === 'guardians_timezone') {
+    const tz = String(timezone || '').trim();
+    return tz ? { role: 'guardian', timezone: tz } : { role: 'guardian' };
+  }
+  if (normalizedAudience === 'guardians_country') {
+    const c = String(country || '').trim();
+    return { role: 'guardian', _derivedCountry: c };
+  }
+  return { role: 'guardian', isActive: true };
+};
+const normalizeHomepageAnnouncement = (value) => {
+  const base = value && typeof value === 'object' ? value : {};
+  const allowedFontSizes = new Set(['text-sm', 'text-base', 'text-lg']);
+  const allowedFontWeights = new Set(['font-normal', 'font-medium', 'font-semibold']);
+  const allowedAlign = new Set(['left', 'center', 'right']);
+  const allowedTone = new Set(['default', 'primary', 'muted']);
+  const allowedBackgroundColors = new Set(['card', 'muted', 'primary', 'success', 'warning', 'info']);
+  const allowedBorderColors = new Set(['default', 'primary', 'success', 'warning', 'info', 'muted']);
+  const defaults = KNOWN_DEFAULTS.homepageAnnouncement;
+
+  return {
+    message: String(base.message || '').trim(),
+    fontSize: allowedFontSizes.has(base.fontSize) ? base.fontSize : defaults.fontSize,
+    fontWeight: allowedFontWeights.has(base.fontWeight) ? base.fontWeight : defaults.fontWeight,
+    italic: typeof base.italic === 'boolean' ? base.italic : defaults.italic,
+    align: allowedAlign.has(base.align) ? base.align : defaults.align,
+    tone: allowedTone.has(base.tone) ? base.tone : defaults.tone,
+    backgroundColor: allowedBackgroundColors.has(base.backgroundColor) ? base.backgroundColor : defaults.backgroundColor,
+    borderColor: allowedBorderColors.has(base.borderColor) ? base.borderColor : defaults.borderColor,
+  };
+};
 const normalizeMeetingFollowupPrompts = (value) => {
   const base = value && typeof value === 'object' ? value : {};
   const normalizeCadence = (v, fallback) => {
@@ -319,6 +456,24 @@ router.get('/dashboardDecoration', authenticateToken, async (req, res) => {
   }
 });
 
+// Getter for homepage announcement (authenticated users)
+router.get('/homepage-announcement', authenticateToken, async (req, res) => {
+  try {
+    const s = await Setting.findOne({ key: HOMEPAGE_ANNOUNCEMENT_KEY }).lean();
+    const value = normalizeHomepageAnnouncement(s?.value ?? KNOWN_DEFAULTS.homepageAnnouncement);
+    return res.json({
+      success: true,
+      setting: {
+        key: HOMEPAGE_ANNOUNCEMENT_KEY,
+        value,
+      },
+    });
+  } catch (err) {
+    console.error('Failed to fetch homepage announcement setting', err);
+    return res.status(500).json({ message: 'Failed to fetch homepage announcement setting' });
+  }
+});
+
 // Getter for meeting follow-up prompts (authenticated users)
 router.get('/meetingFollowupPrompts', authenticateToken, async (req, res) => {
   try {
@@ -366,6 +521,136 @@ router.put('/meetingFollowupPrompts', authenticateToken, requireAdmin, async (re
   } catch (err) {
     console.error('Failed to update meeting follow-up prompts setting', err);
     return res.status(500).json({ message: 'Failed to update meeting follow-up prompts setting' });
+  }
+});
+
+// Update homepage announcement (admin only)
+router.put('/homepage-announcement', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const value = normalizeHomepageAnnouncement(req.body?.value ?? {});
+    const s = await Setting.findOneAndUpdate(
+      { key: HOMEPAGE_ANNOUNCEMENT_KEY },
+      { value },
+      { upsert: true, new: true }
+    );
+    return res.json({ success: true, setting: s });
+  } catch (err) {
+    console.error('Failed to update homepage announcement setting', err);
+    return res.status(500).json({ message: 'Failed to update homepage announcement setting' });
+  }
+});
+
+// WhatsApp recipients for bulk/custom campaigns (admin only)
+router.get('/whatsapp-recipients', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const audience = String(req.query?.audience || 'active_guardians').trim();
+    const timezone = String(req.query?.timezone || '').trim();
+    const country = String(req.query?.country || '').trim();
+    const match = resolveAudienceFilter({ audience, timezone, country });
+
+    const dbQuery = {
+      role: match.role,
+      ...(typeof match.isActive === 'boolean' ? { isActive: match.isActive } : {}),
+      ...(match.timezone ? { timezone: match.timezone } : {}),
+    };
+
+    const users = await User.find(dbQuery)
+      .select('firstName lastName role isActive phone whatsapp timezone guardianInfo.epithet uiPreferences.timezoneCountry')
+      .lean();
+
+    const updates = [];
+    const normalizedRecipients = users.map((u) => {
+      const timezoneValue = String(u?.timezone || '').trim();
+      const derivedCountry = deriveCountryFromTimezone(timezoneValue);
+      const storedCountry = String(u?.uiPreferences?.timezoneCountry || '').trim();
+      const countryValue = derivedCountry || storedCountry;
+      const phone = normalizeWhatsappPhone(u?.whatsapp || u?.phone);
+
+      if (String(u?.role || '') === 'guardian' && countryValue && storedCountry !== countryValue) {
+        updates.push({
+          updateOne: {
+            filter: { _id: u._id },
+            update: { $set: { 'uiPreferences.timezoneCountry': countryValue } },
+          },
+        });
+      }
+
+      return {
+        id: String(u._id),
+        role: u.role,
+        isActive: Boolean(u.isActive),
+        firstName: u.firstName || '',
+        lastName: u.lastName || '',
+        epithet: u?.guardianInfo?.epithet || '',
+        timezone: timezoneValue,
+        country: countryValue,
+        phone,
+      };
+    });
+
+    if (updates.length) {
+      try {
+        await User.bulkWrite(updates, { ordered: false });
+      } catch (bulkErr) {
+        console.warn('Failed to persist timezone-country mapping for some users:', bulkErr?.message || bulkErr);
+      }
+    }
+
+    const filtered = match._derivedCountry
+      ? normalizedRecipients.filter((r) => String(r.country || '').toLowerCase() === String(match._derivedCountry).toLowerCase())
+      : normalizedRecipients;
+
+    const guardianUniverse = await User.find({ role: 'guardian' }).select('timezone uiPreferences.timezoneCountry').lean();
+    const timezoneOptions = Array.from(new Set(
+      guardianUniverse.map((g) => String(g?.timezone || '').trim()).filter(Boolean)
+    )).sort((a, b) => a.localeCompare(b));
+    const countryOptions = Array.from(new Set(
+      guardianUniverse
+        .map((g) => deriveCountryFromTimezone(g?.timezone) || String(g?.uiPreferences?.timezoneCountry || '').trim())
+        .filter(Boolean)
+    )).sort((a, b) => a.localeCompare(b));
+
+    return res.json({
+      success: true,
+      audience,
+      filters: { timezone, country },
+      recipients: filtered,
+      options: {
+        guardianTimezones: timezoneOptions,
+        guardianCountries: countryOptions,
+      },
+      stats: {
+        total: filtered.length,
+        withPhone: filtered.filter((r) => Boolean(r.phone)).length,
+      },
+    });
+  } catch (err) {
+    console.error('Failed to fetch WhatsApp recipients', err);
+    return res.status(500).json({ message: 'Failed to fetch WhatsApp recipients' });
+  }
+});
+
+// Upload optional WhatsApp message image (admin only)
+router.post('/whatsapp-broadcast/image', authenticateToken, requireAdmin, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+
+    const mime = req.file.mimetype || 'image/png';
+    const dataUri = `data:${mime};base64,${req.file.buffer.toString('base64')}`;
+    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      const uploaded = await uploadImage(dataUri, {
+        folder: 'waraqa/whatsapp',
+        transformation: [{ width: 1600, height: 1600, crop: 'limit' }],
+      });
+      const url = uploaded?.main?.secure_url || null;
+      if (!url) return res.status(500).json({ message: 'Upload failed: no image URL returned' });
+      return res.json({ success: true, image: { url } });
+    }
+
+    return res.json({ success: true, image: { url: dataUri, fallback: true } });
+  } catch (err) {
+    console.error('Failed to upload WhatsApp image', err);
+    return res.status(500).json({ message: 'Failed to upload WhatsApp image' });
   }
 });
 

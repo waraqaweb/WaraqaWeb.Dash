@@ -169,8 +169,8 @@ const FirstClassFeedbackModal = ({ open, onClose, prompt, onSubmitted, onDismiss
         </div>
 
         <div className="border-t border-gray-100 px-6 py-3 flex justify-end gap-2">
-          <button onClick={handleRemindLater} className="btn-secondary">Remind me later</button>
-          <button onClick={onClose} className="btn-ghost">Close</button>
+          <button onClick={handleRemindLater} disabled={submitting} className="btn-secondary">Remind me later</button>
+          <button onClick={onClose} disabled={submitting} className="btn-ghost">Cancel</button>
           <button onClick={handleSubmit} disabled={submitting} className="btn-submit">{submitting ? 'Sending...' : 'Send feedback'}</button>
         </div>
       </div>

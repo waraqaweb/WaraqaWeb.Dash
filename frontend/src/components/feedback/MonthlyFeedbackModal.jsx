@@ -156,8 +156,8 @@ const MonthlyFeedbackModal = ({ open, onClose, prompt, onSubmitted, onDismissed 
         </div>
 
         <div className="border-t border-gray-100 px-6 py-3 flex justify-end gap-2">
-          <button onClick={handleRemindLater} className="btn-secondary">Not now</button>
-          <button onClick={onClose} className="btn-ghost">Close</button>
+          <button onClick={handleRemindLater} disabled={submitting} className="btn-secondary">Not now</button>
+          <button onClick={onClose} disabled={submitting} className="btn-ghost">Cancel</button>
           <button onClick={handleSubmit} disabled={submitting} className="btn-submit">{submitting ? 'Sending...' : 'Give feedback'}</button>
         </div>
       </div>

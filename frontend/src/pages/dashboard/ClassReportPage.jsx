@@ -10,6 +10,15 @@ import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 import { useAuth } from "../../contexts/AuthContext";
 import { makeCacheKey, readCache, writeCache } from "../../utils/sessionCache";
 
+const PREVIOUS_ASSIGNMENT_OPTIONS = [
+  { value: 'not_completed', label: 'Not completed', icon: '✕' },
+  { value: 'not_reviewed', label: 'Not reviewed', icon: '◌' },
+  { value: 'weak', label: 'Weak', icon: '△' },
+  { value: 'good', label: 'Good', icon: '○' },
+  { value: 'very_good', label: 'Very Good', icon: '◉' },
+  { value: 'excellent', label: 'Excellent', icon: '★' },
+];
+
 const normalizeAttendance = (attendance) => {
   if (attendance === "missed_by_student") return "absent";
   if (String(attendance || "").startsWith("cancelled")) return "cancelled";
@@ -85,6 +94,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     teacherNotes: baseClass?.classReport?.teacherNotes || "",
     supervisorNotes: baseClass?.classReport?.supervisorNotes || "",
     newAssignment: baseClass?.classReport?.newAssignment || "",
+    previousAssignmentEvaluation: baseClass?.classReport?.previousAssignmentEvaluation || "",
     cancellationReason: baseClass?.cancellation?.reason || "",
     absenceExcused:
       typeof baseClass?.classReport?.absenceExcused === "boolean"
@@ -184,6 +194,19 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
       previousNote,
     };
   }, [buildUserLabel, classData, formatDateTime]);
+
+  const classSummary = useMemo(() => {
+    const student = classData?.student || {};
+    const teacher = classData?.teacher || {};
+    const studentName = [student.firstName, student.lastName].filter(Boolean).join(' ') || student.name || 'Student';
+    const teacherName = [teacher.firstName, teacher.lastName].filter(Boolean).join(' ') || teacher.name || 'Teacher';
+    const scheduledAt = formatDateTime(classData?.scheduledDate);
+    return {
+      studentName,
+      teacherName,
+      scheduledAt,
+    };
+  }, [classData, formatDateTime]);
 
   useEffect(() => {
     hasInitializedState.current = false;
@@ -374,6 +397,9 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         const trimmedTeacherNotes = typeof rest.teacherNotes === "string" ? rest.teacherNotes.trim() : "";
         const trimmedSupervisorNotes = typeof rest.supervisorNotes === "string" ? rest.supervisorNotes.trim() : "";
         const trimmedNewAssignment = typeof rest.newAssignment === "string" ? rest.newAssignment.trim() : "";
+        const trimmedPreviousAssignmentEvaluation = typeof rest.previousAssignmentEvaluation === "string"
+          ? rest.previousAssignmentEvaluation.trim()
+          : "";
         const trimmedSurahName = typeof rest.surahName === "string" ? rest.surahName.trim() : "";
         const parsedVerseEnd = rest.verseEnd === "" || rest.verseEnd === null || typeof rest.verseEnd === "undefined"
           ? undefined
@@ -407,6 +433,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         if (trimmedTeacherNotes) detailPayload.teacherNotes = trimmedTeacherNotes;
         if (trimmedSupervisorNotes) detailPayload.supervisorNotes = trimmedSupervisorNotes;
         if (trimmedNewAssignment) detailPayload.newAssignment = trimmedNewAssignment;
+        if (trimmedPreviousAssignmentEvaluation) detailPayload.previousAssignmentEvaluation = trimmedPreviousAssignmentEvaluation;
 
         if (rest.recitedQuran) {
           detailPayload.recitedQuran = rest.recitedQuran;
@@ -516,39 +543,50 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-xl shadow-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto relative">
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b">
-          <h2 className="text-xl font-semibold text-gray-900">Submit Class Report</h2>
+        <div className="flex items-start justify-between gap-4 p-5 border-b">
+          <div className="min-w-0 flex-1 space-y-3">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Submit Class Report</h2>
+              <div className="mt-1 space-y-1 text-sm text-gray-600">
+                <p className="truncate"><span className="font-medium text-gray-800">Student:</span> {classSummary.studentName}</p>
+                <p className="truncate"><span className="font-medium text-gray-800">Teacher:</span> {classSummary.teacherName}</p>
+                {classSummary.scheduledAt && (
+                  <p className="truncate"><span className="font-medium text-gray-800">Class time:</span> {classSummary.scheduledAt}</p>
+                )}
+              </div>
+            </div>
+
+            {derivedClassId && userRole && (
+              <div className="max-w-md">
+                <ReportSubmissionStatus
+                  classId={derivedClassId}
+                  userRole={userRole}
+                  compact={true}
+                  onExtensionGranted={() => {
+                    if (userRole !== 'admin') {
+                      api.post(`/classes/${derivedClassId}/check-can-submit`)
+                        .then(res => setSubmissionEligibility(res.data))
+                        .catch(err => console.error('Error refreshing eligibility:', err));
+                    }
+                  }}
+                  onRefresh={async () => {
+                    try {
+                      const res = await api.get(`/classes/${derivedClassId}`);
+                      setClassData(res.data?.class || null);
+                    } catch (err) {
+                      console.error('Error refreshing class data:', err);
+                    }
+                  }}
+                />
+              </div>
+            )}
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <XCircle className="h-6 w-6" />
           </button>
         </div>
 
         <form onSubmit={handleSubmitReport} className="p-5 space-y-6">
-          {/* Submission Status Banner */}
-          {derivedClassId && userRole && (
-            <ReportSubmissionStatus
-              classId={derivedClassId}
-              userRole={userRole}
-              onExtensionGranted={() => {
-                // Refresh eligibility check
-                if (userRole !== 'admin') {
-                  api.post(`/classes/${derivedClassId}/check-can-submit`)
-                    .then(res => setSubmissionEligibility(res.data))
-                    .catch(err => console.error('Error refreshing eligibility:', err));
-                }
-              }}
-              onRefresh={async () => {
-                // Reload class data
-                try {
-                  const res = await api.get(`/classes/${derivedClassId}`);
-                  setClassData(res.data?.class || null);
-                } catch (err) {
-                  console.error('Error refreshing class data:', err);
-                }
-              }}
-            />
-          )}
-
           {(reportMeta.submittedAt || reportMeta.lastEditedAt) && (
             <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900 space-y-1">
               {reportMeta.submittedAt ? (
@@ -853,37 +891,82 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               </div>
 
               {/* === Notes === */}
-              <div className="space-y-4">
-                <div className="relative pt-2">
-                  <label className="absolute left-3 top-0 bg-white px-2 text-xs font-medium text-gray-600 z-10">Teacher Notes</label>
-                  <textarea
-                    value={classReport.teacherNotes}
-                    onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
-                    className="w-full border rounded-lg px-3 py-2 text-sm min-h-[84px]"
-                    rows={2}
-                    placeholder="Visible to guardians and admins"
-                  />
-                </div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.5fr),minmax(0,1fr)]">
+                <fieldset className="rounded-lg border border-gray-300 px-4 pb-4 pt-2">
+                  <legend className="px-2 text-xs font-medium text-gray-600">Teacher Notes</legend>
+                  <p className="mb-4 text-xs text-gray-500">Visible to guardians and admins</p>
 
-                <div className="relative pt-2">
-                  <label className="absolute left-3 top-0 bg-white px-2 text-xs font-medium text-gray-600 z-10">Supervisor Notes</label>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-gray-700">Previous Assignment Evaluation</label>
+                      <div className="grid grid-cols-2 gap-2 xl:grid-cols-3">
+                        {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
+                          const isSelected = classReport.previousAssignmentEvaluation === option.value;
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => setClassReport({ ...classReport, previousAssignmentEvaluation: option.value })}
+                              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                                isSelected
+                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                                  : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                              }`}
+                            >
+                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs shadow-sm">
+                                {option.icon}
+                              </span>
+                              <span className="leading-tight">{option.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-gray-700">New Assignment</label>
+                      <textarea
+                        value={classReport.newAssignment}
+                        onChange={(e) => setClassReport({ ...classReport, newAssignment: e.target.value })}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm min-h-[88px]"
+                        rows={3}
+                        placeholder="Write the next assignment or homework for the student"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-gray-700">Notes</label>
+                      <textarea
+                        value={classReport.teacherNotes}
+                        onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm min-h-[88px]"
+                        rows={3}
+                        placeholder="Add any additional comments or observations about the student"
+                      />
+                    </div>
+                  </div>
+                </fieldset>
+
+                <fieldset className="rounded-lg border border-gray-300 px-4 pb-4 pt-2">
+                  <legend className="px-2 text-xs font-medium text-gray-600">Supervisor Notes</legend>
+                  <p className="mb-4 text-xs text-gray-500">Visible to admins only</p>
                   <textarea
                     value={classReport.supervisorNotes}
                     onChange={(e) => setClassReport({ ...classReport, supervisorNotes: e.target.value })}
-                    className="w-full border rounded-lg px-3 py-2 text-sm min-h-[84px]"
-                    rows={2}
-                    placeholder="Visible to admins only"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm min-h-[256px]"
+                    rows={11}
+                    placeholder="Add any internal notes for admins"
                   />
-                </div>
+                </fieldset>
               </div>
 
               {/* Class performance */}
               <div>
-                <div className="mb-2 flex items-center justify-center gap-2">
-                  <label className="text-sm font-medium text-gray-700">Class performance</label>
-                  <span className="text-xs text-gray-500">{(classReport.classScore || 0)}/5</span>
-                </div>
-                <div className="flex flex-col items-center gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium text-gray-700">Class performance</label>
+                    <span className="text-xs text-gray-500">{(classReport.classScore || 0)}/5</span>
+                  </div>
                   <div className="flex items-center gap-2">
                     {[1,2,3,4,5].map((i) => {
                       const activeScore = hoverScore || Number(classReport.classScore || 0);

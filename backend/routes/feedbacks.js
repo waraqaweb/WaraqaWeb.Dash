@@ -245,6 +245,8 @@ router.post('/:type/dismiss', authenticateToken, async (req, res) => {
       classId: classId || undefined,
       dismissed: true,
       dismissedAt: new Date(),
+      read: true,
+      readAt: new Date(),
     };
 
     const f = new Feedback(payload);
@@ -345,7 +347,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
 // Admin: get unread feedback count
 router.get('/count/unread', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const count = await Feedback.countDocuments({ read: false, archived: false });
+    const count = await Feedback.countDocuments({ read: false, archived: false, dismissed: { $ne: true } });
     res.json({ success: true, count });
   } catch (err) {
     console.error('Unread count error', err);

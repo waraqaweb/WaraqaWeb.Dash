@@ -2997,6 +2997,7 @@ fetchClassesRef.current = fetchClasses;
           const subjectValue = (Array.isArray(reportData.subjects) && reportData.subjects.length)
             ? reportData.subjects.join(', ')
             : (reportData.subject || classItem?.subject || '');
+          const previousAssignmentEvaluationValue = reportData.previousAssignmentEvaluation || '';
           const teacherNotesValue = reportData.teacherNotes || classItem?.teacherNotes || '';
           const supervisorNotesValue = reportData.supervisorNotes || classItem?.supervisorNotes || '';
           const assignmentValue = reportData.newAssignment || classItem?.newAssignment || '';
@@ -3434,6 +3435,12 @@ fetchClassesRef.current = fetchClasses;
                         {teacherNotesValue && (
                           <div className="bg-gray-50 p-2 rounded">
                             <span className="font-medium">Teacher Notes:</span> {teacherNotesValue}
+                          </div>
+                        )}
+
+                        {previousAssignmentEvaluationValue && (
+                          <div className="bg-gray-50 p-2 rounded">
+                            <span className="font-medium">Previous Assignment Evaluation:</span> {previousAssignmentEvaluationValue.replace(/_/g, ' ')}
                           </div>
                         )}
 

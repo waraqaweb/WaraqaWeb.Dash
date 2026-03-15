@@ -701,6 +701,52 @@ const DashboardHome = ({ isActive = true }) => {
   const [latestFeedback, setLatestFeedback] = useState(null);
   const [meetingFollowupPrompts, setMeetingFollowupPrompts] = useState(null);
   const isAnyPromptOpen = showWelcome || showFirstClassModal || showMonthlyModal || showGuardianFollowUpModal || showTeacherSyncModal;
+  const feedbackPromptSessionKey = React.useMemo(
+    () => `feedback_prompt_closed_v1_${user?._id || 'anon'}`,
+    [user?._id]
+  );
+  const [closedFeedbackPromptKeys, setClosedFeedbackPromptKeys] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem(`feedback_prompt_closed_v1_${user?._id || 'anon'}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const buildFeedbackPromptKey = React.useCallback((type, prompt) => {
+    if (!prompt || !type) return '';
+    const teacherId = prompt.teacher?._id || prompt.teacherId || 'unknown-teacher';
+    if (type === 'first_class') {
+      return `first_class:${prompt.classId || teacherId}`;
+    }
+    return `monthly:${teacherId}`;
+  }, []);
+
+  const rememberClosedFeedbackPrompt = React.useCallback((type, prompt) => {
+    const key = buildFeedbackPromptKey(type, prompt);
+    if (!key) return;
+    setClosedFeedbackPromptKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
+  }, [buildFeedbackPromptKey]);
+
+  const handleCloseFirstFeedbackModal = React.useCallback(() => {
+    if (activeFirstPrompt) {
+      rememberClosedFeedbackPrompt('first_class', activeFirstPrompt);
+    }
+    setShowFirstClassModal(false);
+    setActiveFirstPrompt(null);
+    try { window.history.back(); } catch(e){}
+  }, [activeFirstPrompt, rememberClosedFeedbackPrompt]);
+
+  const handleCloseMonthlyFeedbackModal = React.useCallback(() => {
+    if (activeMonthlyPrompt) {
+      rememberClosedFeedbackPrompt('monthly', activeMonthlyPrompt);
+    }
+    setShowMonthlyModal(false);
+    setActiveMonthlyPrompt(null);
+    try { window.history.back(); } catch(e){}
+  }, [activeMonthlyPrompt, rememberClosedFeedbackPrompt]);
 
   const isFirstVisit = React.useMemo(() => {
     try {
@@ -717,6 +763,24 @@ const DashboardHome = ({ isActive = true }) => {
       return false;
     }
   }, [user]);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(feedbackPromptSessionKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setClosedFeedbackPromptKeys(Array.isArray(parsed) ? parsed : []);
+    } catch (e) {
+      setClosedFeedbackPromptKeys([]);
+    }
+  }, [feedbackPromptSessionKey]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(feedbackPromptSessionKey, JSON.stringify(closedFeedbackPromptKeys));
+    } catch (e) {
+      // ignore storage failures
+    }
+  }, [feedbackPromptSessionKey, closedFeedbackPromptKeys]);
 
   useEffect(() => {
     let cancelled = false;
@@ -751,17 +815,24 @@ const DashboardHome = ({ isActive = true }) => {
     if (showGuardianFollowUpModal || showTeacherSyncModal) return;
     if (showFirstClassModal || showMonthlyModal) return;
     if (!promptsLoading) {
-      if (firstClassPrompts && firstClassPrompts.length > 0) {
-        setActiveFirstPrompt(firstClassPrompts[0]);
+      const nextFirstPrompt = (firstClassPrompts || []).find(
+        (prompt) => !closedFeedbackPromptKeys.includes(buildFeedbackPromptKey('first_class', prompt))
+      );
+      const nextMonthlyPrompt = (monthlyPrompts || []).find(
+        (prompt) => !closedFeedbackPromptKeys.includes(buildFeedbackPromptKey('monthly', prompt))
+      );
+
+      if (nextFirstPrompt) {
+        setActiveFirstPrompt(nextFirstPrompt);
         setShowFirstClassModal(true);
         try { window.history.pushState({ modal: 'firstClass' }, ''); } catch(e){}
-      } else if (monthlyPrompts && monthlyPrompts.length > 0) {
-        setActiveMonthlyPrompt(monthlyPrompts[0]);
+      } else if (nextMonthlyPrompt) {
+        setActiveMonthlyPrompt(nextMonthlyPrompt);
         setShowMonthlyModal(true);
         try { window.history.pushState({ modal: 'monthly' }, ''); } catch(e){}
       }
     }
-  }, [isActive, promptsLoading, firstClassPrompts, monthlyPrompts, showWelcome, isFirstVisit, showGuardianFollowUpModal, showTeacherSyncModal, showFirstClassModal, showMonthlyModal]);
+  }, [isActive, promptsLoading, firstClassPrompts, monthlyPrompts, showWelcome, isFirstVisit, showGuardianFollowUpModal, showTeacherSyncModal, showFirstClassModal, showMonthlyModal, closedFeedbackPromptKeys, buildFeedbackPromptKey]);
 
   // Welcome modal: show once for new users
   useEffect(() => {
@@ -787,15 +858,23 @@ const DashboardHome = ({ isActive = true }) => {
     const onPop = (e) => {
       // if modal was open and state no longer indicates it, close
       if (showFirstClassModal && !(e.state && e.state.modal === 'firstClass')) {
+        if (activeFirstPrompt) {
+          rememberClosedFeedbackPrompt('first_class', activeFirstPrompt);
+        }
         setShowFirstClassModal(false);
+        setActiveFirstPrompt(null);
       }
       if (showMonthlyModal && !(e.state && e.state.modal === 'monthly')) {
+        if (activeMonthlyPrompt) {
+          rememberClosedFeedbackPrompt('monthly', activeMonthlyPrompt);
+        }
         setShowMonthlyModal(false);
+        setActiveMonthlyPrompt(null);
       }
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, [isActive, showFirstClassModal, showMonthlyModal]);
+  }, [isActive, showFirstClassModal, showMonthlyModal, activeFirstPrompt, activeMonthlyPrompt, rememberClosedFeedbackPrompt]);
 
   const handleFeedbackSubmitted = React.useCallback((result) => {
     refresh();
@@ -1725,7 +1804,7 @@ const DashboardHome = ({ isActive = true }) => {
           <StatCard title="Active Students" value={data.activeStudentCount || data.studentsWithClassesThisMonth || 0} Icon={Users} color="bg-amber-50 text-amber-700" />
           <StatCard title="Cancellations (month)" value={data.cancellationsThisMonth || 0} Icon={AlertCircle} color="bg-rose-50 text-rose-700" />
           <StatCard title="Classes (this month)" value={data.classesCompletedThisMonth || 0} Icon={Calendar} color="bg-violet-50 text-violet-700" />
-          <StatCard title="Vacation days used" value={`${Number(data.vacationSummary?.usedDays || 0)} / ${Number(data.vacationSummary?.allocatedDays || 0)}`} Icon={RefreshCcw} color="bg-emerald-50 text-emerald-700" />
+          <StatCard title="Vacation hours used" value={`${Number(data.vacationSummary?.usedDays || 0) * 24} hours`} Icon={RefreshCcw} color="bg-emerald-50 text-emerald-700" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
@@ -2212,8 +2291,7 @@ const DashboardHome = ({ isActive = true }) => {
       />
       <FirstClassFeedbackModal
         open={showFirstClassModal}
-        // onClose should only close the modal; do NOT refresh prompts here because that would re-open it immediately
-        onClose={() => { setShowFirstClassModal(false); try { window.history.back(); } catch(e){} }}
+        onClose={handleCloseFirstFeedbackModal}
         prompt={activeFirstPrompt}
         onSubmitted={handleFeedbackSubmitted}
         onDismissed={handleFeedbackDismissed}
@@ -2221,8 +2299,7 @@ const DashboardHome = ({ isActive = true }) => {
 
       <MonthlyFeedbackModal
         open={showMonthlyModal}
-        // onClose only closes the modal; refresh will be triggered by onSubmitted after submit/dismiss
-        onClose={() => { setShowMonthlyModal(false); try { window.history.back(); } catch(e){} }}
+        onClose={handleCloseMonthlyFeedbackModal}
         prompt={activeMonthlyPrompt}
         onSubmitted={handleFeedbackSubmitted}
         onDismissed={handleFeedbackDismissed}

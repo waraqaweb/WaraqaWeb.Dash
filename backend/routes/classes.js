@@ -3423,6 +3423,9 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
     const teacherNotes = typeof payload.teacherNotes === "string" ? payload.teacherNotes.trim() : "";
     const supervisorNotes = typeof payload.supervisorNotes === "string" ? payload.supervisorNotes.trim() : "";
     const newAssignment = typeof payload.newAssignment === "string" ? payload.newAssignment.trim() : "";
+    const previousAssignmentEvaluation = typeof payload.previousAssignmentEvaluation === "string"
+      ? payload.previousAssignmentEvaluation.trim()
+      : "";
     const recitedQuran =
       payload.recitedQuran ?? payload.quranRecitation ?? classDoc.classReport?.recitedQuran ?? "";
 
@@ -3478,6 +3481,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
       if (teacherNotes) reportPayload.teacherNotes = teacherNotes;
       if (supervisorNotes) reportPayload.supervisorNotes = supervisorNotes;
       if (newAssignment) reportPayload.newAssignment = newAssignment;
+      if (previousAssignmentEvaluation) reportPayload.previousAssignmentEvaluation = previousAssignmentEvaluation;
       if (recitedQuran) {
         reportPayload.recitedQuran = recitedQuran;
         reportPayload.quranRecitation = recitedQuran;

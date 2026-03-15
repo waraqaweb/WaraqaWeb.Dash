@@ -350,6 +350,11 @@ const classSchema = new mongoose.Schema({
       trim: true,
       maxlength: 1000,
     },
+    previousAssignmentEvaluation: {
+      type: String,
+      trim: true,
+      maxlength: 50,
+    },
     supervisorNotes: {
       type: String,
       trim: true,

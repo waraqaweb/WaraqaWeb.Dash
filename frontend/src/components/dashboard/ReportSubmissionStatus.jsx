@@ -147,7 +147,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     if (compact) {
       return renderCompactStatus(
         'Report Submitted',
-        [status.submittedAt ? `Submitted on ${new Date(status.submittedAt).toLocaleString()}` : null],
+        [],
         'text-green-700',
         null,
         'bg-green-50 border border-green-200 rounded-lg px-3 py-2'

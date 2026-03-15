@@ -25,6 +25,60 @@ const autoResizeTextarea = (element) => {
   element.style.height = `${Math.max(44, element.scrollHeight)}px`;
 };
 
+const reportSelectStyles = {
+  control: (base, state) => ({
+    ...base,
+    minHeight: 46,
+    borderRadius: 12,
+    borderColor: state.isFocused ? '#22d3ee' : '#cbd5e1',
+    backgroundColor: '#f8fafc',
+    boxShadow: state.isFocused ? '0 0 0 4px rgba(34, 211, 238, 0.15)' : '0 1px 2px rgba(15, 23, 42, 0.05)',
+    '&:hover': {
+      borderColor: state.isFocused ? '#22d3ee' : '#94a3b8',
+    },
+  }),
+  valueContainer: (base) => ({
+    ...base,
+    padding: '2px 12px',
+  }),
+  placeholder: (base) => ({
+    ...base,
+    color: '#94a3b8',
+  }),
+  singleValue: (base) => ({
+    ...base,
+    color: '#0f172a',
+  }),
+  indicatorSeparator: () => ({ display: 'none' }),
+  dropdownIndicator: (base) => ({
+    ...base,
+    color: '#64748b',
+  }),
+  clearIndicator: (base) => ({
+    ...base,
+    color: '#94a3b8',
+  }),
+  menu: (base) => ({
+    ...base,
+    borderRadius: 12,
+    overflow: 'hidden',
+    boxShadow: '0 16px 40px rgba(15, 23, 42, 0.16)',
+  }),
+  option: (base, state) => ({
+    ...base,
+    backgroundColor: state.isSelected ? '#cffafe' : state.isFocused ? '#ecfeff' : '#ffffff',
+    color: '#0f172a',
+    cursor: 'pointer',
+  }),
+};
+
+const modernFieldClassName = "w-full rounded-xl border border-slate-300 bg-slate-50/80 px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100";
+const modernToggleButtonClassName = (isActive) => `inline-flex items-center justify-center rounded-xl border px-4 py-2 text-sm font-semibold transition-all ${
+  isActive
+    ? 'border-cyan-300 bg-cyan-50 text-cyan-700 shadow-sm'
+    : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-white'
+}`;
+
 const normalizeAttendance = (attendance) => {
   if (attendance === "missed_by_student") return "absent";
   if (String(attendance || "").startsWith("cancelled")) return "cancelled";
@@ -519,6 +573,21 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const isAttended = classReport.attendance === "attended";
   const isAbsent = classReport.attendance === "absent";
   const isCancelled = classReport.attendance === "cancelled";
+  const showLastEditedMeta = Boolean(
+    reportMeta.lastEditedAt && (
+      reportMeta.lastEditedAt !== reportMeta.submittedAt
+      || reportMeta.lastEditedBy !== reportMeta.submittedBy
+    )
+  );
+  const showPreviousVersionMeta = Boolean(
+    reportMeta.historyCount > 1
+    && reportMeta.previousEditor
+    && (
+      reportMeta.previousChangedAt !== reportMeta.lastEditedAt
+      || reportMeta.previousEditor !== reportMeta.lastEditedBy
+      || reportMeta.previousNote
+    )
+  );
 
   if (!derivedClassId) {
     return (
@@ -602,7 +671,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                       }
                     }}
                   />
-                  {(reportMeta.submittedAt || reportMeta.lastEditedAt || reportMeta.previousEditor) && (
+                  {(reportMeta.submittedAt || showLastEditedMeta || showPreviousVersionMeta) && (
                     <div className="space-y-1 text-xs sm:text-sm">
                       {reportMeta.submittedAt ? (
                         <p>
@@ -611,12 +680,12 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                       ) : (
                         <p className="font-semibold">Submission pending</p>
                       )}
-                      {reportMeta.lastEditedAt && (
+                      {showLastEditedMeta && (
                         <p>
                           <span className="font-semibold">Last edited by:</span> {reportMeta.lastEditedBy || "Unknown user"} on {reportMeta.lastEditedAt}
                         </p>
                       )}
-                      {reportMeta.previousEditor && (
+                      {showPreviousVersionMeta && (
                         <p className="text-emerald-800">
                           <span className="font-semibold">Previous version:</span> {reportMeta.previousEditor}
                           {reportMeta.previousChangedAt ? ` · ${reportMeta.previousChangedAt}` : ""}
@@ -748,11 +817,34 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
           {isAttended && (
             <>
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold tracking-wide text-fuchsia-600">Previous Assignment Evaluation</label>
+                <div className="flex flex-wrap gap-2">
+                  {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
+                    const isSelected = classReport.previousAssignmentEvaluation === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setClassReport({ ...classReport, previousAssignmentEvaluation: option.value })}
+                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                          isSelected
+                            ? option.activeClassName
+                            : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        <span>{option.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* === Second Row: Subject + Lesson Topic/Surah === */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Subject */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+                  <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Subject</label>
                   <Select
                     options={subjectOptions}
                     value={
@@ -763,6 +855,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                     placeholder="Search or select subject..."
                     isClearable
                     isSearchable
+                    styles={reportSelectStyles}
                   />
                 </div>
 
@@ -770,13 +863,13 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                 <div>
                   {quranSurahOnly.includes(classReport.subject) ? (
                     <>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Surah (Lesson Topic)</label>
+                      <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Surah Topic</label>
                       {classReport.lessonTopic === "custom" ? (
                         <input
                           type="text"
                           value={classReport.customLessonTopic || ""}
                           onChange={(e) => setClassReport({ ...classReport, customLessonTopic: e.target.value })}
-                          className="w-full border rounded-lg p-2"
+                          className={modernFieldClassName}
                           placeholder="Enter custom topic..."
                         />
                       ) : (
@@ -799,23 +892,24 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                           placeholder="Search or select surah..."
                           isClearable
                           isSearchable
+                          styles={reportSelectStyles}
                         />
                       )}
 
                       <div className="mt-2">
-                        <label className="block text-sm font-medium">Ending Verse</label>
+                        <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Ending Verse</label>
                         <input
                           type="number"
                           value={classReport.verseEnd}
                           onChange={(e) => setClassReport({ ...classReport, verseEnd: e.target.value })}
-                          className="w-full border rounded-lg p-2"
+                          className={modernFieldClassName}
                           placeholder="Enter ending verse"
                         />
                       </div>
                     </>
                   ) : quranWithRecitation.includes(classReport.subject) ? (
                     <>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Lesson Topic</label>
+                      <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Lesson Topic</label>
                       <Select
                         options={[...topicOptions, { value: "custom", label: "➕ Custom Topic" }]}
                         value={
@@ -830,18 +924,19 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                         placeholder="Search or select topic..."
                         isClearable
                         isSearchable
+                        styles={reportSelectStyles}
                       />
 
                       {/* Recitation Toggle */}
                       <div className="mt-3">
-                        <label className="block font-medium">Did the student recite Quran?</label>
+                        <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Quran Recited?</label>
                         <div className="flex gap-2 mt-2">
                           {["yes", "no"].map((val) => (
                             <button
                               key={val}
                               type="button"
                               onClick={() => setClassReport({ ...classReport, recitedQuran: val })}
-                              className={`recite-toggle w-full ${classReport.recitedQuran === val ? "active" : ""}`}
+                              className={modernToggleButtonClassName(classReport.recitedQuran === val)}
                             >
                               {val.toUpperCase()}
                             </button>
@@ -852,7 +947,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                       {/* Surah & Verse if Recited */}
                       {classReport.recitedQuran === "yes" && (
                         <div className="mt-2">
-                          <label className="block text-sm font-medium">Surah</label>
+                          <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Surah</label>
                           <Select
                             options={surahOptions}
                             value={surahOptions.find((s) => s.value === classReport.surahName) || null}
@@ -862,20 +957,21 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                             placeholder="Select surah..."
                             isClearable
                             isSearchable
+                            styles={reportSelectStyles}
                           />
-                          <label className="block text-sm mt-2">Ending Verse</label>
+                          <label className="mb-1.5 mt-2 block text-xs font-semibold tracking-wide text-cyan-600">Ending Verse</label>
                           <input
                             type="number"
                             value={classReport.verseEnd}
                             onChange={(e) => setClassReport({ ...classReport, verseEnd: e.target.value })}
-                            className="w-full border rounded p-2"
+                            className={modernFieldClassName}
                           />
                         </div>
                       )}
                     </>
                   ) : (
                     <>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Lesson Topic</label>
+                      <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Lesson Topic</label>
                       {!hasTopicOptions ? (
                         <input
                           type="text"
@@ -887,7 +983,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                               customLessonTopic: e.target.value,
                             })
                           }
-                          className="w-full border rounded-lg p-2"
+                          className={modernFieldClassName}
                           placeholder="Enter lesson topic..."
                         />
                       ) : (
@@ -905,6 +1001,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                           placeholder="Search or select topic..."
                           isClearable
                           isSearchable
+                          styles={reportSelectStyles}
                         />
                       )}
                     </>
@@ -914,31 +1011,6 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
               {/* === Notes === */}
               <div className="space-y-4">
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold tracking-wide text-fuchsia-600">Previous Assignment Evaluation</label>
-                  <div className="rounded-lg border border-gray-300 px-2 py-2">
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-                      {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
-                        const isSelected = classReport.previousAssignmentEvaluation === option.value;
-                        return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => setClassReport({ ...classReport, previousAssignmentEvaluation: option.value })}
-                            className={`inline-flex items-center justify-center whitespace-nowrap rounded-full border px-2 py-1.5 text-xs font-semibold transition-colors ${
-                              isSelected
-                                ? option.activeClassName
-                                : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
-                            }`}
-                          >
-                            <span>{option.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
                 <div>
                   <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Lesson Summary &amp; Next Task</label>
                   <textarea

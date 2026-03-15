@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "class report updates 2"
+git commit -m "class report updates 3"
 git push origin main
 
 
@@ -14,8 +14,8 @@ git push origin main
 cd /opt/waraqa
 chmod +x deploy/scripts/deploy.sh
 ./deploy/scripts/deploy.sh pull
-./deploy/scripts/deploy.sh all
 ./deploy/scripts/deploy.sh auto
+./deploy/scripts/deploy.sh all
 
 
 

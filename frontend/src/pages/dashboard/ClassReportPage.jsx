@@ -83,17 +83,6 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     };
   }, []);
 
-  useEffect(() => {
-    autoResizeTextarea(newAssignmentRef.current);
-  }, [classReport.newAssignment]);
-
-  useEffect(() => {
-    autoResizeTextarea(teacherNotesRef.current);
-  }, [classReport.teacherNotes]);
-
-  useEffect(() => {
-    autoResizeTextarea(supervisorNotesRef.current);
-  }, [classReport.supervisorNotes]);
   const defaultReportState = (baseClass) => ({
     attendance: normalizeAttendance(baseClass?.classReport?.attendance || "attended"),
     cancelledBy: String(baseClass?.classReport?.attendance || "").startsWith("cancelled")
@@ -143,6 +132,18 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     }
     return base;
   });
+
+  useEffect(() => {
+    autoResizeTextarea(newAssignmentRef.current);
+  }, [classReport.newAssignment]);
+
+  useEffect(() => {
+    autoResizeTextarea(teacherNotesRef.current);
+  }, [classReport.teacherNotes]);
+
+  useEffect(() => {
+    autoResizeTextarea(supervisorNotesRef.current);
+  }, [classReport.supervisorNotes]);
 
   const formatDateTime = useMemo(() => (
     (value) => {

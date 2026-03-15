@@ -54,6 +54,39 @@ const formatHours2 = (value) => {
   return Number.isFinite(num) ? num.toFixed(2) : '0.00';
 };
 
+const getHoursBalanceMeta = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return {
+      formatted: '0.00',
+      label: 'left',
+      tone: 'text-muted-foreground',
+    };
+  }
+
+  if (num < 0) {
+    return {
+      formatted: formatHours2(Math.abs(num)),
+      label: 'due',
+      tone: 'text-orange-700',
+    };
+  }
+
+  if (num > 0) {
+    return {
+      formatted: formatHours2(num),
+      label: 'left',
+      tone: 'text-emerald-600',
+    };
+  }
+
+  return {
+    formatted: formatHours2(num),
+    label: 'left',
+    tone: 'text-muted-foreground',
+  };
+};
+
 const copyToClipboard = (text) => {
   if (!text) return;
   navigator.clipboard.writeText(String(text)).then(() => {
@@ -780,7 +813,7 @@ const GuardiansPage = () => {
 
         <div className="space-y-3">
           {sortedGuardians.map((guardian) => (
-            <div key={guardian._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+              <div key={guardian._id} className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
               {/* Guardian Summary */}
               <div className="p-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -811,7 +844,9 @@ const GuardiansPage = () => {
                         </span>
                         <span className="flex items-center">
                           <Clock className="h-3 w-3 mr-1" />
-                          {formatHours2(guardian.guardianInfo?.totalHours || 0)} hours left
+                          <span className={getHoursBalanceMeta(guardian.guardianInfo?.totalHours || 0).tone}>
+                            {getHoursBalanceMeta(guardian.guardianInfo?.totalHours || 0).formatted} hours {getHoursBalanceMeta(guardian.guardianInfo?.totalHours || 0).label}
+                          </span>
                         </span>
                         {guardian.email && (
                           <span className="flex items-center">
@@ -1094,7 +1129,9 @@ const GuardiansPage = () => {
                 </div>
                 <div>
                   <p className="font-medium text-foreground">{student.firstName} {student.lastName}</p>
-                  <p className="text-xs text-muted-foreground">{formatHours2(student.hoursRemaining || 0)} hours left</p>
+                  <p className={`text-xs ${getHoursBalanceMeta(student.hoursRemaining || 0).tone}`}>
+                    {getHoursBalanceMeta(student.hoursRemaining || 0).formatted} hours {getHoursBalanceMeta(student.hoursRemaining || 0).label}
+                  </p>
                 </div>
               </div>
               <div className="text-xs text-muted-foreground mt-1">
@@ -1110,10 +1147,8 @@ const GuardiansPage = () => {
       </div>
       );
     })()}
-  </div>
-)}
-
-
+                </div>
+              )}
               </div>
             </div>
           ))}

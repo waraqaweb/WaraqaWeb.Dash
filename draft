@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "vacation and other changes"
+git commit -m "class report updates"
 git push origin main
 
 

@@ -918,79 +918,79 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               </div>
 
               {/* === Notes === */}
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
-                <div className="space-y-3">
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Previous Assignment Evaluation</label>
+                  <div className="rounded-lg border border-gray-300 px-2 py-2 overflow-x-auto">
+                    <div className="flex min-w-max items-center gap-2">
+                      {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
+                        const isSelected = classReport.previousAssignmentEvaluation === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => setClassReport({ ...classReport, previousAssignmentEvaluation: option.value })}
+                            className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                              isSelected
+                                ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                                : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                            }`}
+                          >
+                            <span className={`text-sm ${isSelected ? 'text-emerald-700' : 'text-gray-500'}`}>{option.icon}</span>
+                            <span>{option.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <div>
                     <h3 className="text-sm font-semibold text-gray-800">Teacher Notes</h3>
                     <p className="text-xs text-gray-500">Visible to guardians and admins</p>
                   </div>
 
                   <div>
-                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Previous Assignment Evaluation</label>
-                    <div className="rounded-lg border border-gray-300 px-2 py-2 overflow-x-auto">
-                      <div className="flex min-w-max items-center gap-2">
-                        {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
-                          const isSelected = classReport.previousAssignmentEvaluation === option.value;
-                          return (
-                            <button
-                              key={option.value}
-                              type="button"
-                              onClick={() => setClassReport({ ...classReport, previousAssignmentEvaluation: option.value })}
-                              className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                                isSelected
-                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                                  : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
-                              }`}
-                            >
-                              <span className={`text-sm ${isSelected ? 'text-emerald-700' : 'text-gray-500'}`}>{option.icon}</span>
-                              <span>{option.label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <h3 className="text-sm font-semibold text-gray-800">Supervisor Notes</h3>
+                    <p className="text-xs text-gray-500">Visible to admins only</p>
                   </div>
+                </div>
 
-                  <div>
-                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">New Assignment</label>
-                    <textarea
-                      ref={newAssignmentRef}
-                      value={classReport.newAssignment}
-                      onChange={(e) => setClassReport({ ...classReport, newAssignment: e.target.value })}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
-                      rows={1}
-                      placeholder="Write the next assignment or homework for the student"
-                    />
-                  </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Lesson Summary &amp; Next Assignment</label>
+                  <textarea
+                    ref={newAssignmentRef}
+                    value={classReport.newAssignment}
+                    onChange={(e) => setClassReport({ ...classReport, newAssignment: e.target.value })}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
+                    rows={1}
+                    placeholder="Summarize what was discussed, where the lesson ended, and the assignment for the next lesson"
+                  />
+                </div>
 
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
                   <div>
-                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Notes</label>
+                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Public Note</label>
                     <textarea
                       ref={teacherNotesRef}
                       value={classReport.teacherNotes}
                       onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
                       rows={1}
-                      placeholder="Add any additional comments or observations about the student"
+                      placeholder="Add a note visible to guardians and admins"
                     />
                   </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-800">Supervisor Notes</h3>
-                    <p className="text-xs text-gray-500">Visible to admins only</p>
-                  </div>
 
                   <div>
-                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Supervisor Notes</label>
+                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Supervisor Note</label>
                     <textarea
                       ref={supervisorNotesRef}
                       value={classReport.supervisorNotes}
                       onChange={(e) => setClassReport({ ...classReport, supervisorNotes: e.target.value })}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
                       rows={1}
-                      placeholder="Add any internal notes for admins"
+                      placeholder="Add any internal note for admins"
                     />
                   </div>
                 </div>

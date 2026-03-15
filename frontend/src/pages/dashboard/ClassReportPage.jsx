@@ -11,12 +11,12 @@ import { useAuth } from "../../contexts/AuthContext";
 import { makeCacheKey, readCache, writeCache } from "../../utils/sessionCache";
 
 const PREVIOUS_ASSIGNMENT_OPTIONS = [
-  { value: 'not_completed', label: 'Not completed', icon: '✕' },
-  { value: 'not_reviewed', label: 'Not reviewed', icon: '◌' },
-  { value: 'weak', label: 'Weak', icon: '△' },
-  { value: 'good', label: 'Good', icon: '○' },
-  { value: 'very_good', label: 'Very Good', icon: '◉' },
-  { value: 'excellent', label: 'Excellent', icon: '★' },
+  { value: 'not_completed', label: 'Incomplete', activeClassName: 'border-rose-300 bg-rose-50 text-rose-700' },
+  { value: 'not_reviewed', label: 'Unreviewed', activeClassName: 'border-slate-300 bg-slate-100 text-slate-700' },
+  { value: 'weak', label: 'Weak', activeClassName: 'border-amber-300 bg-amber-50 text-amber-700' },
+  { value: 'good', label: 'Good', activeClassName: 'border-sky-300 bg-sky-50 text-sky-700' },
+  { value: 'very_good', label: 'V.Good', activeClassName: 'border-emerald-300 bg-emerald-50 text-emerald-700' },
+  { value: 'excellent', label: 'Excellent', activeClassName: 'border-violet-300 bg-violet-50 text-violet-700' },
 ];
 
 const autoResizeTextarea = (element) => {
@@ -581,7 +581,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               </div>
 
               {derivedClassId && userRole ? (
-                <div>
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 space-y-2 text-sm text-emerald-900">
                   <ReportSubmissionStatus
                     classId={derivedClassId}
                     userRole={userRole}
@@ -602,6 +602,29 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                       }
                     }}
                   />
+                  {(reportMeta.submittedAt || reportMeta.lastEditedAt || reportMeta.previousEditor) && (
+                    <div className="space-y-1 text-xs sm:text-sm">
+                      {reportMeta.submittedAt ? (
+                        <p>
+                          <span className="font-semibold">Submitted by:</span> {reportMeta.submittedBy || "Unknown user"} on {reportMeta.submittedAt}
+                        </p>
+                      ) : (
+                        <p className="font-semibold">Submission pending</p>
+                      )}
+                      {reportMeta.lastEditedAt && (
+                        <p>
+                          <span className="font-semibold">Last edited by:</span> {reportMeta.lastEditedBy || "Unknown user"} on {reportMeta.lastEditedAt}
+                        </p>
+                      )}
+                      {reportMeta.previousEditor && (
+                        <p className="text-emerald-800">
+                          <span className="font-semibold">Previous version:</span> {reportMeta.previousEditor}
+                          {reportMeta.previousChangedAt ? ` · ${reportMeta.previousChangedAt}` : ""}
+                          {reportMeta.previousNote ? ` · ${reportMeta.previousNote}` : ""}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div />
@@ -614,34 +637,6 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         </div>
 
         <form onSubmit={handleSubmitReport} className="p-5 space-y-6">
-          {(reportMeta.submittedAt || reportMeta.lastEditedAt) && (
-            <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900 space-y-1">
-              {reportMeta.submittedAt ? (
-                <p>
-                  <span className="font-semibold">Submitted by:</span> {reportMeta.submittedBy || "Unknown user"} on {reportMeta.submittedAt}
-                </p>
-              ) : (
-                <p className="font-semibold">Submission pending</p>
-              )}
-              {reportMeta.lastEditedAt && (
-                <p>
-                  <span className="font-semibold">Last edited by:</span> {reportMeta.lastEditedBy || "Unknown user"} on {reportMeta.lastEditedAt}
-                </p>
-              )}
-              {reportMeta.previousEditor && (
-                <p className="text-emerald-800">
-                  <span className="font-semibold">Previous version:</span> {reportMeta.previousEditor}
-                  {reportMeta.previousChangedAt ? ` · ${reportMeta.previousChangedAt}` : ""}
-                  {reportMeta.previousNote ? ` · ${reportMeta.previousNote}` : ""}
-                </p>
-              )}
-              {reportMeta.historyCount > 1 && (
-                <p className="text-xs text-emerald-700">
-                  {reportMeta.historyCount} versions recorded in history. Contact an admin if you need to review older submissions.
-                </p>
-              )}
-            </div>
-          )}
 
           {/* === First Row: Attendance + Billing === */}
           <div className="space-y-2">
@@ -920,9 +915,9 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               {/* === Notes === */}
               <div className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Previous Assignment Evaluation</label>
-                  <div className="rounded-lg border border-gray-300 px-2 py-2 overflow-x-auto">
-                    <div className="flex min-w-max items-center gap-2">
+                  <label className="mb-1.5 block text-xs font-semibold tracking-wide text-fuchsia-600">Previous Assignment Evaluation</label>
+                  <div className="rounded-lg border border-gray-300 px-2 py-2">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
                       {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
                         const isSelected = classReport.previousAssignmentEvaluation === option.value;
                         return (
@@ -930,13 +925,12 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                             key={option.value}
                             type="button"
                             onClick={() => setClassReport({ ...classReport, previousAssignmentEvaluation: option.value })}
-                            className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                            className={`inline-flex items-center justify-center whitespace-nowrap rounded-full border px-2 py-1.5 text-xs font-semibold transition-colors ${
                               isSelected
-                                ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                                : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                                ? option.activeClassName
+                                : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
                             }`}
                           >
-                            <span className={`text-sm ${isSelected ? 'text-emerald-700' : 'text-gray-500'}`}>{option.icon}</span>
                             <span>{option.label}</span>
                           </button>
                         );
@@ -945,20 +939,8 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-800">Teacher Notes</h3>
-                    <p className="text-xs text-gray-500">Visible to guardians and admins</p>
-                  </div>
-
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-800">Supervisor Notes</h3>
-                    <p className="text-xs text-gray-500">Visible to admins only</p>
-                  </div>
-                </div>
-
                 <div>
-                  <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Lesson Summary &amp; Next Assignment</label>
+                  <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Lesson Summary &amp; Next Task</label>
                   <textarea
                     ref={newAssignmentRef}
                     value={classReport.newAssignment}
@@ -971,7 +953,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
                   <div>
-                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Public Note</label>
+                    <label className="mb-1.5 block text-xs font-semibold tracking-wide text-emerald-600">Public Note</label>
                     <textarea
                       ref={teacherNotesRef}
                       value={classReport.teacherNotes}
@@ -983,7 +965,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                   </div>
 
                   <div>
-                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Supervisor Note</label>
+                    <label className="mb-1.5 block text-xs font-semibold tracking-wide text-amber-600">Supervisor Note</label>
                     <textarea
                       ref={supervisorNotesRef}
                       value={classReport.supervisorNotes}

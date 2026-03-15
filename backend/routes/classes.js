@@ -34,6 +34,7 @@ const {
   resolveClassTimezone,
   buildTimeAnchorForScheduledClass,
   buildTimeAnchorForSlot,
+  buildRecurringSlotAnchor,
 } = require("../services/classTimezoneService");
 
 // timezone helpers (you must have these implemented)
@@ -2136,10 +2137,26 @@ router.post(
           fallbackTimezone: baseTimezone,
         });
 
-        const normalizedDetails = normalizeRecurrenceSlots(recurrenceDetails, baseTimezone).map((slot) => ({
-          ...slot,
-          timezone: slot.timezone || baseTimezone,
-        }));
+        const referenceDate = scheduledDate || new Date();
+        const normalizedDetails = normalizeRecurrenceSlots(recurrenceDetails, baseTimezone).map((slot) => {
+          const slotTimezone = slot.timezone || baseTimezone;
+          const anchorMeta = buildRecurringSlotAnchor({
+            slot: { ...slot, timezone: slotTimezone },
+            anchorMode,
+            studentTimezone,
+            teacherTimezone,
+            fallbackTimezone: baseTimezone,
+            referenceDate,
+          });
+          return {
+            ...slot,
+            timezone: slotTimezone,
+            raw: {
+              ...(slot.raw || {}),
+              ...(anchorMeta || {}),
+            },
+          };
+        });
 
         console.log("Recurring creation details (normalized):", normalizedDetails);
 
@@ -2714,7 +2731,26 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
     const proposedDuration = (typeof duration !== "undefined") ? Number(duration) : Number(pattern.duration || 60);
 
     const proposedRecurrence = { ...(pattern.recurrence || {}), ...(recurrence || {}) };
-    const proposedRecurrenceDetails = normalizedUpdateDetails.length ? normalizedUpdateDetails : (pattern.recurrenceDetails || []);
+    const proposedRecurrenceDetails = (normalizedUpdateDetails.length ? normalizedUpdateDetails : (pattern.recurrenceDetails || []))
+      .map((slot) => {
+        const slotTimezone = slot?.timezone || proposedDisplayTimezone || DEFAULT_TIMEZONE;
+        const anchorMeta = buildRecurringSlotAnchor({
+          slot: { ...slot, timezone: slotTimezone },
+          anchorMode: patternAnchorMode,
+          studentTimezone: proposedStudentTimezone,
+          teacherTimezone: proposedTeacherTimezone,
+          fallbackTimezone: proposedDisplayTimezone,
+          referenceDate: scheduledDate || pattern.scheduledDate || new Date(),
+        });
+        return {
+          ...slot,
+          timezone: slotTimezone,
+          raw: {
+            ...(slot?.raw || {}),
+            ...(anchorMeta || {}),
+          },
+        };
+      });
 
     if (Array.isArray(proposedRecurrenceDetails) && proposedRecurrenceDetails.length) {
       const derivedDays = Array.from(new Set(proposedRecurrenceDetails.map((slot) => Number(slot.dayOfWeek))))
@@ -2854,7 +2890,7 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
     }
     pattern.recurrence = proposedRecurrence;
     if (normalizedUpdateDetails.length) {
-      pattern.recurrenceDetails = normalizedUpdateDetails;
+      pattern.recurrenceDetails = proposedRecurrenceDetails;
     }
     pattern.timeAnchor = buildTimeAnchorForSlot({
       slot: (normalizedUpdateDetails && normalizedUpdateDetails[0]) || (pattern.recurrenceDetails && pattern.recurrenceDetails[0]) || null,

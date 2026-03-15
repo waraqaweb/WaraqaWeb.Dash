@@ -135,6 +135,50 @@ const buildTimeAnchorForSlot = ({
   };
 };
 
+const buildRecurringSlotAnchor = ({
+  slot,
+  anchorMode,
+  studentTimezone,
+  teacherTimezone,
+  fallbackTimezone,
+  referenceDate,
+} = {}) => {
+  const timeString = typeof slot?.time === 'string' ? slot.time.trim() : '';
+  const timeMatch = timeString.match(/^(\d{2}):(\d{2})$/);
+  const displayDayOfWeek = Number(slot?.dayOfWeek);
+  if (!timeMatch || !Number.isInteger(displayDayOfWeek) || displayDayOfWeek < 0 || displayDayOfWeek > 6) {
+    return null;
+  }
+
+  const displayTimezone = slot?.timezone || fallbackTimezone || DEFAULT_TIMEZONE;
+  const anchorTimezone = resolveAnchorTimezone({
+    anchorMode,
+    studentTimezone,
+    teacherTimezone,
+    fallbackTimezone: displayTimezone,
+  });
+
+  const [hour, minute] = timeMatch.slice(1).map((value) => Number.parseInt(value, 10));
+  const baseMoment = moment.tz(referenceDate || new Date(), displayTimezone);
+  if (!baseMoment.isValid()) return null;
+
+  const displayMoment = baseMoment.clone()
+    .day(displayDayOfWeek)
+    .hour(hour)
+    .minute(minute)
+    .second(0)
+    .millisecond(0);
+
+  const anchorMoment = displayMoment.clone().tz(anchorTimezone);
+
+  return {
+    anchorTimezone,
+    anchorLocalTime: anchorMoment.format('HH:mm'),
+    anchorDayOfWeek: anchorMoment.day(),
+    anchorDayOffset: anchorMoment.clone().startOf('day').diff(displayMoment.clone().startOf('day'), 'days'),
+  };
+};
+
 module.exports = {
   normalizeAnchorMode,
   getEmbeddedStudentRecord,
@@ -145,4 +189,5 @@ module.exports = {
   getLocalDayTimeParts,
   buildTimeAnchorForScheduledClass,
   buildTimeAnchorForSlot,
+  buildRecurringSlotAnchor,
 };

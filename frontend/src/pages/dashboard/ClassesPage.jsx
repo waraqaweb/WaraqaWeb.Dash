@@ -2989,18 +2989,14 @@ fetchClassesRef.current = fetchClasses;
             ? Math.max(0, Math.min(5, parsedClassScore))
             : null;
           const reportData = classItem?.classReport || {};
-          const lessonTopicValue = reportData.lessonTopic
-            || reportData.customLessonTopic
-            || classItem?.lessonTopic
-            || classItem?.customLessonTopic
-            || '';
+          const lessonTopicValue = (reportData.lessonTopic || reportData.customLessonTopic || '').trim();
           const subjectValue = (Array.isArray(reportData.subjects) && reportData.subjects.length)
             ? reportData.subjects.join(', ')
-            : (reportData.subject || classItem?.subject || '');
-          const previousAssignmentEvaluationValue = reportData.previousAssignmentEvaluation || '';
-          const teacherNotesValue = reportData.teacherNotes || classItem?.teacherNotes || '';
-          const supervisorNotesValue = reportData.supervisorNotes || classItem?.supervisorNotes || '';
-          const assignmentValue = reportData.newAssignment || classItem?.newAssignment || '';
+            : (reportData.subject || '');
+          const previousAssignmentEvaluationValue = (reportData.previousAssignmentEvaluation || '').trim();
+          const teacherNotesValue = (reportData.teacherNotes || '').trim();
+          const supervisorNotesValue = (reportData.supervisorNotes || '').trim();
+          const assignmentValue = (reportData.newAssignment || '').trim();
           const showCancellationReason = isAdminUser && classItem?.cancellation?.reason;
           const summaryMaterials = Array.isArray(classItem?.materials) ? classItem.materials : [];
           const hasWhiteboardScreenshot = summaryMaterials.some(

@@ -19,6 +19,12 @@ const PREVIOUS_ASSIGNMENT_OPTIONS = [
   { value: 'excellent', label: 'Excellent', icon: '★' },
 ];
 
+const autoResizeTextarea = (element) => {
+  if (!element) return;
+  element.style.height = '0px';
+  element.style.height = `${Math.max(44, element.scrollHeight)}px`;
+};
+
 const normalizeAttendance = (attendance) => {
   if (attendance === "missed_by_student") return "absent";
   if (String(attendance || "").startsWith("cancelled")) return "cancelled";
@@ -49,6 +55,9 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const hasInitializedState = useRef(false);
   const [loading, setLoading] = useState(false);
   const [showToast, setShowToast] = useState({ show: false, type: "", message: "" });
+  const newAssignmentRef = useRef(null);
+  const teacherNotesRef = useRef(null);
+  const supervisorNotesRef = useRef(null);
 
   const [catalogSubjects, setCatalogSubjects] = useState(Array.isArray(subjects) ? subjects : []);
   const [catalogTopicsBySubject, setCatalogTopicsBySubject] = useState({});
@@ -73,6 +82,18 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    autoResizeTextarea(newAssignmentRef.current);
+  }, [classReport.newAssignment]);
+
+  useEffect(() => {
+    autoResizeTextarea(teacherNotesRef.current);
+  }, [classReport.teacherNotes]);
+
+  useEffect(() => {
+    autoResizeTextarea(supervisorNotesRef.current);
+  }, [classReport.supervisorNotes]);
   const defaultReportState = (baseClass) => ({
     attendance: normalizeAttendance(baseClass?.classReport?.attendance || "attended"),
     cancelledBy: String(baseClass?.classReport?.attendance || "").startsWith("cancelled")
@@ -545,41 +566,46 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         {/* Header */}
         <div className="flex items-start justify-between gap-4 p-5 border-b">
           <div className="min-w-0 flex-1 space-y-3">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Submit Class Report</h2>
-              <div className="mt-1 space-y-1 text-sm text-gray-600">
-                <p className="truncate"><span className="font-medium text-gray-800">Student:</span> {classSummary.studentName}</p>
-                <p className="truncate"><span className="font-medium text-gray-800">Teacher:</span> {classSummary.teacherName}</p>
-                {classSummary.scheduledAt && (
-                  <p className="truncate"><span className="font-medium text-gray-800">Class time:</span> {classSummary.scheduledAt}</p>
-                )}
-              </div>
-            </div>
+            <h2 className="text-xl font-semibold text-gray-900">Submit Class Report</h2>
 
-            {derivedClassId && userRole && (
-              <div className="max-w-md">
-                <ReportSubmissionStatus
-                  classId={derivedClassId}
-                  userRole={userRole}
-                  compact={true}
-                  onExtensionGranted={() => {
-                    if (userRole !== 'admin') {
-                      api.post(`/classes/${derivedClassId}/check-can-submit`)
-                        .then(res => setSubmissionEligibility(res.data))
-                        .catch(err => console.error('Error refreshing eligibility:', err));
-                    }
-                  }}
-                  onRefresh={async () => {
-                    try {
-                      const res = await api.get(`/classes/${derivedClassId}`);
-                      setClassData(res.data?.class || null);
-                    } catch (err) {
-                      console.error('Error refreshing class data:', err);
-                    }
-                  }}
-                />
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:items-stretch">
+              <div className="rounded-lg border border-gray-200 bg-gray-50/70 p-3">
+                <div className="space-y-1 text-sm text-gray-600">
+                  <p className="truncate"><span className="font-medium text-gray-800">Student:</span> {classSummary.studentName}</p>
+                  <p className="truncate"><span className="font-medium text-gray-800">Teacher:</span> {classSummary.teacherName}</p>
+                  {classSummary.scheduledAt && (
+                    <p className="truncate"><span className="font-medium text-gray-800">Class time:</span> {classSummary.scheduledAt}</p>
+                  )}
+                </div>
               </div>
-            )}
+
+              {derivedClassId && userRole ? (
+                <div>
+                  <ReportSubmissionStatus
+                    classId={derivedClassId}
+                    userRole={userRole}
+                    compact={true}
+                    onExtensionGranted={() => {
+                      if (userRole !== 'admin') {
+                        api.post(`/classes/${derivedClassId}/check-can-submit`)
+                          .then(res => setSubmissionEligibility(res.data))
+                          .catch(err => console.error('Error refreshing eligibility:', err));
+                      }
+                    }}
+                    onRefresh={async () => {
+                      try {
+                        const res = await api.get(`/classes/${derivedClassId}`);
+                        setClassData(res.data?.class || null);
+                      } catch (err) {
+                        console.error('Error refreshing class data:', err);
+                      }
+                    }}
+                  />
+                </div>
+              ) : (
+                <div />
+              )}
+            </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <XCircle className="h-6 w-6" />
@@ -891,15 +917,17 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               </div>
 
               {/* === Notes === */}
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.5fr),minmax(0,1fr)]">
-                <fieldset className="rounded-lg border border-gray-300 px-4 pb-4 pt-2">
-                  <legend className="px-2 text-xs font-medium text-gray-600">Teacher Notes</legend>
-                  <p className="mb-4 text-xs text-gray-500">Visible to guardians and admins</p>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-800">Teacher Notes</h3>
+                    <p className="text-xs text-gray-500">Visible to guardians and admins</p>
+                  </div>
 
-                  <div className="space-y-4">
-                    <div>
-                      <label className="mb-2 block text-sm font-medium text-gray-700">Previous Assignment Evaluation</label>
-                      <div className="grid grid-cols-2 gap-2 xl:grid-cols-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Previous Assignment Evaluation</label>
+                    <div className="rounded-lg border border-gray-300 px-2 py-2 overflow-x-auto">
+                      <div className="flex min-w-max items-center gap-2">
                         {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
                           const isSelected = classReport.previousAssignmentEvaluation === option.value;
                           return (
@@ -907,63 +935,70 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                               key={option.value}
                               type="button"
                               onClick={() => setClassReport({ ...classReport, previousAssignmentEvaluation: option.value })}
-                              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                              className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm transition-colors ${
                                 isSelected
                                   ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
                                   : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
                               }`}
                             >
-                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs shadow-sm">
-                                {option.icon}
-                              </span>
-                              <span className="leading-tight">{option.label}</span>
+                              <span className={`text-sm ${isSelected ? 'text-emerald-700' : 'text-gray-500'}`}>{option.icon}</span>
+                              <span>{option.label}</span>
                             </button>
                           );
                         })}
                       </div>
                     </div>
-
-                    <div>
-                      <label className="mb-2 block text-sm font-medium text-gray-700">New Assignment</label>
-                      <textarea
-                        value={classReport.newAssignment}
-                        onChange={(e) => setClassReport({ ...classReport, newAssignment: e.target.value })}
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm min-h-[88px]"
-                        rows={3}
-                        placeholder="Write the next assignment or homework for the student"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-2 block text-sm font-medium text-gray-700">Notes</label>
-                      <textarea
-                        value={classReport.teacherNotes}
-                        onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm min-h-[88px]"
-                        rows={3}
-                        placeholder="Add any additional comments or observations about the student"
-                      />
-                    </div>
                   </div>
-                </fieldset>
 
-                <fieldset className="rounded-lg border border-gray-300 px-4 pb-4 pt-2">
-                  <legend className="px-2 text-xs font-medium text-gray-600">Supervisor Notes</legend>
-                  <p className="mb-4 text-xs text-gray-500">Visible to admins only</p>
-                  <textarea
-                    value={classReport.supervisorNotes}
-                    onChange={(e) => setClassReport({ ...classReport, supervisorNotes: e.target.value })}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm min-h-[256px]"
-                    rows={11}
-                    placeholder="Add any internal notes for admins"
-                  />
-                </fieldset>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">New Assignment</label>
+                    <textarea
+                      ref={newAssignmentRef}
+                      value={classReport.newAssignment}
+                      onChange={(e) => setClassReport({ ...classReport, newAssignment: e.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
+                      rows={1}
+                      placeholder="Write the next assignment or homework for the student"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Notes</label>
+                    <textarea
+                      ref={teacherNotesRef}
+                      value={classReport.teacherNotes}
+                      onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
+                      rows={1}
+                      placeholder="Add any additional comments or observations about the student"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-800">Supervisor Notes</h3>
+                    <p className="text-xs text-gray-500">Visible to admins only</p>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Supervisor Notes</label>
+                    <textarea
+                      ref={supervisorNotesRef}
+                      value={classReport.supervisorNotes}
+                      onChange={(e) => setClassReport({ ...classReport, supervisorNotes: e.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
+                      rows={1}
+                      placeholder="Add any internal notes for admins"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Class performance */}
               <div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                  <div className="flex items-center gap-1.5">
                     <label className="text-sm font-medium text-gray-700">Class performance</label>
                     <span className="text-xs text-gray-500">{(classReport.classScore || 0)}/5</span>
                   </div>

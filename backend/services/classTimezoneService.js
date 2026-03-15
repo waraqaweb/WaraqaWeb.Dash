@@ -170,12 +170,16 @@ const buildRecurringSlotAnchor = ({
     .millisecond(0);
 
   const anchorMoment = displayMoment.clone().tz(anchorTimezone);
+  const displayDateToken = displayMoment.format('YYYY-MM-DD');
+  const anchorDateToken = anchorMoment.format('YYYY-MM-DD');
+  const displayDateUtc = moment.utc(`${displayDateToken}T00:00:00Z`);
+  const anchorDateUtc = moment.utc(`${anchorDateToken}T00:00:00Z`);
 
   return {
     anchorTimezone,
     anchorLocalTime: anchorMoment.format('HH:mm'),
     anchorDayOfWeek: anchorMoment.day(),
-    anchorDayOffset: anchorMoment.clone().startOf('day').diff(displayMoment.clone().startOf('day'), 'days'),
+    anchorDayOffset: anchorDateUtc.diff(displayDateUtc, 'days'),
   };
 };
 

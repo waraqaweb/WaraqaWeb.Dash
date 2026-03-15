@@ -3,6 +3,26 @@ import api from '../api/axios';
 const STORAGE_KEY = 'waraqa:subjectsCatalog:v1';
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
 
+const readCachedCatalogEntry = () => safeJsonParse(sessionStorage.getItem(STORAGE_KEY));
+
+const writeCachedCatalogEntry = ({ expiresAt, raw }) => {
+  try {
+    sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        expiresAt,
+        raw: raw && typeof raw === 'object' ? raw : null,
+      })
+    );
+  } catch (e) {
+    try {
+      sessionStorage.removeItem(STORAGE_KEY);
+    } catch (removeErr) {
+      // ignore
+    }
+  }
+};
+
 const safeJsonParse = (value) => {
   if (!value) return null;
   try {
@@ -127,24 +147,21 @@ export const fetchSubjectsCatalog = async () => {
 
 export const getSubjectsCatalogCached = async ({ ttlMs = DEFAULT_TTL_MS } = {}) => {
   const now = Date.now();
-  const cached = safeJsonParse(sessionStorage.getItem(STORAGE_KEY));
-  if (cached && cached.expiresAt && cached.expiresAt > now && cached.data) {
-    return cached.data;
+  const cached = readCachedCatalogEntry();
+  if (cached && cached.expiresAt && cached.expiresAt > now) {
+    return normalizeSubjectsCatalog(cached.raw || null);
   }
 
   try {
     const data = await fetchSubjectsCatalog();
-    sessionStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        expiresAt: now + ttlMs,
-        data,
-      })
-    );
+    writeCachedCatalogEntry({
+      expiresAt: now + ttlMs,
+      raw: data?.raw || null,
+    });
     return data;
   } catch (e) {
     // If fetch fails but we have stale data, use it.
-    if (cached?.data) return cached.data;
+    if (cached?.raw) return normalizeSubjectsCatalog(cached.raw);
     return normalizeSubjectsCatalog(null);
   }
 };
@@ -152,12 +169,9 @@ export const getSubjectsCatalogCached = async ({ ttlMs = DEFAULT_TTL_MS } = {}) 
 export const saveSubjectsCatalog = async (catalogValue) => {
   const res = await api.put('/settings/subjects-catalog', { value: catalogValue });
   const data = normalizeSubjectsCatalog(res.data?.catalog || null);
-  sessionStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      expiresAt: Date.now() + DEFAULT_TTL_MS,
-      data,
-    })
-  );
+  writeCachedCatalogEntry({
+    expiresAt: Date.now() + DEFAULT_TTL_MS,
+    raw: data?.raw || null,
+  });
   return data;
 };

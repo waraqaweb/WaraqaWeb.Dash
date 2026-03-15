@@ -351,6 +351,27 @@ const userSchema = new mongoose.Schema({
       type: String,
       trim: true,
     },
+    vacationAllowance: {
+      defaultDaysPerYear: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      yearlyOverrides: [
+        {
+          year: {
+            type: Number,
+            min: 2000,
+            max: 3000,
+          },
+          days: {
+            type: Number,
+            min: 0,
+            default: 0,
+          },
+        },
+      ],
+    },
     // Last month reset date for tracking monthly calculations
     lastMonthlyReset: {
       type: Date,

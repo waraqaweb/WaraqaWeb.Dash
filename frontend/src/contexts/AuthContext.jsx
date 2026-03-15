@@ -18,6 +18,15 @@ const AuthContext = createContext();
 let globalSocket = null;
 let socketInitTimeout = null;
 let isSocketInitializing = false;
+let lastSocketErrorLog = { key: '', at: 0 };
+
+const isBrowserOffline = () => {
+  try {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+  } catch (e) {
+    return false;
+  }
+};
 
 // Custom hook to use the auth context
 export const useAuth = () => {
@@ -99,6 +108,10 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const initializeSocket = (token, user) => {
+    if (!token || !user || isBrowserOffline()) {
+      return globalSocket;
+    }
+
     // Prevent multiple initializations with stronger checks
     if (isSocketInitializing) {
       return globalSocket;
@@ -224,6 +237,7 @@ export const AuthProvider = ({ children }) => {
         const socketOpts = {
           auth: { token },
           forceNew: true,
+          autoConnect: !isBrowserOffline(),
           // Give slow proxies / first-connect DNS a bit more time.
           timeout: 20000,
           transports: ['websocket', 'polling'],
@@ -249,9 +263,20 @@ export const AuthProvider = ({ children }) => {
         
         globalSocket.on('connect_error', (error) => {
           // Common errors: ECONNREFUSED (server not running), xhr poll errors, CORS issues
-          console.error('🔌 Socket connection error:', error && error.message ? error.message : error, {
-            socketUrl
-          });
+          if (isBrowserOffline()) {
+            isSocketInitializing = false;
+            return;
+          }
+
+          const message = error && error.message ? error.message : String(error || 'socket error');
+          const key = `${socketUrl}|${message}`;
+          const now = Date.now();
+          if (lastSocketErrorLog.key !== key || (now - lastSocketErrorLog.at) > 30000) {
+            console.error('🔌 Socket connection error:', message, {
+              socketUrl
+            });
+            lastSocketErrorLog = { key, at: now };
+          }
           isSocketInitializing = false;
         });
         
@@ -273,6 +298,43 @@ export const AuthProvider = ({ children }) => {
       delete api.defaults.headers.common['Authorization'];
     }
   }, [token]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const handleOnline = () => {
+      if (token && user) {
+        if (globalSocket && !globalSocket.connected) {
+          try {
+            globalSocket.connect();
+          } catch (e) {
+            initializeSocket(token, user);
+          }
+        } else {
+          initializeSocket(token, user);
+        }
+      }
+    };
+
+    const handleOffline = () => {
+      if (globalSocket && globalSocket.connected) {
+        try {
+          globalSocket.disconnect();
+        } catch (e) {
+          // ignore
+        }
+      }
+      isSocketInitializing = false;
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [token, user]);
 
   // Provide a stable per-user scope for cached search results.
   useEffect(() => {

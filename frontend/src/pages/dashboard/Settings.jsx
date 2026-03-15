@@ -39,11 +39,69 @@ const addItemsToTextList = (text, itemsToAdd) => {
   return joinLines(Array.from(new Set([...(current || []), ...(incoming || [])])));
 };
 
+const createEmptyDstOverrideDraft = () => ({
+  id: '',
+  timezone: '',
+  transitionAtInput: '',
+  type: 'spring_forward',
+  timeDifference: 60,
+  note: '',
+  enabled: true,
+});
+
+const formatDatetimeInputValue = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (num) => String(num).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const formatTimestamp = (value, options) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString(undefined, options || {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
+
+const formatHoursFromMinutes = (minutes = 0) => {
+  const value = Math.abs(Number(minutes || 0)) / 60;
+  const rounded = Number.isInteger(value) ? String(value) : value.toFixed(1);
+  return `${rounded} hour${Number(rounded) === 1 ? '' : 's'}`;
+};
+
+const buildDstOverridePayload = (draft) => {
+  const transitionAt = draft?.transitionAtInput ? new Date(draft.transitionAtInput) : null;
+  if (!transitionAt || Number.isNaN(transitionAt.getTime())) return null;
+  return {
+    ...(draft?.id ? { id: draft.id } : {}),
+    timezone: String(draft?.timezone || '').trim(),
+    transitionAt: transitionAt.toISOString(),
+    type: draft?.type === 'fall_back' ? 'fall_back' : 'spring_forward',
+    timeDifference: Math.abs(Number(draft?.timeDifference || 60)) || 60,
+    note: String(draft?.note || '').trim(),
+    enabled: draft?.enabled !== false,
+  };
+};
+
+const getDstDirectionLabel = (direction) => {
+  if (direction === 'later') return 'later';
+  if (direction === 'earlier') return 'earlier';
+  return 'unchanged';
+};
+
 const SECTION_ORDER = [
   'general',
   'feedback',
   'reports',
   'meetings',
+  'timezone',
   'access',
   'appearance',
   'cleanup',
@@ -157,6 +215,13 @@ const Settings = () => {
     teacher: { enabled: true, cadenceDays: 30, lookbackDays: 30, triggerAt: null },
   });
   const [savingMeetingFollowupPrompts, setSavingMeetingFollowupPrompts] = useState(false);
+  const [timezoneDstOverrides, setTimezoneDstOverrides] = useState([]);
+  const [timezoneDstOverrideDraft, setTimezoneDstOverrideDraft] = useState(createEmptyDstOverrideDraft());
+  const [loadingTimezoneDstOverrides, setLoadingTimezoneDstOverrides] = useState(false);
+  const [savingTimezoneDstOverrides, setSavingTimezoneDstOverrides] = useState(false);
+  const [previewingTimezoneDstOverride, setPreviewingTimezoneDstOverride] = useState(false);
+  const [applyingTimezoneDstOverride, setApplyingTimezoneDstOverride] = useState(false);
+  const [timezoneDstPreview, setTimezoneDstPreview] = useState(null);
   const [notificationPrefs, setNotificationPrefsState] = useState(() => getNotificationPreferences(user?._id));
   const [notificationPermission, setNotificationPermission] = useState(() => {
     if (!canUseBrowserNotifications()) return 'unsupported';
@@ -337,6 +402,56 @@ const Settings = () => {
       }
     };
     fetchMeetingFollowupPrompts();
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchTimezoneDstOverrides = async () => {
+      try {
+        setLoadingTimezoneDstOverrides(true);
+        const cacheKey = makeCacheKey('settings:timezoneDstOverrides');
+        const cached = readCache(cacheKey, { deps: ['settings'] });
+        if (cached.hit && cached.value) {
+          const value = Array.isArray(cached.value.value || cached.value) ? (cached.value.value || cached.value) : [];
+          setTimezoneDstOverrides(value);
+          if (value.length && !timezoneDstOverrideDraft.id) {
+            const first = value[0];
+            setTimezoneDstOverrideDraft({
+              id: first.id || '',
+              timezone: first.timezone || '',
+              transitionAtInput: formatDatetimeInputValue(first.transitionAt),
+              type: first.type || 'spring_forward',
+              timeDifference: Number(first.timeDifference || 60),
+              note: first.note || '',
+              enabled: first.enabled !== false,
+            });
+          }
+          if (cached.ageMs < 60_000) return;
+        }
+
+        const res = await api.get('/settings/timezoneDstOverrides');
+        const value = Array.isArray(res?.data?.setting?.value) ? res.data.setting.value : [];
+        setTimezoneDstOverrides(value);
+        if (value.length && !timezoneDstOverrideDraft.id) {
+          const first = value[0];
+          setTimezoneDstOverrideDraft({
+            id: first.id || '',
+            timezone: first.timezone || '',
+            transitionAtInput: formatDatetimeInputValue(first.transitionAt),
+            type: first.type || 'spring_forward',
+            timeDifference: Number(first.timeDifference || 60),
+            note: first.note || '',
+            enabled: first.enabled !== false,
+          });
+        }
+        writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+      } catch (err) {
+        setTimezoneDstOverrides([]);
+      } finally {
+        setLoadingTimezoneDstOverrides(false);
+      }
+    };
+    fetchTimezoneDstOverrides();
   }, [user?.role]);
 
   useEffect(() => {
@@ -712,6 +827,7 @@ const Settings = () => {
       { key: 'feedback', label: 'Feedback' },
       { key: 'reports', label: 'Reports' },
       { key: 'meetings', label: 'Meetings' },
+      { key: 'timezone', label: 'Timezone' },
       { key: 'access', label: 'Access' },
       { key: 'appearance', label: 'Appearance' },
       { key: 'cleanup', label: 'Cleanup' },
@@ -1150,6 +1266,151 @@ const Settings = () => {
     };
   }, [user?.role]);
 
+  const selectedTimezoneDstOverride = useMemo(
+    () => timezoneDstOverrides.find((entry) => entry.id === timezoneDstOverrideDraft.id) || null,
+    [timezoneDstOverrides, timezoneDstOverrideDraft.id]
+  );
+
+  const timezoneDstDraftPayload = useMemo(
+    () => buildDstOverridePayload(timezoneDstOverrideDraft),
+    [timezoneDstOverrideDraft]
+  );
+
+  const timezoneDstDraftIsValid = Boolean(timezoneDstDraftPayload?.timezone && timezoneDstDraftPayload?.transitionAt);
+
+  const timezoneDstPreviewHeadline = useMemo(() => {
+    if (!timezoneDstPreview?.preview?.transition) return '';
+    const transition = timezoneDstPreview.preview.transition;
+    const students = (timezoneDstPreview.preview.impactedStudents || []).map((item) => item.studentName).filter(Boolean);
+    const studentLabel = students.length
+      ? ` including ${students.slice(0, 5).join(', ')}${students.length > 5 ? ` and ${students.length - 5} more` : ''}`
+      : '';
+    return `Classes of students from ${transition.timezone}${studentLabel} will get ${formatHoursFromMinutes(transition.amountMinutes)} ${getDstDirectionLabel(transition.direction)} from ${formatTimestamp(transition.date)}.`;
+  }, [timezoneDstPreview]);
+
+  const syncTimezoneDstOverrideCache = useCallback((value) => {
+    const cacheKey = makeCacheKey('settings:timezoneDstOverrides');
+    writeCache(cacheKey, { value }, { ttlMs: 60_000, deps: ['settings'] });
+  }, []);
+
+  const loadTimezoneDstOverrideIntoDraft = useCallback((override) => {
+    if (!override) {
+      setTimezoneDstOverrideDraft(createEmptyDstOverrideDraft());
+      return;
+    }
+    setTimezoneDstOverrideDraft({
+      id: override.id || '',
+      timezone: override.timezone || '',
+      transitionAtInput: formatDatetimeInputValue(override.transitionAt),
+      type: override.type || 'spring_forward',
+      timeDifference: Number(override.timeDifference || 60),
+      note: override.note || '',
+      enabled: override.enabled !== false,
+    });
+  }, []);
+
+  const saveTimezoneDstOverride = useCallback(async () => {
+    if (!timezoneDstDraftIsValid) {
+      setToast({ type: 'error', message: 'Enter a timezone and transition date first' });
+      return null;
+    }
+
+    try {
+      setSavingTimezoneDstOverrides(true);
+      const draftPayload = timezoneDstDraftPayload;
+      const nextList = [...timezoneDstOverrides];
+      const index = nextList.findIndex((entry) => entry.id === draftPayload.id);
+      if (index >= 0) {
+        nextList[index] = {
+          ...nextList[index],
+          ...draftPayload,
+        };
+      } else {
+        nextList.unshift(draftPayload);
+      }
+
+      const res = await api.put('/settings/timezoneDstOverrides', { value: nextList });
+      const saved = Array.isArray(res?.data?.setting?.value) ? res.data.setting.value : nextList;
+      setTimezoneDstOverrides(saved);
+      syncTimezoneDstOverrideCache(saved);
+      const savedOverride = saved.find((entry) => entry.id === draftPayload.id)
+        || saved.find((entry) => entry.timezone === draftPayload.timezone && entry.transitionAt === draftPayload.transitionAt)
+        || draftPayload;
+      loadTimezoneDstOverrideIntoDraft(savedOverride);
+      setToast({ type: 'success', message: 'Timezone override saved' });
+      return savedOverride;
+    } catch (err) {
+      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to save timezone override' });
+      return null;
+    } finally {
+      setSavingTimezoneDstOverrides(false);
+    }
+  }, [loadTimezoneDstOverrideIntoDraft, syncTimezoneDstOverrideCache, timezoneDstDraftIsValid, timezoneDstDraftPayload, timezoneDstOverrides]);
+
+  const previewTimezoneDstOverride = useCallback(async () => {
+    if (!timezoneDstDraftIsValid) {
+      setToast({ type: 'error', message: 'Enter a timezone and transition date first' });
+      return;
+    }
+    try {
+      setPreviewingTimezoneDstOverride(true);
+      const res = await api.post('/settings/timezoneDstOverrides/preview', {
+        id: timezoneDstOverrideDraft.id || undefined,
+        override: timezoneDstDraftPayload,
+      });
+      setTimezoneDstPreview(res.data);
+    } catch (err) {
+      setTimezoneDstPreview(null);
+      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to preview timezone impact' });
+    } finally {
+      setPreviewingTimezoneDstOverride(false);
+    }
+  }, [timezoneDstDraftIsValid, timezoneDstDraftPayload, timezoneDstOverrideDraft.id]);
+
+  const applyTimezoneDstOverride = useCallback(async () => {
+    let overrideToApply = selectedTimezoneDstOverride;
+    if (!overrideToApply || !timezoneDstOverrideDraft.id) {
+      overrideToApply = await saveTimezoneDstOverride();
+    }
+    if (!overrideToApply?.id) return;
+
+    try {
+      setApplyingTimezoneDstOverride(true);
+      const res = await api.post('/settings/timezoneDstOverrides/apply', { id: overrideToApply.id });
+      const saved = Array.isArray(res?.data?.setting?.value) ? res.data.setting.value : timezoneDstOverrides;
+      setTimezoneDstOverrides(saved);
+      syncTimezoneDstOverrideCache(saved);
+      const updatedOverride = saved.find((entry) => entry.id === overrideToApply.id) || overrideToApply;
+      loadTimezoneDstOverrideIntoDraft(updatedOverride);
+      setTimezoneDstPreview({ override: updatedOverride, preview: res.data.preview, result: res.data.result });
+      setToast({ type: 'success', message: res?.data?.message || 'Timezone change applied' });
+    } catch (err) {
+      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to apply timezone change' });
+    } finally {
+      setApplyingTimezoneDstOverride(false);
+    }
+  }, [loadTimezoneDstOverrideIntoDraft, saveTimezoneDstOverride, selectedTimezoneDstOverride, syncTimezoneDstOverrideCache, timezoneDstOverrideDraft.id, timezoneDstOverrides]);
+
+  const removeTimezoneDstOverride = useCallback(async (overrideId) => {
+    try {
+      setSavingTimezoneDstOverrides(true);
+      const nextList = timezoneDstOverrides.filter((entry) => entry.id !== overrideId);
+      const res = await api.put('/settings/timezoneDstOverrides', { value: nextList });
+      const saved = Array.isArray(res?.data?.setting?.value) ? res.data.setting.value : nextList;
+      setTimezoneDstOverrides(saved);
+      syncTimezoneDstOverrideCache(saved);
+      if (timezoneDstOverrideDraft.id === overrideId) {
+        loadTimezoneDstOverrideIntoDraft(saved[0] || null);
+        setTimezoneDstPreview(null);
+      }
+      setToast({ type: 'success', message: 'Timezone override removed' });
+    } catch (err) {
+      setToast({ type: 'error', message: err?.response?.data?.message || err?.message || 'Failed to remove timezone override' });
+    } finally {
+      setSavingTimezoneDstOverrides(false);
+    }
+  }, [loadTimezoneDstOverrideIntoDraft, syncTimezoneDstOverrideCache, timezoneDstOverrideDraft.id, timezoneDstOverrides]);
+
   return (
     <div className={`p-6 bg-background min-h-screen`}> 
       <div className="max-w-7xl mx-auto">
@@ -1566,6 +1827,231 @@ const Settings = () => {
                   >
                     Save
                   </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {user?.role === 'admin' && activeSection === 'timezone' && (
+          <div className="space-y-4">
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <div className="text-sm font-semibold text-foreground">Timezone change overrides</div>
+                <div className="text-xs text-muted-foreground">Add manual timezone transitions, preview affected students, and apply the shift once without duplicating it later.</div>
+              </div>
+              <div className="p-4 grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-4">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Saved overrides</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        loadTimezoneDstOverrideIntoDraft(null);
+                        setTimezoneDstPreview(null);
+                      }}
+                      className="text-xs px-2 py-1 rounded border border-border bg-card text-foreground"
+                    >
+                      New override
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 max-h-[26rem] overflow-auto">
+                    {loadingTimezoneDstOverrides ? (
+                      <div className="text-sm text-muted-foreground">Loading overrides…</div>
+                    ) : timezoneDstOverrides.length === 0 ? (
+                      <div className="rounded border border-dashed border-border p-3 text-sm text-muted-foreground">No manual timezone overrides saved yet.</div>
+                    ) : timezoneDstOverrides.map((override) => {
+                      const isSelected = timezoneDstOverrideDraft.id === override.id;
+                      const appliedCount = Number(override?.lastAppliedResult?.adjustedCount || 0);
+                      return (
+                        <button
+                          key={override.id}
+                          type="button"
+                          onClick={() => {
+                            loadTimezoneDstOverrideIntoDraft(override);
+                            setTimezoneDstPreview(null);
+                          }}
+                          className={`w-full text-left rounded-lg border p-3 ${isSelected ? 'border-primary bg-primary/5' : 'border-border bg-card hover:bg-muted/40'}`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="text-sm font-medium text-foreground">{override.timezone}</div>
+                              <div className="text-xs text-muted-foreground mt-1">{formatTimestamp(override.transitionAt)}</div>
+                            </div>
+                            <div className={`text-[11px] px-2 py-1 rounded-full border ${override.enabled !== false ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-gray-200 text-gray-600 bg-gray-50'}`}>
+                              {override.enabled !== false ? 'Enabled' : 'Disabled'}
+                            </div>
+                          </div>
+                          <div className="mt-2 text-xs text-foreground">
+                            {formatHoursFromMinutes(override.timeDifference || 60)} {override.type === 'fall_back' ? 'later' : 'earlier'}
+                          </div>
+                          {override.note ? <div className="mt-1 text-xs text-muted-foreground">{override.note}</div> : null}
+                          <div className="mt-2 text-[11px] text-muted-foreground">
+                            {override.appliedAt
+                              ? `Last applied ${formatTimestamp(override.appliedAt)}${appliedCount ? ` • ${appliedCount} classes updated` : ''}`
+                              : 'Not applied yet'}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className="text-xs text-muted-foreground">
+                      Timezone
+                      <input
+                        type="text"
+                        value={timezoneDstOverrideDraft.timezone}
+                        onChange={(e) => setTimezoneDstOverrideDraft((prev) => ({ ...prev, timezone: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full"
+                        placeholder="America/New_York"
+                      />
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Change date and time
+                      <input
+                        type="datetime-local"
+                        value={timezoneDstOverrideDraft.transitionAtInput}
+                        onChange={(e) => setTimezoneDstOverrideDraft((prev) => ({ ...prev, transitionAtInput: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full"
+                      />
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Direction
+                      <select
+                        value={timezoneDstOverrideDraft.type}
+                        onChange={(e) => setTimezoneDstOverrideDraft((prev) => ({ ...prev, type: e.target.value }))}
+                        className="mt-1 px-3 py-2 border rounded w-full bg-card"
+                      >
+                        <option value="spring_forward">Classes get earlier for teachers</option>
+                        <option value="fall_back">Classes get later for teachers</option>
+                      </select>
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Shift amount (minutes)
+                      <input
+                        type="number"
+                        min={30}
+                        step={30}
+                        value={timezoneDstOverrideDraft.timeDifference}
+                        onChange={(e) => setTimezoneDstOverrideDraft((prev) => ({ ...prev, timeDifference: Number(e.target.value) || 60 }))}
+                        className="mt-1 px-3 py-2 border rounded w-full"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="text-xs text-muted-foreground block">
+                    Internal note
+                    <textarea
+                      rows={3}
+                      value={timezoneDstOverrideDraft.note}
+                      onChange={(e) => setTimezoneDstOverrideDraft((prev) => ({ ...prev, note: e.target.value }))}
+                      className="mt-1 px-3 py-2 border rounded w-full"
+                      placeholder="Example: Ramadan exception or late government announcement"
+                    />
+                  </label>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setTimezoneDstOverrideDraft((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                      className={`text-xs px-3 py-1.5 rounded border ${timezoneDstOverrideDraft.enabled ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-foreground'}`}
+                    >
+                      {timezoneDstOverrideDraft.enabled ? 'Enabled' : 'Disabled'}
+                    </button>
+                    <div className="text-xs text-muted-foreground">
+                      Disabled overrides stay saved but are ignored in checks.
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={saveTimezoneDstOverride}
+                      disabled={savingTimezoneDstOverrides || !timezoneDstDraftIsValid}
+                      className={`text-xs px-3 py-1.5 rounded border border-gray-200 bg-gray-100 text-gray-800 ${savingTimezoneDstOverrides ? 'opacity-70' : ''}`}
+                    >
+                      {savingTimezoneDstOverrides ? 'Saving…' : 'Save override'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={previewTimezoneDstOverride}
+                      disabled={previewingTimezoneDstOverride || !timezoneDstDraftIsValid}
+                      className={`text-xs px-3 py-1.5 rounded border border-border bg-card text-foreground ${previewingTimezoneDstOverride ? 'opacity-70' : ''}`}
+                    >
+                      {previewingTimezoneDstOverride ? 'Previewing…' : 'Preview impact'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyTimezoneDstOverride}
+                      disabled={applyingTimezoneDstOverride || !timezoneDstDraftIsValid}
+                      className={`text-xs px-3 py-1.5 rounded border border-primary bg-primary text-primary-foreground ${applyingTimezoneDstOverride ? 'opacity-70' : ''}`}
+                    >
+                      {applyingTimezoneDstOverride ? 'Applying…' : 'Apply now'}
+                    </button>
+                    {timezoneDstOverrideDraft.id ? (
+                      <button
+                        type="button"
+                        onClick={() => removeTimezoneDstOverride(timezoneDstOverrideDraft.id)}
+                        disabled={savingTimezoneDstOverrides || applyingTimezoneDstOverride}
+                        className="text-xs px-3 py-1.5 rounded border border-rose-200 bg-rose-50 text-rose-700"
+                      >
+                        Delete
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-lg border border-border bg-muted/20 p-3">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">What this does</div>
+                    <div className="mt-2 text-sm text-foreground">
+                      Student local time stays fixed. Teacher-visible times move {timezoneDstOverrideDraft.type === 'fall_back' ? 'later' : 'earlier'} by {formatHoursFromMinutes(timezoneDstOverrideDraft.timeDifference || 60)} from the transition moment.
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      If a class already received this same change, applying again will skip it automatically.
+                    </div>
+                  </div>
+
+                  {timezoneDstPreview?.preview ? (
+                    <div className="rounded-lg border border-border p-4 space-y-3">
+                      <div>
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">Preview summary</div>
+                        <div className="mt-2 text-sm font-medium text-foreground">{timezoneDstPreviewHeadline}</div>
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          {timezoneDstPreview.preview.summary.pendingClasses} pending class changes • {timezoneDstPreview.preview.summary.alreadyAppliedClasses} already applied • {timezoneDstPreview.preview.summary.totalStudents} students affected
+                        </div>
+                      </div>
+
+                      {(timezoneDstPreview.override?.appliedAt || selectedTimezoneDstOverride?.appliedAt) ? (
+                        <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                          This override was already applied on {formatTimestamp(timezoneDstPreview.override?.appliedAt || selectedTimezoneDstOverride?.appliedAt)}. Future automatic checks will skip the classes that already carry this same transition.
+                        </div>
+                      ) : null}
+
+                      <div className="space-y-2 max-h-[24rem] overflow-auto">
+                        {(timezoneDstPreview.preview.impactedClasses || []).length === 0 ? (
+                          <div className="text-sm text-muted-foreground">No future classes need a shift for this timezone change.</div>
+                        ) : timezoneDstPreview.preview.impactedClasses.map((item) => (
+                          <div key={`${item.classId}-${item.scheduledDate}`} className="rounded border border-border p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <div className="text-sm font-medium text-foreground">{item.studentName} • {item.classTitle}</div>
+                                <div className="text-xs text-muted-foreground">Teacher: {item.teacherName} • Student local time stays {item.studentLocalTime}</div>
+                              </div>
+                              <div className={`text-[11px] px-2 py-1 rounded-full border ${item.alreadyApplied ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                                {item.alreadyApplied ? 'Already applied' : `Will move ${item.direction}`}
+                              </div>
+                            </div>
+                            <div className="mt-2 text-sm text-foreground">
+                              Teacher time: <span className="font-medium">{item.teacherTimeBefore}</span> → <span className="font-medium">{item.teacherTimeAfter}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>

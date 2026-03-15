@@ -1101,22 +1101,67 @@ const ClassesPage = ({ isActive = true }) => {
 
   useEffect(() => {
     if (!isActive) return;
-    try {
-      const q = new URLSearchParams(location.search);
-      const openId = q.get('open');
-      if (!openId) return;
-      const target = (filteredClasses || []).find((cls) => String(cls?._id) === String(openId));
-      if (!target) return;
-      setExpandedClass(openId);
-      window.setTimeout(() => {
-        const el = document.getElementById(`class-card-${openId}`);
-        if (el && typeof el.scrollIntoView === 'function') {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    let cancelled = false;
+
+    const openRequestedClass = async () => {
+      try {
+        const q = new URLSearchParams(location.search);
+        const openId = q.get('open');
+        if (!openId) return;
+
+        let target = (filteredClasses || []).find((cls) => String(cls?._id) === String(openId));
+
+        if (!target) {
+          target = (classes || []).find((cls) => String(cls?._id) === String(openId))
+            || (classesCorpus || []).find((cls) => String(cls?._id) === String(openId));
         }
-      }, 150);
-    } catch (e) {
-      // ignore
-    }
+
+        if (!target) {
+          const response = await api.get(`/classes/${openId}`);
+          const classData = response.data?.class || null;
+          const policy = response.data?.policy || null;
+          const extra = { userTimezone: response.data?.userTimezone, systemTimezone: response.data?.systemTimezone };
+          if (!classData || cancelled) return;
+
+          setClassDetails((prev) => ({
+            ...prev,
+            [openId]: classData ? { ...classData, __meta: extra } : null,
+          }));
+          setClassPolicies((prev) => ({
+            ...prev,
+            [openId]: policy || prev?.[openId] || null,
+          }));
+
+          const mergeClass = (items = []) => {
+            const map = new Map((items || []).map((item) => [String(item?._id || ''), item]));
+            map.set(String(classData._id), classData);
+            return Array.from(map.values()).sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+          };
+
+          setClasses((prev) => mergeClass(prev));
+          setClassesCorpus((prev) => mergeClass(prev));
+          target = classData;
+        }
+
+        if (!target || cancelled) return;
+
+        setExpandedClass(openId);
+        window.setTimeout(() => {
+          const el = document.getElementById(`class-card-${openId}`);
+          if (el && typeof el.scrollIntoView === 'function') {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 150);
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    openRequestedClass();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isActive, location.search, filteredClasses]);
 
   // Persist currentPage in URL (refresh keeps your place)

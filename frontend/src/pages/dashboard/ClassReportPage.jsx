@@ -853,35 +853,36 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               </div>
 
               {/* === Notes === */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Teacher Notes</label>
+              <div className="space-y-4">
+                <div className="relative pt-2">
+                  <label className="absolute left-3 top-0 bg-white px-2 text-xs font-medium text-gray-600 z-10">Teacher Notes</label>
                   <textarea
                     value={classReport.teacherNotes}
                     onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
-                    className="w-full border rounded-lg p-2"
-                    rows={3}
+                    className="w-full border rounded-lg px-3 py-2 text-sm min-h-[84px]"
+                    rows={2}
                     placeholder="Visible to guardians and admins"
                   />
-                  <p className="mt-1 text-xs text-gray-500">These notes are shared with guardians.</p>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Supervisor Notes</label>
+                <div className="relative pt-2">
+                  <label className="absolute left-3 top-0 bg-white px-2 text-xs font-medium text-gray-600 z-10">Supervisor Notes</label>
                   <textarea
                     value={classReport.supervisorNotes}
                     onChange={(e) => setClassReport({ ...classReport, supervisorNotes: e.target.value })}
-                    className="w-full border rounded-lg p-2"
-                    rows={3}
+                    className="w-full border rounded-lg px-3 py-2 text-sm min-h-[84px]"
+                    rows={2}
                     placeholder="Visible to admins only"
                   />
-                  <p className="mt-1 text-xs text-gray-500">Only admins can see these notes.</p>
                 </div>
               </div>
 
               {/* Class performance */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2 text-center">Class performance</label>
+                <div className="mb-2 flex items-center justify-center gap-2">
+                  <label className="text-sm font-medium text-gray-700">Class performance</label>
+                  <span className="text-xs text-gray-500">{(classReport.classScore || 0)}/5</span>
+                </div>
                 <div className="flex flex-col items-center gap-2">
                   <div className="flex items-center gap-2">
                     {[1,2,3,4,5].map((i) => {
@@ -905,7 +906,6 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                       );
                     })}
                   </div>
-                  <span className="text-xs text-gray-500">{(classReport.classScore || 0)}/5</span>
                 </div>
               </div>
             </>

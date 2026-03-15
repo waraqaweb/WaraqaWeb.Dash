@@ -273,7 +273,17 @@ const VacationManagementPage = () => {
     }
   };
 
+  const getVacationStatusValue = (vacation) => String(vacation?.lifecycleStatus || vacation?.status || '').trim().toLowerCase();
+  const canDeleteRegularVacation = (vacation) => ['pending', 'rejected'].includes(getVacationStatusValue(vacation));
+
   const handleDeleteVacation = async (vacation) => {
+    const isSystemVacation = Boolean(vacation?.name);
+    if (!isSystemVacation && !canDeleteRegularVacation(vacation)) {
+      const message = 'Only pending or rejected vacations can be deleted. Consider ending the vacation early instead.';
+      alert(message);
+      return;
+    }
+
     if (!window.confirm('Are you sure you want to delete this vacation?')) return;
     startDeleteCountdown({
       message: `Deleting ${vacation?.name || 'vacation'}`,
@@ -281,12 +291,11 @@ const VacationManagementPage = () => {
       undoSeconds: 3,
       onDelete: async () => {
         try {
-          if (!vacation.name && !['pending', 'rejected'].includes(vacation.status)) {
+          if (!isSystemVacation && !canDeleteRegularVacation(vacation)) {
             const message = 'Only pending or rejected vacations can be deleted. Consider ending the vacation early instead.';
-            alert(message);
             throw new Error(message);
           }
-          const endpoint = vacation.name 
+          const endpoint = isSystemVacation 
             ? `/system-vacations/${vacation._id}`
             : `/vacations/${vacation._id}`;
 
@@ -294,7 +303,7 @@ const VacationManagementPage = () => {
           await fetchData();
         } catch (err) {
           console.error('Error deleting vacation:', err);
-          alert('Error deleting vacation. Please try again.');
+          alert(err?.response?.data?.message || err?.message || 'Error deleting vacation. Please try again.');
           throw err;
         }
       }
@@ -503,7 +512,7 @@ const VacationManagementPage = () => {
     });
 
     if (!canDelete) {
-      alert('Only pending or rejected vacations can be deleted.');
+      alert('Only pending or rejected vacations can be deleted. Consider ending the vacation early instead.');
       return;
     }
 
@@ -557,7 +566,13 @@ const VacationManagementPage = () => {
 
     const getTeacherAllowance = (teacherUser) => {
       const ti = teacherUser?.teacherInfo;
+      const currentYear = new Date().getFullYear();
+      const yearlyOverride = Array.isArray(ti?.vacationAllowance?.yearlyOverrides)
+        ? ti.vacationAllowance.yearlyOverrides.find((entry) => Number(entry?.year) === currentYear)
+        : null;
       const raw =
+        yearlyOverride?.days ??
+        ti?.vacationAllowance?.defaultDaysPerYear ??
         ti?.vacationAllowanceDaysPerYear ??
         ti?.vacationDaysPerYear ??
         ti?.allowedVacationDaysPerYear ??
@@ -809,8 +824,8 @@ const VacationManagementPage = () => {
                         </button>
                       )}
 
-                    {((user?.role === 'admin') || 
-                      (user?.role === 'teacher' && teacherId === (user._id || user.id) && vacation.status === 'pending')) && (
+                    {(((user?.role === 'admin') && canDeleteRegularVacation(vacation)) || 
+                      (user?.role === 'teacher' && teacherId === (user._id || user.id) && canDeleteRegularVacation(vacation))) && (
                       <button 
                         onClick={() => handleDeleteVacation(vacation)}
                         className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
@@ -1079,25 +1094,26 @@ const VacationManagementPage = () => {
                     )}
                     
                     {status === 'pending' && user?.role !== 'guardian' && (
-                      <>
-                        <button 
-                          onClick={() => handleEditVacation(vacation, 'individual')}
-                          className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg"
-                          title="Edit"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteVacation(vacation)}
-                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </>
+                      <button 
+                        onClick={() => handleEditVacation(vacation, 'individual')}
+                        className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg"
+                        title="Edit"
+                      >
+                        <Edit className="h-4 w-4" />
+                      </button>
                     )}
 
-                    {status === 'pending' && user?.role === 'guardian' && (
+                    {canDeleteRegularVacation(vacation) && user?.role !== 'guardian' && (
+                      <button 
+                        onClick={() => handleDeleteVacation(vacation)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                        title="Delete"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+
+                    {canDeleteRegularVacation(vacation) && user?.role === 'guardian' && (
                       <button 
                         onClick={() => handleDeleteVacation(vacation)}
                         className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"

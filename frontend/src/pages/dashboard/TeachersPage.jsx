@@ -59,6 +59,11 @@
 				return Number.isFinite(num) ? num.toFixed(2) : '0.00';
 			};
 
+			const formatVacationDays = (value) => {
+				const num = Number(value);
+				return Number.isFinite(num) ? num : 0;
+			};
+
 			const TeachersPage = () => {
 				const { isAdmin, loginAsUser } = useAuth();
 				const { searchTerm, globalFilter } = useSearch();
@@ -757,6 +762,14 @@
 																<div>
 																	<span className="text-muted-foreground">Languages: </span>
 																	<span>{teacher.teacherInfo.spokenLanguages.join(', ')}</span>
+																</div>
+															)}
+															{teacher.teacherInfo?._vacationSummary && (
+																<div className="rounded-md border border-border bg-background/70 p-3">
+																	<div className="text-sm font-medium text-foreground">Vacation ({teacher.teacherInfo._vacationSummary.year})</div>
+																	<div className="mt-1 text-muted-foreground">Used: {formatVacationDays(teacher.teacherInfo._vacationSummary.usedDays)} day(s)</div>
+																	<div className="text-muted-foreground">Left: {formatVacationDays(teacher.teacherInfo._vacationSummary.remainingDays)} day(s)</div>
+																	<div className="text-muted-foreground">Allowed: {formatVacationDays(teacher.teacherInfo._vacationSummary.allocatedDays)} day(s)</div>
 																</div>
 															)}
 

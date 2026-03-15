@@ -5,6 +5,7 @@ const User = require('../models/User');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const multer = require('multer');
 const { uploadImage } = require('../services/cloudinaryService');
+const dstService = require('../services/dstService');
 
 const SUBJECTS_CATALOG_KEY = 'education.subjectsCatalog';
 
@@ -57,6 +58,7 @@ const KNOWN_DEFAULTS = {
     backgroundColor: 'card',
     borderColor: 'default',
   },
+  timezoneDstOverrides: [],
   // add other well-known setting defaults here as needed
 };
 
@@ -288,6 +290,87 @@ const normalizeDashboardDecorationValue = (value) => {
     },
   };
 };
+
+const asDate = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const buildOverrideId = () => `dst_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const normalizeTimezoneDstOverrideEntry = (value) => {
+  const base = value && typeof value === 'object' ? value : {};
+  const timezone = String(base.timezone || '').trim();
+  const transitionAt = asDate(base.transitionAt);
+  if (!timezone || !transitionAt) return null;
+
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+  } catch (error) {
+    return null;
+  }
+
+  const offsetBefore = Number(base.offsetBefore);
+  const offsetAfter = Number(base.offsetAfter);
+  const normalizedType = String(base.type || '').trim().toLowerCase();
+  const type = normalizedType === 'fall_back' ? 'fall_back' : 'spring_forward';
+  const rawDifference = Number(base.timeDifference);
+  const timeDifference = Number.isFinite(rawDifference)
+    ? Math.abs(rawDifference)
+    : (Number.isFinite(offsetBefore) && Number.isFinite(offsetAfter)
+      ? Math.abs(offsetAfter - offsetBefore)
+      : 60);
+
+  return {
+    id: String(base.id || buildOverrideId()),
+    timezone,
+    transitionAt: transitionAt.toISOString(),
+    offsetBefore: Number.isFinite(offsetBefore) ? offsetBefore : null,
+    offsetAfter: Number.isFinite(offsetAfter) ? offsetAfter : null,
+    type,
+    timeDifference,
+    note: String(base.note || base.label || '').trim(),
+    enabled: base.enabled !== false,
+    appliedAt: asDate(base.appliedAt)?.toISOString() || null,
+    appliedBy: base.appliedBy || null,
+    lastAppliedResult: base.lastAppliedResult && typeof base.lastAppliedResult === 'object'
+      ? base.lastAppliedResult
+      : null,
+  };
+};
+
+const normalizeTimezoneDstOverrides = (value) => {
+  const list = Array.isArray(value) ? value : [];
+  const deduped = new Map();
+
+  list.forEach((entry) => {
+    const normalized = normalizeTimezoneDstOverrideEntry(entry);
+    if (!normalized) return;
+    const key = `${normalized.timezone}|${normalized.transitionAt}`;
+    deduped.set(key, normalized);
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => new Date(a.transitionAt) - new Date(b.transitionAt));
+};
+
+const getNormalizedTimezoneDstOverrides = async () => {
+  const setting = await Setting.findOne({ key: 'timezoneDstOverrides' }).lean();
+  return normalizeTimezoneDstOverrides(setting?.value ?? KNOWN_DEFAULTS.timezoneDstOverrides);
+};
+
+const toTransitionPayload = (override) => ({
+  id: override.id,
+  timezone: override.timezone,
+  transitionAt: override.transitionAt,
+  date: override.transitionAt,
+  offsetBefore: override.offsetBefore,
+  offsetAfter: override.offsetAfter,
+  type: override.type,
+  timeDifference: override.timeDifference,
+  note: override.note,
+  source: 'manual',
+});
 
 // Public branding info (logo, title, slogan) — accessible without admin auth so UI can show branding
 router.get('/branding', async (req, res) => {
@@ -684,6 +767,115 @@ router.put('/requestsVisibility', authenticateToken, requireAdmin, async (req, r
   } catch (err) {
     console.error('Failed to update requests visibility', err);
     return res.status(500).json({ message: 'Failed to update requests visibility' });
+  }
+});
+
+router.get('/timezoneDstOverrides', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const value = await getNormalizedTimezoneDstOverrides();
+    return res.json({
+      success: true,
+      setting: {
+        key: 'timezoneDstOverrides',
+        value,
+      },
+    });
+  } catch (err) {
+    console.error('Failed to fetch timezone DST overrides', err);
+    return res.status(500).json({ message: 'Failed to fetch timezone DST overrides' });
+  }
+});
+
+router.put('/timezoneDstOverrides', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const value = normalizeTimezoneDstOverrides(req.body?.value ?? []);
+    const s = await Setting.findOneAndUpdate(
+      { key: 'timezoneDstOverrides' },
+      { value },
+      { upsert: true, new: true }
+    );
+    return res.json({ success: true, setting: s });
+  } catch (err) {
+    console.error('Failed to update timezone DST overrides', err);
+    return res.status(500).json({ message: 'Failed to update timezone DST overrides' });
+  }
+});
+
+router.post('/timezoneDstOverrides/preview', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const overrides = await getNormalizedTimezoneDstOverrides();
+    const requestedId = String(req.body?.id || '').trim();
+    const savedOverride = overrides.find((entry) => entry.id === requestedId) || null;
+    const incomingOverride = savedOverride || normalizeTimezoneDstOverrideEntry(req.body?.override);
+    if (!incomingOverride) {
+      return res.status(400).json({ message: 'A valid timezone override is required' });
+    }
+
+    const preview = await dstService.buildTransitionImpactPreview(toTransitionPayload(incomingOverride));
+    return res.json({
+      success: true,
+      override: incomingOverride,
+      preview,
+    });
+  } catch (err) {
+    console.error('Failed to preview timezone DST override', err);
+    return res.status(500).json({ message: 'Failed to preview timezone DST override' });
+  }
+});
+
+router.post('/timezoneDstOverrides/apply', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const requestedId = String(req.body?.id || '').trim();
+    if (!requestedId) {
+      return res.status(400).json({ message: 'Override id is required' });
+    }
+
+    const overrides = await getNormalizedTimezoneDstOverrides();
+    const overrideIndex = overrides.findIndex((entry) => entry.id === requestedId);
+    if (overrideIndex === -1) {
+      return res.status(404).json({ message: 'Timezone override not found' });
+    }
+
+    const target = overrides[overrideIndex];
+    const preview = await dstService.buildTransitionImpactPreview(toTransitionPayload(target));
+    const result = await dstService.adjustClassTimesForDST(toTransitionPayload(target), {
+      source: 'manual',
+      overrideId: target.id,
+    });
+
+    overrides[overrideIndex] = {
+      ...target,
+      appliedAt: new Date().toISOString(),
+      appliedBy: {
+        id: String(req.user?._id || ''),
+        name: `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim() || 'Admin',
+      },
+      lastAppliedResult: {
+        adjustedCount: Number(result?.adjustedCount || 0),
+        skippedAlreadyApplied: Number(result?.skippedAlreadyApplied || 0),
+        pendingClassesAtApplyTime: Number(preview?.summary?.pendingClasses || 0),
+      },
+    };
+
+    const s = await Setting.findOneAndUpdate(
+      { key: 'timezoneDstOverrides' },
+      { value: overrides },
+      { upsert: true, new: true }
+    );
+
+    return res.json({
+      success: true,
+      setting: s,
+      override: overrides[overrideIndex],
+      preview,
+      result,
+      message: result?.adjustedCount
+        ? `Applied timezone change to ${result.adjustedCount} class${result.adjustedCount === 1 ? '' : 'es'}`
+        : 'No pending classes needed a timezone update',
+    });
+  } catch (err) {
+    console.error('Failed to apply timezone DST override', err);
+    return res.status(500).json({ message: 'Failed to apply timezone DST override' });
   }
 });
 

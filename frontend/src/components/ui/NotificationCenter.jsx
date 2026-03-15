@@ -16,6 +16,14 @@ import {
   getNotificationPreferences,
 } from '../../utils/notificationPreferences';
 
+const isBrowserOffline = () => {
+  try {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+  } catch (e) {
+    return false;
+  }
+};
+
 const NotificationCenter = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -53,6 +61,7 @@ const NotificationCenter = () => {
 
   useEffect(() => {
     if (user) {
+      if (isBrowserOffline()) return;
       fetchNotifications();
       checkCurrentVacation();
       checkClassStartAlerts();
@@ -80,6 +89,7 @@ const NotificationCenter = () => {
     if (!notificationPrefs.liveAlertsEnabled) return undefined;
 
     const interval = setInterval(() => {
+      if (isBrowserOffline()) return;
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
         return;
       }
@@ -97,6 +107,7 @@ const NotificationCenter = () => {
   }, [isOpen, user?.role, notifications]);
 
   const fetchNotifications = async ({ showLoading = true } = {}) => {
+    if (isBrowserOffline()) return;
     if (notificationsInFlightRef.current) return;
     if (showLoading) setLoading(true);
     notificationsInFlightRef.current = true;
@@ -137,6 +148,7 @@ const NotificationCenter = () => {
       setNotifications(nextNotifications);
       setUnreadCount(nextUnreadCount);
     } catch (err) {
+      if (err?.isOffline) return;
       console.error('Error fetching notifications:', err);
     } finally {
       notificationsInFlightRef.current = false;
@@ -145,6 +157,7 @@ const NotificationCenter = () => {
   };
 
   const checkClassStartAlerts = async () => {
+    if (isBrowserOffline()) return;
     if (classAlertsInFlightRef.current) return;
     classAlertsInFlightRef.current = true;
     try {
@@ -209,6 +222,7 @@ const NotificationCenter = () => {
   };
 
   const checkCurrentVacation = async () => {
+    if (isBrowserOffline()) return;
     try {
       const cacheKey = makeCacheKey('system-vacations:current');
       const cached = readCache(cacheKey, { deps: ['system-vacations'] });
@@ -226,6 +240,7 @@ const NotificationCenter = () => {
       }
       writeCache(cacheKey, res.data, { ttlMs: 60_000, deps: ['system-vacations'] });
     } catch (err) {
+      if (err?.isOffline) return;
       console.error('Error checking current vacation:', err);
     }
   };

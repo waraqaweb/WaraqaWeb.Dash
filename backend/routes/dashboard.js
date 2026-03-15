@@ -20,6 +20,8 @@ const Setting = require('../models/Setting');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { decodeToken } = require('../utils/jwt');
 const { MEETING_TYPES, MEETING_STATUSES } = require('../constants/meetingConstants');
+const dstService = require('../services/dstService');
+const { getTeacherVacationSummary } = require('../services/teacherVacationService');
 
 const resolveQueryResult = async (queryLike, fallbackValue = []) => {
   try {
@@ -273,6 +275,13 @@ router.get('/stats', authenticateToken, async (req, res) => {
             flatStats.studentsOnVacationCount = 0;
           }
 
+          try {
+            flatStats.adminTimezoneSummary = await dstService.buildAdminTimezoneImpactSummary({ warningDays: 7, lookaheadDays: 45 });
+          } catch (timezoneSummaryErr) {
+            console.warn('dashboard: admin timezone summary failed', timezoneSummaryErr?.message || timezoneSummaryErr);
+            flatStats.adminTimezoneSummary = { alerts: [], countries: [], summary: { alertCount: 0, impactedClassCount: 0, impactedStudentCount: 0, impactedTeacherCount: 0, countryCount: 0, timezoneCount: 0 } };
+          }
+
           return res.json({ success: true, role: 'admin', meta: { generatedAt: new Date() }, cached: !isRecent, stats: Object.assign({}, flatStats, { nested: payload }) });
         }
 
@@ -360,6 +369,13 @@ router.get('/stats', authenticateToken, async (req, res) => {
   } catch (e) {
     flatStats.studentsOnVacationList = [];
     flatStats.studentsOnVacationCount = 0;
+  }
+
+  try {
+    flatStats.adminTimezoneSummary = await dstService.buildAdminTimezoneImpactSummary({ warningDays: 7, lookaheadDays: 45 });
+  } catch (timezoneSummaryErr) {
+    console.warn('dashboard: admin timezone summary failed', timezoneSummaryErr?.message || timezoneSummaryErr);
+    flatStats.adminTimezoneSummary = { alerts: [], countries: [], summary: { alertCount: 0, impactedClassCount: 0, impactedStudentCount: 0, impactedTeacherCount: 0, countryCount: 0, timezoneCount: 0 } };
   }
 
   return res.json({ success: true, role: 'admin', meta: { generatedAt: new Date() }, cached: false, stats: Object.assign({}, flatStats, { nested: payload }) });
@@ -775,6 +791,20 @@ router.get('/stats', authenticateToken, async (req, res) => {
       ]);
       const monthlyEarnings = teacherInvoices[0]?.total || 0;
 
+      let timezoneAdjustments = { alerts: [], conflicts: [], summary: { alertCount: 0, conflictCount: 0 } };
+      try {
+        timezoneAdjustments = await dstService.buildTeacherSchedulePreview(teacherId, { warningDays: 7, lookaheadDays: 45 });
+      } catch (tzErr) {
+        console.warn('dashboard: teacher timezone preview failed', tzErr?.message || tzErr);
+      }
+
+      let vacationSummary = { year: new Date().getFullYear(), allocatedDays: 0, usedDays: 0, remainingDays: 0, vacationCount: 0 };
+      try {
+        vacationSummary = await getTeacherVacationSummary(teacherId);
+      } catch (vacationErr) {
+        console.warn('dashboard: teacher vacation summary failed', vacationErr?.message || vacationErr);
+      }
+
       return res.json({
         success: true,
         role: 'teacher',
@@ -793,6 +823,8 @@ router.get('/stats', authenticateToken, async (req, res) => {
           pendingFirstClassStudents,
           activeStudentCount,
           monthlyEarnings,
+          timezoneAdjustments,
+          vacationSummary,
           followUpPrompt: {
             teacherSync: {
               lastMeetingAt: teacherSyncLastMeetingAt,

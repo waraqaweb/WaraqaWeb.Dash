@@ -21,6 +21,7 @@ const GuardianHoursAudit = require('../models/GuardianHoursAudit');
 const AccountStatusAudit = require('../models/AccountStatusAudit');
 const Notification = require('../models/Notification');
 const Class = require('../models/Class');
+const { getTeacherVacationSummaryMap } = require('../services/teacherVacationService');
 const { computeGuardianHoursFromPaidInvoices, normalizeId, roundHours } = require('../services/guardianHoursService');
 const { isValidTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 const { 
@@ -448,6 +449,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
           'profilePicture',
           'teacherInfo.monthlyHours',
           'teacherInfo.googleMeetLink',
+          'teacherInfo.vacationAllowance',
           'createdAt',
           'updatedAt'
         ].join(' ');
@@ -546,6 +548,24 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
           }
         };
       });
+
+      try {
+        const teacherIds = usersPayload.map((obj) => String(obj._id || '')).filter(Boolean);
+        const teachersById = new Map(usersPayload.map((obj) => [String(obj._id), obj]));
+        const vacationSummaryMap = await getTeacherVacationSummaryMap(teacherIds, { teachersById });
+        usersPayload = usersPayload.map((obj) => {
+          const teacherInfo = obj.teacherInfo && typeof obj.teacherInfo === 'object' ? obj.teacherInfo : {};
+          return {
+            ...obj,
+            teacherInfo: {
+              ...teacherInfo,
+              _vacationSummary: vacationSummaryMap.get(String(obj._id)) || null,
+            },
+          };
+        });
+      } catch (e) {
+        console.warn('users: failed to compute teacher vacation summary', e && e.message);
+      }
     }
 
     if (String(role || '').toLowerCase() === 'guardian' && Array.isArray(usersPayload)) {

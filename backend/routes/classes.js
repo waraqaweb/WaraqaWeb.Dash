@@ -26,6 +26,14 @@ const {
   refreshParticipantsFromSchedule,
 } = require("../services/activityStatusService");
 const { processArrayWithTimezone, addTimezoneInfo, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
+const {
+  normalizeAnchorMode,
+  resolveStudentTimezone,
+  resolveTeacherTimezone,
+  resolveClassTimezone,
+  buildTimeAnchorForScheduledClass,
+  buildTimeAnchorForSlot,
+} = require("../services/classTimezoneService");
 
 // timezone helpers (you must have these implemented)
 const tzUtils = require("../utils/timezone"); // expects toUtc(dateString, tz) and buildUtcFromParts(parts, tz)
@@ -1980,7 +1988,7 @@ router.post(
       const {
         title, description, subject, teacher, student,
         scheduledDate, duration, timezone, isRecurring,
-          recurrence, meetingLink, materials, recurrenceDetails = []
+          anchoredTimezone, recurrence, meetingLink, materials, recurrenceDetails = []
       } = req.body;
         const overrideDuplicateSeries = toBool(req.body.overrideDuplicateSeries);
 
@@ -2018,6 +2026,13 @@ router.post(
         studentId: resolvedStudent?.studentId || student.studentId,
         studentName: resolvedStudent?.studentName || student.studentName || 'Unknown Student'
       };
+      const anchorMode = normalizeAnchorMode(anchoredTimezone);
+      const studentTimezone = resolveStudentTimezone({
+        guardianDoc,
+        studentId: studentForClass.studentId,
+        fallbackTimezone: resolvedStudent?.timezone || timezone || DEFAULT_TIMEZONE,
+      });
+      const teacherTimezone = resolveTeacherTimezone(teacherDoc, DEFAULT_TIMEZONE);
       console.log("Student object for class:", studentForClass);
 
       const createdClasses = [];
@@ -2025,7 +2040,13 @@ router.post(
       if (!isRecurring) {
         // ensure tzUsed and convert scheduledDate to UTC
         console.log("Creating single class");
-        const tzUsed = timezone || "UTC";
+        const tzUsed = resolveClassTimezone({
+          requestedTimezone: timezone,
+          anchorMode,
+          studentTimezone,
+          teacherTimezone,
+          fallbackTimezone: DEFAULT_TIMEZONE,
+        });
         console.log("Timezone:", tzUsed, "ScheduledDate:", scheduledDate);
         const scheduledUtc = scheduledDate ? (tzUtils.toUtc ? tzUtils.toUtc(scheduledDate, tzUsed) : new Date(scheduledDate)) : null;
         console.log("Scheduled UTC:", scheduledUtc);
@@ -2046,6 +2067,15 @@ router.post(
           scheduledDate: scheduledUtc,
           duration: Number(duration || 60),
           timezone: tzUsed,
+          anchoredTimezone: anchorMode,
+          timeAnchor: buildTimeAnchorForScheduledClass({
+            scheduledDate: scheduledUtc,
+            anchorMode,
+            requestedTimezone: tzUsed,
+            studentTimezone,
+            teacherTimezone,
+            fallbackTimezone: DEFAULT_TIMEZONE,
+          }),
           isRecurring: false,
           meetingLink: meetingLink || null,
           materials: Array.isArray(materials) ? materials : (materials ? [materials] : []),
@@ -2097,7 +2127,24 @@ router.post(
           });
         }
 
-        const normalizedDetails = normalizeRecurrenceSlots(recurrenceDetails, timezone);
+        const baseTimezone = resolveClassTimezone({
+          requestedTimezone: timezone,
+          anchorMode,
+          studentTimezone,
+          teacherTimezone,
+          fallbackTimezone: DEFAULT_TIMEZONE,
+        });
+
+        const normalizedDetails = normalizeRecurrenceSlots(recurrenceDetails, baseTimezone).map((slot) => ({
+          ...slot,
+          timezone: resolveClassTimezone({
+            requestedTimezone: slot.timezone || baseTimezone,
+            anchorMode,
+            studentTimezone,
+            teacherTimezone,
+            fallbackTimezone: baseTimezone,
+          }),
+        }));
 
         console.log("Recurring creation details (normalized):", normalizedDetails);
 
@@ -2116,7 +2163,7 @@ router.post(
           });
         }
 
-        const tzUsed = recurrenceDetails?.[0]?.timezone || timezone || "UTC";
+        const tzUsed = normalizedDetails?.[0]?.timezone || baseTimezone || "UTC";
         const generationPeriodMonths = (recurrence && recurrence.generationPeriodMonths)
           || Number(req.body.generationPeriodMonths)
           || 2;
@@ -2215,6 +2262,15 @@ router.post(
           scheduledDate: base,
           duration: recurrenceDuration,
           timezone: tzUsed,
+          anchoredTimezone: anchorMode,
+          timeAnchor: buildTimeAnchorForSlot({
+            slot: normalizedDetails[0] || { dayOfWeek: uniqueDays[0], time: null, timezone: tzUsed },
+            anchorMode,
+            requestedTimezone: tzUsed,
+            studentTimezone,
+            teacherTimezone,
+            fallbackTimezone: tzUsed,
+          }),
           isRecurring: true,
           recurrence: finalRecurrence,
           recurrenceDetails: normalizedDetails.map((slot) => ({
@@ -2359,7 +2415,22 @@ router.post(
         return res.status(400).json({ message: "Source class is missing student information" });
       }
 
-      const tzUsed = req.body.timezone || sourceClass.timezone || DEFAULT_TIMEZONE;
+      const duplicateGuardianDoc = await User.findOne({ _id: studentForClass.guardianId, role: 'guardian' }).select('timezone guardianInfo.students');
+      const anchorMode = normalizeAnchorMode(req.body.anchoredTimezone || sourceClass.anchoredTimezone || 'student');
+      const studentTimezone = resolveStudentTimezone({
+        guardianDoc: duplicateGuardianDoc,
+        studentId: studentForClass.studentId,
+        fallbackTimezone: sourceClass?.timeAnchor?.timezone || sourceClass.timezone || DEFAULT_TIMEZONE,
+      });
+      const teacherTimezone = resolveTeacherTimezone(teacherDoc, DEFAULT_TIMEZONE);
+
+      const tzUsed = resolveClassTimezone({
+        requestedTimezone: req.body.timezone || sourceClass.timezone,
+        anchorMode,
+        studentTimezone,
+        teacherTimezone,
+        fallbackTimezone: DEFAULT_TIMEZONE,
+      });
       let scheduledUtc;
       if (req.body.scheduledDate) {
         const parsedRequestedDate = new Date(req.body.scheduledDate);
@@ -2418,7 +2489,15 @@ router.post(
         scheduledDate: scheduledUtc,
         duration: durationMinutes,
         timezone: tzUsed,
-        anchoredTimezone: req.body.anchoredTimezone || sourceClass.anchoredTimezone || "student",
+        anchoredTimezone: anchorMode,
+        timeAnchor: buildTimeAnchorForScheduledClass({
+          scheduledDate: scheduledUtc,
+          anchorMode,
+          requestedTimezone: tzUsed,
+          studentTimezone,
+          teacherTimezone,
+          fallbackTimezone: DEFAULT_TIMEZONE,
+        }),
         isRecurring: false,
         recurrence: undefined,
         recurrenceDetails: [],
@@ -2565,7 +2644,7 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
 
     const {
       title, description, subject, teacher, student,
-      scheduledDate, duration, timezone, recurrence, recurrenceDetails = []
+      scheduledDate, duration, timezone, anchoredTimezone, recurrence, recurrenceDetails = []
     } = updates;
 
     const normalizedUpdateDetails = normalizeRecurrenceSlots(recurrenceDetails, timezone || pattern.timezone);
@@ -2583,7 +2662,25 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
       .lean();
 
     // Build a proposed pattern in-memory and validate availability BEFORE touching children.
-    const proposedTimezone = timezone || pattern.timezone;
+    const patternAnchorMode = normalizeAnchorMode(anchoredTimezone || pattern.anchoredTimezone || 'student');
+    const currentTeacherDoc = teacher ? await User.findOne({ _id: teacher, role: 'teacher' }).select('timezone') : null;
+    const currentGuardianDoc = student?.guardianId
+      ? await User.findOne({ _id: student.guardianId, role: 'guardian' }).select('timezone guardianInfo.students')
+      : await User.findOne({ _id: pattern.student?.guardianId, role: 'guardian' }).select('timezone guardianInfo.students');
+    const patternStudentId = student?.studentId || pattern.student?.studentId;
+    const proposedStudentTimezone = resolveStudentTimezone({
+      guardianDoc: currentGuardianDoc,
+      studentId: patternStudentId,
+      fallbackTimezone: pattern?.timeAnchor?.timezone || pattern.timezone || DEFAULT_TIMEZONE,
+    });
+    const proposedTeacherTimezone = resolveTeacherTimezone(currentTeacherDoc, DEFAULT_TIMEZONE);
+    const proposedTimezone = resolveClassTimezone({
+      requestedTimezone: timezone || pattern.timezone,
+      anchorMode: patternAnchorMode,
+      studentTimezone: proposedStudentTimezone,
+      teacherTimezone: proposedTeacherTimezone,
+      fallbackTimezone: DEFAULT_TIMEZONE,
+    });
     const proposedTeacher = teacher || pattern.teacher;
     const proposedDuration = (typeof duration !== "undefined") ? Number(duration) : Number(pattern.duration || 60);
 
@@ -2721,6 +2818,7 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
       pattern.student = resolvedStudent;
     }
     if (typeof duration !== "undefined") pattern.duration = Number(duration);
+    pattern.anchoredTimezone = patternAnchorMode;
     pattern.timezone = proposedTimezone || pattern.timezone;
     if (scheduledDate) {
       pattern.scheduledDate = tzUtils.toUtc ? tzUtils.toUtc(scheduledDate, pattern.timezone || proposedTimezone || "UTC") : new Date(scheduledDate);
@@ -2729,6 +2827,14 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
     if (normalizedUpdateDetails.length) {
       pattern.recurrenceDetails = normalizedUpdateDetails;
     }
+    pattern.timeAnchor = buildTimeAnchorForSlot({
+      slot: (normalizedUpdateDetails && normalizedUpdateDetails[0]) || (pattern.recurrenceDetails && pattern.recurrenceDetails[0]) || null,
+      anchorMode: patternAnchorMode,
+      requestedTimezone: proposedTimezone,
+      studentTimezone: proposedStudentTimezone,
+      teacherTimezone: proposedTeacherTimezone,
+      fallbackTimezone: proposedTimezone || DEFAULT_TIMEZONE,
+    });
     pattern.recurrence.lastGenerated = new Date();
     pattern.lastModifiedBy = req.user._id;
     pattern.lastModifiedAt = new Date();
@@ -3557,7 +3663,7 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
                   return when ? `${score} on ${when}` : String(score);
                 })
                 .join(', ');
-              const actionLink = `/dashboard/classes?tab=previous&search=${encodeURIComponent(studentName)}`;
+              const actionLink = `/dashboard/classes?tab=previous&open=${classDoc._id}`;
 
               await Promise.allSettled((admins || []).map((admin) => (
                 (async () => {

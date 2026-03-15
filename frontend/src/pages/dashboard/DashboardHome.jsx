@@ -16,6 +16,7 @@ import {
   DollarSign,
   Clock,
   AlertCircle,
+  AlertTriangle,
   CheckCircle,
   RefreshCcw,
 } from "lucide-react";
@@ -60,6 +61,17 @@ const formatClassDate = (d) => {
 const formatHours2 = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num.toFixed(2) : '0.00';
+};
+
+const formatCountdown = (hoursUntil) => {
+  const hours = Number(hoursUntil);
+  if (!Number.isFinite(hours)) return '';
+  if (hours <= 0) return 'now';
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'}`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  if (remainingHours === 0) return `${days} day${days === 1 ? '' : 's'}`;
+  return `${days} day${days === 1 ? '' : 's'} ${remainingHours} hour${remainingHours === 1 ? '' : 's'}`;
 };
 
 const formatDateDMMM = (value) => {
@@ -1422,6 +1434,53 @@ const DashboardHome = ({ isActive = true }) => {
                   </div>
                 </div>
 
+                {Array.isArray(data.adminTimezoneSummary?.alerts) && data.adminTimezoneSummary.alerts.length > 0 && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 text-amber-900">
+                          <AlertTriangle className="h-4 w-4" />
+                          <p className="text-sm font-semibold">Active student timezone changes</p>
+                        </div>
+                        <p className="mt-1 text-xs text-amber-800">
+                          Only countries with active students and upcoming affected classes are shown here.
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-xs font-medium text-amber-900">
+                        {data.adminTimezoneSummary.summary?.alertCount || data.adminTimezoneSummary.alerts.length}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                      {data.adminTimezoneSummary.alerts.slice(0, 6).map((alert) => (
+                        <div key={`${alert.timezone}-${alert.transition?.date || ''}`} className="rounded-xl border border-amber-200 bg-white/80 p-3">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">
+                                {alert.country || 'Unknown country'} • {alert.timezone || 'Unknown timezone'}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-700">
+                                {alert.transition?.date ? formatClassDate(alert.transition.date) : 'Upcoming change'}
+                              </p>
+                            </div>
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                              {alert.impactedStudentCount} student{alert.impactedStudentCount === 1 ? '' : 's'}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-xs text-slate-600">
+                            {alert.impactedClassCount} class{alert.impactedClassCount === 1 ? '' : 'es'} • {alert.impactedTeacherCount} teacher{alert.impactedTeacherCount === 1 ? '' : 's'}
+                          </p>
+                          {Array.isArray(alert.teacherNames) && alert.teacherNames.length > 0 && (
+                            <p className="mt-1 text-xs text-slate-600">
+                              Teachers: {alert.teacherNames.join(', ')}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Secondary lists placed side-by-side to reduce vertical length */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                   <div className="bg-card rounded-lg border border-border p-4 lg:col-span-2">
@@ -1573,6 +1632,56 @@ const DashboardHome = ({ isActive = true }) => {
           </div>
         )}
 
+        {Array.isArray(data.timezoneAdjustments?.alerts) && data.timezoneAdjustments.alerts.length > 0 && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-amber-900">
+                  <AlertTriangle className="h-4 w-4" />
+                  <p className="text-sm font-semibold">Upcoming timezone changes</p>
+                </div>
+                <p className="mt-1 text-xs text-amber-800">
+                  Student local time stays fixed. Teacher time will move when the student's timezone changes.
+                </p>
+              </div>
+              <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-xs font-medium text-amber-900">
+                {data.timezoneAdjustments.summary?.alertCount || data.timezoneAdjustments.alerts.length}
+              </span>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              {data.timezoneAdjustments.alerts.slice(0, 5).map((alert) => (
+                <div
+                  key={`${alert.classId}-${alert.transition?.date || ''}`}
+                  className={`rounded-xl border p-3 ${alert.conflict ? 'border-rose-200 bg-rose-50/70' : 'border-amber-200 bg-white/80'}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {alert.studentName || 'Student'} • {alert.subject || alert.title || 'Class'}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-700">
+                        {alert.teacherTimeBefore} → {alert.teacherTimeAfter}
+                      </p>
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${alert.conflict ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'}`}>
+                      {alert.transitionStatus === 'upcoming' ? `in ${formatCountdown(alert.hoursUntil)}` : 'active'}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600">
+                    Student timezone: {alert.studentTimezone || '—'}
+                  </p>
+                  {alert.conflict && (
+                    <p className="mt-2 text-xs font-medium text-rose-800">
+                      Conflict with {alert.conflict.conflictingStudentName || 'another student'} • {alert.conflict.conflictingClassTitle || 'another class'}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {teacherSyncSuccess?.meeting && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1611,11 +1720,12 @@ const DashboardHome = ({ isActive = true }) => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <StatCard title="Unbilled hours (this month)" value={`${Number(data.hoursThisMonth || 0).toFixed(2)}`} Icon={Clock} color="bg-slate-100 text-slate-700" />
           <StatCard title="Active Students" value={data.activeStudentCount || data.studentsWithClassesThisMonth || 0} Icon={Users} color="bg-amber-50 text-amber-700" />
           <StatCard title="Cancellations (month)" value={data.cancellationsThisMonth || 0} Icon={AlertCircle} color="bg-rose-50 text-rose-700" />
           <StatCard title="Classes (this month)" value={data.classesCompletedThisMonth || 0} Icon={Calendar} color="bg-violet-50 text-violet-700" />
+          <StatCard title="Vacation days used" value={`${Number(data.vacationSummary?.usedDays || 0)} / ${Number(data.vacationSummary?.allocatedDays || 0)}`} Icon={RefreshCcw} color="bg-emerald-50 text-emerald-700" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">

@@ -123,6 +123,31 @@ const classSchema = new mongoose.Schema({
     enum: ['student', 'teacher', 'system'],
     default: 'student', // Student timezone is the anchor by default
   },
+
+  timeAnchor: {
+    source: {
+      type: String,
+      enum: ['student', 'teacher', 'system'],
+      default: 'student',
+    },
+    timezone: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    localTime: {
+      type: String,
+      trim: true,
+      match: /^\d{2}:\d{2}$/,
+      default: null,
+    },
+    dayOfWeek: {
+      type: Number,
+      min: 0,
+      max: 6,
+      default: null,
+    },
+  },
   
   // DST tracking for automatic adjustments
   dstInfo: {
@@ -136,6 +161,11 @@ const classSchema = new mongoose.Schema({
       oldTime: Date,
       newTime: Date,
       affectedTimezone: String,
+      transitionAt: Date,
+      timeDifference: Number,
+      transitionKey: String,
+      source: String,
+      overrideId: String,
       adjustmentType: {
         type: String,
         enum: ['spring_forward', 'fall_back']

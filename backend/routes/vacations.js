@@ -9,6 +9,7 @@ const { requireAdmin, requireAuth } = require('../middleware/auth');
 const vacationService = require('../services/vacationService');
 const notificationService = require('../services/notificationService');
 const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
+const { getTeacherVacationAllowanceStatus } = require('../services/teacherVacationService');
 
 function computeLifecycleStatus(vacationDoc) {
   const now = new Date();
@@ -53,6 +54,57 @@ function toLocalDayEnd(dateValue) {
   if (Number.isNaN(d.getTime())) return null;
   d.setHours(23, 59, 59, 999);
   return d;
+}
+
+async function validateTeacherVacationAllowance({ teacherId, startDate, endDate, excludeVacationId = null }) {
+  const start = toLocalDayStart(startDate);
+  const end = toLocalDayEnd(endDate);
+  if (!teacherId || !start || !end) return null;
+
+  const checks = [];
+  for (let year = start.getFullYear(); year <= end.getFullYear(); year += 1) {
+    const yearStart = new Date(year, 0, 1, 0, 0, 0, 0);
+    const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999);
+    const clippedStart = start > yearStart ? start : yearStart;
+    const clippedEnd = end < yearEnd ? end : yearEnd;
+    if (clippedEnd < clippedStart) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const allowance = await getTeacherVacationAllowanceStatus({
+      teacherId,
+      year,
+      startDate: clippedStart,
+      endDate: clippedEnd,
+      excludeVacationId,
+    });
+    checks.push(allowance);
+  }
+
+  const blocking = checks.find((entry) => !entry.canRequest) || null;
+  if (blocking) {
+    const message = blocking.remainingDays > 0
+      ? `This request cannot be submitted because it counts as ${blocking.requestedDays} day(s) in ${blocking.year}, but only ${blocking.remainingDays} day(s) are still available. Please reduce the request to ${blocking.remainingDays} day(s) or less for that year.`
+      : `This request cannot be submitted because there are no remaining vacation days available for ${blocking.year}.`;
+    return {
+      ok: false,
+      allowance: blocking,
+      yearly: checks,
+      message,
+    };
+  }
+
+  const countedDays = checks.reduce((sum, entry) => sum + Number(entry.requestedDays || 0), 0);
+  const yearlyTail = checks
+    .map((entry) => `${entry.year}: ${Math.max(0, entry.remainingDays - entry.requestedDays)} day(s) left`)
+    .join(' • ');
+
+  return {
+    ok: true,
+    allowance: checks[0] || null,
+    yearly: checks,
+    message: countedDays > 0
+      ? `This request will count as ${countedDays} day(s). ${yearlyTail}`
+      : 'This request falls entirely inside system vacations, so it will not count from the yearly allowance.',
+  };
 }
 
 // Search users by name or email
@@ -105,6 +157,21 @@ router.post('/', requireAuth, async (req, res) => {
 
     if (end < start) {
       return res.status(400).json({ message: 'End date must be after start date' });
+    }
+
+    if (role === 'teacher') {
+      const allowanceCheck = await validateTeacherVacationAllowance({
+        teacherId: user,
+        startDate: start,
+        endDate: end,
+      });
+      if (allowanceCheck && !allowanceCheck.ok) {
+        return res.status(400).json({
+          message: allowanceCheck.message,
+          allowance: allowanceCheck.allowance,
+          yearlyAllowance: allowanceCheck.yearly,
+        });
+      }
     }
 
     // Create vacation request
@@ -182,7 +249,12 @@ router.post('/', requireAuth, async (req, res) => {
     // Send response
     res.status(201).json({ 
       message: 'Vacation request submitted successfully. Awaiting approval.', 
-      vacation: serializeVacation(vacation) 
+      vacation: serializeVacation(vacation),
+      ...(role === 'teacher'
+        ? {
+            allowance: await getTeacherVacationAllowanceStatus({ teacherId: user, year: start.getFullYear() }),
+          }
+        : {})
     });
   } catch (err) {
     console.error('Create vacation error:', err);
@@ -618,6 +690,22 @@ router.post('/:vacationId/approval', requireAuth, requireAdmin, async (req, res)
       return res.status(404).json({ message: 'Vacation request not found' });
     }
 
+    if (approved && vacation.role === 'teacher') {
+      const allowanceCheck = await validateTeacherVacationAllowance({
+        teacherId: vacation.user?._id || vacation.user,
+        startDate: vacation.startDate,
+        endDate: vacation.actualEndDate || vacation.endDate,
+        excludeVacationId: vacation._id,
+      });
+      if (allowanceCheck && !allowanceCheck.ok) {
+        return res.status(400).json({
+          message: allowanceCheck.message,
+          allowance: allowanceCheck.allowance,
+          yearlyAllowance: allowanceCheck.yearly,
+        });
+      }
+    }
+
     vacation.approvalStatus = approved ? 'approved' : 'rejected';
     vacation.status = approved ? 'approved' : 'rejected';
     vacation.approvedBy = req.user._id;
@@ -893,6 +981,22 @@ router.put('/:vacationId', requireAuth, async (req, res) => {
         return res.status(400).json({ message: 'End date must be after start date' });
       }
       vacation.endDate = newEnd;
+    }
+
+    if (vacation.role === 'teacher') {
+      const allowanceCheck = await validateTeacherVacationAllowance({
+        teacherId: vacation.user,
+        startDate: vacation.startDate,
+        endDate: vacation.endDate,
+        excludeVacationId: vacation._id,
+      });
+      if (allowanceCheck && !allowanceCheck.ok) {
+        return res.status(400).json({
+          message: allowanceCheck.message,
+          allowance: allowanceCheck.allowance,
+          yearlyAllowance: allowanceCheck.yearly,
+        });
+      }
     }
 
     if (reason) {

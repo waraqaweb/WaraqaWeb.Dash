@@ -2,6 +2,14 @@
 import axios from "axios";
 import { bumpDomainVersion } from "../utils/sessionCache";
 
+const isBrowserOffline = () => {
+  try {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+  } catch (e) {
+    return false;
+  }
+};
+
 // Prefer environment-configured API base URL, fall back to browser origin.
 // Example: REACT_APP_API_URL=https://api.example.com/api
 const resolveApiBase = () => {
@@ -188,6 +196,12 @@ instance.interceptors.response.use(
     // Network / cache failures (no response) happen when the browser
     // fails to read from the HTTP cache/storage (service worker or disk)
     if (!error.response && error.request) {
+      if (isBrowserOffline()) {
+        error.isOffline = true;
+        error.isNetworkOrCache = true;
+        return Promise.reject(error);
+      }
+
       // Mark network/cache read failures so callers can handle them specifically
       console.error('API Error: Network or cache failure:', error.message, {
         endpoint: error.config?.url,

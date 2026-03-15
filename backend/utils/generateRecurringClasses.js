@@ -1,5 +1,6 @@
 const Class = require('../models/Class');
 const tzUtils = require('../utils/timezone');
+const { buildTimeAnchorForSlot } = require('../services/classTimezoneService');
 
 /**
  * generateRecurringClasses
@@ -103,7 +104,20 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
             student: pattern.student,
             scheduledDate: instanceDate,
             duration: instanceDuration,
-            timezone: pattern.timezone || 'UTC',
+            timezone: tzForDay,
+            anchoredTimezone: pattern.anchoredTimezone || 'student',
+            timeAnchor: buildTimeAnchorForSlot({
+              slot: {
+                dayOfWeek: dow,
+                time: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
+                timezone: tzForDay,
+              },
+              anchorMode: pattern.anchoredTimezone || 'student',
+              requestedTimezone: tzForDay,
+              studentTimezone: pattern?.timeAnchor?.source === 'student' ? pattern?.timeAnchor?.timezone : undefined,
+              teacherTimezone: pattern?.timeAnchor?.source === 'teacher' ? pattern?.timeAnchor?.timezone : undefined,
+              fallbackTimezone: pattern.timezone || 'UTC',
+            }),
             isRecurring: false,
             parentRecurringClass: pattern._id,
             meetingLink: pattern.meetingLink || null,

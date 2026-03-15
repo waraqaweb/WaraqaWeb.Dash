@@ -15,6 +15,7 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(false);
   const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
+  const currentYear = new Date().getFullYear();
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +86,12 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
             isAvailabilityRequired: true
           };
         }
+        const vacationAllowance = targetUser.teacherInfo?.vacationAllowance || {};
+        const yearlyOverrides = Array.isArray(vacationAllowance.yearlyOverrides) ? vacationAllowance.yearlyOverrides : [];
+        const currentYearOverride = yearlyOverrides.find((entry) => Number(entry?.year) === currentYear);
+        formData.vacationAllowanceDefaultDaysPerYear = vacationAllowance.defaultDaysPerYear ?? '';
+        formData.vacationAllowanceCurrentYearDays = currentYearOverride?.days ?? '';
+        formData.vacationAllowanceYearlyOverrides = yearlyOverrides;
       } else if (targetUser.role === 'guardian') {
         // Extract guardian-specific fields (guardians do not receive bank details in the edit form)
         if (targetUser.guardianInfo?.spokenLanguages !== undefined) {
@@ -290,7 +297,7 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
     // allow users to edit their spoken languages
     selfEditable.push('spokenLanguages');
     // Fields that are strictly teacher-only and must not be editable when editing a guardian
-    const teacherOnlyFields = ['bio', 'instapayName', 'qualifications', 'courses', 'availabilityConfig', 'googleMeetLink'];
+    const teacherOnlyFields = ['bio', 'instapayName', 'qualifications', 'courses', 'availabilityConfig', 'googleMeetLink', 'vacationAllowance'];
 
     // If the field is teacher-only but the current form's role is not teacher, disallow editing
     if (teacherOnlyFields.includes(field) && form && form.role !== 'teacher') return false;
@@ -527,6 +534,28 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
         payload.teacherInfo.availabilityConfig = {
           ...form.availabilityConfig,
           lastUpdated: new Date()
+        };
+      }
+
+      if (form.role === 'teacher' && isAdmin) {
+        const defaultDaysRaw = form.vacationAllowanceDefaultDaysPerYear;
+        const currentYearDaysRaw = form.vacationAllowanceCurrentYearDays;
+        const defaultDays = defaultDaysRaw === '' || defaultDaysRaw === null || defaultDaysRaw === undefined
+          ? 0
+          : Number(defaultDaysRaw);
+        const currentYearDays = currentYearDaysRaw === '' || currentYearDaysRaw === null || currentYearDaysRaw === undefined
+          ? null
+          : Number(currentYearDaysRaw);
+        const existingOverrides = Array.isArray(form.vacationAllowanceYearlyOverrides)
+          ? form.vacationAllowanceYearlyOverrides.filter((entry) => Number(entry?.year) !== currentYear)
+          : [];
+        if (!payload.teacherInfo) payload.teacherInfo = {};
+        payload.teacherInfo.vacationAllowance = {
+          defaultDaysPerYear: Number.isFinite(defaultDays) ? Math.max(0, defaultDays) : 0,
+          yearlyOverrides: [
+            ...existingOverrides,
+            ...(Number.isFinite(currentYearDays) ? [{ year: currentYear, days: Math.max(0, currentYearDays) }] : []),
+          ],
         };
       }
 
@@ -870,6 +899,36 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                         isAdminView={isAdmin}
                       />
                     </div>
+                    {isAdmin && (
+                      <div className="md:col-span-2 rounded-lg border border-gray-200 p-4">
+                        <h5 className="font-medium text-gray-900">Yearly vacation allowance</h5>
+                        <p className="mt-1 text-xs text-gray-500">Set one number for all future years and optionally a different number for {currentYear} only.</p>
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700">Default days per year (future years)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              className="w-full min-w-0 border rounded px-2 py-1"
+                              value={form.vacationAllowanceDefaultDaysPerYear ?? ''}
+                              onChange={(e) => setField('vacationAllowanceDefaultDaysPerYear', e.target.value === '' ? '' : Number(e.target.value))}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700">{currentYear} days only</label>
+                            <input
+                              type="number"
+                              min="0"
+                              className="w-full min-w-0 border rounded px-2 py-1"
+                              value={form.vacationAllowanceCurrentYearDays ?? ''}
+                              onChange={(e) => setField('vacationAllowanceCurrentYearDays', e.target.value === '' ? '' : Number(e.target.value))}
+                              placeholder="Leave empty to use future years value"
+                            />
+                            <p className="mt-1 text-xs text-gray-500">Leave this empty if {currentYear} should use the future-years number.</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

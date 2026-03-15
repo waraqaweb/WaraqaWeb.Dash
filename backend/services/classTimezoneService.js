@@ -39,10 +39,9 @@ const resolveTeacherTimezone = (teacherDoc, fallbackTimezone = DEFAULT_TIMEZONE)
   return teacherDoc?.timezone || fallbackTimezone || DEFAULT_TIMEZONE;
 };
 
-const resolveClassTimezone = ({ requestedTimezone, anchorMode, studentTimezone, teacherTimezone, fallbackTimezone } = {}) => {
-  if (requestedTimezone) return requestedTimezone;
-
+const resolveAnchorTimezone = ({ anchorMode, studentTimezone, teacherTimezone, fallbackTimezone } = {}) => {
   const normalizedAnchorMode = normalizeAnchorMode(anchorMode);
+
   if (normalizedAnchorMode === 'teacher') {
     return teacherTimezone || fallbackTimezone || DEFAULT_TIMEZONE;
   }
@@ -52,6 +51,17 @@ const resolveClassTimezone = ({ requestedTimezone, anchorMode, studentTimezone, 
   }
 
   return fallbackTimezone || studentTimezone || teacherTimezone || DEFAULT_TIMEZONE;
+};
+
+const resolveClassTimezone = ({ requestedTimezone, anchorMode, studentTimezone, teacherTimezone, fallbackTimezone } = {}) => {
+  if (requestedTimezone) return requestedTimezone;
+
+  return resolveAnchorTimezone({
+    anchorMode,
+    studentTimezone,
+    teacherTimezone,
+    fallbackTimezone,
+  });
 };
 
 const getLocalDayTimeParts = (dateLike, timezone = DEFAULT_TIMEZONE) => {
@@ -130,6 +140,7 @@ module.exports = {
   getEmbeddedStudentRecord,
   resolveStudentTimezone,
   resolveTeacherTimezone,
+  resolveAnchorTimezone,
   resolveClassTimezone,
   getLocalDayTimeParts,
   buildTimeAnchorForScheduledClass,

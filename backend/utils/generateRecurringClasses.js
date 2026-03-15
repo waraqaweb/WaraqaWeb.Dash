@@ -1,6 +1,12 @@
 const Class = require('../models/Class');
 const tzUtils = require('../utils/timezone');
-const { buildTimeAnchorForSlot } = require('../services/classTimezoneService');
+const {
+  buildTimeAnchorForScheduledClass,
+  resolveStudentTimezone,
+  resolveTeacherTimezone,
+  resolveAnchorTimezone,
+} = require('../services/classTimezoneService');
+const User = require('../models/User');
 
 /**
  * generateRecurringClasses
@@ -12,6 +18,20 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
   const { throwOnError = false } = options || {};
   try {
     const pattern = recurringPattern.toObject ? recurringPattern.toObject() : recurringPattern;
+    let teacherDoc = null;
+    let guardianDoc = null;
+    if (pattern?.teacher) {
+      teacherDoc = await User.findById(pattern.teacher).select('timezone').lean();
+    }
+    if (pattern?.student?.guardianId) {
+      guardianDoc = await User.findById(pattern.student.guardianId).select('timezone guardianInfo.students').lean();
+    }
+    const studentTimezone = resolveStudentTimezone({
+      guardianDoc,
+      studentId: pattern?.student?.studentId,
+      fallbackTimezone: pattern?.timeAnchor?.timezone || pattern?.timezone || 'UTC',
+    });
+    const teacherTimezone = resolveTeacherTimezone(teacherDoc, pattern?.timezone || 'UTC');
 
     // compute generation window (rolling)
     // - start: now
@@ -106,17 +126,18 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
             duration: instanceDuration,
             timezone: tzForDay,
             anchoredTimezone: pattern.anchoredTimezone || 'student',
-            timeAnchor: buildTimeAnchorForSlot({
-              slot: {
-                dayOfWeek: dow,
-                time: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
-                timezone: tzForDay,
-              },
+            timeAnchor: buildTimeAnchorForScheduledClass({
+              scheduledDate: instanceDate,
               anchorMode: pattern.anchoredTimezone || 'student',
-              requestedTimezone: tzForDay,
-              studentTimezone: pattern?.timeAnchor?.source === 'student' ? pattern?.timeAnchor?.timezone : undefined,
-              teacherTimezone: pattern?.timeAnchor?.source === 'teacher' ? pattern?.timeAnchor?.timezone : undefined,
-              fallbackTimezone: pattern.timezone || 'UTC',
+              requestedTimezone: resolveAnchorTimezone({
+                anchorMode: pattern.anchoredTimezone || 'student',
+                studentTimezone,
+                teacherTimezone,
+                fallbackTimezone: tzForDay || pattern.timezone || 'UTC',
+              }),
+              studentTimezone,
+              teacherTimezone,
+              fallbackTimezone: tzForDay || pattern.timezone || 'UTC',
             }),
             isRecurring: false,
             parentRecurringClass: pattern._id,

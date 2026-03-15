@@ -898,7 +898,6 @@ const checkAndNotifyDSTTransitions = async (warningDays = 7, lookaheadDays = 45)
 
 const applyAdjustmentToClass = async (classDoc, preview, options = {}) => {
   classDoc.scheduledDate = preview.adjustedDate;
-  classDoc.timezone = preview.anchorTimezone || classDoc.timezone;
   classDoc.timeAnchor = {
     source: normalizeAnchorMode(classDoc.anchoredTimezone || classDoc?.timeAnchor?.source || 'student'),
     timezone: preview.anchorTimezone,
@@ -983,37 +982,6 @@ const adjustClassTimesForDST = async (transition, options = {}) => {
       await notifyClassTimeAdjustment(classDoc, preview);
       adjustedCount += 1;
     }
-
-    const patterns = await Class.find({
-      status: 'pattern',
-      anchoredTimezone: 'student',
-      ...getHiddenFilter(),
-    })
-      .select('student timezone anchoredTimezone timeAnchor recurrenceDetails')
-      .populate('student.guardianId', 'timezone guardianInfo.students');
-
-    for (const pattern of patterns) {
-      const studentTimezone = resolveStudentTimezone({
-        guardianDoc: pattern.student?.guardianId,
-        studentId: pattern.student?.studentId,
-        fallbackTimezone: pattern.timeAnchor?.timezone || pattern.timezone || DEFAULT_TIMEZONE,
-      });
-      if (studentTimezone !== transition.timezone) continue;
-      pattern.timezone = studentTimezone;
-      pattern.timeAnchor = {
-        ...(pattern.timeAnchor || {}),
-        source: 'student',
-        timezone: studentTimezone,
-      };
-      if (Array.isArray(pattern.recurrenceDetails) && pattern.recurrenceDetails.length) {
-        pattern.recurrenceDetails = pattern.recurrenceDetails.map((slot) => ({
-          ...slot,
-          timezone: studentTimezone,
-        }));
-      }
-      await pattern.save();
-    }
-
     return {
       adjustedCount,
       skippedAlreadyApplied,

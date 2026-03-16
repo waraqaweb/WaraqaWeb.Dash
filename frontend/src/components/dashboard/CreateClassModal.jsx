@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { XCircle, Trash2, Plus } from "lucide-react";
+import moment from 'moment-timezone';
 import TimezoneSelector from '../ui/TimezoneSelector';
 import { DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
 import { subjects as fallbackSubjects } from "../../constants/reportTopicsConfig";
 import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 import axios from '../../api/axios';
 import SearchSelect from '../ui/SearchSelect';
+import CopyButton from '../ui/CopyButton';
 import {
   searchTeachers,
   getTeacherById,
@@ -18,6 +20,7 @@ import {
 } from '../../services/entitySearch';
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const dayShortNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function minutesToTime(minutes) {
   if (!Number.isFinite(minutes) || minutes < 0) return '';
@@ -30,6 +33,228 @@ const adjustDurationByStep = (rawValue, direction = 1, step = 10) => {
   const current = Number.isFinite(Number(rawValue)) ? Number(rawValue) : 0;
   const next = current + step * direction;
   return Math.max(1, Math.round(next));
+};
+
+const cleanDisplayName = (value = '', fallback = '') => {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  return normalized || fallback;
+};
+
+const getOptionName = (option, fallback = '') => {
+  if (!option) return fallback;
+  const raw = option.raw || option;
+  return cleanDisplayName(
+    option.label
+      || raw.studentName
+      || raw.fullName
+      || [raw.firstName, raw.lastName].filter(Boolean).join(' ')
+      || raw.name,
+    fallback
+  );
+};
+
+const getOptionTimezone = (option, fallback = DEFAULT_TIMEZONE) => {
+  const raw = option?.raw || option || {};
+  return raw.timezone || raw.guardianInfo?.timezone || raw.teacherInfo?.timezone || fallback;
+};
+
+const formatTimezoneHeading = (label, timezone) => {
+  if (!timezone) return label;
+  if (/cairo/i.test(timezone)) {
+    return `${label} (Cairo Time)`;
+  }
+  return `${label} (${timezone})`;
+};
+
+const formatDayList = (values = []) => {
+  if (values.length <= 1) return values[0] || '';
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
+};
+
+const formatStartLabel = (dateMoment, timezone) => {
+  if (!dateMoment || !dateMoment.isValid()) return 'soon';
+  const now = moment().tz(timezone || DEFAULT_TIMEZONE);
+  if (dateMoment.isSame(now, 'day')) return 'today';
+  if (dateMoment.isSame(now.clone().add(1, 'day'), 'day')) return 'tomorrow';
+  return `on ${dateMoment.format('dddd D MMMM')}`;
+};
+
+const formatSingleOccurrenceLabel = (dateMoment, timezone) => {
+  if (!dateMoment || !dateMoment.isValid()) return '';
+  const now = moment().tz(timezone || DEFAULT_TIMEZONE);
+  if (dateMoment.isSame(now, 'day')) return `Today at ${dateMoment.format('hh:mm A')}`;
+  if (dateMoment.isSame(now.clone().add(1, 'day'), 'day')) return `Tomorrow at ${dateMoment.format('hh:mm A')}`;
+  return `${dateMoment.format('dddd D MMMM')} at ${dateMoment.format('hh:mm A')}`;
+};
+
+const buildRecurringScheduleLines = (recurrenceDetails = [], targetTimezone, sourceFallbackTimezone) => {
+  const normalizedSlots = Array.isArray(recurrenceDetails) ? recurrenceDetails : [];
+  if (!normalizedSlots.length) return { lines: [], commonDuration: null, firstOccurrence: null };
+
+  const allDurations = normalizedSlots
+    .map((slot) => Number(slot?.duration))
+    .filter((duration) => Number.isFinite(duration) && duration > 0);
+  const commonDuration = allDurations.length && allDurations.every((duration) => duration === allDurations[0])
+    ? allDurations[0]
+    : null;
+
+  const converted = normalizedSlots
+    .map((slot) => {
+      const dayOfWeek = Number(slot?.dayOfWeek);
+      const timeText = String(slot?.time || '00:00');
+      const [hourText = '0', minuteText = '0'] = timeText.split(':');
+      const hour = Number(hourText);
+      const minute = Number(minuteText);
+      if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6 || !Number.isFinite(hour) || !Number.isFinite(minute)) {
+        return null;
+      }
+
+      const sourceTimezone = slot?.timezone || sourceFallbackTimezone || DEFAULT_TIMEZONE;
+      let nextOccurrence = moment().tz(sourceTimezone).day(dayOfWeek).hour(hour).minute(minute).second(0).millisecond(0);
+      if (nextOccurrence.isSameOrBefore(moment().tz(sourceTimezone))) {
+        nextOccurrence = nextOccurrence.add(1, 'week');
+      }
+
+      const convertedMoment = nextOccurrence.clone().tz(targetTimezone || sourceTimezone || DEFAULT_TIMEZONE);
+      return {
+        duration: Number(slot?.duration) || null,
+        weekdayIndex: convertedMoment.day(),
+        weekdayLabel: dayShortNames[convertedMoment.day()],
+        timeLabel: convertedMoment.format('hh:mm A'),
+        dateMoment: convertedMoment,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.dateMoment.valueOf() - b.dateMoment.valueOf());
+
+  if (!converted.length) return { lines: [], commonDuration, firstOccurrence: null };
+
+  const grouped = new Map();
+  converted.forEach((item) => {
+    const key = commonDuration ? item.timeLabel : `${item.timeLabel}__${item.duration || ''}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        timeLabel: item.timeLabel,
+        duration: item.duration,
+        days: [],
+        firstOccurrence: item.dateMoment,
+      });
+    }
+    const target = grouped.get(key);
+    target.days.push({ index: item.weekdayIndex, label: item.weekdayLabel });
+    if (item.dateMoment.isBefore(target.firstOccurrence)) {
+      target.firstOccurrence = item.dateMoment;
+    }
+  });
+
+  const lines = Array.from(grouped.values())
+    .map((group) => {
+      const uniqueDays = Array.from(new Map(
+        group.days
+          .sort((a, b) => a.index - b.index)
+          .map((day) => [day.index, day.label])
+      ).values());
+      return {
+        firstOccurrence: group.firstOccurrence,
+        text: `${formatDayList(uniqueDays)} at ${group.timeLabel}${commonDuration ? '' : ` (${group.duration} Minutes)`}`,
+      };
+    })
+    .sort((a, b) => a.firstOccurrence.valueOf() - b.firstOccurrence.valueOf());
+
+  return {
+    lines: lines.map((item) => item.text),
+    commonDuration,
+    firstOccurrence: converted[0]?.dateMoment || null,
+  };
+};
+
+const buildSingleScheduleLine = (scheduledDate, sourceTimezone, targetTimezone, duration) => {
+  if (!scheduledDate) {
+    return { line: '', occurrence: null, commonDuration: Number(duration) || null };
+  }
+
+  const base = sourceTimezone
+    ? moment.tz(scheduledDate, sourceTimezone)
+    : moment(scheduledDate);
+  const converted = base.clone().tz(targetTimezone || sourceTimezone || DEFAULT_TIMEZONE);
+  return {
+    line: formatSingleOccurrenceLabel(converted, targetTimezone || sourceTimezone || DEFAULT_TIMEZONE),
+    occurrence: converted,
+    commonDuration: Number(duration) || null,
+  };
+};
+
+const buildWhatsAppMessage = ({
+  classForm,
+  teacherOption,
+  guardianOption,
+  studentOption,
+  fallbackTimezone,
+}) => {
+  const teacherName = getOptionName(teacherOption, 'Teacher');
+  const studentName = cleanDisplayName(classForm?.student?.studentName || getOptionName(studentOption, 'Student'), 'Student');
+  const guardianTimezone = getOptionTimezone(guardianOption, fallbackTimezone || DEFAULT_TIMEZONE);
+  const teacherTimezone = getOptionTimezone(teacherOption, classForm?.timezone || fallbackTimezone || DEFAULT_TIMEZONE);
+  const sourceTimezone = classForm?.timezone || fallbackTimezone || DEFAULT_TIMEZONE;
+  const isRecurring = Boolean(classForm?.isRecurring);
+
+  const guardianSchedule = isRecurring
+    ? buildRecurringScheduleLines(classForm?.recurrenceDetails, guardianTimezone, sourceTimezone)
+    : buildSingleScheduleLine(classForm?.scheduledDate, sourceTimezone, guardianTimezone, classForm?.duration);
+
+  const teacherSchedule = teacherTimezone === guardianTimezone
+    ? null
+    : (isRecurring
+      ? buildRecurringScheduleLines(classForm?.recurrenceDetails, teacherTimezone, sourceTimezone)
+      : buildSingleScheduleLine(classForm?.scheduledDate, sourceTimezone, teacherTimezone, classForm?.duration));
+
+  const firstOccurrence = guardianSchedule?.firstOccurrence || teacherSchedule?.firstOccurrence || null;
+  const startLabel = formatStartLabel(firstOccurrence, guardianTimezone);
+  const commonDuration = guardianSchedule?.commonDuration || teacherSchedule?.commonDuration || null;
+  const guardianLines = Array.isArray(guardianSchedule?.lines)
+    ? guardianSchedule.lines
+    : guardianSchedule?.line ? [guardianSchedule.line] : [];
+  const teacherLines = Array.isArray(teacherSchedule?.lines)
+    ? teacherSchedule.lines
+    : teacherSchedule?.line ? [teacherSchedule.line] : [];
+  const classWord = isRecurring ? 'classes' : 'class';
+
+  const parts = [
+    'Assalamu Alaykum everyone,',
+    'I hope you are all doing well.',
+    '',
+    `This is to confirm that ${studentName}'s ${classWord} with Teacher ${teacherName} will begin ${startLabel} Inshaa Allah.`,
+    '',
+    'Class Schedule:',
+  ];
+
+  if (guardianLines.length) {
+    parts.push(formatTimezoneHeading('Student & Guardian Time', guardianTimezone));
+    guardianLines.forEach((line) => parts.push(line));
+    parts.push('');
+  }
+
+  if (teacherLines.length) {
+    parts.push(formatTimezoneHeading('Teacher Time', teacherTimezone));
+    teacherLines.forEach((line) => parts.push(line));
+    parts.push('');
+  }
+
+  if (commonDuration) {
+    parts.push(`Class duration: ${commonDuration} Minutes`);
+    parts.push('');
+  }
+
+  if (classForm?.meetingLink) {
+    parts.push(`Class Link: ${classForm.meetingLink}`);
+    parts.push('');
+  }
+
+  parts.push('Looking forward to starting!');
+  parts.push('Thank you');
+
+  return parts.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 };
 
 export default function CreateClassModal({
@@ -93,9 +318,13 @@ export default function CreateClassModal({
   });
   const [isLoading, setIsLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [shareMessage, setShareMessage] = useState('');
   const [duplicatePrompt, setDuplicatePrompt] = useState(null);
   const [availabilityWarning, setAvailabilityWarning] = useState(null);
   const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
+  const [selectedTeacherOption, setSelectedTeacherOption] = useState(null);
+  const [selectedGuardianOption, setSelectedGuardianOption] = useState(null);
+  const [selectedStudentOption, setSelectedStudentOption] = useState(null);
   const duplicateActionRef = useRef(null);
 
   useEffect(() => {
@@ -120,6 +349,7 @@ export default function CreateClassModal({
   useEffect(() => {
     if (isOpen) {
       setSuccessMessage('');
+      setShareMessage('');
     }
   }, [isOpen]);
   
@@ -231,6 +461,7 @@ export default function CreateClassModal({
   const handleTeacherSelect = (option) => {
     const teacherId = option?.id || '';
     const teacherMeetingLink = extractTeacherMeetingLink(option);
+    setSelectedTeacherOption(option || null);
     currentSetNewClass((prev) => ({
       ...prev,
       teacher: teacherId,
@@ -240,6 +471,7 @@ export default function CreateClassModal({
 
   const handleGuardianSelect = (option) => {
     const guardianId = option?.id || '';
+    setSelectedGuardianOption(option || null);
     currentSetNewClass((prev) => ({
       ...prev,
       student: {
@@ -260,6 +492,8 @@ export default function CreateClassModal({
     const studentId = option?.id || '';
     const guardianId = option?.guardianId || currentNewClass.student?.guardianId || '';
     const studentName = option?.label || '';
+
+    setSelectedStudentOption(option || null);
 
     currentSetNewClass((prev) => ({
       ...prev,
@@ -286,12 +520,30 @@ export default function CreateClassModal({
     return false;
   };
 
+  const buildShareMessage = useCallback(async (classFormSnapshot) => {
+    const [teacherOption, guardianOption, studentOption] = await Promise.all([
+      selectedTeacherOption || (classFormSnapshot?.teacher ? fetchTeacherById(classFormSnapshot.teacher) : Promise.resolve(null)),
+      selectedGuardianOption || (classFormSnapshot?.student?.guardianId ? fetchGuardianById(classFormSnapshot.student.guardianId) : Promise.resolve(null)),
+      selectedStudentOption || (classFormSnapshot?.student?.studentId ? fetchStudentById(classFormSnapshot.student.studentId, classFormSnapshot?.student?.guardianId || null) : Promise.resolve(null)),
+    ]);
+
+    return buildWhatsAppMessage({
+      classForm: classFormSnapshot,
+      teacherOption,
+      guardianOption,
+      studentOption,
+      fallbackTimezone: adminTimezone,
+    });
+  }, [adminTimezone, fetchGuardianById, fetchStudentById, fetchTeacherById, selectedGuardianOption, selectedStudentOption, selectedTeacherOption]);
+
   const handleFormSubmit = async (event) => {
     event.preventDefault();
     if (!validateParticipants()) return;
+    setShareMessage('');
     if (isStandalone) {
       await handleLocalCreateClass();
     } else {
+      const classSnapshot = JSON.parse(JSON.stringify(currentNewClass));
       const result = await handleCreateClass?.();
       if (result?.code === 'duplicate') {
         const studentName = result?.duplicateSeries?.studentName || 'this student';
@@ -306,6 +558,7 @@ export default function CreateClassModal({
       }
       if (result?.success) {
         setSuccessMessage(result.message || 'Class created successfully!');
+        setShareMessage(await buildShareMessage(classSnapshot));
       }
     }
   };
@@ -524,6 +777,7 @@ export default function CreateClassModal({
 
       await axios.post('/classes', payload);
       setSuccessMessage(currentNewClass?.isRecurring ? 'Recurring classes created successfully!' : 'Class created successfully!');
+      setShareMessage(await buildShareMessage(JSON.parse(JSON.stringify(currentNewClass))));
     } catch (error) {
       try {
         if (!(import.meta?.env?.PROD)) {
@@ -642,6 +896,7 @@ export default function CreateClassModal({
             onSubmit={handleFormSubmit}
             onFocusCapture={() => {
               if (successMessage) setSuccessMessage('');
+              if (shareMessage) setShareMessage('');
               if (duplicatePrompt) setDuplicatePrompt(null);
             }}
             className="space-y-4"
@@ -757,8 +1012,22 @@ export default function CreateClassModal({
             )}
 
             {successMessage && (
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-md text-sm text-emerald-800">
-                {successMessage}
+              <div className="flex items-center justify-between gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-md text-sm text-emerald-800">
+                <div className="min-w-0">
+                  <p>{successMessage}</p>
+                  {shareMessage && (
+                    <p className="mt-1 text-xs text-emerald-700">Copy the WhatsApp confirmation message.</p>
+                  )}
+                </div>
+                {shareMessage && (
+                  <CopyButton
+                    text={shareMessage}
+                    title="Copy WhatsApp message"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                  />
+                )}
               </div>
             )}
            

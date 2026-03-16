@@ -392,6 +392,7 @@ const ClassesPage = ({ isActive = true }) => {
   const [teachers, setTeachers] = useState([]);
   const [guardians, setGuardians] = useState([]);
   const [students, setStudents] = useState([]);
+  const [loadedClassTabs, setLoadedClassTabs] = useState({ upcoming: false, previous: false });
 
   const [loading, setLoading] = useState(true);
   const [isFetching, setIsFetching] = useState(false);
@@ -1365,6 +1366,7 @@ const fetchClasses = useCallback(async () => {
       setTotalPages(searchMode ? 1 : cachedTotalPages);
       setError('');
       setLoading(false);
+      setLoadedClassTabs((prev) => ({ ...prev, [tabFilter]: true }));
 
       // Background revalidate if cache is getting old (keeps data fresh without blocking UI)
       if (cached.ageMs < 60_000 && !searchMode) {
@@ -1481,11 +1483,13 @@ const fetchClasses = useCallback(async () => {
       },
       { ttlMs: 5 * 60_000, deps: ['classes'] }
     );
+    setLoadedClassTabs((prev) => ({ ...prev, [tabFilter]: true }));
   } catch (err) {
     const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
     if (!isCanceled) {
       console.error("Fetch classes error:", err);
       setError("Failed to fetch classes");
+      setLoadedClassTabs((prev) => ({ ...prev, [tabFilter]: true }));
     }
   } finally {
     setLoading(false);
@@ -2951,7 +2955,8 @@ fetchClassesRef.current = fetchClasses;
     return icons[status] || <Clock className="h-4 w-4" />;
   };
 
-  const isListLoading = showLoading || isFetching || (Boolean(normalizedSearchTerm) && isSearchPulse);
+  const activeTabLoaded = Boolean(loadedClassTabs?.[tabFilter]);
+  const isListLoading = showLoading || isFetching || !activeTabLoaded || (Boolean(normalizedSearchTerm) && isSearchPulse);
   const renderClassesList = () => (
     <div className="space-y-4">
       {isListLoading && filteredClasses.length === 0 ? (

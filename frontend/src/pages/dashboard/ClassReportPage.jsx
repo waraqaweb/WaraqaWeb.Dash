@@ -12,7 +12,7 @@ import { makeCacheKey, readCache, writeCache } from "../../utils/sessionCache";
 
 const PREVIOUS_ASSIGNMENT_OPTIONS = [
   { value: 'not_completed', label: 'Incomplete', activeClassName: 'border-rose-300 bg-rose-50 text-rose-700' },
-  { value: 'not_reviewed', label: 'Unreviewed', activeClassName: 'border-slate-300 bg-slate-100 text-slate-700' },
+  { value: 'not_reviewed', label: 'No Assignment', activeClassName: 'border-slate-300 bg-slate-100 text-slate-700' },
   { value: 'weak', label: 'Weak', activeClassName: 'border-amber-300 bg-amber-50 text-amber-700' },
   { value: 'good', label: 'Good', activeClassName: 'border-sky-300 bg-sky-50 text-sky-700' },
   { value: 'very_good', label: 'V.Good', activeClassName: 'border-emerald-300 bg-emerald-50 text-emerald-700' },
@@ -73,11 +73,20 @@ const reportSelectStyles = {
 };
 
 const modernFieldClassName = "w-full rounded-xl border border-slate-300 bg-slate-50/80 px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100";
+const modernTextareaClassName = "w-full rounded-xl border border-slate-300 bg-slate-50/80 px-3 py-2.5 text-sm leading-6 text-slate-700 shadow-sm outline-none transition resize-none overflow-hidden focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100";
 const modernToggleButtonClassName = (isActive) => `inline-flex items-center justify-center rounded-xl border px-4 py-2 text-sm font-semibold transition-all ${
   isActive
     ? 'border-cyan-300 bg-cyan-50 text-cyan-700 shadow-sm'
     : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-white'
 }`;
+const attendanceButtonClassName = (isActive) => `flex min-h-[58px] items-center justify-center rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
+  isActive
+    ? 'border-cyan-300 bg-cyan-50 text-cyan-700 shadow-sm'
+    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+}`;
+const sectionCardClassName = "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm";
+const floatingFieldWrapClassName = "relative pt-2";
+const floatingFieldLabelClassName = "pointer-events-none absolute left-3 top-0 z-10 inline-flex bg-white px-2 text-[11px] font-semibold tracking-wide";
 
 const normalizeAttendance = (attendance) => {
   if (attendance === "missed_by_student") return "absent";
@@ -97,6 +106,7 @@ const toApiAttendance = (attendance, cancelledBy) => {
 
 const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => {
   const derivedClassId = reportClass?._id || reportClassId;
+  const initialDraftRef = useRef(derivedClassId ? loadDraft(derivedClassId) : null);
   const [classData, setClassData] = useState(reportClass || null);
   const [classLoadError, setClassLoadError] = useState(null);
   const [classLoading, setClassLoading] = useState(!reportClass && Boolean(reportClassId));
@@ -112,6 +122,9 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const newAssignmentRef = useRef(null);
   const teacherNotesRef = useRef(null);
   const supervisorNotesRef = useRef(null);
+  const [isClosing, setIsClosing] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState(() => (initialDraftRef.current ? new Date() : null));
 
   const [catalogSubjects, setCatalogSubjects] = useState(Array.isArray(subjects) ? subjects : []);
   const [catalogTopicsBySubject, setCatalogTopicsBySubject] = useState({});
@@ -174,7 +187,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
   const [classReport, setClassReport] = useState(() => {
     const base = defaultReportState(reportClass || null);
-    const draft = derivedClassId ? loadDraft(derivedClassId) : null;
+    const draft = initialDraftRef.current;
     if (draft) {
       const normalizedAttendance = normalizeAttendance(draft.attendance || base.attendance);
       return {
@@ -186,6 +199,23 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     }
     return base;
   });
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setIsVisible(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !loading) {
+        event.preventDefault();
+        setIsClosing(true);
+        window.setTimeout(() => onClose?.(), 180);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [loading, onClose]);
 
   useEffect(() => {
     autoResizeTextarea(newAssignmentRef.current);
@@ -204,13 +234,15 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
       if (!value) return null;
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return null;
-      return date.toLocaleString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = date.toLocaleString('en-US', { month: 'short' });
+      const year = date.getFullYear();
+      const time = date.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
       });
+      return `${day} ${month} ${year}, ${time}`;
     }
   ), []);
 
@@ -274,8 +306,8 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const classSummary = useMemo(() => {
     const student = classData?.student || {};
     const teacher = classData?.teacher || {};
-    const studentName = [student.firstName, student.lastName].filter(Boolean).join(' ') || student.name || 'Student';
-    const teacherName = [teacher.firstName, teacher.lastName].filter(Boolean).join(' ') || teacher.name || 'Teacher';
+    const studentName = [student.firstName, student.lastName].filter(Boolean).join(' ') || student.studentName || student.name || student.fullName || 'Student';
+    const teacherName = [teacher.firstName, teacher.lastName].filter(Boolean).join(' ') || teacher.teacherName || teacher.name || teacher.fullName || 'Teacher';
     const scheduledAt = formatDateTime(classData?.scheduledDate);
     return {
       studentName,
@@ -369,6 +401,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   useEffect(() => {
     if (!derivedClassId) return;
     saveDraft(derivedClassId, classReport);
+    setDraftSavedAt(new Date());
   }, [classReport, derivedClassId]);
 
   // Fetch user role
@@ -589,6 +622,20 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     )
   );
 
+  const handleRequestClose = () => {
+    if (loading) return;
+    setIsClosing(true);
+    window.setTimeout(() => onClose?.(), 180);
+  };
+
+  const handleClearDraft = () => {
+    if (!derivedClassId) return;
+    clearDraft(derivedClassId);
+    initialDraftRef.current = null;
+    setDraftSavedAt(null);
+    setClassReport(defaultReportState(classData));
+  };
+
   if (!derivedClassId) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center p-4 z-50">
@@ -631,30 +678,56 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto relative">
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 transition-opacity duration-200 ${isVisible && !isClosing ? 'opacity-100' : 'opacity-0'}`}
+      onMouseDown={handleRequestClose}
+    >
+      <div
+        className={`relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] bg-gradient-to-b from-white to-slate-50 shadow-2xl transition-all duration-200 ${isVisible && !isClosing ? 'translate-y-0 scale-100' : 'translate-y-3 scale-[0.98]'}`}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 p-5 border-b">
+        <div className="border-b border-slate-200 bg-white/90 px-5 py-4 backdrop-blur">
+          <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1 space-y-3">
-            <h2 className="text-xl font-semibold text-gray-900">Submit Class Report</h2>
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold text-slate-900">Submit Class Report</h2>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                <span>{initialDraftRef.current ? 'Draft restored automatically' : 'Draft autosaves on this device'}</span>
+                {draftSavedAt && <span>Saved {formatDateTime(draftSavedAt)}</span>}
+                {derivedClassId && (
+                  <button type="button" onClick={handleClearDraft} className="font-semibold text-cyan-700 hover:text-cyan-800">
+                    Clear draft
+                  </button>
+                )}
+              </div>
+            </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:items-stretch">
-              <div className="rounded-lg border border-gray-200 bg-gray-50/70 p-3">
-                <div className="space-y-1 text-sm text-gray-600">
-                  <p className="truncate"><span className="font-medium text-gray-800">Student:</span> {classSummary.studentName}</p>
-                  <p className="truncate"><span className="font-medium text-gray-800">Teacher:</span> {classSummary.teacherName}</p>
-                  {classSummary.scheduledAt && (
-                    <p className="truncate"><span className="font-medium text-gray-800">Class time:</span> {classSummary.scheduledAt}</p>
-                  )}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-stretch">
+              <div className="h-full rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="min-w-0 rounded-xl bg-white/80 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Student</p>
+                    <p className="truncate text-sm font-semibold text-slate-800">{classSummary.studentName}</p>
+                  </div>
+                  <div className="min-w-0 rounded-xl bg-white/80 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Teacher</p>
+                    <p className="truncate text-sm font-semibold text-slate-800">{classSummary.teacherName}</p>
+                  </div>
+                  <div className="min-w-0 rounded-xl bg-white/80 px-3 py-2 sm:col-span-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Class time</p>
+                    <p className="truncate text-sm font-semibold text-slate-800">{classSummary.scheduledAt || 'Pending'}</p>
+                  </div>
                 </div>
               </div>
 
               {derivedClassId && userRole ? (
-                <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 space-y-2 text-sm text-emerald-900">
+                <div className="h-full rounded-2xl border border-emerald-100 bg-emerald-50 p-4 space-y-2 text-sm text-emerald-900">
                   <ReportSubmissionStatus
                     classId={derivedClassId}
                     userRole={userRole}
                     compact={true}
+                    compactBare={true}
                     onExtensionGranted={() => {
                       if (userRole !== 'admin') {
                         api.post(`/classes/${derivedClassId}/check-can-submit`)
@@ -674,19 +747,19 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                   {(reportMeta.submittedAt || showLastEditedMeta || showPreviousVersionMeta) && (
                     <div className="space-y-1 text-xs sm:text-sm">
                       {reportMeta.submittedAt ? (
-                        <p>
+                        <p className="leading-5">
                           <span className="font-semibold">Submitted by:</span> {reportMeta.submittedBy || "Unknown user"} on {reportMeta.submittedAt}
                         </p>
                       ) : (
                         <p className="font-semibold">Submission pending</p>
                       )}
                       {showLastEditedMeta && (
-                        <p>
+                        <p className="leading-5">
                           <span className="font-semibold">Last edited by:</span> {reportMeta.lastEditedBy || "Unknown user"} on {reportMeta.lastEditedAt}
                         </p>
                       )}
                       {showPreviousVersionMeta && (
-                        <p className="text-emerald-800">
+                        <p className="leading-5 text-emerald-800">
                           <span className="font-semibold">Previous version:</span> {reportMeta.previousEditor}
                           {reportMeta.previousChangedAt ? ` · ${reportMeta.previousChangedAt}` : ""}
                           {reportMeta.previousNote ? ` · ${reportMeta.previousNote}` : ""}
@@ -700,16 +773,21 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               )}
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button onClick={handleRequestClose} className="rounded-full p-1 text-gray-400 transition hover:bg-slate-100 hover:text-gray-600">
             <XCircle className="h-6 w-6" />
           </button>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmitReport} className="p-5 space-y-6">
+        <form onSubmit={handleSubmitReport} className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 space-y-6 overflow-y-auto px-5 py-5">
 
           {/* === First Row: Attendance + Billing === */}
-          <div className="space-y-2">
-            <label className="block font-semibold">Attendance</label>
+          <div className={sectionCardClassName}>
+            <div className="flex items-center justify-between gap-3">
+              <label className="block text-sm font-semibold text-slate-800">Attendance</label>
+              <span className="text-xs text-slate-500">Choose one</span>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
                 { key: "attended", label: "Attended" },
@@ -731,9 +809,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                       cancelledBy: key === "cancelled" ? (prev.cancelledBy || "teacher") : "teacher",
                     }))
                   }
-                  className={`recite-toggle w-full ${
-                    classReport.attendance === key ? "active" : ""
-                  }`}
+                  className={attendanceButtonClassName(classReport.attendance === key)}
                 >
                   {label}
                 </button>
@@ -777,13 +853,13 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
           </div>
 
           {isAbsent && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               Student missed the class. No detailed report is required—just confirm whether the absence should be counted for billing.
             </div>
           )}
 
           {isCancelled && (
-            <div className="space-y-2">
+            <div className={sectionCardClassName + " space-y-3"}>
               <label className="block text-sm font-semibold text-gray-700">Cancelled by</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {[
@@ -817,7 +893,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
           {isAttended && (
             <>
-              <div className="space-y-2">
+              <div className={sectionCardClassName + " space-y-3"}>
                 <label className="block text-xs font-semibold tracking-wide text-fuchsia-600">Previous Assignment Evaluation</label>
                 <div className="flex flex-wrap gap-2">
                   {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
@@ -841,10 +917,11 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               </div>
 
               {/* === Second Row: Subject + Lesson Topic/Surah === */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className={sectionCardClassName}>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {/* Subject */}
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Subject</label>
+                <div className={floatingFieldWrapClassName}>
+                  <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Subject</label>
                   <Select
                     options={subjectOptions}
                     value={
@@ -863,7 +940,8 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                 <div>
                   {quranSurahOnly.includes(classReport.subject) ? (
                     <>
-                      <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Surah Topic</label>
+                      <div className={floatingFieldWrapClassName}>
+                      <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Lesson Topic</label>
                       {classReport.lessonTopic === "custom" ? (
                         <input
                           type="text"
@@ -895,9 +973,10 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                           styles={reportSelectStyles}
                         />
                       )}
+                      </div>
 
-                      <div className="mt-2">
-                        <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Ending Verse</label>
+                      <div className={`mt-2 ${floatingFieldWrapClassName}`}>
+                        <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Ending Verse</label>
                         <input
                           type="number"
                           value={classReport.verseEnd}
@@ -909,7 +988,8 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                     </>
                   ) : quranWithRecitation.includes(classReport.subject) ? (
                     <>
-                      <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Lesson Topic</label>
+                      <div className={floatingFieldWrapClassName}>
+                      <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Lesson Topic</label>
                       <Select
                         options={[...topicOptions, { value: "custom", label: "➕ Custom Topic" }]}
                         value={
@@ -926,52 +1006,12 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                         isSearchable
                         styles={reportSelectStyles}
                       />
-
-                      {/* Recitation Toggle */}
-                      <div className="mt-3">
-                        <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Quran Recited?</label>
-                        <div className="flex gap-2 mt-2">
-                          {["yes", "no"].map((val) => (
-                            <button
-                              key={val}
-                              type="button"
-                              onClick={() => setClassReport({ ...classReport, recitedQuran: val })}
-                              className={modernToggleButtonClassName(classReport.recitedQuran === val)}
-                            >
-                              {val.toUpperCase()}
-                            </button>
-                          ))}
-                        </div>
                       </div>
-
-                      {/* Surah & Verse if Recited */}
-                      {classReport.recitedQuran === "yes" && (
-                        <div className="mt-2">
-                          <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Surah</label>
-                          <Select
-                            options={surahOptions}
-                            value={surahOptions.find((s) => s.value === classReport.surahName) || null}
-                            onChange={(selected) =>
-                              setClassReport({ ...classReport, surahName: selected?.value || "" })
-                            }
-                            placeholder="Select surah..."
-                            isClearable
-                            isSearchable
-                            styles={reportSelectStyles}
-                          />
-                          <label className="mb-1.5 mt-2 block text-xs font-semibold tracking-wide text-cyan-600">Ending Verse</label>
-                          <input
-                            type="number"
-                            value={classReport.verseEnd}
-                            onChange={(e) => setClassReport({ ...classReport, verseEnd: e.target.value })}
-                            className={modernFieldClassName}
-                          />
-                        </div>
-                      )}
                     </>
                   ) : (
                     <>
-                      <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Lesson Topic</label>
+                      <div className={floatingFieldWrapClassName}>
+                      <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Lesson Topic</label>
                       {!hasTopicOptions ? (
                         <input
                           type="text"
@@ -1004,45 +1044,96 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                           styles={reportSelectStyles}
                         />
                       )}
+                      </div>
                     </>
                   )}
                 </div>
+                </div>
               </div>
 
+              {quranWithRecitation.includes(classReport.subject) && (
+                <div className={sectionCardClassName + " space-y-3"}>
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <label className="text-xs font-semibold tracking-wide text-cyan-600">Quran Recited?</label>
+                    <div className="flex gap-2">
+                      {["yes", "no"].map((val) => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setClassReport({ ...classReport, recitedQuran: val })}
+                          className={modernToggleButtonClassName(classReport.recitedQuran === val)}
+                        >
+                          {val.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {classReport.recitedQuran === "yes" && (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className={floatingFieldWrapClassName}>
+                        <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Surah</label>
+                        <Select
+                          options={surahOptions}
+                          value={surahOptions.find((s) => s.value === classReport.surahName) || null}
+                          onChange={(selected) =>
+                            setClassReport({ ...classReport, surahName: selected?.value || "" })
+                          }
+                          placeholder="Select surah..."
+                          isClearable
+                          isSearchable
+                          styles={reportSelectStyles}
+                        />
+                      </div>
+                      <div className={floatingFieldWrapClassName}>
+                        <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Ending Verse</label>
+                        <input
+                          type="number"
+                          value={classReport.verseEnd}
+                          onChange={(e) => setClassReport({ ...classReport, verseEnd: e.target.value })}
+                          className={modernFieldClassName}
+                          placeholder="Ending verse"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* === Notes === */}
-              <div className="space-y-4">
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold tracking-wide text-cyan-600">Lesson Summary &amp; Next Task</label>
+              <div className={sectionCardClassName + " space-y-4"}>
+                <div className={floatingFieldWrapClassName}>
+                  <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Summary &amp; New Assignment</label>
                   <textarea
                     ref={newAssignmentRef}
                     value={classReport.newAssignment}
                     onChange={(e) => setClassReport({ ...classReport, newAssignment: e.target.value })}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
+                    className={modernTextareaClassName}
                     rows={1}
                     placeholder="Summarize what was discussed, where the lesson ended, and the assignment for the next lesson"
                   />
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold tracking-wide text-emerald-600">Public Note</label>
+                  <div className={floatingFieldWrapClassName}>
+                    <label className={`${floatingFieldLabelClassName} text-emerald-600`}>Public Note</label>
                     <textarea
                       ref={teacherNotesRef}
                       value={classReport.teacherNotes}
                       onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
+                      className={modernTextareaClassName}
                       rows={1}
                       placeholder="Add a note visible to guardians and admins"
                     />
                   </div>
 
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold tracking-wide text-amber-600">Supervisor Note</label>
+                  <div className={floatingFieldWrapClassName}>
+                    <label className={`${floatingFieldLabelClassName} text-amber-600`}>Supervisor Note</label>
                     <textarea
                       ref={supervisorNotesRef}
                       value={classReport.supervisorNotes}
                       onChange={(e) => setClassReport({ ...classReport, supervisorNotes: e.target.value })}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 resize-none overflow-hidden"
+                      className={modernTextareaClassName}
                       rows={1}
                       placeholder="Add any internal note for admins"
                     />
@@ -1051,7 +1142,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               </div>
 
               {/* Class performance */}
-              <div>
+              <div className={sectionCardClassName}>
                 <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
                   <div className="flex items-center gap-1.5">
                     <label className="text-sm font-medium text-gray-700">Class performance</label>
@@ -1083,24 +1174,31 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
               </div>
             </>
           )}
+          </div>
 
           {/* Submit */}
-          <div className="flex justify-end gap-3">
+          <div className="border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {/* Show submission blocker message for teachers */}
             {userRole === 'teacher' && submissionEligibility && !submissionEligibility.canSubmit && (
               <div className="flex-1 text-sm text-red-600 flex items-center gap-2">
                 <span className="font-medium">{submissionEligibility.reason}</span>
               </div>
             )}
-            
-            <button 
-              type="submit" 
-              disabled={loading || (userRole === 'teacher' && submissionEligibility && !submissionEligibility.canSubmit)} 
-              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-              title={userRole === 'teacher' && submissionEligibility && !submissionEligibility.canSubmit ? submissionEligibility.reason : ''}
-            >
-              {loading ? <Loader2 className="animate-spin w-5 h-5" /> : "Submit Report"}
-            </button>
+            <div className="flex items-center justify-end gap-2 sm:ml-auto">
+              <button type="button" onClick={handleRequestClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">
+                Close
+              </button>
+              <button 
+                type="submit" 
+                disabled={loading || (userRole === 'teacher' && submissionEligibility && !submissionEligibility.canSubmit)} 
+                className="inline-flex min-w-[148px] items-center justify-center rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+                title={userRole === 'teacher' && submissionEligibility && !submissionEligibility.canSubmit ? submissionEligibility.reason : ''}
+              >
+                {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Submit Report"}
+              </button>
+            </div>
+          </div>
           </div>
         </form>
 

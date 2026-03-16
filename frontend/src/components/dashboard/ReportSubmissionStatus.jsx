@@ -2,11 +2,27 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Clock, AlertCircle, CheckCircle2, XCircle, Shield } from 'lucide-react';
 import api from '../../api/axios';
 
+const formatCompactDateTime = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(date);
+  const lookup = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${lookup.day} ${lookup.month} ${lookup.year} ${lookup.hour}:${lookup.minute} ${lookup.dayPeriod || ''}`.trim();
+};
+
 /**
  * ReportSubmissionStatus Component
  * Displays submission window status, deadlines, and admin controls
  */
-const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefresh, compact = false }) => {
+const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefresh, compact = false, compactBare = false }) => {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -95,7 +111,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     lines = [],
     toneClass = 'text-slate-700',
     action = null,
-    containerClassName = 'bg-slate-50 border border-slate-200 rounded-lg px-3 py-2'
+    containerClassName = compactBare ? 'px-0 py-0' : 'bg-slate-50 border border-slate-200 rounded-lg px-3 py-2'
   ) => (
     <div className={containerClassName}>
       <div className="flex items-start justify-between gap-3">
@@ -114,7 +130,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
 
   if (loading) {
     if (compact) {
-      return renderCompactStatus('Checking submission status…', [], 'text-blue-700', null, 'bg-blue-50 border border-blue-200 rounded-lg px-3 py-2');
+      return renderCompactStatus('Checking submission status…', [], 'text-blue-700', null, compactBare ? 'px-0 py-0' : 'bg-blue-50 border border-blue-200 rounded-lg px-3 py-2');
     }
     return (
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
@@ -128,7 +144,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
 
   if (error) {
     if (compact) {
-      return renderCompactStatus(error, [], 'text-red-700', null, 'bg-red-50 border border-red-200 rounded-lg px-3 py-2');
+      return renderCompactStatus(error, [], 'text-red-700', null, compactBare ? 'px-0 py-0' : 'bg-red-50 border border-red-200 rounded-lg px-3 py-2');
     }
     return (
       <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
@@ -150,7 +166,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
         [],
         'text-green-700',
         null,
-        'bg-green-50 border border-green-200 rounded-lg px-3 py-2'
+        compactBare ? 'px-0 py-0' : 'bg-green-50 border border-green-200 rounded-lg px-3 py-2'
       );
     }
     return (
@@ -173,10 +189,10 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     if (compact) {
       return renderCompactStatus(
         'Class Scheduled',
-        [status.classEndTime ? `Opens after ${new Date(status.classEndTime).toLocaleString()}` : null],
+        [status.classEndTime ? `Opens ${formatCompactDateTime(status.classEndTime)}` : null],
         'text-blue-700',
         null,
-        'bg-blue-50 border border-blue-200 rounded-lg px-3 py-2'
+        compactBare ? 'px-0 py-0' : 'bg-blue-50 border border-blue-200 rounded-lg px-3 py-2'
       );
     }
     return (
@@ -214,11 +230,11 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
       return (
         <>
           {renderCompactStatus(
-            'Submission Window Expired',
-            ['Class is marked as unreported', userRole === 'teacher' ? 'Contact an admin for an extension' : null],
+            'Submission Closed',
+            [userRole === 'teacher' ? 'Ask admin to reopen it' : 'Marked as unreported'],
             'text-red-700',
             compactAction,
-            'bg-red-50 border border-red-200 rounded-lg px-3 py-2'
+            compactBare ? 'px-0 py-0' : 'bg-red-50 border border-red-200 rounded-lg px-3 py-2'
           )}
           {showExtensionModal && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -411,12 +427,12 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
         {renderCompactStatus(
           isExtended ? 'Admin Extension Granted' : 'Submission Window Open',
           [
-            timeRemaining !== null ? `${formatTimeRemaining(timeRemaining)} remaining` : null,
-            deadline ? `Deadline: ${deadline.toLocaleString()}` : null,
+            timeRemaining !== null ? `${formatTimeRemaining(timeRemaining)} left` : null,
+            deadline ? `Due ${formatCompactDateTime(deadline)}` : null,
           ],
           textColor,
           compactAction,
-          `${bgColor} border ${borderColor} rounded-lg px-3 py-2`
+          compactBare ? 'px-0 py-0' : `${bgColor} border ${borderColor} rounded-lg px-3 py-2`
         )}
 
         {showExtensionModal && (

@@ -308,11 +308,24 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     const teacher = classData?.teacher || {};
     const studentName = [student.firstName, student.lastName].filter(Boolean).join(' ') || student.studentName || student.name || student.fullName || 'Student';
     const teacherName = [teacher.firstName, teacher.lastName].filter(Boolean).join(' ') || teacher.teacherName || teacher.name || teacher.fullName || 'Teacher';
-    const scheduledAt = formatDateTime(classData?.scheduledDate);
+    const scheduledDate = classData?.scheduledDate ? new Date(classData.scheduledDate) : null;
+    const hasValidScheduledDate = scheduledDate && !Number.isNaN(scheduledDate.getTime());
+    const scheduledTime = hasValidScheduledDate
+      ? scheduledDate.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        })
+      : null;
+    const scheduledDay = hasValidScheduledDate
+      ? `${String(scheduledDate.getDate()).padStart(2, '0')} ${scheduledDate.toLocaleString('en-US', { month: 'short' })} ${scheduledDate.getFullYear()}`
+      : null;
     return {
       studentName,
       teacherName,
-      scheduledAt,
+      scheduledAt: formatDateTime(classData?.scheduledDate),
+      scheduledTime,
+      scheduledDay,
     };
   }, [classData, formatDateTime]);
 
@@ -704,21 +717,63 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-stretch">
-              <div className="h-full rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div className="min-w-0 rounded-xl bg-white/80 px-3 py-2">
+              <div className="h-full rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="min-w-0 rounded-xl bg-white/80 px-2.5 py-2 sm:px-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Student</p>
-                    <p className="truncate text-sm font-semibold text-slate-800">{classSummary.studentName}</p>
+                    <p className="break-words text-sm font-semibold leading-5 text-slate-800">{classSummary.studentName}</p>
                   </div>
-                  <div className="min-w-0 rounded-xl bg-white/80 px-3 py-2">
+                  <div className="min-w-0 rounded-xl bg-white/80 px-2.5 py-2 sm:px-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Teacher</p>
-                    <p className="truncate text-sm font-semibold text-slate-800">{classSummary.teacherName}</p>
+                    <p className="break-words text-sm font-semibold leading-5 text-slate-800">{classSummary.teacherName}</p>
                   </div>
-                  <div className="min-w-0 rounded-xl bg-white/80 px-3 py-2 sm:col-span-1">
+                  <div className="min-w-0 rounded-xl bg-white/80 px-2.5 py-2 sm:px-3 sm:col-span-2 xl:col-span-1">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Class time</p>
-                    <p className="truncate text-sm font-semibold text-slate-800">{classSummary.scheduledAt || 'Pending'}</p>
+                    {classSummary.scheduledTime || classSummary.scheduledDay ? (
+                      <div className="space-y-0.5">
+                        {classSummary.scheduledTime && (
+                          <p className="text-sm font-semibold leading-5 text-slate-800">{classSummary.scheduledTime}</p>
+                        )}
+                        {classSummary.scheduledDay && (
+                          <p className="break-words text-xs font-medium leading-5 text-slate-500">{classSummary.scheduledDay}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-sm font-semibold text-slate-800">Pending</p>
+                    )}
                   </div>
                 </div>
+
+                {isAttended && (
+                  <div className="mt-3 rounded-xl bg-white/80 px-2.5 py-2.5 sm:px-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-slate-700">Performance</p>
+                      <span className="text-sm font-semibold text-slate-500">{(classReport.classScore || 0)}/5</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {[1,2,3,4,5].map((i) => {
+                        const activeScore = hoverScore || Number(classReport.classScore || 0);
+                        const isActive = i <= activeScore;
+                        return (
+                          <button
+                            key={i}
+                            type="button"
+                            aria-label={`${i} star${i>1?'s':''}`}
+                            onClick={() => setClassReport({ ...classReport, classScore: i })}
+                            onMouseEnter={() => setHoverScore(i)}
+                            onMouseLeave={() => setHoverScore(0)}
+                            onFocus={() => setHoverScore(i)}
+                            onBlur={() => setHoverScore(0)}
+                            className={`h-9 w-9 rounded-full border transition-all duration-150 flex items-center justify-center ${isActive ? 'bg-amber-400/90 border-amber-300 text-white shadow-sm' : 'bg-white border-gray-200 text-gray-300'}`}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setClassReport({ ...classReport, classScore: i }); } }}
+                          >
+                            <Star className={`h-5 w-5 ${isActive ? 'fill-current' : ''}`} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {derivedClassId && userRole ? (
@@ -1137,38 +1192,6 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                       rows={1}
                       placeholder="Add any internal note for admins"
                     />
-                  </div>
-                </div>
-              </div>
-
-              {/* Class performance */}
-              <div className={sectionCardClassName}>
-                <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-sm font-medium text-gray-700">Class performance</label>
-                    <span className="text-xs text-gray-500">{(classReport.classScore || 0)}/5</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {[1,2,3,4,5].map((i) => {
-                      const activeScore = hoverScore || Number(classReport.classScore || 0);
-                      const isActive = i <= activeScore;
-                      return (
-                        <button
-                          key={i}
-                          type="button"
-                          aria-label={`${i} star${i>1?'s':''}`}
-                          onClick={() => setClassReport({ ...classReport, classScore: i })}
-                          onMouseEnter={() => setHoverScore(i)}
-                          onMouseLeave={() => setHoverScore(0)}
-                          onFocus={() => setHoverScore(i)}
-                          onBlur={() => setHoverScore(0)}
-                          className={`h-9 w-9 rounded-full border transition-all duration-150 flex items-center justify-center ${isActive ? 'bg-amber-400/90 border-amber-300 text-white shadow-sm' : 'bg-white border-gray-200 text-gray-300'}`}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setClassReport({ ...classReport, classScore: i }); } }}
-                        >
-                          <Star className={`h-5 w-5 ${isActive ? 'fill-current' : ''}`} />
-                        </button>
-                      );
-                    })}
                   </div>
                 </div>
               </div>

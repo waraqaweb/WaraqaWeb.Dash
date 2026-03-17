@@ -29,6 +29,7 @@ import ImpersonationBanner from '../../components/ui/ImpersonationBanner';
 import SystemVacationBanner from '../../components/ui/SystemVacationBanner';
 import NotificationCenter from '../../components/ui/NotificationCenter';
 import FeedbacksAdmin from './FeedbacksAdmin';
+import TeacherContractPage from './TeacherContractPage';
 import { Menu, X } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import VacationManagementPage from './VacationManagementPage';
@@ -146,6 +147,7 @@ const Dashboard = () => {
         '/dashboard/library',
         '/dashboard/vacation-management',
         '/dashboard/availability',
+        '/dashboard/teacher-contract',
         '/dashboard/salaries',
         '/dashboard/requests',
         '/dashboard/settings'
@@ -301,6 +303,8 @@ const Dashboard = () => {
           : <TeacherAvailabilityPage isActive={isActive} />;
       case 'feedbacks':
         return <FeedbacksAdmin isActive={isActive} />;
+      case 'teacher-contract':
+        return <TeacherContractPage isActive={isActive} />;
       case 'class-reports':
         return <ClassReportPage isActive={isActive} />;
       case 'vacation-management':
@@ -346,6 +350,8 @@ const Dashboard = () => {
         return 'Salaries';
       case 'availability':
         return user?.role === 'admin' ? 'Meeting Availability' : 'My Availability';
+      case 'teacher-contract':
+        return 'Teacher Contract';
       case 'library':
         return 'Library';
       default:

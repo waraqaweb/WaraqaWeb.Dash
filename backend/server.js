@@ -35,6 +35,8 @@ const libraryShareRoutes = require('./routes/libraryShares');
 const whiteboardRoutes = require('./routes/whiteboard');
 const onboardingRoutes = require('./routes/onboarding');
 const meetingRoutes = require('./routes/meetings');
+const leadRoutes = require('./routes/leads');
+const teacherContractRoutes = require('./routes/teacherContract');
 
 // Create Express application
 const app = express();
@@ -329,6 +331,8 @@ app.use('/api/library', libraryRoutes);
 app.use('/api/library/shares', libraryShareRoutes);
 app.use('/api/whiteboard', whiteboardRoutes);
 app.use('/api/meetings', meetingRoutes);
+app.use('/api/leads', leadRoutes);
+app.use('/api/teacher-contract', teacherContractRoutes);
 
 const vacationManagementRoutes = require('./routes/vacationManagement');
 app.use('/api/vacation-management', vacationManagementRoutes);

@@ -28,6 +28,8 @@ import InvoiceViewModal from './components/invoices/InvoiceViewModal';
 import RecordPaymentModal from './components/invoices/RecordPaymentModal';
 import InvoicePublicPage from './components/invoices/InvoicePublicPage';
 import PublicEvaluationBookingPage from './components/meetings/PublicEvaluationBookingPage';
+import PublicStudentRegistrationPage from './components/registration/PublicStudentRegistrationPage';
+import PublicTeacherContractPage from './components/registration/PublicTeacherContractPage';
 import SalariesPage from "./pages/dashboard/salaries/SalariesPage";
 import FeedbacksAdmin from './pages/dashboard/FeedbacksAdmin';
 // Classes modals
@@ -226,6 +228,21 @@ const AppRoutes = () => {
       <Route
         path="/public/meetings/evaluation"
         element={<PublicEvaluationBookingPage />}
+      />
+
+      <Route
+        path="/register-student"
+        element={<PublicStudentRegistrationPage />}
+      />
+
+      <Route
+        path="/teacher-contract"
+        element={<PublicTeacherContractPage />}
+      />
+
+      <Route
+        path="/register-teacher"
+        element={<PublicTeacherContractPage />}
       />
 
       <Route

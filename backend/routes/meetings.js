@@ -168,7 +168,11 @@ router.post('/book', optionalAuth, async (req, res) => {
       teacherPayload: teacher,
       notes,
       adminId: parseAdminId(req),
-      calendarPreference
+      calendarPreference,
+      bookingMeta: {
+        ip: req.ip,
+        userAgent: req.get('user-agent') || '',
+      }
     });
 
     res.status(201).json({

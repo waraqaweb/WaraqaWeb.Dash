@@ -10,6 +10,7 @@ const MeetingAvailabilitySlot = require('../models/MeetingAvailabilitySlot');
 const MeetingUnavailablePeriod = require('../models/MeetingUnavailablePeriod');
 const SystemVacation = require('../models/SystemVacation');
 const User = require('../models/User');
+const RegistrationLead = require('../models/RegistrationLead');
 const notificationService = require('./notificationService');
 const {
   MEETING_TYPES,
@@ -730,7 +731,8 @@ const bookMeeting = async ({
   teacherPayload = {},
   notes = '',
   adminId,
-  calendarPreference
+  calendarPreference,
+  bookingMeta = {}
 }) => {
   ensureMeetingType(meetingType);
   if (!requestedStart) {
@@ -754,13 +756,10 @@ const bookMeeting = async ({
   let studentIdForQuota;
   if (meetingType === MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP) {
     studentIdForQuota = toObjectId(students[0]?.studentId || guardianPayload.studentId);
-    if (!studentIdForQuota) {
-      throw createError(400, 'Student is required for follow-up meetings');
-    }
   }
 
   const monthKey = formatMonthKey(startUtc, admin.adminSettings?.meetingTimezone || DEFAULT_TIMEZONE);
-  if (meetingType === MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP) {
+  if (meetingType === MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP && guardianId && studentIdForQuota) {
     await enforceGuardianMonthlyLimit({
       guardianId,
       studentId: studentIdForQuota,
@@ -769,8 +768,8 @@ const bookMeeting = async ({
     });
   }
 
-  if (meetingType === MEETING_TYPES.TEACHER_SYNC && !teacherId) {
-    throw createError(403, 'Only teachers can book sync meetings');
+  if (meetingType === MEETING_TYPES.TEACHER_SYNC && !teacherId && !teacherPayload.teacherName && requester?.role !== 'teacher') {
+    throw createError(400, 'Teacher information is required for sync meetings');
   }
 
   const preferredCalendar = calendarPreference
@@ -857,6 +856,49 @@ const bookMeeting = async ({
   });
 
   await meeting.save();
+
+  if (meetingType === MEETING_TYPES.NEW_STUDENT_EVALUATION) {
+    try {
+      await RegistrationLead.create({
+        source: 'evaluation_booking',
+        status: 'new',
+        personalInfo: {
+          fullName: guardianPayload.guardianName || requester?.fullName || guardianPayload.guardianEmail || 'Evaluation lead',
+          guardianName: guardianPayload.guardianName || requester?.fullName || '',
+          email: guardianPayload.guardianEmail || requester?.email || '',
+          phone: guardianPayload.guardianPhone || requester?.phone || '',
+          timezone: bookingTimezone,
+        },
+        preferences: {
+          classPreferences: [],
+          teacherPreferences: [],
+          notes: notes || '',
+        },
+        students: (students || []).map((student) => ({
+          firstName: student.firstName || String(student.studentName || '').split(' ').slice(0, 1).join(' '),
+          lastName: student.lastName || String(student.studentName || '').split(' ').slice(1).join(' '),
+          gender: student.gender || '',
+          courses: [],
+          notes: student.notes || '',
+        })),
+        availability: {
+          preferredStartingDate: startUtc,
+          schedulingMode: 'consecutive',
+          allDurationsSame: true,
+          sharedDuration: durationMinutes,
+          slots: [],
+          notes: `Evaluation booked for ${moment(startUtc).tz(bookingTimezone).format('MMM D, YYYY h:mm A')} (${bookingTimezone})`,
+        },
+        submittedMeta: {
+          ip: bookingMeta.ip || '',
+          userAgent: bookingMeta.userAgent || '',
+        },
+      });
+    } catch (leadError) {
+      console.warn('Evaluation lead mirror warning:', leadError.message || leadError);
+    }
+  }
+
   const calendarLinks = buildCalendarLinks(meeting, admin);
   await notificationService.notifyMeetingScheduled({ meeting, adminUser: admin, triggeredBy: requester });
   return { meeting: formatMeetingResponse(meeting), calendarLinks };

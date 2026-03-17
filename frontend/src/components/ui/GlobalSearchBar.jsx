@@ -25,8 +25,16 @@ const placeholderMap = {
   users: 'Search users...',
   settings: 'Search settings...',
   profile: 'Search profile information...',
-  library: 'Search the library by subject, title, or tag...'
+  library: 'Search the library by subject, title, or tag...',
+  availability: 'Search leads by guardian, student, email, or phone...'
 };
+
+const AVAILABILITY_VIEW_KEY = 'availability';
+const createDefaultAvailabilityFilters = () => ({
+  leadStatus: 'all',
+  leadSource: 'all',
+  leadTimeView: 'viewer'
+});
 
 const filterOptions = {
   teachers: [
@@ -124,14 +132,22 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
   const currentFilters = filterOptions[activeView] || [];
   const actionableFilters = currentFilters.filter((filter) => Boolean(filter.value));
   const isTeacherSalaryView = activeView === TEACHER_SALARY_VIEW_KEY;
+  const isAvailabilityView = activeView === AVAILABILITY_VIEW_KEY;
   const salaryFilterState = viewFilters[TEACHER_SALARY_VIEW_KEY];
   const resolvedSalaryFilters = salaryFilterState || createDefaultTeacherSalaryFilters();
+  const availabilityFilterState = viewFilters[AVAILABILITY_VIEW_KEY];
+  const resolvedAvailabilityFilters = availabilityFilterState || createDefaultAvailabilityFilters();
   const salaryFilterCount = useMemo(() => (
     Object.values(resolvedSalaryFilters).filter(Boolean).length
   ), [resolvedSalaryFilters]);
-  const hasFilters = actionableFilters.length > 0 || isTeacherSalaryView;
+  const availabilityFilterCount = useMemo(() => (
+    Object.entries(resolvedAvailabilityFilters).filter(([key, value]) => value && value !== createDefaultAvailabilityFilters()[key]).length
+  ), [resolvedAvailabilityFilters]);
+  const hasFilters = actionableFilters.length > 0 || isTeacherSalaryView || isAvailabilityView;
   const filterIndicatorCount = isTeacherSalaryView
     ? salaryFilterCount
+    : isAvailabilityView
+      ? availabilityFilterCount
     : (globalFilter !== 'all' ? 1 : 0);
 
   // Reset filter when changing pages
@@ -145,6 +161,12 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
     if (salaryFilterState) return;
     setFiltersForView(TEACHER_SALARY_VIEW_KEY, createDefaultTeacherSalaryFilters());
   }, [isTeacherSalaryView, salaryFilterState, setFiltersForView]);
+
+  useEffect(() => {
+    if (!isAvailabilityView) return;
+    if (availabilityFilterState) return;
+    setFiltersForView(AVAILABILITY_VIEW_KEY, createDefaultAvailabilityFilters());
+  }, [isAvailabilityView, availabilityFilterState, setFiltersForView]);
 
   // Fetch teachers for salary filters once
   useEffect(() => {
@@ -315,6 +337,66 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
                       {TEACHER_SALARY_STATUS_OPTIONS.map(option => (
                         <option key={option.value || 'all-statuses'} value={option.value}>{option.label}</option>
                       ))}
+                    </select>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      onClick={() => setShowFilters(false)}
+                      className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56]"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : isAvailabilityView ? (
+                <div className="absolute right-0 top-full mt-1 w-80 bg-card border border-border rounded-md shadow-lg z-50 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-foreground">Lead filters</p>
+                    <button
+                      onClick={() => setFiltersForView(AVAILABILITY_VIEW_KEY, createDefaultAvailabilityFilters())}
+                      className="text-xs font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
+                    >
+                      Reset
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-muted-foreground">Status</label>
+                    <select
+                      value={resolvedAvailabilityFilters.leadStatus || 'all'}
+                      onChange={(e) => updateViewFilters(AVAILABILITY_VIEW_KEY, { leadStatus: e.target.value })}
+                      className="w-full rounded-md border border-border px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      <option value="all">All leads</option>
+                      <option value="new">New</option>
+                      <option value="converted">Converted</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-muted-foreground">Source</label>
+                    <select
+                      value={resolvedAvailabilityFilters.leadSource || 'all'}
+                      onChange={(e) => updateViewFilters(AVAILABILITY_VIEW_KEY, { leadSource: e.target.value })}
+                      className="w-full rounded-md border border-border px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      <option value="all">All sources</option>
+                      <option value="student_registration_form">Registration form</option>
+                      <option value="evaluation_booking">Evaluation booking</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-muted-foreground">Time display</label>
+                    <select
+                      value={resolvedAvailabilityFilters.leadTimeView || 'viewer'}
+                      onChange={(e) => updateViewFilters(AVAILABILITY_VIEW_KEY, { leadTimeView: e.target.value })}
+                      className="w-full rounded-md border border-border px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      <option value="viewer">My timezone</option>
+                      <option value="lead">Lead timezone</option>
                     </select>
                   </div>
 

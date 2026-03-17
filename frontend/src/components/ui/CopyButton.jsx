@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { Clipboard, Check, Link2 } from 'lucide-react';
+import { Clipboard, Check, Link2, MessageCircleMore } from 'lucide-react';
 
 const CopyButton = ({ 
   text, 
@@ -78,22 +78,26 @@ const CopyButton = ({
 
   const getVariantClasses = () => {
     if (copied) {
-      return 'text-emerald-600 hover:bg-emerald-50';
+      return 'border border-emerald-200 bg-emerald-50 text-emerald-600 hover:bg-emerald-100';
     }
     
     switch (variant) {
       case 'ghost':
         return 'text-slate-500 hover:text-slate-700 hover:bg-slate-100';
       case 'outline':
-        return 'text-slate-700 hover:bg-slate-100 border border-slate-200';
+        return 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100';
       case 'blue':
         return 'text-sky-600 hover:bg-sky-50';
+      case 'link':
+        return 'border border-sky-200 bg-sky-50 text-sky-600 hover:bg-sky-100';
+      case 'message':
+        return 'border border-violet-200 bg-violet-50 text-violet-600 hover:bg-violet-100';
       default:
         return 'text-slate-500 hover:text-slate-700 hover:bg-slate-100';
     }
   };
 
-  const Icon = icon === 'link' ? Link2 : Clipboard;
+  const Icon = icon === 'link' ? Link2 : icon === 'message' ? MessageCircleMore : Clipboard;
 
   return (
     <button

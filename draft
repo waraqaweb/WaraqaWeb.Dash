@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "class report updates 4"
+git commit -m "meetings page"
 git push origin main
 
 

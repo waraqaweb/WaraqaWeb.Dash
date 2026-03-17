@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import Select from 'react-select';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import Input from '../ui/Input';
@@ -75,9 +75,24 @@ const createStudent = () => ({
   notes: '',
 });
 
+const autoResizeTextarea = (event) => {
+  const element = event.currentTarget;
+  element.style.height = 'auto';
+  element.style.height = `${Math.min(Math.max(element.scrollHeight, 44), 180)}px`;
+};
+
+const resolvePublicMeetingType = (search = '') => {
+  const queryType = String(new URLSearchParams(search).get('type') || MEETING_TYPES.NEW_STUDENT_EVALUATION);
+  return Object.values(MEETING_TYPES).includes(queryType) ? queryType : MEETING_TYPES.NEW_STUDENT_EVALUATION;
+};
+
 const PublicEvaluationBookingPage = () => {
-  const meetingType = MEETING_TYPES.NEW_STUDENT_EVALUATION;
+  const location = useLocation();
+  const meetingType = useMemo(() => resolvePublicMeetingType(location.search), [location.search]);
   const detectedTimezone = getBrowserTimezone();
+  const isTeacherSync = meetingType === MEETING_TYPES.TEACHER_SYNC;
+  const isGuardianFollowUp = meetingType === MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP;
+  const requiresStudents = meetingType !== MEETING_TYPES.TEACHER_SYNC;
   const [timezone, setTimezone] = useState(detectedTimezone);
   const [calendarPreference, setCalendarPreference] = useState(() => getStoredCalendarPreference());
 
@@ -87,7 +102,8 @@ const PublicEvaluationBookingPage = () => {
     logoUrl: null,
   });
 
-  const [guardianName, setGuardianName] = useState('');
+  const [guardianFirstName, setGuardianFirstName] = useState('');
+  const [guardianLastName, setGuardianLastName] = useState('');
   const [guardianEmail, setGuardianEmail] = useState('');
   const [guardianPhone, setGuardianPhone] = useState('');
   const [students, setStudents] = useState(() => [createStudent()]);
@@ -186,6 +202,13 @@ const PublicEvaluationBookingPage = () => {
   const [selectedDayKey, setSelectedDayKey] = useState(null);
 
   useEffect(() => {
+    setSelectedSlotId(null);
+    setSelectedDayKey(null);
+    setSuccess(null);
+    setError(null);
+  }, [meetingType]);
+
+  useEffect(() => {
     // Keep month picker in a valid range when timezone changes.
     setVisibleMonthKey((prev) => {
       if (compareMonthKey(prev, minMonthKey) < 0) return minMonthKey;
@@ -225,8 +248,11 @@ const PublicEvaluationBookingPage = () => {
       setSuccess(null);
     }
 
-    const cleanedGuardianName = guardianName.trim();
+    const cleanedGuardianFirstName = guardianFirstName.trim();
+    const cleanedGuardianLastName = guardianLastName.trim();
+    const cleanedGuardianName = `${cleanedGuardianFirstName} ${cleanedGuardianLastName}`.trim();
     const cleanedEmail = guardianEmail.trim();
+    const cleanedPhone = guardianPhone.trim();
     const cleanedStudents = (students || []).map((student) => ({
       ...student,
       firstName: (student.firstName || '').trim(),
@@ -240,20 +266,24 @@ const PublicEvaluationBookingPage = () => {
 
     const invalidStudent = cleanedStudents.find((student) => (student.firstName || student.lastName || student.age || student.gender || student.notes) && (!student.firstName || !student.lastName));
 
-    if (!cleanedGuardianName) {
-      setError('Please enter your name.');
+    if (!cleanedGuardianFirstName || !cleanedGuardianLastName) {
+      setError(isTeacherSync ? 'Please enter the teacher\'s first and last name.' : 'Please enter the guardian\'s first and last name.');
       return;
     }
     if (!cleanedEmail) {
       setError('Please enter your email.');
       return;
     }
-    if (invalidStudent) {
+    if (!cleanedPhone) {
+      setError('Please enter your phone or WhatsApp number.');
+      return;
+    }
+    if (requiresStudents && invalidStudent) {
       setError('Please enter both first and last name for each student.');
       return;
     }
-    if (validStudents.length === 0) {
-      setError('Please add at least one student.');
+    if (requiresStudents && validStudents.length === 0) {
+      setError(isGuardianFollowUp ? 'Please add at least one student for the follow-up.' : 'Please add at least one student.');
       return;
     }
     if (!selectedSlotId) {
@@ -279,19 +309,24 @@ const PublicEvaluationBookingPage = () => {
         guardian: {
           guardianName: cleanedGuardianName,
           guardianEmail: cleanedEmail,
-          guardianPhone: guardianPhone.trim(),
+          guardianPhone: cleanedPhone,
           timezone,
           preferredCalendar: preference,
         },
-        students: validStudents.map((student) => ({
+        teacher: isTeacherSync ? {
+          teacherName: cleanedGuardianName,
+          additionalEmails: cleanedEmail ? [cleanedEmail] : [],
+          calendarPreference: preference,
+        } : undefined,
+        students: requiresStudents ? validStudents.map((student) => ({
           studentName: `${student.firstName} ${student.lastName}`.trim(),
           firstName: student.firstName,
           lastName: student.lastName,
           age: student.age ? Number(student.age) : undefined,
           gender: student.gender || undefined,
           notes: student.notes || undefined,
-          isExistingStudent: false,
-        })),
+          isExistingStudent: isGuardianFollowUp,
+        })) : [],
         notes: notes.trim(),
         calendarPreference: preference,
       };
@@ -307,7 +342,7 @@ const PublicEvaluationBookingPage = () => {
         const link = response?.calendar?.outlookCalendarLink;
         if (link) window.open(link, '_blank');
       } else if (preference === 'apple') {
-        downloadIcsFile(response?.calendar?.icsContent, 'evaluation.ics');
+        downloadIcsFile(response?.calendar?.icsContent, `${meetingType}.ics`);
       }
     } catch (err) {
       console.error(err);
@@ -368,16 +403,18 @@ const PublicEvaluationBookingPage = () => {
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <div className="rounded-2xl bg-card p-5 shadow-sm ring-1 ring-border">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              {branding.logoUrl ? (
-                <img
-                  src={branding.logoUrl}
-                  alt="Waraqa"
-                  className="h-10 w-10 rounded-xl bg-background object-contain"
-                />
-              ) : (
-                <div className="h-10 w-10 rounded-xl bg-primary/10" />
-              )}
+            <div className="flex items-center gap-4">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/10 bg-primary/5 shadow-sm">
+                {branding.logoUrl ? (
+                  <img
+                    src={branding.logoUrl}
+                    alt={branding.title || 'Waraqa'}
+                    className="h-12 w-12 object-contain"
+                  />
+                ) : (
+                  <div className="h-12 w-12 rounded-xl bg-primary/10" />
+                )}
+              </div>
               <div>
                 <p className="text-xs font-semibold text-muted-foreground">{branding.slogan}</p>
                 <h1 className="text-lg font-semibold leading-tight sm:text-xl">
@@ -389,7 +426,7 @@ const PublicEvaluationBookingPage = () => {
 
             <Link
               to="/dashboard/login"
-              className="inline-flex h-9 items-center justify-center rounded-full border border-border bg-primary px-4 text-xs font-semibold text-foreground"
+              className="inline-flex h-9 items-center justify-center rounded-full border border-border bg-primary px-4 text-xs font-semibold text-white"
             >
               Login page
             </Link>
@@ -430,6 +467,18 @@ const PublicEvaluationBookingPage = () => {
                         Open Outlook
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSuccess(null);
+                        setSelectedSlotId(null);
+                        setError(null);
+                        confirmationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                      className="rounded-full border border-emerald-300 bg-white px-4 py-2 text-xs font-semibold text-emerald-800 shadow-sm hover:bg-emerald-100"
+                    >
+                      Schedule another meeting
+                    </button>
                   </div>
                   <p className="mt-3 text-xs text-emerald-900/70">
                     If you don’t receive the meeting link, please contact the admin team.
@@ -443,21 +492,28 @@ const PublicEvaluationBookingPage = () => {
             <div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Input
-                  label="Your name"
-                  placeholder="Guardian name"
-                  value={guardianName}
-                  onChange={(e) => setGuardianName(e.target.value)}
+                  label={isTeacherSync ? 'Teacher first name' : 'Guardian first name'}
+                  placeholder={isTeacherSync ? 'Teacher first name' : 'Guardian first name'}
+                  value={guardianFirstName}
+                  onChange={(e) => setGuardianFirstName(e.target.value)}
                   disabled={submitting}
                 />
                 <Input
-                  label="Your email"
+                  label={isTeacherSync ? 'Teacher last name' : 'Guardian last name'}
+                  placeholder={isTeacherSync ? 'Teacher last name' : 'Guardian last name'}
+                  value={guardianLastName}
+                  onChange={(e) => setGuardianLastName(e.target.value)}
+                  disabled={submitting}
+                />
+                <Input
+                  label={isTeacherSync ? 'Teacher email' : 'Your email'}
                   placeholder="name@example.com"
                   value={guardianEmail}
                   onChange={(e) => setGuardianEmail(e.target.value)}
                   disabled={submitting}
                 />
                 <Input
-                  label="Phone (optional)"
+                  label={isTeacherSync ? 'Teacher phone / WhatsApp' : 'Phone / WhatsApp'}
                   placeholder="+20 ..."
                   value={guardianPhone}
                   onChange={(e) => setGuardianPhone(e.target.value)}
@@ -500,9 +556,10 @@ const PublicEvaluationBookingPage = () => {
                 </div>
               </div>
 
+              {requiresStudents ? (
               <div className="mt-4">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold">Students</p>
+                  <p className="text-sm font-semibold">{isGuardianFollowUp ? 'Students to discuss' : 'Students'}</p>
                   <button
                     type="button"
                     onClick={() => setStudents((prev) => [...(prev || []), createStudent()])}
@@ -587,10 +644,11 @@ const PublicEvaluationBookingPage = () => {
                       <label className="mt-3 inline-flex w-full flex-col gap-1 text-xs font-medium text-muted-foreground">
                         Notes (optional)
                         <textarea
-                          className="w-full rounded-xl border border-border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                          rows={2}
+                          className="w-full overflow-hidden rounded-xl border border-border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-ring resize-none"
+                          rows={1}
                           placeholder="Any notes about this student"
                           value={student.notes}
+                          onInput={autoResizeTextarea}
                           onChange={(e) =>
                             setStudents((prev) =>
                               (prev || []).map((s) => (s.id === student.id ? { ...s, notes: e.target.value } : s))
@@ -603,14 +661,16 @@ const PublicEvaluationBookingPage = () => {
                   ))}
                 </div>
               </div>
+              ) : null}
 
               <label className="mt-4 inline-flex w-full flex-col gap-1 text-xs font-medium text-muted-foreground">
-                Notes (optional)
+                Additional notes (optional)
                 <textarea
-                  className="w-full rounded-xl border border-border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                  rows={3}
-                  placeholder="Language level, goals, availability..."
+                  className="w-full overflow-hidden rounded-xl border border-border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-ring resize-none"
+                  rows={1}
+                  placeholder={isTeacherSync ? 'Topics, blockers, schedule, preferred agenda...' : isGuardianFollowUp ? 'Progress, concerns, goals, scheduling notes...' : 'Language level, goals, availability...'}
                   value={notes}
+                  onInput={autoResizeTextarea}
                   onChange={(e) => setNotes(e.target.value)}
                   disabled={submitting}
                 />
@@ -631,7 +691,7 @@ const PublicEvaluationBookingPage = () => {
                   className="inline-flex h-10 items-center justify-center rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:opacity-60"
                   disabled={submitting}
                 >
-                  {submitting ? 'Booking…' : 'Book evaluation'}
+                  {submitting ? 'Booking…' : `Book ${primaryLabel.toLowerCase()}`}
                 </button>
               </div>
             </div>

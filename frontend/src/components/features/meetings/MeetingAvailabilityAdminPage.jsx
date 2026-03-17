@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
-import { Calendar, Clock, Edit, Plus, Trash2, X, AlertCircle, Link2 } from 'lucide-react';
+import { Calendar, Clock, Edit, Plus, Trash2, X, AlertCircle, Link2, CalendarRange, FileText, UserPlus, Copy, Power, Ban, ChevronDown, ChevronUp, GraduationCap } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import {
   listMeetingAvailabilitySlots,
@@ -19,14 +19,34 @@ import {
 import { getMeetingTimezoneOptions } from '../../../utils/timezone';
 import { MEETING_DEFAULT_DURATIONS } from '../../../constants/meetingConstants';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
+import { getPublicAppUrl } from '../../../utils/publicAppLinks';
+import CopyButton from '../../ui/CopyButton';
+import MeetingActivityPanel from './MeetingActivityPanel';
+import RegistrationLeadsPanel from './RegistrationLeadsPanel';
+import TeacherResponsesPanel from './TeacherResponsesPanel';
 
 const MEETING_TYPE_LABELS = {
-  new_student_evaluation: 'New Student Evaluations',
-  current_student_follow_up: 'Guardian Follow-ups',
-  teacher_sync: 'Teacher Syncs'
+  new_student_evaluation: 'Evaluations',
+  current_student_follow_up: 'Follow ups',
+  teacher_sync: 'Teachers'
 };
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const SHORT_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const PAGE_TABS = [
+  { id: 'availability', label: 'Availability', icon: CalendarRange },
+  { id: 'meetings', label: 'Meetings', icon: FileText },
+  { id: 'leads', label: 'Leads', icon: UserPlus },
+  { id: 'teachers', label: 'Teachers', icon: GraduationCap },
+];
+
+const getInitialPageTab = () => {
+  if (typeof window === 'undefined') return 'availability';
+  const section = String(new URLSearchParams(window.location.search).get('section') || '').toLowerCase();
+  return PAGE_TABS.some((item) => item.id === section) ? section : 'availability';
+};
 
 const emptyFormState = (overrides = {}) => ({
   _id: null,
@@ -134,6 +154,8 @@ const MeetingAvailabilityAdminPage = () => {
   const [meetingLinkStatus, setMeetingLinkStatus] = useState({ type: '', message: '' });
   const [meetingLinkSaving, setMeetingLinkSaving] = useState(false);
   const [publicLinkStatus, setPublicLinkStatus] = useState('');
+  const [pageTab, setPageTab] = useState(getInitialPageTab);
+  const [loadedTabs, setLoadedTabs] = useState(() => new Set([getInitialPageTab()]));
   const timezoneOptions = useMemo(() => getMeetingTimezoneOptions(), []);
   const meetingsEnabled = user?.adminSettings?.meetingsEnabled !== false;
   const [meetingsEnabledSaving, setMeetingsEnabledSaving] = useState(false);
@@ -148,6 +170,14 @@ const MeetingAvailabilityAdminPage = () => {
     hours: '',
     description: ''
   }));
+  const [showTimeOffForm, setShowTimeOffForm] = useState(false);
+  const [selectedDaysByType, setSelectedDaysByType] = useState(() => {
+    const today = new Date().getDay();
+    return fallbackTypes.reduce((acc, type) => {
+      acc[type] = [today];
+      return acc;
+    }, {});
+  });
   const slotsRef = useRef([]);
   const refreshSlotsInFlightRef = useRef(false);
   const refreshSlotsKeyRef = useRef('');
@@ -160,11 +190,41 @@ const MeetingAvailabilityAdminPage = () => {
   const refreshTimeOffRequestIdRef = useRef(0);
 
   const publicEvaluationLink = useMemo(() => {
-    if (typeof window === 'undefined') return '';
-    const publicUrl = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
-    const basePrefix = publicUrl && publicUrl !== '/' ? publicUrl : '';
-    return `${window.location.origin}${basePrefix}/public/meetings/evaluation`;
+    return getPublicAppUrl('/public/meetings/evaluation');
   }, []);
+
+  const publicGuardianFollowUpLink = useMemo(() => {
+    return getPublicAppUrl('/public/meetings/evaluation?type=current_student_follow_up');
+  }, []);
+
+  const publicTeacherSyncLink = useMemo(() => {
+    return getPublicAppUrl('/public/meetings/evaluation?type=teacher_sync');
+  }, []);
+
+  const publicRegistrationLink = useMemo(() => {
+    return getPublicAppUrl('/register-student');
+  }, []);
+
+  const publicTeacherRegistrationLink = useMemo(() => {
+    return getPublicAppUrl('/register-teacher');
+  }, []);
+
+  const registrationInviteMessage = useMemo(() => (
+    `Assalamu Alaykum,\n\nThank you for attending the evaluation session. We hope you found it helpful and informative. Here is the link to our registration form: ${publicRegistrationLink}\n\nAs soon as we receive your response, we will start the registration process and update you soon, Inshaa Allah. If you have any questions regarding our payment and cancellation policy, you can check it on our website so feel free to visit it https://www.waraqaweb.com to learn more about our courses and services.\n\nIt was a pleasure meeting you, and we are excited to accompany you on your learning journey. Please let us know if you have any further questions.\n\nThank you,\nWaraqa`
+  ), [publicRegistrationLink]);
+
+  const evaluationInviteMessage = useMemo(() => (
+    `Let’s schedule a free evaluation session to assess your level, set a plan, and answer any questions you may have.\n\n${publicEvaluationLink}`
+  ), [publicEvaluationLink]);
+
+  useEffect(() => {
+    setLoadedTabs((prev) => {
+      if (prev.has(pageTab)) return prev;
+      const next = new Set(prev);
+      next.add(pageTab);
+      return next;
+    });
+  }, [pageTab]);
 
   useEffect(() => {
     if (!activeType && meetingTypes.length) {
@@ -331,6 +391,8 @@ const MeetingAvailabilityAdminPage = () => {
     });
     return map.map((list) => list.sort((a, b) => a.startTime.localeCompare(b.startTime)));
   }, [slots]);
+
+  const activeSelectedDays = selectedDaysByType[activeType] || [new Date().getDay()];
 
   const mergedSlotsByDay = useMemo(() => {
     return slotsByDay.map((daySlots) => mergeConsecutiveSlots(daySlots));
@@ -510,6 +572,19 @@ const MeetingAvailabilityAdminPage = () => {
       setPublicLinkStatus('Copy failed');
       window.setTimeout(() => setPublicLinkStatus(''), 2500);
     }
+  };
+
+  const toggleVisibleDay = (dayIndex) => {
+    setSelectedDaysByType((prev) => {
+      const current = new Set(prev[activeType] || [new Date().getDay()]);
+      if (current.has(dayIndex)) {
+        if (current.size === 1) return prev;
+        current.delete(dayIndex);
+      } else {
+        current.add(dayIndex);
+      }
+      return { ...prev, [activeType]: Array.from(current).sort((a, b) => a - b) };
+    });
   };
 
   const handleSubmit = async (event) => {
@@ -699,56 +774,73 @@ const MeetingAvailabilityAdminPage = () => {
     );
   }
 
-  return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Calendar className="w-6 h-6 text-gray-700" />
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">Meeting Availability</h1>
-            <p className="text-sm text-gray-500">Control the bookable windows for evaluations and syncs.</p>
-          </div>
-        </div>
-        <div className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 flex items-center gap-2">
-          <Clock className="w-4 h-4 text-[#2C736C]" />
-          <span>{timezone}</span>
-        </div>
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <div className="flex flex-wrap gap-2">
-        {(meetingTypes.length ? meetingTypes : fallbackTypes).map((type) => (
-          <button
-            key={type}
-            type="button"
-            onClick={() => setActiveType(type)}
-            className={`px-4 py-2 rounded-full text-sm font-medium border transition ${
-              activeType === type
-                ? 'bg-[#2C736C] text-white border-[#2C736C]'
-                : 'bg-white text-gray-700 border-gray-200 hover:border-[#2C736C] hover:text-[#2C736C]'
-            }`}
-          >
-            {MEETING_TYPE_LABELS[type] || type}
-          </button>
-        ))}
-          </div>
-
+  const renderAvailabilitySection = () => (
+    <>
       {error && (
         <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
         </div>
       )}
 
+      <div className="mt-2 rounded-2xl bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-4 xl:flex-nowrap xl:gap-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Meeting type</label>
+            {(meetingTypes.length ? meetingTypes : fallbackTypes).map((type) => {
+              const active = activeType === type;
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setActiveType(type)}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${active ? 'bg-[#2C736C] text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                >
+                  {MEETING_TYPE_LABELS[type] || type}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-1 flex-wrap items-center gap-2 xl:justify-end">
+            <label className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Visible days</label>
+            <button
+              type="button"
+              onClick={() => setSelectedDaysByType((prev) => ({ ...prev, [activeType]: [new Date().getDay()] }))}
+              className="mr-1 text-xs font-semibold text-[#2C736C] hover:underline"
+            >
+              Today only
+            </button>
+            {DAY_NAMES.map((day, index) => {
+              const active = activeSelectedDays.includes(index);
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => toggleVisibleDay(index)}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition ${active ? 'bg-[#2C736C] text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-[#2C736C]'}`}
+                  title={day}
+                >
+                  {SHORT_DAY_NAMES[index]}
+                </button>
+              );
+            })}
+            <button type="button" onClick={() => openCreateForm(activeSelectedDays[0] ?? new Date().getDay())} className="ml-1 inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110">
+              <Plus className="w-4 h-4" /> Add slot
+            </button>
+          </div>
+        </div>
+      </div>
+
       {loading ? (
         <div className="mt-6 space-y-3 animate-pulse">
-          {[...Array(3)].map((_, idx) => (
-            <div key={idx} className="h-16 rounded-lg bg-gray-100" />
+          {[...Array(Math.max(activeSelectedDays.length, 1))].map((_, idx) => (
+            <div key={idx} className="h-20 rounded-2xl bg-gray-100" />
           ))}
         </div>
       ) : (
-        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-          {DAY_NAMES.map((day, index) => {
+        <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {activeSelectedDays.map((index) => {
+            const day = DAY_NAMES[index];
             const daySlots = slotsByDay[index];
             const dayGroups = mergedSlotsByDay[index] || [];
             return (
@@ -756,34 +848,22 @@ const MeetingAvailabilityAdminPage = () => {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-gray-900">{day}</p>
-                    <p className="text-xs text-gray-500">
-                      {daySlots.length ? `${daySlots.length} slot${daySlots.length !== 1 ? 's' : ''}` : 'No slots yet'}
-                    </p>
+                    <p className="text-xs text-gray-500">{daySlots.length ? `${daySlots.length} slot${daySlots.length !== 1 ? 's' : ''}` : 'No slots'}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {daySlots.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => openDuplicateDayModal(index)}
-                        className="text-xs font-semibold text-gray-600 hover:text-[#2C736C]"
-                        title={`Duplicate ${day} to other weekdays`}
-                      >
-                        Duplicate
+                      <button type="button" onClick={() => openDuplicateDayModal(index)} className="icon-button icon-button--muted" title="Duplicate day">
+                        <Copy className="w-4 h-4" />
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => openCreateForm(index)}
-                      className="icon-button icon-button--muted"
-                      title={`Add slot for ${day}`}
-                    >
+                    <button type="button" onClick={() => openCreateForm(index)} className="icon-button icon-button--muted" title="Add slot">
                       <Plus className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
 
                 {daySlots.length === 0 ? (
-                  <p className="text-xs text-gray-400">No bookable windows.</p>
+                  <p className="text-xs text-gray-400">No windows.</p>
                 ) : (
                   <div className="flex flex-col gap-2">
                     {dayGroups.map((group) => {
@@ -791,27 +871,16 @@ const MeetingAvailabilityAdminPage = () => {
                       const expanded = expandedGroupKey === groupKey;
                       return (
                         <div key={groupKey} className="border rounded-xl px-3 py-2 bg-gradient-to-r from-white to-gray-50">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setExpandedSlotId('');
-                              setExpandedGroupKey((prev) => (prev === groupKey ? '' : groupKey));
-                            }}
-                            className="w-full text-left"
-                          >
+                          <button type="button" onClick={() => {
+                            setExpandedSlotId('');
+                            setExpandedGroupKey((prev) => (prev === groupKey ? '' : groupKey));
+                          }} className="w-full text-left">
                             <div className="flex items-start justify-between gap-3">
                               <div>
-                                <p className="text-sm font-semibold text-gray-900">
-                                  {formatTime(group.startTime)} — {formatTime(group.endTime)}
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                  {group.label || 'General availability'} · Capacity {group.capacity || 1}
-                                  {group.slots.length > 1 ? ` · ${group.slots.length} blocks` : ''}
-                                </p>
+                                <p className="text-sm font-semibold text-gray-900">{formatTime(group.startTime)} — {formatTime(group.endTime)}</p>
+                                <p className="text-xs text-gray-500">{group.label || 'Open'} · Cap {group.capacity || 1}{group.slots.length > 1 ? ` · ${group.slots.length} blocks` : ''}</p>
                               </div>
-                              <div className="text-xs font-semibold text-gray-500">
-                                {expanded ? 'Hide' : 'Details'}
-                              </div>
+                              <div className="text-xs font-semibold text-gray-500">{expanded ? 'Hide' : 'Open'}</div>
                             </div>
                           </button>
 
@@ -820,40 +889,16 @@ const MeetingAvailabilityAdminPage = () => {
                               {group.slots.map((slot) => (
                                 <div key={slot._id} className="rounded-lg border border-gray-100 bg-white px-3 py-2">
                                   <div className="flex items-start justify-between gap-3">
-                                    <button
-                                      type="button"
-                                      onClick={() => setExpandedSlotId((prev) => (prev === slot._id ? '' : slot._id))}
-                                      className="text-left"
-                                    >
-                                      <p className="text-sm font-semibold text-gray-900">
-                                        {formatTime(slot.startTime)} — {formatTime(slot.endTime)}
-                                      </p>
-                                      <p className="text-xs text-gray-500">
-                                        {slot.label || 'General availability'} · Capacity {slot.capacity || 1}
-                                      </p>
+                                    <button type="button" onClick={() => setExpandedSlotId((prev) => (prev === slot._id ? '' : slot._id))} className="text-left">
+                                      <p className="text-sm font-semibold text-gray-900">{formatTime(slot.startTime)} — {formatTime(slot.endTime)}</p>
+                                      <p className="text-xs text-gray-500">{slot.label || 'Open'} · Cap {slot.capacity || 1}</p>
                                     </button>
                                     <div className="flex items-center gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => openEditForm(slot)}
-                                        className="icon-button icon-button--muted"
-                                        title="Edit slot"
-                                      >
-                                        <Edit className="w-4 h-4" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleDelete(slot._id)}
-                                        className="icon-button icon-button--muted text-red-500 hover:text-red-600"
-                                        title="Delete slot"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
+                                      <button type="button" onClick={() => openEditForm(slot)} className="icon-button icon-button--muted" title="Edit"><Edit className="w-4 h-4" /></button>
+                                      <button type="button" onClick={() => handleDelete(slot._id)} className="icon-button icon-button--muted text-red-500 hover:text-red-600" title="Delete"><Trash2 className="w-4 h-4" /></button>
                                     </div>
                                   </div>
-                                  {expandedSlotId === slot._id && slot.description && (
-                                    <p className="mt-2 text-xs text-gray-500">{slot.description}</p>
-                                  )}
+                                  {expandedSlotId === slot._id && slot.description ? <p className="mt-2 text-xs text-gray-500">{slot.description}</p> : null}
                                 </div>
                               ))}
                             </div>
@@ -868,17 +913,65 @@ const MeetingAvailabilityAdminPage = () => {
           })}
         </div>
       )}
+    </>
+  );
 
-      <div className="mt-8 flex justify-center">
-        <button
-          type="button"
-          onClick={() => openCreateForm(0)}
-          className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-5 py-3 text-sm font-semibold text-white shadow-sm hover:brightness-110"
-        >
-          <Plus className="w-4 h-4" />
-          Add Availability Slot
-        </button>
+  return (
+    <div className="mx-auto max-w-[1600px] p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <Calendar className="w-6 h-6 text-gray-700" />
+          <div>
+            <h1 className="text-xl font-semibold text-gray-900">Meeting Availability</h1>
+            <p className="text-sm text-gray-500">Control the bookable windows for evaluations and syncs.</p>
+          </div>
+        </div>
+        <div className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 flex items-center gap-2">
+          <Clock className="w-4 h-4 text-[#2C736C]" />
+          <span>{timezone}</span>
+        </div>
       </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="min-w-0">
+          <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <div className="flex flex-wrap gap-2">
+            {PAGE_TABS.map((item) => {
+              const Icon = item.icon;
+              const active = pageTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setPageTab(item.id)}
+                  className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${active ? 'border-[#2C736C] bg-[#2C736C] text-white' : 'border-gray-200 bg-white text-gray-700 hover:border-[#2C736C] hover:text-[#2C736C]'}`}
+                >
+                  <Icon className="h-4 w-4" /> {item.label}
+                </button>
+              );
+            })}
+            </div>
+          </div>
+          <div className="mt-6">
+            <div className={pageTab === 'availability' ? 'block' : 'hidden'}>
+              {renderAvailabilitySection()}
+            </div>
+            {loadedTabs.has('meetings') ? (
+              <div className={pageTab === 'meetings' ? 'block' : 'hidden'}>
+                <MeetingActivityPanel timezone={timezone} />
+              </div>
+            ) : null}
+            {loadedTabs.has('leads') ? (
+              <div className={pageTab === 'leads' ? 'block' : 'hidden'}>
+                <RegistrationLeadsPanel registrationLink={publicRegistrationLink} />
+              </div>
+            ) : null}
+            {loadedTabs.has('teachers') ? (
+              <div className={pageTab === 'teachers' ? 'block' : 'hidden'}>
+                <TeacherResponsesPanel />
+              </div>
+            ) : null}
+          </div>
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -896,9 +989,9 @@ const MeetingAvailabilityAdminPage = () => {
             </div>
 
             <form className="space-y-4" onSubmit={handleSubmit}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
                 <div>
-                  <label className="text-xs font-medium text-gray-600 mb-1 block">Day of week</label>
+                  <label className="text-xs font-medium text-gray-600 mb-1 block">Day</label>
                   <select
                     value={formState.dayOfWeek}
                     onChange={(e) => handleFormChange('dayOfWeek', parseInt(e.target.value, 10))}
@@ -909,22 +1002,11 @@ const MeetingAvailabilityAdminPage = () => {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 mb-1 block">Capacity</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="5"
-                    value={formState.capacity}
-                    onChange={(e) => handleFormChange('capacity', parseInt(e.target.value, 10) || 1)}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2"
-                  />
-                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-medium text-gray-600 mb-1 block">Start time</label>
+                  <label className="text-xs font-medium text-gray-600 mb-1 block">Start</label>
                   <input
                     type="time"
                     value={formState.startTime}
@@ -933,7 +1015,7 @@ const MeetingAvailabilityAdminPage = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-gray-600 mb-1 block">End time</label>
+                  <label className="text-xs font-medium text-gray-600 mb-1 block">End</label>
                   <input
                     type="time"
                     value={formState.endTime}
@@ -951,27 +1033,21 @@ const MeetingAvailabilityAdminPage = () => {
                     onChange={(e) => setSplitRange(e.target.checked)}
                     className="mt-0.5"
                   />
-                  <span>
-                    Split into {MEETING_DEFAULT_DURATIONS[formState.meetingType || activeType] || 30}-minute slots when the range is longer.
-                  </span>
+                  <span>Auto-split to {MEETING_DEFAULT_DURATIONS[formState.meetingType || activeType] || 30} min</span>
                 </label>
               )}
 
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Timezone</label>
-                <input
-                  type="text"
+                <select
                   value={formState.timezone}
                   onChange={(e) => handleFormChange('timezone', e.target.value)}
-                  list="meeting-availability-timezones"
                   className="w-full rounded-lg border border-gray-200 px-3 py-2"
-                />
-                <datalist id="meeting-availability-timezones">
+                >
                   {timezoneOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
-                </datalist>
-                <p className="mt-1 text-xs text-gray-500">Use an IANA timezone (e.g., Africa/Cairo).</p>
+                </select>
               </div>
 
               <div>
@@ -980,19 +1056,8 @@ const MeetingAvailabilityAdminPage = () => {
                   type="text"
                   value={formState.label}
                   onChange={(e) => handleFormChange('label', e.target.value)}
-                  placeholder="Optional short label"
+                  placeholder="Short label"
                   className="w-full rounded-lg border border-gray-200 px-3 py-2"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-gray-600 mb-1 block">Description</label>
-                <textarea
-                  value={formState.description}
-                  onChange={(e) => handleFormChange('description', e.target.value)}
-                  placeholder="Optional context for this slot"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2"
-                  rows={3}
                 />
               </div>
 
@@ -1009,7 +1074,7 @@ const MeetingAvailabilityAdminPage = () => {
                   disabled={saving}
                   className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
                 >
-                  {saving ? 'Saving…' : formState._id ? 'Update slot' : 'Create slot'}
+                  {saving ? 'Saving…' : formState._id ? 'Update' : 'Add'}
                 </button>
               </div>
             </form>
@@ -1019,95 +1084,99 @@ const MeetingAvailabilityAdminPage = () => {
 
         </div>
 
-        <div className="space-y-4">
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start gap-3">
-              <Link2 className="w-5 h-5 text-[#2C736C] mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-gray-900">Default meeting link</p>
-                <p className="text-xs text-gray-500">Used in calendar invites and confirmation emails.</p>
-              </div>
+        <div className="space-y-4 xl:sticky xl:top-6 xl:self-start">
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-[#2C736C]" />Default link</div>
+            <div className="mt-3 flex items-center gap-2">
+              <input type="url" value={meetingLinkValue} onChange={(e) => setMeetingLinkValue(e.target.value)} placeholder="https://meet.google.com/..." className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C736C]" />
+              <button type="button" onClick={handleSaveMeetingLink} disabled={meetingLinkSaving} className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow disabled:opacity-60">{meetingLinkSaving ? 'Saving…' : 'Save'}</button>
             </div>
-            <div className="mt-4 space-y-3">
-              <input
-                type="url"
-                value={meetingLinkValue}
-                onChange={(e) => setMeetingLinkValue(e.target.value)}
-                placeholder="https://meet.google.com/..."
-                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C736C]"
-              />
-              {meetingLinkStatus.message && (
-                <p className={`text-xs ${meetingLinkStatus.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
-                  {meetingLinkStatus.message}
-                </p>
-              )}
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={handleSaveMeetingLink}
-                  disabled={meetingLinkSaving}
-                  className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow disabled:opacity-60"
-                >
-                  {meetingLinkSaving ? 'Saving…' : 'Save meeting link'}
-                </button>
-              </div>
-            </div>
+            {meetingLinkStatus.message ? <p className={`mt-2 text-xs ${meetingLinkStatus.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>{meetingLinkStatus.message}</p> : null}
           </div>
 
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start gap-3">
-              <Link2 className="w-5 h-5 text-[#2C736C] mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-gray-900">Public evaluation booking link</p>
-                <p className="text-xs text-gray-500">Send this link to new students/guardians to book an evaluation.</p>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-[#2C736C]" />Evaluation link</div>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input type="text" value={publicEvaluationLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <CopyButton text={publicEvaluationLink} title="Copy evaluation link" variant="link" icon="link" className="rounded-xl shadow-sm" />
+                  <CopyButton text={evaluationInviteMessage} title="Copy evaluation message" variant="message" icon="message" className="rounded-xl shadow-sm" />
+                </div>
+              </div>
+              {publicLinkStatus ? <p className="mt-2 text-xs text-slate-500">{publicLinkStatus}</p> : null}
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-[#2C736C]" />Guardian follow-up link</div>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input type="text" value={publicGuardianFollowUpLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <CopyButton text={publicGuardianFollowUpLink} title="Copy guardian follow-up link" variant="link" icon="link" className="rounded-xl shadow-sm" />
+                </div>
               </div>
             </div>
-            <div className="mt-4 space-y-3">
-              <input
-                type="text"
-                value={publicEvaluationLink}
-                readOnly
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-gray-500">{publicLinkStatus || 'Tip: paste it into WhatsApp, email, or SMS.'}</p>
-                <button
-                  type="button"
-                  onClick={handleCopyPublicLink}
-                  className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-800 hover:border-[#2C736C]"
-                >
-                  Copy link
-                </button>
+
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-[#2C736C]" />Teacher sync link</div>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input type="text" value={publicTeacherSyncLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <CopyButton text={publicTeacherSyncLink} title="Copy teacher sync link" variant="link" icon="link" className="rounded-xl shadow-sm" />
+                </div>
               </div>
             </div>
+
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><UserPlus className="w-4 h-4 text-[#2C736C]" />Registration link</div>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input type="text" value={publicRegistrationLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <CopyButton text={publicRegistrationLink} title="Copy registration link" variant="link" icon="link" className="rounded-xl shadow-sm" />
+                  <CopyButton text={registrationInviteMessage} title="Copy registration message" variant="message" icon="message" className="rounded-xl shadow-sm" />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><UserPlus className="w-4 h-4 text-[#2C736C]" />Teacher registration link</div>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input type="text" value={publicTeacherRegistrationLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <CopyButton text={publicTeacherRegistrationLink} title="Copy teacher registration link" variant="link" icon="link" className="rounded-xl shadow-sm" />
+                </div>
+              </div>
+            </div>
+
           </div>
 
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-semibold text-gray-900">Meetings status</p>
-            <p className="mt-1 text-xs text-gray-500">Turn this off to stop all meeting bookings temporarily.</p>
-            <div className="mt-3 flex items-center justify-between">
-              <div className={`text-sm font-semibold ${meetingsEnabled ? 'text-green-700' : 'text-gray-700'}`}>
-                {meetingsEnabled ? 'Available for meetings' : 'Not available'}
-              </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Power className={`h-4 w-4 ${meetingsEnabled ? 'text-emerald-600' : 'text-slate-400'}`} />Meetings</div>
+              <div className={`text-sm font-semibold ${meetingsEnabled ? 'text-green-700' : 'text-gray-700'}`}>{meetingsEnabled ? 'On' : 'Off'}</div>
+            </div>
+            <div className="mt-3 flex items-center justify-end">
               <button
                 type="button"
                 onClick={handleToggleMeetingsEnabled}
                 disabled={meetingsEnabledSaving}
-                className={`rounded-full px-4 py-2 text-sm font-semibold text-white ${
-                  meetingsEnabled
-                    ? 'bg-[#2C736C] hover:brightness-110'
-                    : 'bg-gray-600 hover:bg-gray-700'
-                } disabled:opacity-60`}
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white ${meetingsEnabled ? 'bg-[#2C736C]' : 'bg-gray-600'} disabled:opacity-60`}
               >
-                {meetingsEnabledSaving ? 'Saving…' : meetingsEnabled ? 'Disable' : 'Enable'}
+                <Ban className="h-4 w-4" />{meetingsEnabledSaving ? 'Saving…' : meetingsEnabled ? 'Disable' : 'Enable'}
               </button>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-semibold text-gray-900">Temporary time off</p>
-            <p className="mt-1 text-xs text-gray-500">Blocks booking even if slots exist.</p>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <button type="button" onClick={() => setShowTimeOffForm((prev) => !prev)} className="flex w-full items-center justify-between gap-3 text-left">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Time off</p>
+                <p className="text-xs text-gray-500">Block bookings when needed.</p>
+              </div>
+              {showTimeOffForm ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+            </button>
 
+            {showTimeOffForm ? (
             <div className="mt-4 grid grid-cols-1 gap-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1210,6 +1279,9 @@ const MeetingAvailabilityAdminPage = () => {
                 )}
               </div>
             </div>
+            ) : (
+              <div className="mt-3 text-sm text-slate-500">Hidden. Click to manage.</div>
+            )}
           </div>
         </div>
       </div>

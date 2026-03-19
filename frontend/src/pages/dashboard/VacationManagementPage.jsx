@@ -10,6 +10,7 @@ import {
   User, 
   Users, 
   Globe, 
+  Send,
   CheckCircle, 
   XCircle, 
   AlertCircle,
@@ -23,6 +24,53 @@ import {
 import VacationModal from '../../components/dashboard/VacationModal';
 import VacationDetailsModal from '../../components/dashboard/VacationDetailsModal';
 import GuardianStudentVacationModal from '../../components/dashboard/GuardianStudentVacationModal';
+
+const VACATION_WHATSAPP_REPORT_STORAGE_PREFIX = 'waraqa.vacations.whatsappReport.v1';
+const ISLAMIC_DECORATIVE_LINE = '۞ ┈┈┈ ✦ ┈┈┈ ۞';
+const VACATION_TITLE_FONT = '"Aref Ruqaa", "Amiri", Georgia, serif';
+const VACATION_BODY_FONT = '"Noto Naskh Arabic", "Inter", "Segoe UI", sans-serif';
+const VACATION_LABEL_FONT = '"Noto Kufi Arabic", "Open Sans", "Segoe UI", sans-serif';
+const VACATION_WHATSAPP_COPY = {
+  title: 'Waraqa Vacation Notice',
+  decorativeLine: '۞ ┈---┈┈ ✦ ---┈┈┈ ۞',
+  greetingPrefix: 'Assalamu Alaikum',
+  beginsLabel: 'Begins',
+  endsLabel: 'Ends',
+  timezoneNote: 'This is in your timezone.',
+};
+
+const normalizeWhatsappPhone = (value) => String(value || '').replace(/\D+/g, '');
+
+const validateWhatsappPhone = (value) => {
+  const normalized = normalizeWhatsappPhone(value);
+  if (!normalized) {
+    return { ok: false, normalized, reason: 'Missing WhatsApp number' };
+  }
+  if (!/^[1-9][0-9]{7,14}$/.test(normalized)) {
+    return { ok: false, normalized, reason: 'Invalid phone format' };
+  }
+  return { ok: true, normalized, reason: null };
+};
+
+const formatRecipientEpithet = (epithet) => {
+  const normalized = String(epithet || '').trim().toLowerCase();
+  if (!normalized || normalized === 'none') return '';
+
+  const map = {
+    mr: 'Mr',
+    mister: 'Mr',
+    mrs: 'Mrs',
+    missus: 'Mrs',
+    ms: 'Ms',
+    miss: 'Ms',
+    brother: 'Brother',
+    bro: 'Brother',
+    sister: 'Sister',
+    sis: 'Sister',
+  };
+
+  return map[normalized] || String(epithet || '').trim();
+};
 
 const VacationManagementPage = () => {
   const { user } = useAuth();
@@ -75,6 +123,59 @@ const VacationManagementPage = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [showGuardianStudentModal, setShowGuardianStudentModal] = useState(false);
+  const [whatsappDraftProgress, setWhatsappDraftProgress] = useState(null);
+  const [whatsappDraftReport, setWhatsappDraftReport] = useState(null);
+  const [whatsappDraftSession, setWhatsappDraftSession] = useState(null);
+  const whatsappDraftWindowRef = useRef(null);
+  const whatsappDraftTimerRef = useRef(null);
+  const whatsappDraftSessionRef = useRef(null);
+  const advanceVacationWhatsappSessionRef = useRef(null);
+
+  const userTimezone = user?.timezone || user?.guardianInfo?.timezone || user?.teacherInfo?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+  useEffect(() => {
+    whatsappDraftSessionRef.current = whatsappDraftSession;
+  }, [whatsappDraftSession]);
+
+  useEffect(() => {
+    if (!user?._id) {
+      setWhatsappDraftReport(null);
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem(`${VACATION_WHATSAPP_REPORT_STORAGE_PREFIX}:${user._id}`);
+      if (!raw) {
+        setWhatsappDraftReport(null);
+        return;
+      }
+
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        setWhatsappDraftReport(parsed);
+      } else {
+        setWhatsappDraftReport(null);
+      }
+    } catch (e) {
+      setWhatsappDraftReport(null);
+    }
+  }, [user?._id]);
+
+  useEffect(() => {
+    if (!user?._id) return;
+
+    try {
+      const storageKey = `${VACATION_WHATSAPP_REPORT_STORAGE_PREFIX}:${user._id}`;
+      if (!whatsappDraftReport) {
+        localStorage.removeItem(storageKey);
+        return;
+      }
+
+      localStorage.setItem(storageKey, JSON.stringify(whatsappDraftReport));
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [user?._id, whatsappDraftReport]);
 
   const availableTabs = useMemo(() => {
     const tabs = [];
@@ -368,7 +469,11 @@ const VacationManagementPage = () => {
     setDetailVacation(vacation);
 
     try {
-      const res = await api.get(`/vacations/${vacation._id}/impact`);
+      const isSystemVacation = Boolean(vacation?.name) && !vacation?.reason;
+      const endpoint = isSystemVacation
+        ? `/system-vacations/${vacation._id}/impact`
+        : `/vacations/${vacation._id}/impact`;
+      const res = await api.get(endpoint);
       setDetailVacation(res.data?.vacation || vacation);
       setDetailImpact(res.data?.impact || null);
     } catch (err) {
@@ -409,14 +514,459 @@ const VacationManagementPage = () => {
   };
 
   const formatDateTime = (dateString) => {
-    return new Date(dateString).toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    const value = new Date(dateString);
+    if (Number.isNaN(value.getTime())) return '';
+
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        timeZone: userTimezone,
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(value);
+    } catch (e) {
+      return value.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
   };
+
+  const formatDateTimeForTimezone = useCallback((dateString, timezone, includeZone = false) => {
+    const value = new Date(dateString);
+    if (Number.isNaN(value.getTime())) return '';
+
+    try {
+      const formatterOptions = {
+        timeZone: timezone || userTimezone,
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      };
+
+      if (includeZone) {
+        try {
+          return new Intl.DateTimeFormat('en-US', {
+            ...formatterOptions,
+            timeZoneName: 'shortOffset',
+          }).format(value);
+        } catch (offsetError) {
+          return new Intl.DateTimeFormat('en-US', {
+            ...formatterOptions,
+            timeZoneName: 'short',
+          }).format(value);
+        }
+      }
+
+      return new Intl.DateTimeFormat('en-US', {
+        ...formatterOptions,
+      }).format(value);
+    } catch (e) {
+      return formatDateTime(dateString);
+    }
+  }, [userTimezone]);
+
+  const buildVacationWhatsappMessage = useCallback((vacation, recipient) => {
+    const recipientTimezone = recipient?.timezone || vacation?.timezone || userTimezone;
+    const epithet = formatRecipientEpithet(recipient?.epithet);
+    const greetingName = `${epithet ? `${epithet} ` : ''}${recipient?.firstName || ''}`.trim()
+      || `${recipient?.firstName || ''} ${recipient?.lastName || ''}`.trim()
+      || 'there';
+    const startLabel = formatDateTimeForTimezone(vacation.startDate, recipientTimezone, true);
+    const endLabel = formatDateTimeForTimezone(vacation.endDate, recipientTimezone, true);
+    const messageBody = String(vacation.message || '').trim();
+
+    return [
+      VACATION_WHATSAPP_COPY.title,
+      VACATION_WHATSAPP_COPY.decorativeLine,
+      '',
+      `${VACATION_WHATSAPP_COPY.greetingPrefix} ${greetingName},`,
+      '',
+      `${vacation.name}`,
+      messageBody,
+      `${VACATION_WHATSAPP_COPY.beginsLabel}: ${startLabel}`,
+      `${VACATION_WHATSAPP_COPY.endsLabel}: ${endLabel}`,
+      VACATION_WHATSAPP_COPY.timezoneNote,
+    ].filter(Boolean).join('\n');
+  }, [formatDateTimeForTimezone, userTimezone]);
+
+  const fetchWhatsappRecipients = useCallback(async (audience) => {
+    const res = await api.get('/settings/whatsapp-recipients', { params: { audience } });
+    return Array.isArray(res?.data?.recipients) ? res.data.recipients : [];
+  }, []);
+
+  const openVacationWhatsappWindow = useCallback(() => {
+    let popup = whatsappDraftWindowRef.current;
+
+    if (!popup || popup.closed) {
+      popup = window.open('', 'waraqa-vacation-whatsapp-sender');
+      if (!popup) return null;
+      whatsappDraftWindowRef.current = popup;
+    }
+
+    try {
+      popup.focus();
+    } catch (e) {
+      // ignore focus errors
+    }
+
+    return popup;
+  }, []);
+
+  const clearVacationWhatsappTimer = useCallback(() => {
+    if (whatsappDraftTimerRef.current) {
+      clearTimeout(whatsappDraftTimerRef.current);
+      whatsappDraftTimerRef.current = null;
+    }
+  }, []);
+
+  const updateQueueStatus = useCallback((session, index, status) => {
+    const queue = Array.isArray(session?.queue) ? session.queue : [];
+    return queue.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, status } : entry
+    ));
+  }, []);
+
+  const finalizeVacationWhatsappSession = useCallback((session) => {
+    clearVacationWhatsappTimer();
+    const queue = Array.isArray(session?.queue) ? session.queue : [];
+    const autoFailed = queue
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.status === 'opened')
+      .map(({ entry, index }) => ({
+        id: entry.id || `opened-${index}`,
+        name: entry.name || 'Unknown recipient',
+        role: entry.role || 'unknown',
+        reason: 'Opened but not confirmed as sent before auto-advance',
+      }));
+    const existingFailures = Array.isArray(session?.failed) ? session.failed : [];
+    const failureKeys = new Set(existingFailures.map((item) => `${item.role}:${item.id}:${item.reason}`));
+    const mergedFailures = [...existingFailures];
+    autoFailed.forEach((item) => {
+      const key = `${item.role}:${item.id}:${item.reason}`;
+      if (!failureKeys.has(key)) {
+        mergedFailures.push(item);
+        failureKeys.add(key);
+      }
+    });
+
+    setWhatsappDraftReport({
+      timestamp: new Date().toISOString(),
+      vacationId: session?.vacationId || null,
+      vacationName: session?.vacationName || 'System vacation',
+      audience: session?.audience || 'all',
+      attempted: Array.isArray(session?.recipients) ? session.recipients.length : 0,
+      sent: session?.sent || [],
+      failed: mergedFailures,
+    });
+    setWhatsappDraftSession(null);
+    setWhatsappDraftProgress(null);
+  }, [clearVacationWhatsappTimer]);
+
+  const openVacationWhatsappDraftForRecipient = useCallback((session, recipient, index) => {
+    if (!session || !recipient) return false;
+
+    const popup = openVacationWhatsappWindow();
+    if (!popup) {
+      const recipientName = `${recipient?.firstName || ''} ${recipient?.lastName || ''}`.trim() || 'Unknown recipient';
+      finalizeVacationWhatsappSession({
+        ...session,
+        failed: [
+          ...(session.failed || []),
+          {
+            id: recipient?.id || `popup-${index}`,
+            name: recipientName,
+            role: recipient?.role || 'unknown',
+            reason: 'Popup blocked while opening the WhatsApp tab',
+          },
+        ],
+      });
+      return false;
+    }
+
+    const validation = validateWhatsappPhone(recipient?.phone);
+    if (!validation.ok) {
+      const recipientName = `${recipient?.firstName || ''} ${recipient?.lastName || ''}`.trim() || 'Unknown recipient';
+      finalizeVacationWhatsappSession({
+        ...session,
+        failed: [
+          ...(session.failed || []),
+          {
+            id: recipient?.id || `invalid-open-${index}`,
+            name: recipientName,
+            role: recipient?.role || 'unknown',
+            reason: validation.reason,
+          },
+        ],
+      });
+      return false;
+    }
+
+    const message = buildVacationWhatsappMessage(session.vacation, recipient);
+    popup.location.href = `https://wa.me/${validation.normalized}?text=${encodeURIComponent(message)}`;
+
+    setWhatsappDraftSession((prev) => {
+      const base = prev || session;
+      if (!base) return prev;
+      return {
+        ...base,
+        draftOpenedForIndex: index,
+        queue: updateQueueStatus(base, index, 'opened'),
+      };
+    });
+
+    clearVacationWhatsappTimer();
+    whatsappDraftTimerRef.current = setTimeout(() => {
+      const currentSession = whatsappDraftSessionRef.current;
+      if (!currentSession) return;
+      if (currentSession.currentIndex !== index) return;
+
+      const nextSession = {
+        ...currentSession,
+        draftOpenedForIndex: null,
+      };
+
+      advanceVacationWhatsappSessionRef.current?.(nextSession, index + 1, true);
+    }, 3000);
+
+    return true;
+  }, [buildVacationWhatsappMessage, clearVacationWhatsappTimer, finalizeVacationWhatsappSession, openVacationWhatsappWindow, updateQueueStatus]);
+
+  const advanceVacationWhatsappSession = useCallback((session, startIndex = 0, autoOpenCurrent = false) => {
+    if (!session) return;
+
+    const recipients = Array.isArray(session.recipients) ? session.recipients : [];
+    const nextFailed = [...(session.failed || [])];
+    let nextIndex = startIndex;
+
+    while (nextIndex < recipients.length) {
+      const recipient = recipients[nextIndex];
+      const recipientName = `${recipient?.firstName || ''} ${recipient?.lastName || ''}`.trim() || 'Unknown recipient';
+      const validation = validateWhatsappPhone(recipient?.phone);
+
+      if (!validation.ok) {
+        nextFailed.push({
+          id: recipient?.id || `invalid-${nextIndex}`,
+          name: recipientName,
+          role: recipient?.role || 'unknown',
+          reason: validation.reason,
+        });
+        nextIndex += 1;
+        continue;
+      }
+
+      const nextSession = {
+        ...session,
+        failed: nextFailed,
+        currentIndex: nextIndex,
+        currentRecipient: recipient,
+        draftOpenedForIndex: null,
+        queue: Array.isArray(session?.queue) ? session.queue : [],
+      };
+
+      setWhatsappDraftSession(nextSession);
+      setWhatsappDraftProgress({
+        vacationId: session?.vacationId || null,
+        audience: session?.audience || 'all',
+        current: nextIndex + 1,
+        total: recipients.length,
+        name: recipientName,
+      });
+
+      if (autoOpenCurrent) {
+        openVacationWhatsappDraftForRecipient(nextSession, recipient, nextIndex);
+      }
+      return;
+    }
+
+    finalizeVacationWhatsappSession({
+      ...session,
+      failed: nextFailed,
+      currentIndex: recipients.length,
+      currentRecipient: null,
+      draftOpenedForIndex: null,
+    });
+  }, [finalizeVacationWhatsappSession, openVacationWhatsappDraftForRecipient]);
+
+  useEffect(() => {
+    advanceVacationWhatsappSessionRef.current = advanceVacationWhatsappSession;
+  }, [advanceVacationWhatsappSession]);
+
+  const markVacationWhatsappRecipient = useCallback((wasSent) => {
+    if (!whatsappDraftSession) return;
+
+    if (whatsappDraftSession.draftOpenedForIndex !== whatsappDraftSession.currentIndex) {
+      alert('Open the current recipient draft first, then mark it as sent or not sent.');
+      return;
+    }
+
+    clearVacationWhatsappTimer();
+
+    const currentRecipient = whatsappDraftSession.recipients?.[whatsappDraftSession.currentIndex];
+    if (!currentRecipient) {
+      finalizeVacationWhatsappSession(whatsappDraftSession);
+      return;
+    }
+
+    const recipientName = `${currentRecipient.firstName || ''} ${currentRecipient.lastName || ''}`.trim() || 'Unknown recipient';
+    const validation = validateWhatsappPhone(currentRecipient.phone);
+    const nextSession = {
+      ...whatsappDraftSession,
+      sent: [...(whatsappDraftSession.sent || [])],
+      failed: [...(whatsappDraftSession.failed || [])],
+    };
+
+    if (wasSent) {
+      nextSession.sent.push({
+        id: currentRecipient.id,
+        name: recipientName,
+        role: currentRecipient.role,
+        phone: validation.normalized,
+      });
+      nextSession.queue = updateQueueStatus(nextSession, whatsappDraftSession.currentIndex, 'sent');
+    } else {
+      const reasonInput = window.prompt(
+        `Marking ${recipientName} as not sent. Optional reason:`,
+        'Not confirmed as sent'
+      );
+      nextSession.failed.push({
+        id: currentRecipient.id,
+        name: recipientName,
+        role: currentRecipient.role,
+        reason: String(reasonInput || '').trim() || 'Not confirmed as sent',
+      });
+      nextSession.queue = updateQueueStatus(nextSession, whatsappDraftSession.currentIndex, 'not_sent');
+    }
+
+    advanceVacationWhatsappSession(nextSession, (whatsappDraftSession.currentIndex || 0) + 1, true);
+  }, [advanceVacationWhatsappSession, clearVacationWhatsappTimer, finalizeVacationWhatsappSession, updateQueueStatus, whatsappDraftSession]);
+
+  const reopenCurrentVacationWhatsappDraft = useCallback(() => {
+    if (!whatsappDraftSession?.currentRecipient) return;
+
+    const opened = openVacationWhatsappDraftForRecipient(
+      whatsappDraftSession,
+      whatsappDraftSession.currentRecipient,
+      whatsappDraftSession.currentIndex || 0,
+    );
+
+    if (!opened) {
+      alert('Could not open the WhatsApp draft. Please allow popups and try again.');
+    }
+  }, [openVacationWhatsappDraftForRecipient, whatsappDraftSession]);
+
+  const handleLaunchVacationWhatsAppDrafts = useCallback(async (vacation, audience) => {
+    if (!vacation?._id) {
+      setWhatsappDraftReport({
+        timestamp: new Date().toISOString(),
+        vacationId: vacation?._id || null,
+        vacationName: vacation?.name || 'System vacation',
+        audience,
+        attempted: 0,
+        sent: [],
+        failed: [{ id: 'invalid-vacation', name: 'System vacation', role: 'system', reason: 'Vacation record is missing or invalid' }],
+      });
+      return;
+    }
+
+    const popup = openVacationWhatsappWindow();
+    if (!popup) {
+      setWhatsappDraftReport({
+        timestamp: new Date().toISOString(),
+        vacationId: vacation?._id || null,
+        vacationName: vacation?.name || 'System vacation',
+        audience,
+        attempted: 0,
+        sent: [],
+        failed: [{ id: 'popup-blocked', name: 'WhatsApp sender', role: 'system', reason: 'Popup blocked while opening the WhatsApp tab' }],
+      });
+      return;
+    }
+
+    try {
+      popup.document.title = 'Waraqa WhatsApp Sender';
+      popup.document.body.innerHTML = '<div style="font-family: Segoe UI, Arial, sans-serif; padding: 24px; line-height: 1.6;"><h2>Preparing WhatsApp sender...</h2><p>Keep this tab open. The next recipient draft will load here.</p></div>';
+    } catch (e) {
+      // ignore document access issues
+    }
+
+    setWhatsappDraftProgress({
+      vacationId: vacation?._id || null,
+      audience,
+      current: 0,
+      total: 0,
+      name: '',
+    });
+
+    try {
+      const audiences = audience === 'all'
+        ? ['active_guardians', 'active_teachers']
+        : [audience === 'guardians' ? 'active_guardians' : 'active_teachers'];
+      const results = await Promise.all(audiences.map((item) => fetchWhatsappRecipients(item)));
+      const recipients = [];
+      const seen = new Set();
+
+      results.flat().forEach((recipient) => {
+        const key = `${recipient.role}:${recipient.id}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        recipients.push(recipient);
+      });
+
+      const session = {
+        vacation,
+        vacationId: vacation?._id || null,
+        vacationName: vacation?.name || 'System vacation',
+        audience,
+        recipients,
+        currentIndex: 0,
+        currentRecipient: null,
+        draftOpenedForIndex: null,
+        queue: recipients.map((recipient) => ({
+          id: recipient.id,
+          name: `${recipient.firstName || ''} ${recipient.lastName || ''}`.trim() || 'Unknown recipient',
+          role: recipient.role,
+          status: 'pending',
+        })),
+        sent: [],
+        failed: [],
+      };
+
+      if (!recipients.length) {
+        finalizeVacationWhatsappSession(session);
+        return;
+      }
+
+      advanceVacationWhatsappSession(session, 0, true);
+    } catch (err) {
+      console.error('Error preparing vacation WhatsApp drafts:', err);
+      setWhatsappDraftSession(null);
+      setWhatsappDraftReport({
+        timestamp: new Date().toISOString(),
+        vacationId: vacation?._id || null,
+        vacationName: vacation?.name || 'System vacation',
+        audience,
+        attempted: 0,
+        sent: [],
+        failed: [{
+          id: 'request-error',
+          name: 'Recipient lookup',
+          role: 'system',
+          reason: err?.response?.data?.message || err?.message || 'Failed to load recipients',
+        }],
+      });
+      setWhatsappDraftProgress(null);
+    } finally {
+      // progress stays active until the operator finishes the in-app send session
+    }
+  }, [advanceVacationWhatsappSession, fetchWhatsappRecipients, finalizeVacationWhatsappSession, openVacationWhatsappDraftForRecipient, openVacationWhatsappWindow]);
 
   const filteredIndividualVacations = individualVacations.filter(vacation => {
     const teacherFirst = vacation.user?.firstName || vacation.teacher?.firstName || '';
@@ -848,12 +1398,12 @@ const VacationManagementPage = () => {
   const renderSystemVacations = () => (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">System Vacations</h2>
           <p className="text-gray-600">Manage institution-wide holidays and breaks</p>
         </div>
-        <div className="flex space-x-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
           <button
             onClick={() => handleCreateVacation('system')}
             className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center space-x-2"
@@ -863,6 +1413,105 @@ const VacationManagementPage = () => {
           </button>
         </div>
       </div>
+
+      {whatsappDraftProgress && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="font-semibold">
+                Sending WhatsApp one by one for {whatsappDraftProgress.current}/{whatsappDraftProgress.total || 0}
+                {whatsappDraftProgress.name ? ` • ${whatsappDraftProgress.name}` : ''}
+              </div>
+              <div className="mt-1 text-blue-800">
+                One reusable WhatsApp tab is used for the full run. Each opened draft waits 3 seconds, then the next recipient opens automatically unless you click Sent or Not sent first.
+              </div>
+            </div>
+            {whatsappDraftSession?.currentRecipient && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={reopenCurrentVacationWhatsappDraft}
+                  className="rounded-lg border border-blue-300 bg-white px-3 py-2 font-medium text-blue-700 hover:bg-blue-100"
+                >
+                  Reopen draft
+                </button>
+                <button
+                  type="button"
+                  onClick={() => markVacationWhatsappRecipient(true)}
+                  className="rounded-lg border border-green-300 bg-green-600 px-3 py-2 font-medium text-white hover:bg-green-700"
+                >
+                  Sent
+                </button>
+                <button
+                  type="button"
+                  onClick={() => markVacationWhatsappRecipient(false)}
+                  className="rounded-lg border border-orange-300 bg-orange-600 px-3 py-2 font-medium text-white hover:bg-orange-700"
+                >
+                  Not sent
+                </button>
+              </div>
+            )}
+          </div>
+
+          {Array.isArray(whatsappDraftSession?.queue) && whatsappDraftSession.queue.length > 0 && (
+            <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {whatsappDraftSession.queue.map((entry, index) => {
+                const status = String(entry.status || 'pending');
+                const isCurrent = index === whatsappDraftSession.currentIndex;
+                const tone = status === 'sent'
+                  ? 'border-green-200 bg-green-50 text-green-800'
+                  : status === 'not_sent'
+                    ? 'border-orange-200 bg-orange-50 text-orange-800'
+                    : status === 'opened'
+                      ? 'border-blue-200 bg-blue-100 text-blue-900'
+                      : 'border-slate-200 bg-white text-slate-700';
+
+                return (
+                  <div key={`${entry.role}-${entry.id}-${index}`} className={`rounded-lg border px-3 py-2 ${tone}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium truncate">{entry.name}</div>
+                      <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold capitalize">
+                        {status === 'not_sent' ? 'not sent' : status}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-2 text-xs opacity-80">
+                      <span>{entry.role}</span>
+                      <span>{isCurrent ? 'current' : `#${index + 1}`}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {whatsappDraftReport && (
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">Last WhatsApp send run</h3>
+              <p className="text-sm text-gray-600">
+                {whatsappDraftReport.vacationName} • sent {whatsappDraftReport.sent.length}/{whatsappDraftReport.attempted}
+              </p>
+            </div>
+            <div className={`text-sm font-medium ${whatsappDraftReport.failed.length ? 'text-orange-600' : 'text-green-600'}`}>
+              {whatsappDraftReport.failed.length
+                ? `${whatsappDraftReport.failed.length} recipient${whatsappDraftReport.failed.length === 1 ? '' : 's'} not sent`
+                : 'All selected recipients were confirmed as sent'}
+            </div>
+          </div>
+          {whatsappDraftReport.failed.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {whatsappDraftReport.failed.map((entry) => (
+                <div key={`${entry.role}-${entry.id}`} className="rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm text-orange-900">
+                  <span className="font-medium">{entry.name}</span> • {entry.role} • {entry.reason}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* System Vacation List */}
       <div className="bg-white rounded-lg shadow">
@@ -891,20 +1540,80 @@ const VacationManagementPage = () => {
                         </span>
                       )}
                     </div>
-                    <p className="text-gray-600 mb-2">{vacation.message}</p>
-                    <div className="flex items-center space-x-4 text-sm text-gray-500">
-                      <div className="flex items-center space-x-1">
+                    <div className="mb-4 rounded-2xl border border-amber-100 bg-gradient-to-br from-amber-50 via-white to-emerald-50 p-4 shadow-sm">
+                      <div className="text-center text-xs tracking-[0.28em] text-amber-700" style={{ fontFamily: VACATION_LABEL_FONT }}>
+                        {ISLAMIC_DECORATIVE_LINE}
+                      </div>
+                      <p className="mt-3 text-lg leading-8 text-slate-700 whitespace-pre-line" style={{ fontFamily: VACATION_BODY_FONT }}>
+                        {vacation.message}
+                      </p>
+                    </div>
+                    <div className="grid gap-3 text-sm text-gray-600 md:grid-cols-3">
+                      <div className="flex items-start space-x-2 rounded-xl border border-gray-200 bg-white px-3 py-3">
                         <Calendar className="h-4 w-4" />
-                            <span>{formatDateTime(vacation.startDate)} - {formatDateTime(vacation.endDate)}</span>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-[0.2em] text-gray-400" style={{ fontFamily: VACATION_LABEL_FONT }}>
+                            Begins
+                          </div>
+                          <span className="mt-1 block">{formatDateTime(vacation.startDate)}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-1">
+                      <div className="flex items-start space-x-2 rounded-xl border border-gray-200 bg-white px-3 py-3">
+                        <Calendar className="h-4 w-4" />
+                        <div>
+                          <div className="text-[11px] uppercase tracking-[0.2em] text-gray-400" style={{ fontFamily: VACATION_LABEL_FONT }}>
+                            Ends
+                          </div>
+                          <span className="mt-1 block">{formatDateTime(vacation.endDate)}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-start space-x-2 rounded-xl border border-gray-200 bg-white px-3 py-3">
                         <Clock className="h-4 w-4" />
-                        <span>Timezone: {vacation.timezone}</span>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-[0.2em] text-gray-400" style={{ fontFamily: VACATION_LABEL_FONT }}>
+                            Timezone
+                          </div>
+                          <span className="mt-1 block">Set in {vacation.timezone} and shown here in {userTimezone}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-1">
+                      <div className="flex items-start space-x-2 rounded-xl border border-gray-200 bg-white px-3 py-3 md:col-span-3">
                         <Users className="h-4 w-4" />
-                        <span>{vacation.affectedClasses || 0} classes affected</span>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-[0.2em] text-gray-400" style={{ fontFamily: VACATION_LABEL_FONT }}>
+                            Impact
+                          </div>
+                          <span className="mt-1 block">{vacation.affectedClasses || 0} classes affected during this system vacation.</span>
+                        </div>
                       </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleLaunchVacationWhatsAppDrafts(vacation, 'guardians')}
+                        disabled={Boolean(whatsappDraftProgress)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Send className="h-4 w-4" />
+                        Send to guardians
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleLaunchVacationWhatsAppDrafts(vacation, 'teachers')}
+                        disabled={Boolean(whatsappDraftProgress)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Send className="h-4 w-4" />
+                        Send to teachers
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleLaunchVacationWhatsAppDrafts(vacation, 'all')}
+                        disabled={Boolean(whatsappDraftProgress)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Users className="h-4 w-4" />
+                        Send to all active users
+                      </button>
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">

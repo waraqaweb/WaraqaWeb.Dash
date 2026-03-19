@@ -44,6 +44,8 @@ const VacationDetailsModal = ({ isOpen, onClose, vacation, impact, loading, erro
   const safeImpact = impact || null;
   const students = safeImpact?.students || [];
   const status = vacation?.lifecycleStatus || vacation?.status;
+  const detailsLabel = vacation?.message && !vacation?.reason ? 'Message' : 'Reason';
+  const detailsValue = vacation?.reason || vacation?.message || '—';
   const totalMinutes = safeImpact?.totalMinutes || 0;
   const totalHours = totalMinutes ? (totalMinutes / 60).toFixed(1) : null;
   const approvedByName = vacation && typeof vacation.approvedBy === 'object' && vacation.approvedBy !== null
@@ -96,8 +98,8 @@ const VacationDetailsModal = ({ isOpen, onClose, vacation, impact, loading, erro
                     </span>
                   )}
                 </div>
-                <p className="text-gray-700">
-                  <span className="font-medium">Reason:</span> {vacation.reason || '—'}
+                <p className="text-gray-700 whitespace-pre-line">
+                  <span className="font-medium">{detailsLabel}:</span> {detailsValue}
                 </p>
                 {approvedByName && (
                   <p className="text-sm text-gray-500">Approved by {approvedByName}</p>

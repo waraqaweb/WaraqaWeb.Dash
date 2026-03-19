@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import moment from 'moment-timezone';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
 import { X, User, Globe, AlertCircle } from 'lucide-react';
@@ -40,6 +41,24 @@ const VacationModal = ({
   });
 
   const [errors, setErrors] = useState({});
+
+  const toTimezoneDateTimeValue = (value, timezone = DEFAULT_TIMEZONE) => {
+    if (!value) return '';
+
+    const zoned = moment.utc(value).tz(timezone);
+    if (!zoned.isValid()) return '';
+
+    return zoned.format('YYYY-MM-DDTHH:mm');
+  };
+
+  const toUtcIsoFromTimezone = (value, timezone = DEFAULT_TIMEZONE) => {
+    if (!value) return '';
+
+    const zoned = moment.tz(value, 'YYYY-MM-DDTHH:mm', timezone);
+    if (!zoned.isValid()) return '';
+
+    return zoned.utc().toISOString();
+  };
 
   const toLocalDateTimeValue = (value) => {
     if (!value) return '';
@@ -86,12 +105,13 @@ const VacationModal = ({
             studentHandling
           });
         } else {
+          const systemTimezone = vacation.timezone || DEFAULT_TIMEZONE;
           setSystemForm({
             name: vacation.name || '',
             message: vacation.message || '',
-            startDate: toLocalDateTimeValue(vacation.startDate) || '',
-            endDate: toLocalDateTimeValue(vacation.endDate) || '',
-            timezone: vacation.timezone || DEFAULT_TIMEZONE
+            startDate: toTimezoneDateTimeValue(vacation.startDate, systemTimezone) || '',
+            endDate: toTimezoneDateTimeValue(vacation.endDate, systemTimezone) || '',
+            timezone: systemTimezone
           });
         }
       } else {
@@ -245,11 +265,14 @@ const VacationModal = ({
       }
     } else {
       if (!systemForm.name) newErrors.name = 'Name is required';
+      if (!systemForm.message?.trim()) newErrors.message = 'Message is required';
       if (!systemForm.startDate) newErrors.startDate = 'Start date is required';
       if (!systemForm.endDate) newErrors.endDate = 'End date is required';
       
       if (systemForm.startDate && systemForm.endDate) {
-        if (new Date(systemForm.startDate) >= new Date(systemForm.endDate)) {
+        const startMoment = moment.tz(systemForm.startDate, 'YYYY-MM-DDTHH:mm', systemForm.timezone || DEFAULT_TIMEZONE);
+        const endMoment = moment.tz(systemForm.endDate, 'YYYY-MM-DDTHH:mm', systemForm.timezone || DEFAULT_TIMEZONE);
+        if (startMoment.isValid() && endMoment.isValid() && !endMoment.isAfter(startMoment)) {
           newErrors.endDate = 'End date must be after start date';
         }
       }
@@ -293,10 +316,12 @@ const VacationModal = ({
           await api.post('/vacations', payload);
         }
       } else {
+        const startDate = toUtcIsoFromTimezone(systemForm.startDate, systemForm.timezone || DEFAULT_TIMEZONE);
+        const endDate = toUtcIsoFromTimezone(systemForm.endDate, systemForm.timezone || DEFAULT_TIMEZONE);
         const payload = {
           ...systemForm,
-          startDate: new Date(systemForm.startDate).toISOString(),
-          endDate: new Date(systemForm.endDate).toISOString()
+          startDate,
+          endDate
         };
 
         if (vacation) {
@@ -554,15 +579,20 @@ const VacationModal = ({
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Message
+                    Message *
                   </label>
                   <textarea
                     value={systemForm.message}
                     onChange={(e) => setSystemForm(prev => ({ ...prev, message: e.target.value }))}
                     rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                      errors.message ? 'border-red-300' : 'border-gray-300'
+                    }`}
                     placeholder="Message to display to users about this vacation..."
                   />
+                  {errors.message && (
+                    <p className="mt-1 text-sm text-red-600">{errors.message}</p>
+                  )}
                 </div>
 
                 {/* Date Range */}

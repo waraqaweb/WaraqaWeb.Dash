@@ -4,26 +4,34 @@ const User = require('../models/User');
 const notificationService = require('./notificationService');
 const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 
+const buildAffectedClassesQuery = (startDate, endDate) => ({
+  scheduledDate: {
+    $gte: startDate,
+    $lte: endDate
+  },
+  status: { $in: ['scheduled', 'in_progress'] }
+});
+
+const buildSystemVacationOverlapQuery = (startDate, endDate) => ({
+  isActive: true,
+  startDate: { $lt: endDate },
+  endDate: { $gt: startDate }
+});
+
 /**
  * Apply system vacation effects - put affected classes on hold
  * @param {Object} systemVacation - System vacation document
  */
 async function applySystemVacation(systemVacation) {
   try {
-    // Find all classes within the vacation period
-    const affectedClasses = await Class.find({
-      scheduledDate: {
-        $gte: systemVacation.startDate,
-        $lte: systemVacation.endDate
-      },
-      status: { $in: ['scheduled', 'in_progress'] }
-    });
+    const affectedClasses = await Class.countDocuments(
+      buildAffectedClassesQuery(systemVacation.startDate, systemVacation.endDate)
+    );
 
-    systemVacation.affectedClasses = affectedClasses.length;
+    systemVacation.affectedClasses = affectedClasses;
     await systemVacation.save();
 
-    // Put all affected classes on hold
-    await putClassesOnHold(affectedClasses, systemVacation);
+    await putClassesOnHold(systemVacation);
 
     // Send notifications to all users
     await sendSystemVacationNotifications(systemVacation);
@@ -56,20 +64,14 @@ async function createSystemVacation(vacationData) {
       createdBy: vacationData.createdBy
     });
 
-    // Find all classes within the vacation period
-    const affectedClasses = await Class.find({
-      scheduledDate: {
-        $gte: vacationData.startDate,
-        $lte: vacationData.endDate
-      },
-      status: { $in: ['scheduled', 'in_progress'] }
-    });
+    const affectedClasses = await Class.countDocuments(
+      buildAffectedClassesQuery(vacationData.startDate, vacationData.endDate)
+    );
 
-    systemVacation.affectedClasses = affectedClasses.length;
+    systemVacation.affectedClasses = affectedClasses;
     await systemVacation.save();
 
-    // Put all affected classes on hold
-    await putClassesOnHold(affectedClasses, systemVacation);
+    await putClassesOnHold(systemVacation);
 
     // Send notifications to all users
     await sendSystemVacationNotifications(systemVacation);
@@ -83,26 +85,29 @@ async function createSystemVacation(vacationData) {
 
 /**
  * Put classes on hold for system vacation
- * @param {Array} classes - Array of class documents
  * @param {Object} systemVacation - System vacation document
  */
-async function putClassesOnHold(classes, systemVacation) {
+async function putClassesOnHold(systemVacation) {
   try {
-    for (const cls of classes) {
-      cls.status = 'on_hold';
-      cls.hidden = true;
-      if (!cls.cancellation) {
-        cls.cancellation = {};
+    const now = new Date();
+    const result = await Class.updateMany(
+      buildAffectedClassesQuery(systemVacation.startDate, systemVacation.endDate),
+      {
+        $set: {
+          status: 'on_hold',
+          hidden: true,
+          'cancellation.reason': `System Vacation: ${systemVacation.name}`,
+          'cancellation.cancelledBy': systemVacation.createdBy,
+          'cancellation.cancelledByRole': 'admin',
+          'cancellation.cancelledAt': now,
+          'cancellation.isTemporary': true,
+          'cancellation.systemVacationId': systemVacation._id,
+        },
       }
-      cls.cancellation.reason = `System Vacation: ${systemVacation.name}`;
-      cls.cancellation.cancelledBy = systemVacation.createdBy;
-      cls.cancellation.cancelledAt = new Date();
-      cls.cancellation.isTemporary = true;
-      cls.cancellation.systemVacationId = systemVacation._id;
-      
-      await cls.save();
-    }
-    console.log(`Put ${classes.length} classes on hold for system vacation: ${systemVacation.name}`);
+    );
+
+    const modifiedCount = result?.modifiedCount ?? result?.nModified ?? 0;
+    console.log(`Put ${modifiedCount} classes on hold for system vacation: ${systemVacation.name}`);
   } catch (error) {
     console.error('Error putting classes on hold:', error);
     throw error;
@@ -163,20 +168,25 @@ async function sendSystemVacationNotifications(systemVacation) {
  */
 async function restoreClassesAfterSystemVacation(systemVacationId) {
   try {
-    const classes = await Class.find({
-      'cancellation.systemVacationId': systemVacationId,
-      status: 'on_hold'
-    });
+    const result = await Class.updateMany(
+      {
+        'cancellation.systemVacationId': systemVacationId,
+        status: 'on_hold'
+      },
+      {
+        $set: {
+          status: 'scheduled',
+          hidden: false,
+        },
+        $unset: {
+          cancellation: '',
+        },
+      }
+    );
 
-    for (const cls of classes) {
-      cls.status = 'scheduled';
-      cls.hidden = false;
-      cls.cancellation = undefined;
-      await cls.save();
-    }
-
-    console.log(`Restored ${classes.length} classes after system vacation`);
-    return classes.length;
+    const restoredCount = result?.modifiedCount ?? result?.nModified ?? 0;
+    console.log(`Restored ${restoredCount} classes after system vacation`);
+    return restoredCount;
   } catch (error) {
     console.error('Error restoring classes after system vacation:', error);
     throw error;
@@ -202,6 +212,25 @@ async function getCurrentVacation() {
 }
 
 /**
+ * Get the current active system vacation or the next upcoming active vacation.
+ * @param {Date} referenceDate
+ * @returns {Promise<SystemVacation|null>}
+ */
+async function getCurrentOrUpcomingVacation(referenceDate = new Date()) {
+  try {
+    return await SystemVacation.findOne({
+      isActive: true,
+      endDate: { $gte: referenceDate }
+    })
+      .populate('createdBy', 'firstName lastName email')
+      .sort({ startDate: 1 });
+  } catch (error) {
+    console.error('Error getting current or upcoming system vacation:', error);
+    return null;
+  }
+}
+
+/**
  * Get active system vacation that affects a given date
  * @param {Date} date - Date to check
  * @returns {Promise<SystemVacation|null>}
@@ -215,6 +244,22 @@ async function getActiveSystemVacationForDate(date) {
     });
   } catch (error) {
     console.error('Error checking system vacation for date:', error);
+    return null;
+  }
+}
+
+/**
+ * Get an overlapping active system vacation for a date range.
+ * @param {Date} startDate
+ * @param {Date} endDate
+ * @returns {Promise<SystemVacation|null>}
+ */
+async function getOverlappingSystemVacation(startDate, endDate) {
+  try {
+    return await SystemVacation.findOne(buildSystemVacationOverlapQuery(startDate, endDate))
+      .sort({ startDate: 1 });
+  } catch (error) {
+    console.error('Error checking overlapping system vacation:', error);
     return null;
   }
 }
@@ -330,7 +375,9 @@ module.exports = {
   sendSystemVacationNotifications,
   restoreClassesAfterSystemVacation,
   getCurrentVacation,
+  getCurrentOrUpcomingVacation,
   getActiveSystemVacationForDate,
+  getOverlappingSystemVacation,
   getAllSystemVacations,
   endSystemVacation,
   checkAndRestoreExpiredSystemVacations

@@ -650,6 +650,15 @@ const classSchema = new mongoose.Schema({
       type: String,
       enum: ["admin", "teacher", "guardian", "student"],
     },
+    isTemporary: {
+      type: Boolean,
+      default: false,
+    },
+    systemVacationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SystemVacation',
+      default: null,
+    },
     refundIssued: {
       type: Boolean,
       default: false,

@@ -1,13 +1,22 @@
 let audioCtx = null;
 let unlockBound = false;
 
-const getAudioContext = () => {
+const hasUserActivation = () => {
+  if (typeof window === 'undefined') return false;
+
+  const activation = navigator?.userActivation;
+  if (!activation) return false;
+
+  return Boolean(activation.isActive || activation.hasBeenActive);
+};
+
+const getAudioContext = ({ createIfNeeded = true } = {}) => {
   if (typeof window === 'undefined') return null;
 
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) return null;
 
-  if (!audioCtx) {
+  if (!audioCtx && createIfNeeded && hasUserActivation()) {
     audioCtx = new AudioContextClass();
   }
 
@@ -15,10 +24,12 @@ const getAudioContext = () => {
 };
 
 const resumeAudioContext = async () => {
-  const ctx = getAudioContext();
+  const ctx = getAudioContext({ createIfNeeded: hasUserActivation() });
   if (!ctx) return false;
 
   if (ctx.state === 'running') return true;
+
+  if (!hasUserActivation()) return false;
 
   try {
     await ctx.resume();
@@ -71,10 +82,12 @@ const playTone = (ctx, {
 };
 
 const playPattern = async (steps = []) => {
+  if (!audioCtx && !hasUserActivation()) return false;
+
   const ready = await resumeAudioContext();
   if (!ready) return false;
 
-  const ctx = getAudioContext();
+  const ctx = getAudioContext({ createIfNeeded: false });
   if (!ctx) return false;
 
   const base = ctx.currentTime + 0.01;

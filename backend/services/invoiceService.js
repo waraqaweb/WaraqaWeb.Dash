@@ -110,6 +110,7 @@ const calculatePaidHoursFromLogs = (invoice, hourlyRate) => {
 const CANCELLED_CLASS_STATUSES = new Set([
   'cancelled',
   'cancelled_by_teacher',
+  'cancelled_by_student',
   'cancelled_by_guardian',
   'cancelled_by_admin',
   'cancelled_by_system',
@@ -3117,6 +3118,7 @@ class InvoiceService {
         'pattern',
         'cancelled',
         'cancelled_by_teacher',
+        'cancelled_by_student',
         'cancelled_by_guardian',
         'cancelled_by_admin',
         'cancelled_by_system'

@@ -8,7 +8,7 @@ const User = require('../models/User');
 const InvoiceService = require('../services/invoiceService');
 const notificationService = require('../services/notificationService');
 const { buildGuardianFinancialSnapshot } = require('../utils/guardianFinancial');
-const { extractSequenceFromName, ensureSequenceAtLeast, formatSequence } = require('../utils/invoiceNaming');
+const { ensureSequenceAtLeast, formatSequence, slugifyInvoiceName } = require('../utils/invoiceNaming');
 const { allocateNextSequence, buildInvoiceIdentifiers } = require('../utils/invoiceNaming');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const GuardianHoursAudit = require('../models/GuardianHoursAudit');
@@ -256,6 +256,17 @@ const normalizeInvoiceItemStatus = (status) => {
   return 'scheduled';
 };
 
+const CANCELLED_CLASS_STATUSES = new Set([
+  'cancelled',
+  'cancelled_by_teacher',
+  'cancelled_by_student',
+  'cancelled_by_guardian',
+  'cancelled_by_admin',
+  'cancelled_by_system',
+  'pattern',
+  'on_hold'
+]);
+
 const computeTransferFeePreview = ({ baseTotal, guardianFinancial, coverage }) => {
   const transferFee = guardianFinancial?.transferFee && typeof guardianFinancial.transferFee === 'object'
     ? guardianFinancial.transferFee
@@ -325,7 +336,10 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit, endDate 
     .populate('teacher', 'firstName lastName email')
     .lean();
 
-  unpaidClasses = unpaidClasses.filter((cls) => cls?.status !== 'pattern');
+  unpaidClasses = unpaidClasses.filter((cls) => {
+    const normalizedStatus = String(cls?.status || '').trim().toLowerCase();
+    return !CANCELLED_CLASS_STATUSES.has(normalizedStatus);
+  });
 
   unpaidClasses.sort((a, b) => {
     const dateA = new Date(a.scheduledDate || a.date || 0);
@@ -1995,12 +2009,10 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       if (incomingName) {
         invoice.invoiceName = incomingName;
         invoice.invoiceNameManual = true;
-        const manualSequence = extractSequenceFromName(incomingName);
-        if (Number.isFinite(manualSequence)) {
-          invoice.invoiceSequence = manualSequence;
-          invoice.paypalInvoiceNumber = formatSequence(manualSequence);
-          await ensureSequenceAtLeast(invoice.type || 'guardian_invoice', manualSequence);
-        }
+        invoice.invoiceSlug = slugifyInvoiceName(
+          incomingName,
+          invoice.invoiceSequence || Date.now()
+        );
       } else {
         invoice.invoiceNameManual = false;
       }

@@ -105,6 +105,7 @@ const normalizeStatusValue = (value) => (typeof value === 'string' ? value.trim(
 const CANCELLED_CLASS_STATUSES = new Set([
   'cancelled',
   'cancelled_by_teacher',
+  'cancelled_by_student',
   'cancelled_by_guardian',
   'cancelled_by_admin',
   'cancelled_by_system',
@@ -237,14 +238,12 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesStatus, setNotesStatus] = useState(null);
   const [waiveTransferFee, setWaiveTransferFee] = useState(false);
-  const [invoiceNameEditing, setInvoiceNameEditing] = useState(false);
-  const [invoiceNameDraft, setInvoiceNameDraft] = useState('');
   const [invoiceNameStatus, setInvoiceNameStatus] = useState(null);
-  const invoiceNameInputRef = useRef(null);
   const [invoiceNameParts, setInvoiceNameParts] = useState({ prefix: 'Waraqa', month: 'Mar', year: '2026', seq: '' });
-  const [editingPart, setEditingPart] = useState(null);
+  const [seqEditing, setSeqEditing] = useState(false);
+  const [seqDraft, setSeqDraft] = useState('');
   const [editingInlineNote, setEditingInlineNote] = useState(null);
-  const partInputRefs = useRef({});
+  const seqInputRef = useRef(null);
 
   const notesLastSavedRef = useRef({ notes: '', internalNotes: '', invoiceReferenceLink: '' });
   const skipNextNotesSave = useRef(false);
@@ -260,12 +259,12 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const coverageEditingRef = useRef(false);
   const seededInitialInvoiceIdRef = useRef(null);
 
-  const formatDateInput = (value) => {
+  const formatDateInput = useCallback((value) => {
     if (!value) return '';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '';
     return date.toISOString().slice(0, 10);
-  };
+  }, []);
 
   const formatDateDisplay = useCallback((value) => {
     if (!value) return '';
@@ -351,12 +350,12 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
       };
     }
 
-    if (!invoiceNameEditing && !editingPart) {
+    if (!seqEditing) {
       const parts = parseInvoiceNameParts(inv?.invoiceName || '');
       setInvoiceNameParts(parts);
-      setInvoiceNameDraft(buildInvoiceNameFromParts(parts));
+      setSeqDraft(parts.seq || '');
     }
-  }, [invoiceNameEditing]);
+  }, [seqEditing, parseInvoiceNameParts, formatDateInput]);
 
   const toNumberOr = (value, fallback = 0) => {
     const numeric = Number(value);
@@ -1240,51 +1239,63 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     }
   }, [invoice, resolvedInvoiceId, noteEdits, syncInvoiceState]);
 
-  const handleSaveInvoiceName = useCallback(async (overrideName) => {
+  const handleSaveSeq = useCallback(async (nextSeqValue) => {
     if (!isAdmin) return;
     const targetInvoiceId = invoice?._id || resolvedInvoiceId;
     if (!targetInvoiceId) return;
-    const trimmed = String(overrideName || invoiceNameDraft || '').trim();
-    if (!trimmed) {
-      setInvoiceNameStatus({ type: 'error', message: 'Invoice name required' });
-      return;
-    }
 
+    const prevName = invoice?.invoiceName || '';
+    const nextSeq = typeof nextSeqValue === 'string' ? nextSeqValue : seqDraft;
+    const nextName = buildInvoiceNameFromParts({
+      ...invoiceNameParts,
+      seq: nextSeq,
+    });
+
+    const optimisticParts = parseInvoiceNameParts(nextName);
     setInvoiceNameStatus({ type: 'progress', message: 'Saving…' });
+    setInvoiceNameParts(optimisticParts);
+    setSeqDraft(optimisticParts.seq || '');
+    setInvoice((prev) => (prev ? { ...prev, invoiceName: nextName } : prev));
+
     try {
       suppressSocketRefreshUntilRef.current = Date.now() + 1500;
-      const { data } = await api.put(`/invoices/${targetInvoiceId}`, { invoiceName: trimmed });
+      const { data } = await api.put(`/invoices/${targetInvoiceId}`, { invoiceName: nextName });
       const updated = data?.invoice || data;
-      if (updated && typeof updated === 'object') {
-        setInvoice((prev) => (prev ? { ...prev, ...updated, invoiceName: updated.invoiceName || trimmed } : updated));
-      } else {
-        setInvoice((prev) => (prev ? { ...prev, invoiceName: trimmed } : prev));
-      }
-      const nextParts = parseInvoiceNameParts(updated?.invoiceName || trimmed);
-      setInvoiceNameParts(nextParts);
-      setInvoiceNameDraft(buildInvoiceNameFromParts(nextParts));
-      if (updated) {
-        const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: targetInvoiceId });
-        writeCache(cacheKey, { invoice: updated }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
-      }
-      setInvoiceNameEditing(false);
-      setEditingPart(null);
+      const resolved = updated && typeof updated === 'object'
+        ? updated
+        : { ...(invoice || {}), invoiceName: nextName };
+
+      syncInvoiceState(resolved);
+
+      const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: targetInvoiceId });
+      writeCache(cacheKey, { invoice: resolved }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
+
+      setSeqEditing(false);
       setInvoiceNameStatus({ type: 'success', message: 'Saved' });
       setTimeout(() => setInvoiceNameStatus(null), 1500);
     } catch (err) {
       console.error('Invoice name update failed:', err);
+      const fallbackParts = parseInvoiceNameParts(prevName);
+      setInvoiceNameParts(fallbackParts);
+      setSeqDraft(fallbackParts.seq || '');
+      setInvoice((prev) => (prev ? { ...prev, invoiceName: prevName } : prev));
       const message = err?.response?.data?.message || 'Failed to update invoice name';
       setInvoiceNameStatus({ type: 'error', message });
     }
-  }, [isAdmin, invoice, resolvedInvoiceId, invoiceNameDraft, parseInvoiceNameParts, buildInvoiceNameFromParts, user?._id]);
+  }, [isAdmin, invoice, resolvedInvoiceId, seqDraft, buildInvoiceNameFromParts, invoiceNameParts, parseInvoiceNameParts, syncInvoiceState, user?._id]);
 
   useEffect(() => {
-    if (!editingPart) return;
-    const input = partInputRefs.current[editingPart];
-    if (input && typeof input.select === 'function') {
-      input.select();
-    }
-  }, [editingPart]);
+    if (!seqEditing || !seqInputRef.current) return;
+    const target = seqInputRef.current;
+    target.focus();
+    target.select();
+    setTimeout(() => {
+      try {
+        target.focus();
+        target.select();
+      } catch (_) {}
+    }, 0);
+  }, [seqEditing]);
 
   useEffect(() => {
     if (!invoice) return;
@@ -1740,69 +1751,50 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
             <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap pb-1 pr-12 sm:pr-14">
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <h2 className="flex min-w-0 items-center gap-1.5 text-xl font-semibold text-slate-900 sm:text-2xl">
-                    {(['prefix', 'month', 'year', 'seq']).map((partKey, idx) => {
-                      const value = invoiceNameParts[partKey] || '';
-                      const isSeq = partKey === 'seq';
-                      const shouldEditSeq = isSeq && isAdmin && !value;
-                      const isEditing = editingPart === partKey || shouldEditSeq;
-                      const inputClass = isSeq ? 'w-16' : partKey === 'year' ? 'w-14' : partKey === 'month' ? 'w-12' : 'w-20';
-                      return (
-                        <React.Fragment key={partKey}>
-                          {isEditing ? (
-                            <input
-                              ref={(node) => { partInputRefs.current[partKey] = node; }}
-                              value={value}
-                              onChange={(e) => {
-                                const next = { ...invoiceNameParts, [partKey]: e.target.value };
-                                setInvoiceNameParts(next);
-                                setInvoiceNameDraft(buildInvoiceNameFromParts(next));
-                              }}
-                              autoFocus={shouldEditSeq}
-                              onBlur={() => {
-                                const nextName = buildInvoiceNameFromParts(invoiceNameParts);
-                                setInvoiceNameEditing(false);
-                                setEditingPart(null);
-                                handleSaveInvoiceName(nextName);
-                              }}
-                              onFocus={(e) => e.target.select()}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  const nextName = buildInvoiceNameFromParts(invoiceNameParts);
-                                  setInvoiceNameEditing(false);
-                                  setEditingPart(null);
-                                  handleSaveInvoiceName(nextName);
-                                }
-                                if (e.key === 'Escape') {
-                                  e.preventDefault();
-                                  const parts = parseInvoiceNameParts(invoice?.invoiceName || '');
-                                  setInvoiceNameParts(parts);
-                                  setInvoiceNameDraft(buildInvoiceNameFromParts(parts));
-                                  setInvoiceNameEditing(false);
-                                  setEditingPart(null);
-                                  setInvoiceNameStatus(null);
-                                }
-                              }}
-                              className={`${inputClass} border-0 border-b border-slate-300 bg-transparent px-0 py-0 text-xl font-semibold text-slate-900 focus:border-slate-500 focus:outline-none sm:text-2xl`}
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!isAdmin) return;
-                                setInvoiceNameEditing(true);
-                                setEditingPart(partKey);
-                              }}
-                              className={`px-0.5 ${isAdmin ? 'hover:text-slate-700' : ''}`}
-                              title={isAdmin ? 'Click to edit' : undefined}
-                            >
-                              {value || (isSeq ? '' : partKey === 'prefix' ? 'Waraqa' : partKey === 'month' ? 'Mar' : '2026')}
-                            </button>
-                          )}
-                          {idx < 3 && <span className="text-slate-400">-</span>}
-                        </React.Fragment>
-                      );
-                    })}
+                  <span>{`${invoiceNameParts.prefix || 'Waraqa'}-${invoiceNameParts.month || ''}-${invoiceNameParts.year || ''}-`}</span>
+                  {seqEditing || !invoiceNameParts.seq ? (
+                    <input
+                      ref={seqInputRef}
+                      value={seqDraft}
+                      onChange={(e) => setSeqDraft(e.target.value)}
+                      autoFocus={seqEditing || !invoiceNameParts.seq}
+                      onFocus={(e) => e.target.select()}
+                      onClick={(e) => e.currentTarget.select()}
+                      onBlur={() => {
+                        setSeqEditing(false);
+                        handleSaveSeq(seqInputRef.current?.value ?? seqDraft);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          setSeqEditing(false);
+                          handleSaveSeq(e.currentTarget.value);
+                        }
+                        if (e.key === 'Escape') {
+                          e.preventDefault();
+                          const parts = parseInvoiceNameParts(invoice?.invoiceName || '');
+                          setInvoiceNameParts(parts);
+                          setSeqDraft(parts.seq || '');
+                          setSeqEditing(false);
+                          setInvoiceNameStatus(null);
+                        }
+                      }}
+                      className="w-20 border-0 border-b border-slate-300 bg-transparent px-0 py-0 text-xl font-semibold text-slate-900 focus:border-slate-500 focus:outline-none sm:text-2xl"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isAdmin) return;
+                        setSeqDraft(invoiceNameParts.seq || '');
+                        setSeqEditing(true);
+                      }}
+                      className={`px-0.5 ${isAdmin ? 'hover:text-slate-700' : ''}`}
+                      title={isAdmin ? 'Click to edit invoice number' : undefined}
+                    >
+                      {invoiceNameParts.seq || ''}
+                    </button>
+                  )}
                 </h2>
                 <span className={`inline-flex w-16 justify-start text-xs font-semibold leading-4 ${invoiceNameStatus ? (invoiceNameStatus.type === 'success' ? 'text-emerald-600' : invoiceNameStatus.type === 'error' ? 'text-rose-600' : 'text-slate-500') : 'text-transparent'}`}>
                   {invoiceNameStatus?.message || 'Saved'}

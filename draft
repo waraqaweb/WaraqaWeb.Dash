@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "messaging and vacation page"
+git commit -m "invoices and class report fixes"
 git push origin main
 
 

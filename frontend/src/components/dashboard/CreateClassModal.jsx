@@ -894,7 +894,10 @@ export default function CreateClassModal({
           {/* Form */}
           <form
             onSubmit={handleFormSubmit}
-            onFocusCapture={() => {
+            onFocusCapture={(event) => {
+              if (event.target instanceof Element && event.target.closest('[data-success-banner="true"]')) {
+                return;
+              }
               if (successMessage) setSuccessMessage('');
               if (shareMessage) setShareMessage('');
               if (duplicatePrompt) setDuplicatePrompt(null);
@@ -1012,7 +1015,7 @@ export default function CreateClassModal({
             )}
 
             {successMessage && (
-              <div className="flex items-center justify-between gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-md text-sm text-emerald-800">
+              <div data-success-banner="true" className="flex items-center justify-between gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-md text-sm text-emerald-800">
                 <div className="min-w-0">
                   <p>{successMessage}</p>
                   {shareMessage && (

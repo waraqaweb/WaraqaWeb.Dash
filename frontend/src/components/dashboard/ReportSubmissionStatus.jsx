@@ -22,7 +22,7 @@ const formatCompactDateTime = (value) => {
  * ReportSubmissionStatus Component
  * Displays submission window status, deadlines, and admin controls
  */
-const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefresh, compact = false, compactBare = false }) => {
+const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefresh, compact = false, compactBare = false, compactInline = false }) => {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -114,11 +114,11 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     containerClassName = compactBare ? 'px-0 py-0' : 'bg-slate-50 border border-slate-200 rounded-lg px-3 py-2'
   ) => (
     <div className={containerClassName}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <p className={`text-sm font-semibold ${toneClass}`}>{title}</p>
-          {lines.filter(Boolean).slice(0, 2).map((line, index) => (
-            <p key={index} className={`text-xs ${toneClass} break-words`}>
+      <div className={`flex justify-between gap-3 ${compactInline ? 'items-center' : 'items-start'}`}>
+        <div className={`min-w-0 ${compactInline ? 'flex flex-wrap items-center gap-x-2 gap-y-1' : 'space-y-1'}`}>
+          <p className={`${compactInline ? 'text-xs' : 'text-sm'} font-semibold ${toneClass}`}>{title}</p>
+          {lines.filter(Boolean).slice(0, compactInline ? 1 : 2).map((line, index) => (
+            <p key={index} className={`${compactInline ? 'text-[11px]' : 'text-xs'} ${toneClass} break-words`}>
               {line}
             </p>
           ))}
@@ -162,7 +162,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
   if (status.reportSubmitted) {
     if (compact) {
       return renderCompactStatus(
-        'Report Submitted',
+        compactInline ? 'Submitted' : 'Report Submitted',
         [],
         'text-green-700',
         null,
@@ -188,8 +188,8 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
   if (!status.classEnded) {
     if (compact) {
       return renderCompactStatus(
-        'Class Scheduled',
-        [status.classEndTime ? `Opens ${formatCompactDateTime(status.classEndTime)}` : null],
+        compactInline ? 'Opens later' : 'Class Scheduled',
+        [status.classEndTime ? `${compactInline ? 'At' : 'Opens'} ${formatCompactDateTime(status.classEndTime)}` : null],
         'text-blue-700',
         null,
         compactBare ? 'px-0 py-0' : 'bg-blue-50 border border-blue-200 rounded-lg px-3 py-2'
@@ -230,8 +230,8 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
       return (
         <>
           {renderCompactStatus(
-            'Submission Closed',
-            [userRole === 'teacher' ? 'Ask admin to reopen it' : 'Marked as unreported'],
+            compactInline ? 'Closed' : 'Submission Closed',
+            [userRole === 'teacher' ? (compactInline ? 'Ask admin' : 'Ask admin to reopen it') : 'Marked as unreported'],
             'text-red-700',
             compactAction,
             compactBare ? 'px-0 py-0' : 'bg-red-50 border border-red-200 rounded-lg px-3 py-2'
@@ -416,7 +416,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
           e.stopPropagation();
           setShowExtensionModal(true);
         }}
-        className="shrink-0 rounded bg-custom-teal px-2 py-1 text-[11px] font-semibold text-white hover:bg-custom-teal-dark"
+        className="shrink-0 rounded-lg bg-custom-teal px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-custom-teal-dark"
       >
         Extend
       </button>
@@ -425,10 +425,12 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     return (
       <>
         {renderCompactStatus(
-          isExtended ? 'Admin Extension Granted' : 'Submission Window Open',
+          compactInline ? (isExtended ? 'Extended' : 'Open') : (isExtended ? 'Admin Extension Granted' : 'Submission Window Open'),
           [
-            timeRemaining !== null ? `${formatTimeRemaining(timeRemaining)} left` : null,
-            deadline ? `Due ${formatCompactDateTime(deadline)}` : null,
+            compactInline
+              ? (timeRemaining !== null ? `${formatTimeRemaining(timeRemaining)} left` : (deadline ? `Due ${formatCompactDateTime(deadline)}` : null))
+              : (timeRemaining !== null ? `${formatTimeRemaining(timeRemaining)} left` : null),
+            compactInline ? null : (deadline ? `Due ${formatCompactDateTime(deadline)}` : null),
           ],
           textColor,
           compactAction,

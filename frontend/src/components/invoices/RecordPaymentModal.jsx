@@ -37,6 +37,8 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
   const paypalInputRef = useRef(null);
   const lastInvoiceIdRef = useRef(null);
   const isDirtyRef = useRef(false);
+  const coverageDirtyRef = useRef(false);
+  const fetchAbortRef = useRef(null);
 
   const mergeInvoiceUpdate = React.useCallback((prev, updated) => {
     if (!updated || typeof updated !== 'object') return prev;
@@ -140,6 +142,17 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
   useEffect(() => {
     if (!invoiceId) return;
 
+    if (fetchAbortRef.current) {
+      try {
+        fetchAbortRef.current.abort();
+      } catch (e) {
+        // ignore abort cleanup errors
+      }
+    }
+
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
+
     const fetchInvoice = async () => {
       try {
         const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: invoiceId });
@@ -156,7 +169,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
           setLoading(false);
         }
 
-        const { data } = await api.get(`/invoices/${invoiceId}`);
+        const { data } = await api.get(`/invoices/${invoiceId}`, { signal: controller.signal });
         const inv = data.invoice || data;
         const computed = computeInvoiceTotals(inv);
         const normalizedInvoice = {
@@ -192,6 +205,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
           : '';
 
         if (isNewInvoice || !isDirtyRef.current) {
+          coverageDirtyRef.current = false;
           setForm({
             amount: formattedAmount,
             paymentMethod: (inv.guardian && inv.guardian.paymentMethod) || inv.paymentMethod || 'paypal',
@@ -204,14 +218,25 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
         setError('');
         writeCache(cacheKey, { invoice: inv }, { ttlMs: 2 * 60_000, deps: ['invoices'] });
       } catch (err) {
+        if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
         console.error(err);
         setError('Failed to load invoice details');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     };
 
     fetchInvoice();
+
+    return () => {
+      try {
+        controller.abort();
+      } catch (e) {
+        // ignore abort cleanup errors
+      }
+    };
   }, [invoiceId, mergeInvoiceUpdate, user?._id]);
 
   useEffect(() => {
@@ -387,6 +412,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
     if (loading) return;
     if (['paid', 'refunded'].includes(effectiveInvoiceStatus)) return;
     if (!invoiceId) return;
+    if (!coverageDirtyRef.current) return;
     const hrs = Number(form.hoursPaid);
     if (!Number.isFinite(hrs) || hrs <= 0) return;
 
@@ -404,6 +430,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
         if (updated && typeof updated === 'object') {
           setLocalInvoice((prev) => mergeInvoiceUpdate(prev, updated));
         }
+        coverageDirtyRef.current = false;
       } catch (err) {
         const statusCode = Number(err?.response?.status || 0);
         const message = String(err?.response?.data?.message || '').toLowerCase();
@@ -422,6 +449,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
     if (name === 'amount') {
       setIsDirty(true);
       isDirtyRef.current = true;
+      coverageDirtyRef.current = true;
       setActiveField('amount');
       const hours = computeHoursFromAmount(value);
         setForm(prev => ({
@@ -434,6 +462,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
     if (name === 'hoursPaid') {
       setIsDirty(true);
       isDirtyRef.current = true;
+      coverageDirtyRef.current = true;
       setActiveField('hours');
       const amount = computeAmountFromHours(value);
         setForm(prev => ({
@@ -806,6 +835,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
                                 }
                               } catch (_) {}
                               setActiveField('hours');
+                              coverageDirtyRef.current = true;
                               setForm((prev) => ({ ...prev, hoursPaid: h.toFixed(2), amount: a.toFixed(2) }));
                             }}
                             className="text-emerald-700 underline"

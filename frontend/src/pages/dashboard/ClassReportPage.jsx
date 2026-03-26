@@ -85,8 +85,8 @@ const attendanceButtonClassName = (isActive) => `flex min-h-[58px] items-center 
     : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
 }`;
 const sectionCardClassName = "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm";
-const floatingFieldWrapClassName = "relative pt-2";
-const floatingFieldLabelClassName = "pointer-events-none absolute left-3 top-0 z-10 inline-flex bg-white px-2 text-[11px] font-semibold tracking-wide";
+const floatingFieldWrapClassName = "space-y-1.5";
+const floatingFieldLabelClassName = "block text-xs font-semibold tracking-wide";
 
 const normalizeAttendance = (attendance) => {
   if (attendance === "missed_by_student") return "absent";
@@ -318,14 +318,20 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         })
       : null;
     const scheduledDay = hasValidScheduledDate
-      ? `${String(scheduledDate.getDate()).padStart(2, '0')} ${scheduledDate.toLocaleString('en-US', { month: 'short' })} ${scheduledDate.getFullYear()}`
+      ? scheduledDate.toLocaleDateString('en-US', {
+          weekday: 'short',
+          day: '2-digit',
+          month: 'short',
+        })
       : null;
+    const scheduledLabel = [scheduledTime, scheduledDay].filter(Boolean).join(' - ');
     return {
       studentName,
       teacherName,
       scheduledAt: formatDateTime(classData?.scheduledDate),
       scheduledTime,
       scheduledDay,
+      scheduledLabel,
     };
   }, [classData, formatDateTime]);
 
@@ -702,130 +708,44 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         {/* Header */}
         <div className="border-b border-slate-200 bg-white/90 px-5 py-4 backdrop-blur">
           <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1 space-y-3">
+          <div className="min-w-0 flex-1 space-y-1">
             <div className="space-y-1">
               <h2 className="text-xl font-semibold text-slate-900">Submit Class Report</h2>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                <span>{initialDraftRef.current ? 'Draft restored automatically' : 'Draft autosaves on this device'}</span>
+                <span>{initialDraftRef.current ? 'Draft restored' : 'Saved on this device'}</span>
                 {draftSavedAt && <span>Saved {formatDateTime(draftSavedAt)}</span>}
                 {derivedClassId && (
                   <button type="button" onClick={handleClearDraft} className="font-semibold text-cyan-700 hover:text-cyan-800">
-                    Clear draft
+                    Clear
                   </button>
                 )}
+                {derivedClassId && userRole ? (
+                  <div className="min-w-0 sm:ml-auto">
+                    <ReportSubmissionStatus
+                      classId={derivedClassId}
+                      userRole={userRole}
+                      compact={true}
+                      compactBare={true}
+                      compactInline={true}
+                      onExtensionGranted={() => {
+                        if (userRole !== 'admin') {
+                          api.post(`/classes/${derivedClassId}/check-can-submit`)
+                            .then(res => setSubmissionEligibility(res.data))
+                            .catch(err => console.error('Error refreshing eligibility:', err));
+                        }
+                      }}
+                      onRefresh={async () => {
+                        try {
+                          const res = await api.get(`/classes/${derivedClassId}`);
+                          setClassData(res.data?.class || null);
+                        } catch (err) {
+                          console.error('Error refreshing class data:', err);
+                        }
+                      }}
+                    />
+                  </div>
+                ) : null}
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-stretch">
-              <div className="h-full rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4">
-                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-                  <div className="min-w-0 rounded-xl bg-white/80 px-2.5 py-2 sm:px-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Student</p>
-                    <p className="break-words text-sm font-semibold leading-5 text-slate-800">{classSummary.studentName}</p>
-                  </div>
-                  <div className="min-w-0 rounded-xl bg-white/80 px-2.5 py-2 sm:px-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Teacher</p>
-                    <p className="break-words text-sm font-semibold leading-5 text-slate-800">{classSummary.teacherName}</p>
-                  </div>
-                  <div className="min-w-0 rounded-xl bg-white/80 px-2.5 py-2 sm:px-3 sm:col-span-2 xl:col-span-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Class time</p>
-                    {classSummary.scheduledTime || classSummary.scheduledDay ? (
-                      <div className="space-y-0.5">
-                        {classSummary.scheduledTime && (
-                          <p className="text-sm font-semibold leading-5 text-slate-800">{classSummary.scheduledTime}</p>
-                        )}
-                        {classSummary.scheduledDay && (
-                          <p className="break-words text-xs font-medium leading-5 text-slate-500">{classSummary.scheduledDay}</p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-sm font-semibold text-slate-800">Pending</p>
-                    )}
-                  </div>
-                </div>
-
-                {isAttended && (
-                  <div className="mt-3 rounded-xl bg-white/80 px-2.5 py-2.5 sm:px-3">
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-slate-700">Performance</p>
-                      <span className="text-sm font-semibold text-slate-500">{(classReport.classScore || 0)}/5</span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {[1,2,3,4,5].map((i) => {
-                        const activeScore = hoverScore || Number(classReport.classScore || 0);
-                        const isActive = i <= activeScore;
-                        return (
-                          <button
-                            key={i}
-                            type="button"
-                            aria-label={`${i} star${i>1?'s':''}`}
-                            onClick={() => setClassReport({ ...classReport, classScore: i })}
-                            onMouseEnter={() => setHoverScore(i)}
-                            onMouseLeave={() => setHoverScore(0)}
-                            onFocus={() => setHoverScore(i)}
-                            onBlur={() => setHoverScore(0)}
-                            className={`h-9 w-9 rounded-full border transition-all duration-150 flex items-center justify-center ${isActive ? 'bg-amber-400/90 border-amber-300 text-white shadow-sm' : 'bg-white border-gray-200 text-gray-300'}`}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setClassReport({ ...classReport, classScore: i }); } }}
-                          >
-                            <Star className={`h-5 w-5 ${isActive ? 'fill-current' : ''}`} />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {derivedClassId && userRole ? (
-                <div className="h-full rounded-2xl border border-emerald-100 bg-emerald-50 p-4 space-y-2 text-sm text-emerald-900">
-                  <ReportSubmissionStatus
-                    classId={derivedClassId}
-                    userRole={userRole}
-                    compact={true}
-                    compactBare={true}
-                    onExtensionGranted={() => {
-                      if (userRole !== 'admin') {
-                        api.post(`/classes/${derivedClassId}/check-can-submit`)
-                          .then(res => setSubmissionEligibility(res.data))
-                          .catch(err => console.error('Error refreshing eligibility:', err));
-                      }
-                    }}
-                    onRefresh={async () => {
-                      try {
-                        const res = await api.get(`/classes/${derivedClassId}`);
-                        setClassData(res.data?.class || null);
-                      } catch (err) {
-                        console.error('Error refreshing class data:', err);
-                      }
-                    }}
-                  />
-                  {(reportMeta.submittedAt || showLastEditedMeta || showPreviousVersionMeta) && (
-                    <div className="space-y-1 text-xs sm:text-sm">
-                      {reportMeta.submittedAt ? (
-                        <p className="leading-5">
-                          <span className="font-semibold">Submitted by:</span> {reportMeta.submittedBy || "Unknown user"} on {reportMeta.submittedAt}
-                        </p>
-                      ) : (
-                        <p className="font-semibold">Submission pending</p>
-                      )}
-                      {showLastEditedMeta && (
-                        <p className="leading-5">
-                          <span className="font-semibold">Last edited by:</span> {reportMeta.lastEditedBy || "Unknown user"} on {reportMeta.lastEditedAt}
-                        </p>
-                      )}
-                      {showPreviousVersionMeta && (
-                        <p className="leading-5 text-emerald-800">
-                          <span className="font-semibold">Previous version:</span> {reportMeta.previousEditor}
-                          {reportMeta.previousChangedAt ? ` · ${reportMeta.previousChangedAt}` : ""}
-                          {reportMeta.previousNote ? ` · ${reportMeta.previousNote}` : ""}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div />
-              )}
             </div>
           </div>
           <button onClick={handleRequestClose} className="rounded-full p-1 text-gray-400 transition hover:bg-slate-100 hover:text-gray-600">
@@ -837,251 +757,281 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         <form onSubmit={handleSubmitReport} className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 space-y-6 overflow-y-auto px-5 py-5">
 
-          {/* === First Row: Attendance + Billing === */}
-          <div className={sectionCardClassName}>
-            <div className="flex items-center justify-between gap-3">
-              <label className="block text-sm font-semibold text-slate-800">Attendance</label>
-              <span className="text-xs text-slate-500">Choose one</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {[
-                { key: "attended", label: "Attended" },
-                { key: "absent", label: "Absent" },
-                { key: "cancelled", label: "Cancelled" }
-              ].map(({ key, label }) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() =>
-                    setClassReport((prev) => ({
-                      ...prev,
-                      attendance: key,
-                      countAbsentForBilling:
-                        key === "absent"
-                          ? (typeof prev.countAbsentForBilling === "boolean" ? prev.countAbsentForBilling : true)
-                          : false,
-                      cancellationReason: key === "cancelled" ? prev.cancellationReason : "",
-                      cancelledBy: key === "cancelled" ? (prev.cancelledBy || "teacher") : "teacher",
-                    }))
-                  }
-                  className={attendanceButtonClassName(classReport.attendance === key)}
-                >
-                  {label}
-                </button>
-              ))}
+          <section className="w-full space-y-3 text-center">
+            <div className={`grid gap-4 sm:grid-cols-2 ${isAttended ? 'xl:grid-cols-4' : 'xl:grid-cols-3'}`}>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Student</p>
+                <p className="mt-1 text-sm font-semibold leading-5 text-slate-800">{classSummary.studentName}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Teacher</p>
+                <p className="mt-1 text-sm font-semibold leading-5 text-slate-800">{classSummary.teacherName}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Class time</p>
+                <p className="mt-1 text-sm font-semibold leading-5 text-slate-800">{classSummary.scheduledLabel || 'Pending'}</p>
+              </div>
+              {isAttended && (
+                <div className="min-w-0">
+                  <div className="flex items-center justify-center gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Performance</p>
+                    <span className="text-sm font-semibold text-slate-500">{(classReport.classScore || 0)}/5</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
+                    {[1,2,3,4,5].map((i) => {
+                      const activeScore = hoverScore || Number(classReport.classScore || 0);
+                      const isActive = i <= activeScore;
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          aria-label={`${i} star${i>1?'s':''}`}
+                          onClick={() => setClassReport({ ...classReport, classScore: i })}
+                          onMouseEnter={() => setHoverScore(i)}
+                          onMouseLeave={() => setHoverScore(0)}
+                          onFocus={() => setHoverScore(i)}
+                          onBlur={() => setHoverScore(0)}
+                          className={`flex h-8 w-8 items-center justify-center rounded-full border transition-all duration-150 ${isActive ? 'border-amber-300 bg-amber-400/90 text-white shadow-sm' : 'border-gray-200 bg-white text-gray-300'}`}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setClassReport({ ...classReport, classScore: i }); } }}
+                        >
+                          <Star className={`h-4.5 w-4.5 ${isActive ? 'fill-current' : ''}`} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Show Count for Billing toggle ONLY if absent */}
-            {classReport.attendance === "absent" && (
-              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <label htmlFor="countAbsent" className="text-sm font-medium text-slate-800">
-                      Count this absence for billing
-                    </label>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Turn on only when this missed class should still be billable.
-                    </p>
-                  </div>
-                  <button
-                    id="countAbsent"
-                    type="button"
-                    role="switch"
-                    aria-checked={Boolean(classReport.countAbsentForBilling)}
-                    onClick={() =>
-                      setClassReport((prev) => ({
-                        ...prev,
-                        countAbsentForBilling: !Boolean(prev.countAbsentForBilling),
-                      }))
-                    }
-                    className={`inline-flex min-w-[72px] items-center justify-center rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      classReport.countAbsentForBilling
-                        ? "bg-emerald-600 text-white"
-                        : "bg-slate-300 text-slate-700"
-                    }`}
-                  >
-                    {classReport.countAbsentForBilling ? "ON" : "OFF"}
-                  </button>
-                </div>
+            {(reportMeta.submittedAt || showLastEditedMeta || showPreviousVersionMeta) && (
+              <div className="space-y-1 text-xs leading-5 text-slate-600">
+                {reportMeta.submittedAt ? (
+                  <p className="leading-5">
+                    <span className="font-semibold text-slate-700">Submitted by:</span> {reportMeta.submittedBy || "Unknown user"} on {reportMeta.submittedAt}
+                  </p>
+                ) : (
+                  <p className="font-semibold text-slate-700">Submission pending</p>
+                )}
+                {showLastEditedMeta && (
+                  <p className="leading-5">
+                    <span className="font-semibold text-slate-700">Last edited by:</span> {reportMeta.lastEditedBy || "Unknown user"} on {reportMeta.lastEditedAt}
+                  </p>
+                )}
+                {showPreviousVersionMeta && (
+                  <p className="leading-5 text-slate-600">
+                    <span className="font-semibold text-slate-700">Previous version:</span> {reportMeta.previousEditor}
+                    {reportMeta.previousChangedAt ? ` · ${reportMeta.previousChangedAt}` : ""}
+                    {reportMeta.previousNote ? ` · ${reportMeta.previousNote}` : ""}
+                  </p>
+                )}
               </div>
             )}
-          </div>
+          </section>
 
-          {isAbsent && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Student missed the class. No detailed report is required—just confirm whether the absence should be counted for billing.
-            </div>
-          )}
-
-          {isCancelled && (
-            <div className={sectionCardClassName + " space-y-3"}>
-              <label className="block text-sm font-semibold text-gray-700">Cancelled by</label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className={sectionCardClassName + " space-y-5"}>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <label className="block text-sm font-semibold text-slate-800">Attendance</label>
+                <span className="text-xs text-slate-500">Choose one</span>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 {[
-                  { key: "student", label: "Student" },
-                  { key: "teacher", label: "Teacher" },
+                  { key: "attended", label: "Attended" },
+                  { key: "absent", label: "Absent" },
+                  { key: "cancelled", label: "Cancelled" }
                 ].map(({ key, label }) => (
                   <button
                     key={key}
                     type="button"
-                    onClick={() => setClassReport((prev) => ({ ...prev, cancelledBy: key }))}
-                    className={`recite-toggle w-full ${classReport.cancelledBy === key ? "active" : ""}`}
+                    onClick={() =>
+                      setClassReport((prev) => ({
+                        ...prev,
+                        attendance: key,
+                        countAbsentForBilling:
+                          key === "absent"
+                            ? (typeof prev.countAbsentForBilling === "boolean" ? prev.countAbsentForBilling : true)
+                            : false,
+                        cancellationReason: key === "cancelled" ? prev.cancellationReason : "",
+                        cancelledBy: key === "cancelled" ? (prev.cancelledBy || "teacher") : "teacher",
+                      }))
+                    }
+                    className={attendanceButtonClassName(classReport.attendance === key)}
                   >
                     {label}
                   </button>
                 ))}
               </div>
-              <label className="block text-sm font-semibold text-gray-700" htmlFor="cancellationReason">
-                Cancellation reason (visible to admins only)
-              </label>
-              <textarea
-                id="cancellationReason"
-                value={classReport.cancellationReason || ""}
-                onChange={(e) => setClassReport({ ...classReport, cancellationReason: e.target.value })}
-                className="w-full border rounded-lg p-3"
-                rows={4}
-                placeholder="Explain why the class was cancelled..."
-              />
-              <p className="text-xs text-gray-500">Your reason will be shared with the admin team; students and guardians will not see it.</p>
-            </div>
-          )}
 
-          {isAttended && (
-            <>
-              <div className={sectionCardClassName + " space-y-3"}>
-                <label className="block text-xs font-semibold tracking-wide text-fuchsia-600">Previous Assignment Evaluation</label>
-                <div className="flex flex-wrap gap-2">
-                  {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
-                    const isSelected = classReport.previousAssignmentEvaluation === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setClassReport({ ...classReport, previousAssignmentEvaluation: option.value })}
-                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                          isSelected
-                            ? option.activeClassName
-                            : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                      >
-                        <span>{option.label}</span>
-                      </button>
-                    );
-                  })}
+              {classReport.attendance === "absent" && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <label htmlFor="countAbsent" className="text-sm font-medium text-slate-800">
+                        Count this absence for billing
+                      </label>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        Turn on only when this missed class should still be billable.
+                      </p>
+                    </div>
+                    <button
+                      id="countAbsent"
+                      type="button"
+                      role="switch"
+                      aria-checked={Boolean(classReport.countAbsentForBilling)}
+                      onClick={() =>
+                        setClassReport((prev) => ({
+                          ...prev,
+                          countAbsentForBilling: !Boolean(prev.countAbsentForBilling),
+                        }))
+                      }
+                      className={`inline-flex min-w-[72px] items-center justify-center rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                        classReport.countAbsentForBilling
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-300 text-slate-700"
+                      }`}
+                    >
+                      {classReport.countAbsentForBilling ? "ON" : "OFF"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {isAbsent && (
+              <div className="border-t border-slate-200 pt-4 text-sm text-amber-900">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  Student missed the class. No detailed report is required, just confirm whether the absence should be counted for billing.
                 </div>
               </div>
+            )}
 
-              {/* === Second Row: Subject + Lesson Topic/Surah === */}
-              <div className={sectionCardClassName}>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {/* Subject */}
-                <div className={floatingFieldWrapClassName}>
-                  <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Subject</label>
-                  <Select
-                    options={subjectOptions}
-                    value={
-                      subjectOptions.find((s) => s.value === classReport.subject)
-                      || { value: classReport.subject, label: classReport.subject }
-                    }
-                    onChange={(selected) => setClassReport({ ...classReport, subject: selected?.value || "" })}
-                    placeholder="Search or select subject..."
-                    isClearable
-                    isSearchable
-                    styles={reportSelectStyles}
-                  />
+            {isCancelled && (
+              <div className="space-y-3 border-t border-slate-200 pt-4">
+                <label className="block text-sm font-semibold text-gray-700">Cancelled by</label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {[
+                    { key: "student", label: "Student" },
+                    { key: "teacher", label: "Teacher" },
+                  ].map(({ key, label }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setClassReport((prev) => ({ ...prev, cancelledBy: key }))}
+                      className={`recite-toggle w-full ${classReport.cancelledBy === key ? "active" : ""}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <label className="block text-sm font-semibold text-gray-700" htmlFor="cancellationReason">
+                  Cancellation reason (visible to admins only)
+                </label>
+                <textarea
+                  id="cancellationReason"
+                  value={classReport.cancellationReason || ""}
+                  onChange={(e) => setClassReport({ ...classReport, cancellationReason: e.target.value })}
+                  className="w-full rounded-lg border p-3"
+                  rows={4}
+                  placeholder="Explain why the class was cancelled..."
+                />
+                <p className="text-xs text-gray-500">Your reason will be shared with the admin team; students and guardians will not see it.</p>
+              </div>
+            )}
+
+            {isAttended && (
+              <>
+                <div className="space-y-3 border-t border-slate-200 pt-4">
+                  <label className="block text-xs font-semibold tracking-wide text-fuchsia-600">Previous Assignment Evaluation</label>
+                  <div className="flex flex-wrap gap-2">
+                    {PREVIOUS_ASSIGNMENT_OPTIONS.map((option) => {
+                      const isSelected = classReport.previousAssignmentEvaluation === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setClassReport({ ...classReport, previousAssignmentEvaluation: option.value })}
+                          className={`inline-flex items-center justify-center whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                            isSelected
+                              ? option.activeClassName
+                              : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          <span>{option.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                {/* Lesson Topic / Surah Handling */}
-                <div>
-                  {quranSurahOnly.includes(classReport.subject) ? (
-                    <>
-                      <div className={floatingFieldWrapClassName}>
-                      <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Lesson Topic</label>
-                      {classReport.lessonTopic === "custom" ? (
-                        <input
-                          type="text"
-                          value={classReport.customLessonTopic || ""}
-                          onChange={(e) => setClassReport({ ...classReport, customLessonTopic: e.target.value })}
-                          className={modernFieldClassName}
-                          placeholder="Enter custom topic..."
-                        />
-                      ) : (
-                        <Select
-                          options={[...surahOptions, { value: "custom", label: "➕ Custom Topic" }]}
-                          value={
-                            surahOptions.find((s) => s.value === classReport.surahName) ||
-                            (classReport.surahName && !surahOptions.find((s) => s.value === classReport.surahName)
-                              ? { value: classReport.surahName, label: classReport.surahName }
-                              : null)
-                          }
-                          onChange={(selected) =>
-                            setClassReport({
-                              ...classReport,
-                              surahName: selected?.value || "",
-                              lessonTopic: selected?.value || "",
-                              customLessonTopic: selected?.value === "custom" ? "" : classReport.customLessonTopic,
-                            })
-                          }
-                          placeholder="Search or select surah..."
-                          isClearable
-                          isSearchable
-                          styles={reportSelectStyles}
-                        />
-                      )}
-                      </div>
+                <div className="grid grid-cols-1 gap-4 border-t border-slate-200 pt-4 md:grid-cols-2">
+                  <div className={floatingFieldWrapClassName}>
+                    <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Subject</label>
+                    <Select
+                      options={subjectOptions}
+                      value={
+                        subjectOptions.find((s) => s.value === classReport.subject)
+                        || { value: classReport.subject, label: classReport.subject }
+                      }
+                      onChange={(selected) => setClassReport({ ...classReport, subject: selected?.value || "" })}
+                      placeholder="Search or select subject..."
+                      isClearable
+                      isSearchable
+                      styles={reportSelectStyles}
+                    />
+                  </div>
 
-                      <div className={`mt-2 ${floatingFieldWrapClassName}`}>
-                        <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Ending Verse</label>
-                        <input
-                          type="number"
-                          value={classReport.verseEnd}
-                          onChange={(e) => setClassReport({ ...classReport, verseEnd: e.target.value })}
-                          className={modernFieldClassName}
-                          placeholder="Enter ending verse"
-                        />
-                      </div>
-                    </>
-                  ) : quranWithRecitation.includes(classReport.subject) ? (
-                    <>
+                  <div>
+                    {quranSurahOnly.includes(classReport.subject) ? (
+                      <>
+                        <div className={floatingFieldWrapClassName}>
+                          <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Lesson Topic</label>
+                          {classReport.lessonTopic === "custom" ? (
+                            <input
+                              type="text"
+                              value={classReport.customLessonTopic || ""}
+                              onChange={(e) => setClassReport({ ...classReport, customLessonTopic: e.target.value })}
+                              className={modernFieldClassName}
+                              placeholder="Enter custom topic..."
+                            />
+                          ) : (
+                            <Select
+                              options={[...surahOptions, { value: "custom", label: "➕ Custom Topic" }]}
+                              value={
+                                surahOptions.find((s) => s.value === classReport.surahName) ||
+                                (classReport.surahName && !surahOptions.find((s) => s.value === classReport.surahName)
+                                  ? { value: classReport.surahName, label: classReport.surahName }
+                                  : null)
+                              }
+                              onChange={(selected) =>
+                                setClassReport({
+                                  ...classReport,
+                                  surahName: selected?.value || "",
+                                  lessonTopic: selected?.value || "",
+                                  customLessonTopic: selected?.value === "custom" ? "" : classReport.customLessonTopic,
+                                })
+                              }
+                              placeholder="Search or select surah..."
+                              isClearable
+                              isSearchable
+                              styles={reportSelectStyles}
+                            />
+                          )}
+                        </div>
+
+                        <div className={`mt-3 ${floatingFieldWrapClassName}`}>
+                          <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Ending Verse</label>
+                          <input
+                            type="number"
+                            value={classReport.verseEnd}
+                            onChange={(e) => setClassReport({ ...classReport, verseEnd: e.target.value })}
+                            className={modernFieldClassName}
+                            placeholder="Enter ending verse"
+                          />
+                        </div>
+                      </>
+                    ) : quranWithRecitation.includes(classReport.subject) ? (
                       <div className={floatingFieldWrapClassName}>
-                      <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Lesson Topic</label>
-                      <Select
-                        options={[...topicOptions, { value: "custom", label: "➕ Custom Topic" }]}
-                        value={
-                          topicOptions.find((t) => t.value === classReport.lessonTopic) ||
-                          (classReport.lessonTopic && !topicOptions.find((t) => t.value === classReport.lessonTopic)
-                            ? { value: classReport.lessonTopic, label: classReport.lessonTopic }
-                            : null)
-                        }
-                        onChange={(selected) =>
-                          setClassReport({ ...classReport, lessonTopic: selected?.value || "" })
-                        }
-                        placeholder="Search or select topic..."
-                        isClearable
-                        isSearchable
-                        styles={reportSelectStyles}
-                      />
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className={floatingFieldWrapClassName}>
-                      <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Lesson Topic</label>
-                      {!hasTopicOptions ? (
-                        <input
-                          type="text"
-                          value={classReport.customLessonTopic || classReport.lessonTopic || ""}
-                          onChange={(e) =>
-                            setClassReport({
-                              ...classReport,
-                              lessonTopic: e.target.value,
-                              customLessonTopic: e.target.value,
-                            })
-                          }
-                          className={modernFieldClassName}
-                          placeholder="Enter lesson topic..."
-                        />
-                      ) : (
+                        <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Lesson Topic</label>
                         <Select
                           options={[...topicOptions, { value: "custom", label: "➕ Custom Topic" }]}
                           value={
@@ -1098,105 +1048,138 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
                           isSearchable
                           styles={reportSelectStyles}
                         />
-                      )}
                       </div>
-                    </>
-                  )}
-                </div>
-                </div>
-              </div>
-
-              {quranWithRecitation.includes(classReport.subject) && (
-                <div className={sectionCardClassName + " space-y-3"}>
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <label className="text-xs font-semibold tracking-wide text-cyan-600">Quran Recited?</label>
-                    <div className="flex gap-2">
-                      {["yes", "no"].map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setClassReport({ ...classReport, recitedQuran: val })}
-                          className={modernToggleButtonClassName(classReport.recitedQuran === val)}
-                        >
-                          {val.toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
+                    ) : (
+                      <div className={floatingFieldWrapClassName}>
+                        <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Lesson Topic</label>
+                        {!hasTopicOptions ? (
+                          <input
+                            type="text"
+                            value={classReport.customLessonTopic || classReport.lessonTopic || ""}
+                            onChange={(e) =>
+                              setClassReport({
+                                ...classReport,
+                                lessonTopic: e.target.value,
+                                customLessonTopic: e.target.value,
+                              })
+                            }
+                            className={modernFieldClassName}
+                            placeholder="Enter lesson topic..."
+                          />
+                        ) : (
+                          <Select
+                            options={[...topicOptions, { value: "custom", label: "➕ Custom Topic" }]}
+                            value={
+                              topicOptions.find((t) => t.value === classReport.lessonTopic) ||
+                              (classReport.lessonTopic && !topicOptions.find((t) => t.value === classReport.lessonTopic)
+                                ? { value: classReport.lessonTopic, label: classReport.lessonTopic }
+                                : null)
+                            }
+                            onChange={(selected) =>
+                              setClassReport({ ...classReport, lessonTopic: selected?.value || "" })
+                            }
+                            placeholder="Search or select topic..."
+                            isClearable
+                            isSearchable
+                            styles={reportSelectStyles}
+                          />
+                        )}
+                      </div>
+                    )}
                   </div>
+                </div>
 
-                  {classReport.recitedQuran === "yes" && (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      <div className={floatingFieldWrapClassName}>
-                        <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Surah</label>
-                        <Select
-                          options={surahOptions}
-                          value={surahOptions.find((s) => s.value === classReport.surahName) || null}
-                          onChange={(selected) =>
-                            setClassReport({ ...classReport, surahName: selected?.value || "" })
-                          }
-                          placeholder="Select surah..."
-                          isClearable
-                          isSearchable
-                          styles={reportSelectStyles}
-                        />
-                      </div>
-                      <div className={floatingFieldWrapClassName}>
-                        <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Ending Verse</label>
-                        <input
-                          type="number"
-                          value={classReport.verseEnd}
-                          onChange={(e) => setClassReport({ ...classReport, verseEnd: e.target.value })}
-                          className={modernFieldClassName}
-                          placeholder="Ending verse"
-                        />
+                {quranWithRecitation.includes(classReport.subject) && (
+                  <div className="space-y-3 border-t border-slate-200 pt-4">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <label className="text-xs font-semibold tracking-wide text-cyan-600">Quran Recited?</label>
+                      <div className="flex gap-2">
+                        {["yes", "no"].map((val) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setClassReport({ ...classReport, recitedQuran: val })}
+                            className={modernToggleButtonClassName(classReport.recitedQuran === val)}
+                          >
+                            {val.toUpperCase()}
+                          </button>
+                        ))}
                       </div>
                     </div>
-                  )}
-                </div>
-              )}
 
-              {/* === Notes === */}
-              <div className={sectionCardClassName + " space-y-4"}>
-                <div className={floatingFieldWrapClassName}>
-                  <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Summary &amp; New Assignment</label>
-                  <textarea
-                    ref={newAssignmentRef}
-                    value={classReport.newAssignment}
-                    onChange={(e) => setClassReport({ ...classReport, newAssignment: e.target.value })}
-                    className={modernTextareaClassName}
-                    rows={1}
-                    placeholder="Summarize what was discussed, where the lesson ended, and the assignment for the next lesson"
-                  />
-                </div>
+                    {classReport.recitedQuran === "yes" && (
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div className={floatingFieldWrapClassName}>
+                          <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Surah</label>
+                          <Select
+                            options={surahOptions}
+                            value={surahOptions.find((s) => s.value === classReport.surahName) || null}
+                            onChange={(selected) =>
+                              setClassReport({ ...classReport, surahName: selected?.value || "" })
+                            }
+                            placeholder="Select surah..."
+                            isClearable
+                            isSearchable
+                            styles={reportSelectStyles}
+                          />
+                        </div>
+                        <div className={floatingFieldWrapClassName}>
+                          <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Ending Verse</label>
+                          <input
+                            type="number"
+                            value={classReport.verseEnd}
+                            onChange={(e) => setClassReport({ ...classReport, verseEnd: e.target.value })}
+                            className={modernFieldClassName}
+                            placeholder="Ending verse"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+                <div className="space-y-4 border-t border-slate-200 pt-4">
                   <div className={floatingFieldWrapClassName}>
-                    <label className={`${floatingFieldLabelClassName} text-emerald-600`}>Public Note</label>
+                    <label className={`${floatingFieldLabelClassName} text-cyan-600`}>Summary &amp; New Assignment</label>
                     <textarea
-                      ref={teacherNotesRef}
-                      value={classReport.teacherNotes}
-                      onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
+                      ref={newAssignmentRef}
+                      value={classReport.newAssignment}
+                      onChange={(e) => setClassReport({ ...classReport, newAssignment: e.target.value })}
                       className={modernTextareaClassName}
                       rows={1}
-                      placeholder="Add a note visible to guardians and admins"
+                      placeholder="Summarize what was discussed, where the lesson ended, and the assignment for the next lesson"
                     />
                   </div>
 
-                  <div className={floatingFieldWrapClassName}>
-                    <label className={`${floatingFieldLabelClassName} text-amber-600`}>Supervisor Note</label>
-                    <textarea
-                      ref={supervisorNotesRef}
-                      value={classReport.supervisorNotes}
-                      onChange={(e) => setClassReport({ ...classReport, supervisorNotes: e.target.value })}
-                      className={modernTextareaClassName}
-                      rows={1}
-                      placeholder="Add any internal note for admins"
-                    />
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+                    <div className={floatingFieldWrapClassName}>
+                      <label className={`${floatingFieldLabelClassName} text-emerald-600`}>Public Note</label>
+                      <textarea
+                        ref={teacherNotesRef}
+                        value={classReport.teacherNotes}
+                        onChange={(e) => setClassReport({ ...classReport, teacherNotes: e.target.value })}
+                        className={modernTextareaClassName}
+                        rows={1}
+                        placeholder="Add a note visible to guardians and admins"
+                      />
+                    </div>
+
+                    <div className={floatingFieldWrapClassName}>
+                      <label className={`${floatingFieldLabelClassName} text-amber-600`}>Supervisor Note</label>
+                      <textarea
+                        ref={supervisorNotesRef}
+                        value={classReport.supervisorNotes}
+                        onChange={(e) => setClassReport({ ...classReport, supervisorNotes: e.target.value })}
+                        className={modernTextareaClassName}
+                        rows={1}
+                        placeholder="Add any internal note for admins"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
+          </div>
           </div>
 
           {/* Submit */}

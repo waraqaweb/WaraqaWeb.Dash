@@ -2,6 +2,16 @@
 // live class coverage rules (matches InvoiceViewModal logic).
 
 const REFILL_LINE_REGEX = /refill|top\s?-?up|auto\s?top\s?-?up/i;
+const CANCELLED_CLASS_STATUSES = new Set([
+  'cancelled',
+  'cancelled_by_teacher',
+  'cancelled_by_student',
+  'cancelled_by_guardian',
+  'cancelled_by_admin',
+  'cancelled_by_system',
+  'on_hold',
+  'pattern'
+]);
 
 export const roundCurrency = (value) => {
   const num = Number(value || 0);
@@ -96,6 +106,14 @@ const buildClassEntriesFromItems = (sourceItems = [], coverage = {}) => {
   const normalized = rawItems
     .filter((item) => {
       if (!item) return false;
+      const normalizedStatus = String(
+        item.status
+        || item.class?.status
+        || item.classReport?.attendance
+        || item.class?.classReport?.attendance
+        || ''
+      ).trim().toLowerCase();
+      if (CANCELLED_CLASS_STATUSES.has(normalizedStatus)) return false;
       if (item.class || item.lessonId || item.classId) return true;
       const desc = String(item.description || '').toLowerCase();
       return !REFILL_LINE_REGEX.test(desc);

@@ -15,10 +15,10 @@ jobs:
       - name: Validate deploy secrets
         shell: bash
         env:
-          DO_HOST: ${{ secrets.DO_HOST }}
-          DO_USER: ${{ secrets.DO_USER }}
+          DO_HOST: ${{ vars.DO_HOST }}
+          DO_USER: ${{ vars.DO_USER }}
           DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
-          DO_APP_DIR: ${{ secrets.DO_APP_DIR }}
+          DO_APP_DIR: ${{ vars.DO_APP_DIR }}
         run: |
           set -euo pipefail
 
@@ -29,8 +29,9 @@ jobs:
           [[ -n "${DO_APP_DIR:-}" ]] || missing+=(DO_APP_DIR)
 
           if (( ${#missing[@]} > 0 )); then
-            echo "Missing required GitHub Actions secrets: ${missing[*]}"
-            echo "Configure them in: Settings > Secrets and variables > Actions"
+            echo "Missing required GitHub Actions configuration: ${missing[*]}"
+            echo "Set DO_SSH_KEY as a Repository secret."
+            echo "Set DO_HOST, DO_USER, and DO_APP_DIR as Repository variables."
             exit 1
           fi
 
@@ -42,7 +43,7 @@ jobs:
       - name: Prepare SSH
         shell: bash
         env:
-          DO_HOST: ${{ secrets.DO_HOST }}
+          DO_HOST: ${{ vars.DO_HOST }}
           DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
         run: |
           set -euo pipefail
@@ -58,8 +59,8 @@ jobs:
       - name: Test SSH connectivity
         shell: bash
         env:
-          DO_HOST: ${{ secrets.DO_HOST }}
-          DO_USER: ${{ secrets.DO_USER }}
+          DO_HOST: ${{ vars.DO_HOST }}
+          DO_USER: ${{ vars.DO_USER }}
         run: |
           set -euo pipefail
 
@@ -73,9 +74,9 @@ jobs:
       - name: Deploy via SSH
         shell: bash
         env:
-          DO_HOST: ${{ secrets.DO_HOST }}
-          DO_USER: ${{ secrets.DO_USER }}
-          DO_APP_DIR: ${{ secrets.DO_APP_DIR }}
+          DO_HOST: ${{ vars.DO_HOST }}
+          DO_USER: ${{ vars.DO_USER }}
+          DO_APP_DIR: ${{ vars.DO_APP_DIR }}
           BUILD_VERSION: ${{ github.run_number }}
         run: |
           set -euo pipefail

@@ -85,7 +85,7 @@ jobs:
             -o BatchMode=yes \
             -o ConnectTimeout=20 \
             -o StrictHostKeyChecking=yes \
-            "${DO_USER}@${DO_HOST}" 'bash -se' <<EOF
+            "${DO_USER}@${DO_HOST}" "DO_APP_DIR='${DO_APP_DIR}' BUILD_VERSION='${BUILD_VERSION}' bash -se" <<'EOF'
           set -euo pipefail
 
           APP_DIR="${DO_APP_DIR}"

@@ -12,15 +12,84 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate deploy secrets
+        shell: bash
+        env:
+          DO_HOST: ${{ secrets.DO_HOST }}
+          DO_USER: ${{ secrets.DO_USER }}
+          DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+          DO_APP_DIR: ${{ secrets.DO_APP_DIR }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+          [[ -n "${DO_HOST:-}" ]] || missing+=(DO_HOST)
+          [[ -n "${DO_USER:-}" ]] || missing+=(DO_USER)
+          [[ -n "${DO_SSH_KEY:-}" ]] || missing+=(DO_SSH_KEY)
+          [[ -n "${DO_APP_DIR:-}" ]] || missing+=(DO_APP_DIR)
+
+          if (( ${#missing[@]} > 0 )); then
+            echo "Missing required GitHub Actions secrets: ${missing[*]}"
+            echo "Configure them in: Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+          echo "Deploy secret preflight passed."
+          echo "Remote host is configured."
+          echo "Remote user is configured."
+          echo "Remote app dir secret is configured as: ${DO_APP_DIR}"
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
+          script_stop: true
+          command_timeout: 30m
           script: |
-            set -e
-            cd "${{ secrets.DO_APP_DIR }}"
+            set -euo pipefail
+
+            APP_DIR="${{ secrets.DO_APP_DIR }}"
+
+            echo "[deploy] Remote preflight starting"
+            echo "[deploy] host=$(hostname)"
+            echo "[deploy] user=$(id -un 2>/dev/null || whoami)"
+            echo "[deploy] app_dir=${APP_DIR}"
+            echo "[deploy] current_dir=$(pwd)"
+
+            if [ ! -d "${APP_DIR}" ]; then
+              echo "[deploy] ERROR: DO_APP_DIR does not exist: ${APP_DIR}"
+              echo "[deploy] Parent directory listing:"
+              ls -la "$(dirname "${APP_DIR}")" || true
+              echo "[deploy] /opt listing:"
+              ls -la /opt || true
+              exit 1
+            fi
+
+            cd "${APP_DIR}"
+
+            echo "[deploy] entered_dir=$(pwd)"
+
+            if [ ! -d .git ]; then
+              echo "[deploy] ERROR: ${APP_DIR} is not a git repository"
+              echo "[deploy] Directory contents:"
+              ls -la
+              exit 1
+            fi
+
+            if [ ! -f deploy/scripts/deploy.sh ]; then
+              echo "[deploy] ERROR: deploy/scripts/deploy.sh not found in ${APP_DIR}"
+              echo "[deploy] Directory contents:"
+              ls -la
+              echo "[deploy] deploy/ contents:"
+              ls -la deploy || true
+              exit 1
+            fi
+
+            echo "[deploy] git_head=$(git rev-parse --short HEAD)"
+            echo "[deploy] git_branch=$(git rev-parse --abbrev-ref HEAD)"
+
             # Stamp a simple increasing numeric build version for this deployment.
             export BUILD_VERSION="${{ github.run_number }}"
             export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -28,7 +97,11 @@ jobs:
             chmod +x deploy/scripts/deploy.sh || true
 
             # Fast deploy: rebuild only changed services
+            echo "[deploy] running deploy/scripts/deploy.sh auto"
             deploy/scripts/deploy.sh auto
 
             # Optional light cleanup (keeps BuildKit cache for faster rebuilds)
+            echo "[deploy] pruning old docker images"
             docker image prune -f --filter "until=168h" || true
+
+            echo "[deploy] workflow completed successfully"

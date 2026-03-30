@@ -941,8 +941,17 @@ class InvoiceService {
       }
       
       // Cap auto-generated coverage at the end of the earliest class's calendar month
-      const billingWindowDays = getDaysInMonth(billingStartDate);
-      const searchEndDate = getFixedWindowEndExclusive(billingStartDate, billingWindowDays);
+      let billingWindowDays = getDaysInMonth(billingStartDate);
+      let searchEndDate = getFixedWindowEndExclusive(billingStartDate, billingWindowDays);
+
+      // If the triggering class is outside the window derived from the earliest
+      // unbilled class (different month), use the triggering class's own month
+      // so the coverage window actually includes the class being billed.
+      if (firstDate >= searchEndDate) {
+        billingStartDate = firstDate;
+        billingWindowDays = getDaysInMonth(firstDate);
+        searchEndDate = getFixedWindowEndExclusive(firstDate, billingWindowDays);
+      }
 
       // Build initial item from the reported class
       const duration = Number(classDoc.duration || 60);
@@ -3992,11 +4001,14 @@ class InvoiceService {
           const maxDateBase = dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : (invoice.billingPeriod?.endDate || invoice.dueDate || minDate);
           const coverageEnd = invoice.coverage && invoice.coverage.endDate ? new Date(invoice.coverage.endDate) : null;
           const endDate = coverageEnd && !Number.isNaN(coverageEnd.getTime()) ? coverageEnd : maxDateBase;
+          // Ensure billing period end is never before start (can happen when items
+          // were added outside the original coverage window).
+          const finalEndDate = (endDate < minDate) ? maxDateBase : endDate;
           if (!invoice.billingPeriod || typeof invoice.billingPeriod !== 'object') {
             invoice.billingPeriod = {};
           }
           invoice.billingPeriod.startDate = minDate;
-          invoice.billingPeriod.endDate = endDate;
+          invoice.billingPeriod.endDate = finalEndDate;
           invoice.markModified('billingPeriod');
         } catch (_) {}
 

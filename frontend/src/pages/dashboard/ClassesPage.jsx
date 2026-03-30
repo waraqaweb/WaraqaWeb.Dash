@@ -13,7 +13,7 @@ import {
   ChevronDown, ChevronUp, Video, Clock, CheckCircle,
   XCircle, AlertCircle, Plus, Trash2, Calendar, User, Users, BookOpen,
   Pencil, Copy, Repeat, Star, FileText, RotateCcw, Globe, MessageCircle, Image,
-  CalendarClock
+  CalendarClock, ShieldCheck
 } from "lucide-react";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import useMinLoading from "../../components/ui/useMinLoading";
@@ -792,6 +792,13 @@ const ClassesPage = ({ isActive = true }) => {
       const hours = Number(teacherReportWindowHours) || 72;
       deadlineMs = classEndMs + Math.max(1, hours) * 60 * 60 * 1000;
     }
+    // Active admin extension → show 'admin_extended' instead of 'missed_report'
+    const adminExt = classItem?.reportSubmission?.adminExtension;
+    if (adminExt?.granted && classItem?.reportSubmission?.status === 'admin_extended') {
+      const expiresAt = adminExt.expiresAt ? new Date(adminExt.expiresAt).getTime() : Infinity;
+      if (now < expiresAt) return 'admin_extended';
+    }
+
     const statusUnreported = classItem?.reportSubmission?.status === 'unreported';
     const deadlinePassed = statusUnreported || (Number.isFinite(deadlineMs) ? now >= deadlineMs : false);
 
@@ -2764,6 +2771,7 @@ fetchClassesRef.current = fetchClasses;
   const formatStatus = (status) => {
     if (status === 'pending_report') return 'Pending report';
     if (status === 'missed_report') return 'Missed report';
+    if (status === 'admin_extended') return 'Extended';
     return status?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Unknown';
   };
 
@@ -2985,6 +2993,7 @@ fetchClassesRef.current = fetchClasses;
       no_show_both: "bg-gray-100 text-gray-800",
       pending_report: "bg-amber-100 text-amber-800",
       missed_report: "bg-rose-100 text-rose-800",
+      admin_extended: "bg-sky-100 text-sky-700",
     };
     return colors[status] || "bg-gray-100 text-gray-800";
   };
@@ -3002,6 +3011,7 @@ fetchClassesRef.current = fetchClasses;
       no_show_both: <XCircle className="h-4 w-4" />,
       pending_report: <AlertCircle className="h-4 w-4" />,
       missed_report: <AlertCircle className="h-4 w-4" />,
+      admin_extended: <ShieldCheck className="h-4 w-4" />,
     };
     return icons[status] || <Clock className="h-4 w-4" />;
   };

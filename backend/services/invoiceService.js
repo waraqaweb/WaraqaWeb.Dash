@@ -366,6 +366,10 @@ const isClassEligibleForDynamicInvoice = (cls, now = new Date()) => {
     return FUTURE_ELIGIBLE_STATUSES.has(status) || !status;
   }
 
+  // If admin explicitly granted an extension, the class is always billable
+  // (admin acknowledgement that the class happened, even if the extension since expired)
+  if (cls?.reportSubmission?.adminExtension?.granted) return true;
+
   if (isSubmissionWindowActive(cls, now)) {
     return true;
   }

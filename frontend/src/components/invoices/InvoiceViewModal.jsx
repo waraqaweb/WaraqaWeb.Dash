@@ -679,17 +679,10 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           || submissionPayload?.adminExtension?.extendedUntil
           || submissionPayload?.adminExtension?.expiresAt
           || null;
-        // When using the dynamic payload from the backend, trust its filtering —
-        // the backend already applied isPinned bypass and eligibility checks.
-        const eligibleForCoverage = usingDynamicPayload
-          ? true
-          : deriveClassEligibility(
-              actualStatus,
-              reportSubmissionStatus,
-              scheduledSource || dateObj,
-              reportSubmissionAllowance,
-              reportSubmissionExtendedUntil
-            );
+        // Items already stored in the invoice (static path) or returned by the
+        // backend dynamic endpoint have already been vetted — always treat them
+        // as eligible so the frontend doesn't re-filter past scheduled classes.
+        const eligibleForCoverage = true;
 
         const durationMinutes = Number.isFinite(Number(liveClass?.duration))
           ? Number(liveClass.duration)

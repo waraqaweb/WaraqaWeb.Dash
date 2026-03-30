@@ -1857,7 +1857,7 @@ const InvoicesPage = ({ isActive = true }) => {
           <div className="mt-6 space-y-4">
             {showLoading && displayedInvoices.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 py-16 text-center text-slate-500">
-                <LoadingSpinner />
+                <LoadingSpinner variant="circle" size="lg" text="Loading invoices…" />
                 <p className="text-sm">Loading invoices…</p>
               </div>
             ) : displayedInvoices.length === 0 ? (

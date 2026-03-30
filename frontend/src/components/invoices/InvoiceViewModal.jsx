@@ -1878,7 +1878,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     setTimeout(() => setNotesStatus(null), 2000);
   }, [invoice?.guardian?.email]);
 
-  if (loading) return <LoadingSpinner />;
+  if (loading) return <LoadingSpinner variant="circle" size="lg" text="Loading invoice…" />;
   if (!invoice) return <div className="p-4 text-center">Invoice not found</div>;
 
   const statusTone = (() => {

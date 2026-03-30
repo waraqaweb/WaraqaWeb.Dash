@@ -78,14 +78,6 @@ const filterOptions = {
     { value: 'unread', label: 'Unread' },
     { value: 'read', label: 'Read' }
   ],
-  classes: [
-    { value: 'all', label: 'All Classes' },
-    { value: 'scheduled', label: 'Scheduled' },
-    { value: 'completed', label: 'Completed' },
-    { value: 'cancelled', label: 'Cancelled' },
-    { value: 'pending_report', label: 'Pending report' },
-    { value: 'missed_report', label: 'Missed report' }
-  ],
   profile: [
     { value: 'all', label: 'All Users' },
     { value: 'active', label: 'Active Only' },
@@ -112,6 +104,26 @@ const filterOptions = {
   ]
 };
 
+const getClassesFilterOptions = (classesViewState = {}) => {
+  const baseFilters = [
+    { value: 'all', label: 'All Classes' },
+    { value: 'scheduled', label: 'Scheduled' },
+    { value: 'completed', label: 'Completed' },
+    { value: 'cancelled', label: 'Cancelled' },
+  ];
+
+  if (classesViewState?.tabFilter === 'previous') {
+    return [
+      ...baseFilters,
+      { value: 'pending_report', label: 'Pending report' },
+      { value: 'missed_report', label: 'Missed report' },
+      { value: 'admin_extended', label: 'Extended lessons' },
+    ];
+  }
+
+  return baseFilters;
+};
+
 const GlobalSearchBar = ({ activeView = 'default' }) => {
   const {
     searchTerm,
@@ -129,7 +141,13 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
   const [salaryTeachersLoading, setSalaryTeachersLoading] = useState(false);
   const inputRef = useRef(null);
   const placeholder = placeholderMap[activeView] || 'Search...';
-  const currentFilters = filterOptions[activeView] || [];
+  const classesViewState = viewFilters.classes || {};
+  const currentFilters = useMemo(() => {
+    if (activeView === 'classes') {
+      return getClassesFilterOptions(classesViewState);
+    }
+    return filterOptions[activeView] || [];
+  }, [activeView, classesViewState]);
   const actionableFilters = currentFilters.filter((filter) => Boolean(filter.value));
   const isTeacherSalaryView = activeView === TEACHER_SALARY_VIEW_KEY;
   const isAvailabilityView = activeView === AVAILABILITY_VIEW_KEY;
@@ -154,6 +172,14 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
   useEffect(() => {
     setGlobalFilter('all');
   }, [activeView, setGlobalFilter]);
+
+  useEffect(() => {
+    if (globalFilter === 'all') return;
+    const existsInCurrentView = currentFilters.some((filter) => filter.value === globalFilter);
+    if (!existsInCurrentView) {
+      setGlobalFilter('all');
+    }
+  }, [currentFilters, globalFilter, setGlobalFilter]);
 
   // Ensure salary filters have defaults when view loads
   useEffect(() => {

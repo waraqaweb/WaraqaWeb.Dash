@@ -33,6 +33,7 @@ import CancelClassModal from "../../components/dashboard/CancelClassModal";
 import { useDeleteClassCountdown } from "../../contexts/DeleteClassCountdownContext";
 import SeriesScannerModal from "../../components/dashboard/SeriesScannerModal";
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const REPORT_ONLY_FILTERS = new Set(['pending_report', 'missed_report', 'admin_extended']);
 const MEETING_LOOKBACK_DAYS = 60;
 const MEETING_LOOKAHEAD_DAYS = 90;
 const DESKTOP_MEETING_SPLIT_MIN_WIDTH = 1280;
@@ -327,7 +328,7 @@ const ClassesPage = ({ isActive = true }) => {
   // router hooks for tab sync and route-backed modals
   const location = useLocation();
   const navigate = useNavigate();
-  const { searchTerm, globalFilter } = useSearch();
+  const { searchTerm, globalFilter, updateViewFilters } = useSearch();
   const getInitialTab = () => {
 
     try {
@@ -717,12 +718,19 @@ const ClassesPage = ({ isActive = true }) => {
     () => String(searchTerm || "").toLowerCase(),
     [searchTerm]
   );
+  const searchHasTrailingSpace = useMemo(() => /\s$/.test(rawSearchTermLower), [rawSearchTermLower]);
 
   const normalizedSearchTerm = useMemo(
     () => rawSearchTermLower.trim(),
     [rawSearchTermLower]
   );
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(normalizedSearchTerm);
   const [isSearchPulse, setIsSearchPulse] = useState(false);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebouncedSearchTerm(normalizedSearchTerm), normalizedSearchTerm ? 180 : 0);
+    return () => clearTimeout(timeout);
+  }, [normalizedSearchTerm]);
 
   useEffect(() => {
     if (!normalizedSearchTerm) {
@@ -733,6 +741,10 @@ const ClassesPage = ({ isActive = true }) => {
     const t = setTimeout(() => setIsSearchPulse(false), 250);
     return () => clearTimeout(t);
   }, [normalizedSearchTerm]);
+
+  useEffect(() => {
+    updateViewFilters?.('classes', { tabFilter });
+  }, [tabFilter, updateViewFilters]);
 
   useEffect(() => {
     let cancelled = false;
@@ -807,13 +819,22 @@ const ClassesPage = ({ isActive = true }) => {
 
   const filteredClasses = useMemo(() => {
     let working = classes || [];
-    if (globalFilter === 'pending_report' || globalFilter === 'missed_report') {
+    if (REPORT_ONLY_FILTERS.has(globalFilter)) {
       working = working.filter((cls) => getDisplayStatus(cls) === globalFilter);
     }
 
     if (normalizedSearchTerm) {
       const searchParts = normalizedSearchTerm.split(/\s+/).filter(Boolean);
       const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const matchesOrderedNameQuery = (value = '') => {
+        const parts = String(value || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+        if (!parts.length || !searchParts.length || searchParts.length > parts.length) return false;
+        for (let index = 0; index < searchParts.length; index += 1) {
+          if (!parts[index]?.startsWith(searchParts[index])) return false;
+        }
+        if (searchHasTrailingSpace && parts.length <= searchParts.length) return false;
+        return true;
+      };
       const matchesNameToken = (value = '', token = '') => {
         if (!value || !token) return false;
         const regex = new RegExp(`(^|\\s)${escapeRegExp(token)}`, 'i');
@@ -855,6 +876,10 @@ const ClassesPage = ({ isActive = true }) => {
           ...nameValues,
         ].filter(Boolean);
 
+        if ([studentName, teacherName, guardianName].some((value) => matchesOrderedNameQuery(value))) {
+          return true;
+        }
+
         return searchParts.every((part) => {
           const matchedByName = nameValues.some((value) => matchesNameToken(value, part));
           if (matchedByName) return true;
@@ -864,7 +889,7 @@ const ClassesPage = ({ isActive = true }) => {
     }
 
     return working;
-  }, [classes, globalFilter, getDisplayStatus, normalizedSearchTerm]);
+  }, [classes, globalFilter, getDisplayStatus, normalizedSearchTerm, searchHasTrailingSpace]);
 
 
   const mapAvailabilityResponse = useCallback((raw = {}) => createAvailabilityState({
@@ -920,7 +945,7 @@ const ClassesPage = ({ isActive = true }) => {
   }, [
     isActive,
     globalFilter,
-    normalizedSearchTerm,
+    debouncedSearchTerm,
     sortBy,
     sortOrder,
     statusFilter,
@@ -1338,9 +1363,11 @@ const ClassesPage = ({ isActive = true }) => {
 // Fetch classes with filter
 const fetchClasses = useCallback(async () => {
   try {
-    const searchMode = Boolean(normalizedSearchTerm);
-    const fetchPage = searchMode ? 1 : currentPage;
-    const fetchLimit = searchMode ? 500 : 30;
+    const searchMode = Boolean(debouncedSearchTerm);
+    const reportFilterMode = tabFilter === 'previous' && REPORT_ONLY_FILTERS.has(globalFilter);
+    const fetchAllMode = searchMode || reportFilterMode;
+    const fetchPage = fetchAllMode ? 1 : currentPage;
+    const fetchLimit = fetchAllMode ? 100 : 30;
     const cacheKey = makeCacheKey(
       'classes:list',
       user?._id,
@@ -1352,8 +1379,8 @@ const fetchClasses = useCallback(async () => {
         teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
         guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
         global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
-        search: normalizedSearchTerm || undefined,
-        searchAll: searchMode || undefined,
+        search: debouncedSearchTerm || undefined,
+        fetchAll: fetchAllMode || undefined,
       }
     );
 
@@ -1365,7 +1392,8 @@ const fetchClasses = useCallback(async () => {
       teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
       guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
       global: globalFilter && globalFilter !== 'all' ? globalFilter : undefined,
-      search: normalizedSearchTerm || undefined,
+      search: debouncedSearchTerm || undefined,
+      fetchAll: fetchAllMode,
     });
 
     if (fetchClassesInFlightRef.current && fetchClassesKeyRef.current === requestSignature) {
@@ -1395,13 +1423,13 @@ const fetchClasses = useCallback(async () => {
       const cachedClasses = cached.value.classes || [];
       const cachedTotalPages = cached.value.totalPages || 1;
       setClasses(cachedClasses);
-      setTotalPages(searchMode ? 1 : cachedTotalPages);
+      setTotalPages(fetchAllMode ? 1 : cachedTotalPages);
       setError('');
       setLoading(false);
       setLoadedClassTabs((prev) => ({ ...prev, [tabFilter]: true }));
 
       // Background revalidate if cache is getting old (keeps data fresh without blocking UI)
-      if (cached.ageMs < 60_000 && !searchMode) {
+      if (cached.ageMs < 60_000 && !fetchAllMode) {
         fetchClassesInFlightRef.current = false;
         setIsFetching(false);
         return;
@@ -1431,14 +1459,13 @@ const fetchClasses = useCallback(async () => {
     if (teacherFilter !== "all") params.teacher = teacherFilter;
     if (guardianFilter !== "all") params.guardian = guardianFilter;
     
-    // Apply global filter (skip client-only report filters)
-    const isReportFilter = globalFilter === 'pending_report' || globalFilter === 'missed_report';
+    // Apply global filter (skip derived previous-class report filters)
+    const isReportFilter = REPORT_ONLY_FILTERS.has(globalFilter);
     if (globalFilter && globalFilter !== 'all' && !isReportFilter) {
       params.status = globalFilter;
     }
-    if (normalizedSearchTerm) {
-      params.search = normalizedSearchTerm;
-      params.searchAll = true;
+    if (debouncedSearchTerm) {
+      params.search = debouncedSearchTerm;
     }
 
     const mergeClasses = (items) => {
@@ -1460,27 +1487,33 @@ const fetchClasses = useCallback(async () => {
     const normalizedTotalPages = Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1;
     let resolvedClasses = fetchedClasses;
 
-    if (searchMode && normalizedTotalPages > 1) {
+    if (fetchAllMode && normalizedTotalPages > 1) {
       const pages = [];
       for (let page = 2; page <= normalizedTotalPages; page += 1) {
         pages.push(page);
       }
       const pageResults = [];
-      for (const page of pages) {
+      const batchSize = 4;
+      for (let index = 0; index < pages.length; index += batchSize) {
         if (requestId !== fetchClassesRequestIdRef.current) {
           return;
         }
-        const pageRes = await api.get(
-          "/classes",
-          {
-            params: { ...params, page },
-            signal: controller.signal
-          }
-        );
+        const batch = pages.slice(index, index + batchSize);
+        const batchResults = await Promise.all(batch.map((page) => (
+          api.get(
+            "/classes",
+            {
+              params: { ...params, page },
+              signal: controller.signal
+            }
+          )
+        )));
         if (requestId !== fetchClassesRequestIdRef.current) {
           return;
         }
-        pageResults.push(pageRes.data?.classes || []);
+        batchResults.forEach((pageRes) => {
+          pageResults.push(pageRes.data?.classes || []);
+        });
       }
       resolvedClasses = mergeClasses([resolvedClasses, ...pageResults].flat());
       loadedClassPagesRef.current = new Set(pages.concat(1));
@@ -1504,14 +1537,14 @@ const fetchClasses = useCallback(async () => {
       merged.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
       return merged;
     });
-    setTotalPages(searchMode ? 1 : normalizedTotalPages);
+    setTotalPages(fetchAllMode ? 1 : normalizedTotalPages);
     setError("");
 
     writeCache(
       cacheKey,
       {
         classes: resolvedClasses,
-        totalPages: searchMode ? 1 : normalizedTotalPages,
+        totalPages: fetchAllMode ? 1 : normalizedTotalPages,
       },
       { ttlMs: 5 * 60_000, deps: ['classes'] }
     );
@@ -1536,7 +1569,7 @@ const fetchClasses = useCallback(async () => {
   tabFilter,
   teacherFilter,
   user?._id,
-  normalizedSearchTerm,
+  debouncedSearchTerm,
 ]);
 
 // Keep a ref reference to fetchClasses so effects that are created earlier can call it
@@ -3017,13 +3050,14 @@ fetchClassesRef.current = fetchClasses;
   };
 
   const activeTabLoaded = Boolean(loadedClassTabs?.[tabFilter]);
-  const isListLoading = showLoading || isFetching || !activeTabLoaded || (Boolean(normalizedSearchTerm) && isSearchPulse);
+  const isSearchDebouncing = normalizedSearchTerm !== debouncedSearchTerm;
+  const isListLoading = showLoading || isFetching || !activeTabLoaded || isSearchDebouncing || (Boolean(normalizedSearchTerm) && isSearchPulse);
   const renderClassesList = () => (
     <div className="space-y-4">
-      {isListLoading && filteredClasses.length === 0 ? (
+      {isListLoading && (filteredClasses.length === 0 || isSearchDebouncing || Boolean(normalizedSearchTerm)) ? (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
           <div className="flex items-center justify-center">
-            <LoadingSpinner />
+            <LoadingSpinner variant="circle" size="lg" text={normalizedSearchTerm ? 'Searching classes…' : 'Loading classes…'} />
           </div>
         </div>
       ) : filteredClasses.length === 0 ? (

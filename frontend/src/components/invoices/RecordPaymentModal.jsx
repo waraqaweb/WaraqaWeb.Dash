@@ -696,7 +696,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
     }
   };
 
-  if (loading) return <LoadingSpinner />;
+  if (loading) return <LoadingSpinner variant="circle" size="lg" text="Loading invoice…" />;
   // Display exactly what was saved on the invoice as the primary source of truth, and show computed as secondary
   const savedTotal = Number(localInvoice?.total ?? localInvoice?.amount ?? localInvoice?.__computedTotal ?? 0) || 0;
   const savedHours = Number.isFinite(Number(localInvoice?.__computedHours))

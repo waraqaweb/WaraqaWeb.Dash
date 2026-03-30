@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import CircleSpinner from '../../components/ui/CircleSpinner';
 import useMinLoading from '../../components/ui/useMinLoading';
 import PrimaryButton from '../../components/ui/PrimaryButton';
 import Badge from '../../components/ui/Badge';
@@ -1857,7 +1858,7 @@ const InvoicesPage = ({ isActive = true }) => {
           <div className="mt-6 space-y-4">
             {showLoading && displayedInvoices.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 py-16 text-center text-slate-500">
-                <LoadingSpinner variant="circle" size="lg" text="Loading invoices…" />
+                <CircleSpinner size="lg" />
                 <p className="text-sm">Loading invoices…</p>
               </div>
             ) : displayedInvoices.length === 0 ? (

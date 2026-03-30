@@ -1322,9 +1322,10 @@ router.post("/series/:id/recreate", authenticateToken, requireRole(["admin"]), a
 /* -------------------------
    POST /api/classes/series/recreate-all
    - Admin-only
-   - Recreate missing instances for ALL active recurring patterns.
-   - Skips patterns whose most recent instances were all cancelled (admin
-     intentionally stopped the series) unless the pattern has no instances yet.
+   - Recreate missing instances for all ACTIVE recurring patterns
+     (those that have at least one future non-cancelled instance).
+   - Inactive patterns (no future instances) are skipped — they
+     should be handled individually by the admin.
    Returns: { processed, totalCreated, skipped, results[] }
    ------------------------- */
 router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), async (req, res) => {
@@ -1333,14 +1334,31 @@ router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), a
     const patterns = await Class.find({ status: 'pattern', isRecurring: true }).lean();
     const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'];
 
+    // Find which patterns have at least one future active instance
+    const patternIds = patterns.map((p) => p._id);
+    const activePatternRows = patternIds.length
+      ? await Class.aggregate([
+          {
+            $match: {
+              parentRecurringClass: { $in: patternIds },
+              status: { $nin: [...cancelledStatuses, 'pattern'] },
+              hidden: { $ne: true },
+              scheduledDate: { $gte: now },
+            },
+          },
+          { $group: { _id: '$parentRecurringClass' } },
+        ])
+      : [];
+    const activePatternIdSet = new Set(activePatternRows.map((r) => String(r._id)));
+
     const results = [];
     let totalCreated = 0;
     let skipped = 0;
 
     for (const pattern of patterns) {
-      const patternId = pattern._id;
+      const patternId = String(pattern._id);
 
-      // Check if the pattern has an endDate that's already in the past
+      // Skip patterns with expired endDate
       if (pattern.recurrence?.endDate) {
         const endDate = new Date(pattern.recurrence.endDate);
         if (!Number.isNaN(endDate.getTime()) && endDate < now) {
@@ -1349,23 +1367,10 @@ router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), a
         }
       }
 
-      // Check if admin intentionally cancelled all recent instances.
-      // If every instance in the last 60 days was cancelled, skip this pattern.
-      const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-      const recentInstances = await Class.find({
-        parentRecurringClass: patternId,
-        status: { $ne: 'pattern' },
-        scheduledDate: { $gte: sixtyDaysAgo },
-      }).select('status').lean();
-
-      if (recentInstances.length > 0) {
-        const allCancelled = recentInstances.every((inst) =>
-          cancelledStatuses.includes(inst.status)
-        );
-        if (allCancelled) {
-          skipped++;
-          continue;
-        }
+      // Skip inactive patterns (no future active instances)
+      if (!activePatternIdSet.has(patternId)) {
+        skipped++;
+        continue;
       }
 
       try {
@@ -1388,7 +1393,7 @@ router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), a
     }
 
     return res.json({
-      processed: patterns.length,
+      processed: patterns.length - skipped,
       totalCreated,
       skipped,
       results,

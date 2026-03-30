@@ -679,13 +679,17 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           || submissionPayload?.adminExtension?.extendedUntil
           || submissionPayload?.adminExtension?.expiresAt
           || null;
-        const eligibleForCoverage = deriveClassEligibility(
-          actualStatus,
-          reportSubmissionStatus,
-          scheduledSource || dateObj,
-          reportSubmissionAllowance,
-          reportSubmissionExtendedUntil
-        );
+        // When using the dynamic payload from the backend, trust its filtering —
+        // the backend already applied isPinned bypass and eligibility checks.
+        const eligibleForCoverage = usingDynamicPayload
+          ? true
+          : deriveClassEligibility(
+              actualStatus,
+              reportSubmissionStatus,
+              scheduledSource || dateObj,
+              reportSubmissionAllowance,
+              reportSubmissionExtendedUntil
+            );
 
         const durationMinutes = Number.isFinite(Number(liveClass?.duration))
           ? Number(liveClass.duration)

@@ -1081,9 +1081,6 @@ router.get("/", authenticateToken, async (req, res) => {
           'classReport.verseEnd',
           'classReport.recitedQuran',
           'reportSubmission.status',
-          'reportSubmission.teacherDeadline',
-          'reportSubmission.adminExtension.granted',
-          'reportSubmission.adminExtension.expiresAt',
           'createdAt',
           'updatedAt'
         ].join(' '))

@@ -6,7 +6,7 @@
 
 import React from 'react';
 
-const LoadingSpinner = ({ size = 'md', text = 'Loading...', label, fullScreen = false, variant = 'brand' }) => {
+const LoadingSpinner = ({ size = 'md', text = 'Loading...', fullScreen = false }) => {
   const sizeClasses = {
     sm: 'max-w-[180px]',
     md: 'max-w-[260px]',
@@ -14,28 +14,7 @@ const LoadingSpinner = ({ size = 'md', text = 'Loading...', label, fullScreen = 
     xl: 'max-w-[420px]'
   };
 
-  const circleSizes = {
-    sm: 'h-8 w-8 border-[3px]',
-    md: 'h-12 w-12 border-4',
-    lg: 'h-16 w-16 border-4',
-    xl: 'h-20 w-20 border-[5px]'
-  };
-
-  const resolvedText = typeof label === 'string' ? label : text;
-
-  const circleSpinner = (
-    <div className="flex flex-col items-center justify-center p-4">
-      <div className="flex flex-col items-center gap-4">
-        <div className="relative flex items-center justify-center" aria-hidden="true">
-          <div className={`${circleSizes[size] || circleSizes.md} rounded-full border-slate-200 border-t-[#2C736C] animate-spin`} />
-          <div className="absolute h-2.5 w-2.5 rounded-full bg-[#2C736C] shadow-[0_0_0_6px_rgba(44,115,108,0.12)] animate-pulse" />
-        </div>
-        {resolvedText && <span className="text-sm font-medium text-muted-foreground">{resolvedText}</span>}
-      </div>
-    </div>
-  );
-
-  const brandSpinner = (
+  const spinner = (
     <div className="flex flex-col items-center justify-center p-4">
       <div className="flex flex-col items-center gap-3 w-full">
         <div className={`w-full ${sizeClasses[size]}`} aria-hidden="true">
@@ -129,12 +108,10 @@ const LoadingSpinner = ({ size = 'md', text = 'Loading...', label, fullScreen = 
             </g>
           </svg>
         </div>
-        {resolvedText && <span className="text-sm text-muted-foreground font-medium">{resolvedText}</span>}
+        {text && <span className="text-sm text-muted-foreground font-medium">{text}</span>}
       </div>
     </div>
   );
-
-  const spinner = variant === 'circle' ? circleSpinner : brandSpinner;
 
   if (fullScreen) {
     return (

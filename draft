@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "wrongly created invocies"
+git commit -m "filter and search classes"
 git push origin main
 
 

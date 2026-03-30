@@ -352,7 +352,7 @@ const RefundInvoiceModal = ({ invoiceId, onClose, onUpdated }) => {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
         <div className="rounded-2xl bg-white p-10 shadow-xl">
-          <LoadingSpinner variant="circle" size="lg" label="Loading invoice..." />
+          <LoadingSpinner size="lg" label="Loading invoice..." />
         </div>
       </div>
     );

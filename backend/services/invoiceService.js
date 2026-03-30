@@ -49,6 +49,28 @@ const getFixedWindowEndInclusive = (value, days = 30) => {
   return new Date(exclusiveEnd.getTime() - 1);
 };
 
+/** Returns the number of days in the calendar month of the given date. */
+const getDaysInMonth = (date) => {
+  const d = ensureDate(date) || new Date();
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+};
+
+/**
+ * Compute the billing window (in days) for an invoice.
+ * Uses the billing period span if available, otherwise falls back to the
+ * calendar month length of the start date.
+ */
+const deriveBillingWindowDays = (invoice) => {
+  const start = ensureDate(invoice?.billingPeriod?.startDate);
+  const end = ensureDate(invoice?.billingPeriod?.endDate);
+  if (start && end) {
+    const diffDays = Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+    if (diffDays > 0 && diffDays <= 90) return diffDays;
+  }
+  if (start) return getDaysInMonth(start);
+  return 30;
+};
+
 const EPSILON_HOURS = 0.0005;
 const EPSILON_CURRENCY = 0.05;
 const ACTIVE_UNPAID_INVOICE_STATUSES = ['draft', 'pending', 'sent', 'overdue'];
@@ -739,7 +761,7 @@ class InvoiceService {
         if (existing) continue;
 
         // Cap auto-generated coverage at the end of the start month
-        const endDate = getFixedWindowEndExclusive(startDate, 30);
+        const endDate = getFixedWindowEndExclusive(startDate, getDaysInMonth(startDate));
 
         // Filter classes to only include those within the current calendar-month boundary
         const selectedClasses = unpaidClasses.filter(cls => {
@@ -918,8 +940,9 @@ class InvoiceService {
         }
       }
       
-      // Cap auto-generated coverage at the end of the earliest class month
-      const searchEndDate = getFixedWindowEndExclusive(billingStartDate, 30);
+      // Cap auto-generated coverage at the end of the earliest class's calendar month
+      const billingWindowDays = getDaysInMonth(billingStartDate);
+      const searchEndDate = getFixedWindowEndExclusive(billingStartDate, billingWindowDays);
 
       // Build initial item from the reported class
       const duration = Number(classDoc.duration || 60);
@@ -973,27 +996,7 @@ class InvoiceService {
             scheduledDate: { $gte: billingStartDate, $lt: searchEndDate },
             // Exclude classes that are in active invoices
             _id: { $nin: billedIds },
-            // Include classes that are:
-            // - Attended/absent (has report)
-            // - Scheduled and within submission window (reportSubmission.status: 'open' or 'admin_extended')
-            // - Scheduled with no submission status yet (class just ended)
-            $or: [
-              // Classes with reports submitted
-              { 'classReport.submittedAt': { $exists: true } },
-              // Scheduled classes within 72-hour window or with admin extension
-              { 
-                status: 'scheduled',
-                $or: [
-                  { 'reportSubmission.status': 'open' },
-                  { 'reportSubmission.status': 'admin_extended' },
-                  { 'reportSubmission.status': { $exists: false } }, // No tracking yet
-                  { 'reportSubmission.status': 'pending' }
-                ]
-              },
-              // Attended/absent classes
-              { status: 'attended' },
-              { status: 'missed_by_student' }
-            ]
+            status: { $nin: ['cancelled', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian', 'cancelled_by_admin', 'cancelled_by_system', 'on_hold', 'pattern'] }
           })
             .select('_id subject scheduledDate duration student teacher status billedInInvoiceId classReport reportSubmission')
             .lean();
@@ -1054,18 +1057,17 @@ class InvoiceService {
       const subtotal = items.reduce((s, it) => s + (Number(it.amount || 0) || 0), 0);
       console.log(`[First-Lesson Invoice] Calculated subtotal: $${subtotal}`);
 
-      // Calculate actual billing period from items (earliest to latest)
-      const itemDates = items.map(it => new Date(it.date)).sort((a, b) => a - b);
-      const actualStartDate = itemDates[0] || billingStartDate;
-      const actualEndDate = itemDates[itemDates.length - 1] || searchEndDate;
+      // Billing period: from earliest unbilled class through one calendar-month window
+      const actualStartDate = billingStartDate;
+      const billingPeriodEndDate = searchEndDate;
 
       const resolvedCoverageEnd = (() => {
-        const explicitEnd = ensureDate(opts.billingPeriodEnd || billingEnd);
+        const explicitEnd = ensureDate(opts.billingPeriodEnd);
         if (explicitEnd) {
           explicitEnd.setHours(23, 59, 59, 999);
           return explicitEnd;
         }
-        return getFixedWindowEndInclusive(billingStart, 30);
+        return getFixedWindowEndInclusive(actualStartDate, billingWindowDays);
       })();
 
       const invoice = new Invoice({
@@ -1075,7 +1077,7 @@ class InvoiceService {
         generationSource: 'first-lesson',
         billingPeriod: {
           startDate: actualStartDate,
-          endDate: actualEndDate,
+          endDate: billingPeriodEndDate,
           month: actualStartDate.getMonth() + 1,
           year: actualStartDate.getFullYear()
         },
@@ -1087,7 +1089,7 @@ class InvoiceService {
         paymentMethod: guardian.guardianInfo?.preferredPaymentMethod || 'paypal',
         notes: `Auto-generated for lesson on **${dayjs(classDoc.scheduledDate).format('MMM D, YYYY')}**.`,
         guardianFinancial: buildGuardianFinancialSnapshot(guardian),
-        coverage: { strategy: 'full_period', waiveTransferFee: false },
+        coverage: { strategy: 'full_period', endDate: resolvedCoverageEnd, waiveTransferFee: false },
         internalNotes: `First lesson • ${dayjs(now).format('MMM D, h:mm A')} • Class ${classDoc._id}`
       });
 
@@ -1255,7 +1257,11 @@ class InvoiceService {
 
       // Initialize billing period - will be updated based on unpaid classes
       let billingStart = opts.billingPeriodStart instanceof Date ? opts.billingPeriodStart : now;
-      let billingEnd = opts.billingPeriodEnd instanceof Date ? opts.billingPeriodEnd : getFixedWindowEndExclusive(billingStart, 30);
+      // billingWindowDays: caller can override; otherwise derived from the calendar month of the start date
+      const billingWindowDays = Number.isFinite(Number(opts.billingWindowDays)) && Number(opts.billingWindowDays) > 0
+        ? Number(opts.billingWindowDays)
+        : getDaysInMonth(billingStart);
+      let billingEnd = opts.billingPeriodEnd instanceof Date ? opts.billingPeriodEnd : getFixedWindowEndExclusive(billingStart, billingWindowDays);
 
       let resolvedCoverageEnd = null;
 
@@ -1300,7 +1306,7 @@ class InvoiceService {
           // Use the earliest unpaid class date as billing start, or today if no classes
           if (allUnpaidClasses.length > 0 && allUnpaidClasses[0].scheduledDate) {
             billingStart = new Date(allUnpaidClasses[0].scheduledDate);
-            billingEnd = getFixedWindowEndExclusive(billingStart, 30);
+            billingEnd = getFixedWindowEndExclusive(billingStart, billingWindowDays);
           }
 
           console.log(`🔍 [Zero-Hour PAYG Invoice] Guardian: ${guardian.firstName} ${guardian.lastName}`);
@@ -1311,30 +1317,9 @@ class InvoiceService {
           const upcomingQuery = {
             'student.guardianId': guardian._id,
             scheduledDate: { $gte: billingStart, $lt: billingEnd },
-            // Exclude classes in active invoices
             _id: { $nin: billedIds },
             paidByGuardian: { $ne: true },
-            // Include classes that are:
-            // - Attended/absent (has report)
-            // - Scheduled and within submission window (reportSubmission.status: 'open' or 'admin_extended')
-            // - Scheduled with no submission status yet (class just ended)
-            $or: [
-              // Classes with reports submitted
-              { 'classReport.submittedAt': { $exists: true } },
-              // Scheduled classes within 72-hour window or with admin extension
-              { 
-                status: 'scheduled',
-                $or: [
-                  { 'reportSubmission.status': 'open' },
-                  { 'reportSubmission.status': 'admin_extended' },
-                  { 'reportSubmission.status': { $exists: false } }, // No tracking yet
-                  { 'reportSubmission.status': 'pending' }
-                ]
-              },
-              // Attended/absent classes
-              { status: 'attended' },
-              { status: 'missed_by_student' }
-            ]
+            status: { $nin: ['cancelled', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian', 'cancelled_by_admin', 'cancelled_by_system', 'on_hold', 'pattern'] }
           };
           if (trackedStudentIds.length > 0) {
             upcomingQuery['student.studentId'] = { $in: trackedStudentIds };
@@ -1353,7 +1338,7 @@ class InvoiceService {
               scheduledDate: { $gte: billingStart, $lt: billingEnd },
               _id: { $nin: billedIds },
               paidByGuardian: { $ne: true },
-              $or: upcomingQuery.$or
+              status: upcomingQuery.status
             };
             upcoming = await Class.find(fallbackUpcomingQuery)
               .select('_id subject scheduledDate duration student teacher status reportSubmission')
@@ -1399,7 +1384,7 @@ class InvoiceService {
       // For auto-payg zero-trigger invoices, only create invoices from real due classes (or explicit dueOnlyHours).
       // Do not create empty fallback invoices anchored to "today".
       if (isAutoPayg && dueOnlyHours <= 0 && (!Array.isArray(items) || items.length === 0)) {
-        console.log(`⏭️ [Zero-Hour PAYG Invoice] Skipping ${guardian.firstName} ${guardian.lastName} - no unpaid classes found in derived 30-day window.`);
+        console.log(`⏭️ [Zero-Hour PAYG Invoice] Skipping ${guardian.firstName} ${guardian.lastName} - no unpaid classes found in derived ${billingWindowDays}-day window.`);
         return null;
       }
 
@@ -1409,7 +1394,7 @@ class InvoiceService {
           explicitEnd.setHours(23, 59, 59, 999);
           return explicitEnd;
         }
-        return getFixedWindowEndInclusive(billingStart, 30);
+        return getFixedWindowEndInclusive(billingStart, billingWindowDays);
       })();
 
       const invoice = new Invoice({
@@ -1918,7 +1903,25 @@ class InvoiceService {
           }
         }
         // Class not linked to any invoice yet - check if we should add it to an unpaid invoice
-        await InvoiceService.maybeAddClassToUnpaidInvoice(classDoc);
+        const addResult = await InvoiceService.maybeAddClassToUnpaidInvoice(classDoc);
+
+        // If no unpaid invoice exists or class falls outside billing period,
+        // auto-create a new invoice so the class doesn't remain uninvoiced
+        if (addResult && !addResult.success && (addResult.reason === 'no_unpaid_invoice' || addResult.reason === 'outside_billing_period')) {
+          const guardianId = classDoc.student?.guardianId;
+          if (guardianId) {
+            try {
+              const guardian = await User.findById(guardianId);
+              if (guardian && guardian.role === 'guardian' && (guardian.guardianInfo?.totalHours ?? 0) <= 0) {
+                console.log(`[onClassStateChanged] No suitable unpaid invoice for class ${classDoc._id} (${addResult.reason}), creating new invoice`);
+                await InvoiceService.createInvoiceForFirstLesson(guardian, classDoc);
+              }
+            } catch (createErr) {
+              console.warn('[onClassStateChanged] Failed to auto-create invoice for uninvoiced class:', createErr?.message);
+            }
+          }
+        }
+
         return { success: true, reason: 'not_linked', hoursUpdated: statusChanged && !skipHourAdjustment };
       }
 
@@ -2217,7 +2220,8 @@ class InvoiceService {
       
       if (billingStart && billingEnd) {
         if (classDate < billingStart || classDate >= billingEnd) {
-          return { success: false, reason: 'outside_billing_period' };
+          // Instead of silently rejecting, signal that a new invoice may be needed
+          return { success: false, reason: 'outside_billing_period', guardianId };
         }
       }
 
@@ -2591,6 +2595,8 @@ class InvoiceService {
         || new Date();
       const billingEnd = ensureDate(invoiceDoc?.billingPeriod?.endDate);
       const hasCoverageHoursCap = hasCoverageCap;
+      // Derive the billing window from the invoice's actual period or calendar month
+      const invoiceBillingDays = deriveBillingWindowDays(invoiceDoc);
       let coverageEnd = ensureDate(invoiceDoc?.coverage?.endDate) || null;
       if (coverageEnd) {
         coverageEnd.setHours(23, 59, 59, 999);
@@ -2599,11 +2605,11 @@ class InvoiceService {
         if (coverageEnd) {
           coverageEnd.setHours(23, 59, 59, 999);
         } else if (billingStart) {
-          coverageEnd = getFixedWindowEndInclusive(billingStart, 30);
+          coverageEnd = getFixedWindowEndInclusive(billingStart, invoiceBillingDays);
         }
       }
       if (isUnpaid && billingStart && !hasCoverageHoursCap) {
-        const fixedEnd = getFixedWindowEndInclusive(billingStart, 30);
+        const fixedEnd = getFixedWindowEndInclusive(billingStart, invoiceBillingDays);
         if (!coverageEnd || (fixedEnd && coverageEnd > fixedEnd)) {
           coverageEnd = fixedEnd;
         }
@@ -2799,7 +2805,9 @@ class InvoiceService {
           reportSubmissionExtendedUntil: extendedUntil
         };
 
-        if (!isClassEligibleForDynamicInvoice(enrichedClass, now)) {
+        // Pinned classes (already linked to this invoice) always stay visible
+        const isPinned = pinnedClassIds.has(classId);
+        if (!isPinned && !isClassEligibleForDynamicInvoice(enrichedClass, now)) {
           continue;
         }
 
@@ -2878,6 +2886,7 @@ class InvoiceService {
         coverageHours: coverageHours || null
       };
     } catch (err) {
+      console.error('[buildDynamicClassList] error:', err?.message || err);
       console.warn('buildDynamicClassList failed:', err?.message || err);
       return resultFallback;
     }
@@ -3632,15 +3641,13 @@ class InvoiceService {
         : await User.findById(guardianOrId);
       if (!guardian || guardian.role !== 'guardian') return { created: false };
 
-      const minLessonMinutes = Number(guardian.guardianInfo?.minLessonDurationMinutes ?? guardian.guardianInfo?.minLessonMinutes ?? 30);
-      const minLessonHours = Number.isFinite(minLessonMinutes) ? (minLessonMinutes / 60) : 0.5;
-
       const guardianTotalHours = Number(guardian.guardianInfo?.totalHours ?? 0);
       if (!Number.isFinite(guardianTotalHours)) {
         return { created: false, reason: 'invalid_total' };
       }
 
-      if (guardianTotalHours > minLessonHours) {
+      // Only create follow-up invoice when guardian hours are zero or negative
+      if (guardianTotalHours > 0) {
         return { created: false, reason: 'above_threshold' };
       }
 
@@ -3681,10 +3688,15 @@ class InvoiceService {
         ? new Date(prevInvoice.billingPeriod.endDate)
         : new Date();
 
+      // Match the billing period duration of the previous invoice,
+      // or use the calendar month length of the new billing start
+      const billingWindowDays = deriveBillingWindowDays(prevInvoice) || getDaysInMonth(prevEnd);
+
       const created = await this.createZeroHourInvoice(guardian, zeroHourTargets, {
         reason: 'threshold_followup',
         triggeredBy: 'auto-payg',
         billingPeriodStart: prevEnd,
+        billingWindowDays,
       });
 
       // Notify guardian about the newly created follow-up invoice (similar to first-lesson flow)
@@ -4270,11 +4282,25 @@ class InvoiceService {
       const invoice = await Invoice.findById(invoiceId).populate('guardian').exec();
       if (!invoice) throw new Error('Invoice not found');
 
+      const isInvoiceSettled = (candidate) => {
+        if (!candidate) return false;
+        const status = String(candidate.status || '').toLowerCase();
+        if (status === 'paid' || status === 'refunded') return true;
+
+        const total = Number(candidate.adjustedTotal ?? candidate.total ?? 0);
+        const paid = Number(candidate.paidAmount || 0);
+        const remainingAmount = typeof candidate.getDueAmount === 'function'
+          ? Number(candidate.getDueAmount() || 0)
+          : Math.max(0, total - paid);
+
+        if (Number.isFinite(remainingAmount) && remainingAmount <= 0) return true;
+        if (Number.isFinite(total) && total > 0 && Number.isFinite(paid) && paid >= (total - 0.01)) return true;
+        return false;
+      };
+
       // If invoice is already paid / settled, return idempotent success and do not apply another payment
       try {
-        const remainingAmount = typeof invoice.getDueAmount === 'function' ? invoice.getDueAmount() : (Number(invoice.total || 0) - Number(invoice.paidAmount || 0));
-        const isSettled = (Number(remainingAmount || 0) <= 0) || String(invoice.status || '').toLowerCase() === 'paid';
-        if (isSettled) {
+        if (isInvoiceSettled(invoice)) {
           console.log('[InvoiceService] Invoice already settled - ignoring payment attempt', { invoiceId });
           // Return fresh invoice snapshot where possible
           try {
@@ -4323,15 +4349,48 @@ class InvoiceService {
             if (tx && !query.idempotencyKey) query.transactionId = tx;
             query.invoice = invoice._id;
             try {
-              const existing = await Payment.findOne(query).lean().exec();
+              const existing = await Payment.findOne(query).exec();
               if (existing) {
-                // If already applied, return existing invoice snapshot
-                if (existing.status === 'applied') {
-                  const freshInv = await Invoice.findById(invoiceId).populate('guardian').exec();
-                  return { success: true, invoice: freshInv, duplicate: true, message: 'Duplicate payment (already applied)' };
+                let freshInv = null;
+                try {
+                  freshInv = await Invoice.findById(invoiceId).populate('guardian').exec();
+                } catch (freshErr) {
+                  freshInv = null;
                 }
-                // In-flight or created: treat as duplicate-in-progress
-                return { success: true, invoice, duplicate: true, message: 'Payment already in progress' };
+                const invoiceSnapshot = freshInv || invoice;
+
+                // If already applied, return existing invoice snapshot
+                if (existing.status === 'applied' && isInvoiceSettled(invoiceSnapshot)) {
+                  return { success: true, invoice: invoiceSnapshot, duplicate: true, message: 'Duplicate payment (already applied)' };
+                }
+
+                if (isInvoiceSettled(invoiceSnapshot)) {
+                  return { success: true, invoice: invoiceSnapshot, duplicate: true, message: 'Invoice already settled' };
+                }
+
+                console.warn('[InvoiceService] Existing payment record found for unpaid invoice; retrying payment apply', {
+                  invoiceId,
+                  paymentId: existing._id,
+                  paymentStatus: existing.status
+                });
+
+                createdPayment = await Payment.findByIdAndUpdate(
+                  existing._id,
+                  {
+                    $set: {
+                      amount: Number(paymentData.amount || 0),
+                      paymentMethod: paymentData.paymentMethod || paymentData.method || 'manual',
+                      transactionId: tx,
+                      adminUser: adminUserId || undefined,
+                      paidHours: typeof paidHoursVal === 'number' ? paidHoursVal : undefined,
+                      tip: typeof tipVal === 'number' ? tipVal : undefined,
+                      paidAt: paidAtVal || undefined,
+                      status: 'pending'
+                    },
+                    $unset: { error: 1 }
+                  },
+                  { new: true }
+                ).exec();
               }
             } catch (loadErr) {
               console.warn('Failed to load existing Payment after duplicate key', loadErr && loadErr.message);
@@ -4384,8 +4443,12 @@ class InvoiceService {
           });
 
           if (found) {
-            console.log('🔔 [InvoiceService] Duplicate payment detected — ignoring re-apply', { invoiceId, incomingAmount, incomingMethod, incomingTx });
-            return { success: true, invoice, duplicate: true, message: 'Duplicate payment ignored' };
+            const freshInvoice = await Invoice.findById(invoiceId).populate('guardian').exec().catch(() => null);
+            if (isInvoiceSettled(freshInvoice || invoice)) {
+              console.log('🔔 [InvoiceService] Duplicate payment detected — ignoring re-apply', { invoiceId, incomingAmount, incomingMethod, incomingTx });
+              return { success: true, invoice: freshInvoice || invoice, duplicate: true, message: 'Duplicate payment ignored' };
+            }
+            console.warn('[InvoiceService] Duplicate-like payment log found on unpaid invoice; continuing with recovery apply', { invoiceId, incomingAmount, incomingMethod, incomingTx });
           }
         }
       } catch (dupErr) {
@@ -4641,8 +4704,12 @@ class InvoiceService {
           });
 
           if (exists) {
-            console.log('🔔 [InvoiceService] Duplicate payment detected on fresh DB re-check — ignoring', { invoiceId, incomingAmount, incomingMethod, incomingTx });
-            return { success: true, invoice, duplicate: true, message: 'Duplicate payment ignored (concurrent)' };
+            const freshInvoice = await Invoice.findById(invoiceId).populate('guardian').exec().catch(() => null);
+            if (isInvoiceSettled(freshInvoice || invoice)) {
+              console.log('🔔 [InvoiceService] Duplicate payment detected on fresh DB re-check — ignoring', { invoiceId, incomingAmount, incomingMethod, incomingTx });
+              return { success: true, invoice: freshInvoice || invoice, duplicate: true, message: 'Duplicate payment ignored (concurrent)' };
+            }
+            console.warn('[InvoiceService] Duplicate-like payment log found during fresh DB check on unpaid invoice; continuing with recovery apply', { invoiceId, incomingAmount, incomingMethod, incomingTx });
           }
         }
       } catch (freshErr) {

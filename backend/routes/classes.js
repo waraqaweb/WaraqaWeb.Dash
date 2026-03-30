@@ -3342,6 +3342,219 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
 });
 
 /* -------------------------
+   PUT /api/classes/:id/unsubmit-report
+   Admin-only: reverts a submitted class report as if it was never submitted.
+   - Restores guardian hours that were consumed
+   - Subtracts teacher hours that were credited
+   - If the class belongs to a past month with an existing TeacherInvoice,
+     adds a deduction entry with explanatory note
+   - Archives the existing report in classReportHistory
+   - Resets class status to 'scheduled' and reportSubmission to 'pending'
+   ------------------------- */
+router.put("/:id/unsubmit-report", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  try {
+    const classDoc = await Class.findById(req.params.id);
+    if (!classDoc) return res.status(404).json({ message: "Class not found" });
+
+    const isCountable = (s) => ['attended', 'missed_by_student', 'absent'].includes(s);
+    if (!isCountable(classDoc.status)) {
+      return res.status(400).json({
+        message: "This class does not have a submitted report that affects hours"
+      });
+    }
+
+    if (!classDoc.classReport?.submittedAt) {
+      return res.status(400).json({ message: "No submitted report to revert" });
+    }
+
+    const adminReason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+
+    // Archive the current report into history before clearing
+    if (!Array.isArray(classDoc.classReportHistory)) {
+      classDoc.classReportHistory = [];
+    }
+    classDoc.classReportHistory.push({
+      snapshot: JSON.parse(JSON.stringify(classDoc.classReport)),
+      editedAt: new Date(),
+      editedBy: req.user._id,
+      note: `Unsubmitted by admin${adminReason ? ': ' + adminReason : ''}`,
+    });
+    if (classDoc.classReportHistory.length > 20) {
+      classDoc.classReportHistory = classDoc.classReportHistory.slice(-20);
+    }
+    classDoc.markModified("classReportHistory");
+
+    // Determine the class month/year for teacher invoice adjustment
+    const classDate = classDoc.scheduledDate ? new Date(classDoc.scheduledDate) : null;
+    const classMonth = classDate ? classDate.getUTCMonth() + 1 : null;
+    const classYear = classDate ? classDate.getUTCFullYear() : null;
+    const now = new Date();
+    const currentMonth = now.getUTCMonth() + 1;
+    const currentYear = now.getUTCFullYear();
+    const isCrossMonth = classMonth !== null && (classMonth !== currentMonth || classYear !== currentYear);
+    const classDuration = Number(classDoc.duration || 60);
+    const classHours = classDuration / 60;
+
+    // Clear the report — status change to 'scheduled' triggers the post-save
+    // hook which calls onClassStateChanged (countable→non-countable) to:
+    //   - subtract teacher hours (current month counter)
+    //   - restore guardian hours
+    classDoc.classReport = undefined;
+    classDoc.markModified("classReport");
+
+    // Reset status back to scheduled — this is the key transition that
+    // triggers hour reversal via the post-save hook
+    classDoc.status = "scheduled";
+
+    // Reset attendance
+    classDoc.attendance = {};
+    classDoc.markModified("attendance");
+
+    // Reset report submission tracking
+    if (!classDoc.reportSubmission) classDoc.reportSubmission = {};
+    classDoc.reportSubmission.status = 'pending';
+    classDoc.reportSubmission.markedUnreportedAt = undefined;
+    classDoc.reportSubmission.markedUnreportedBy = undefined;
+    classDoc.markModified("reportSubmission");
+
+    // Clear cancellation if it was a teacher/student cancellation
+    if (classDoc.cancellation) {
+      classDoc.cancellation = undefined;
+      classDoc.markModified("cancellation");
+    }
+
+    classDoc.lastModifiedBy = req.user._id;
+    classDoc.lastModifiedAt = new Date();
+
+    await classDoc.save();
+
+    // Handle cross-month teacher invoice adjustments:
+    // When a report from a past month is unsubmitted, the teacher's live
+    // monthlyHours counter (which tracks the *current* month) gets decreased
+    // by onClassStateChanged. But the real accounting impact is on the month
+    // the class belongs to. If that month already has a TeacherInvoice we
+    // need to record the deduction there.
+    if (isCrossMonth && classDoc.teacher) {
+      try {
+        const TeacherInvoice = require('../models/TeacherInvoice');
+        const dayjs = require('dayjs');
+        const monthLabel = dayjs.utc(`${classYear}-${String(classMonth).padStart(2, '0')}-01`).format('MMM YYYY');
+
+        // Find the teacher invoice for the month the class belongs to
+        const teacherInvoice = await TeacherInvoice.findOne({
+          teacher: classDoc.teacher,
+          month: classMonth,
+          year: classYear,
+          isAdjustment: { $ne: true },
+          deleted: { $ne: true },
+        });
+
+        if (teacherInvoice) {
+          // Remove the class from the invoice's classIds
+          const classIdStr = String(classDoc._id);
+          teacherInvoice.classIds = (teacherInvoice.classIds || []).filter(
+            (id) => String(id) !== classIdStr
+          );
+
+          // Decrease totalHours
+          teacherInvoice.totalHours = Math.max(
+            0,
+            (teacherInvoice.totalHours || 0) - classHours
+          );
+
+          // Add a deduction extra to leave an audit trail
+          const deductionReason =
+            `Report unsubmitted for class on ${dayjs.utc(classDate).format('MMM D, YYYY')} ` +
+            `(${classHours.toFixed(2)}h)` +
+            (adminReason ? ` — ${adminReason}` : '');
+
+          if (typeof teacherInvoice.addExtra === 'function') {
+            teacherInvoice.addExtra({
+              category: 'penalty',
+              amountUSD: 0,
+              reason: deductionReason,
+              addedBy: req.user._id,
+            });
+          } else {
+            if (!Array.isArray(teacherInvoice.extras)) teacherInvoice.extras = [];
+            teacherInvoice.extras.push({
+              category: 'penalty',
+              amountUSD: 0,
+              reason: deductionReason,
+              addedAt: new Date(),
+              addedBy: req.user._id,
+            });
+          }
+
+          // Append an internal note explaining the discrepancy
+          const note =
+            `[Auto] Class unsubmitted (${monthLabel}): -${classHours.toFixed(2)}h. ` +
+            `The class list may show more entries than the total hours because ` +
+            `this class was unsubmitted after the invoice was generated.` +
+            (adminReason ? ` Reason: ${adminReason}` : '');
+          teacherInvoice.internalNotes = teacherInvoice.internalNotes
+            ? teacherInvoice.internalNotes + '\n' + note
+            : note;
+
+          // Record in change history
+          if (!Array.isArray(teacherInvoice.changeHistory)) teacherInvoice.changeHistory = [];
+          teacherInvoice.changeHistory.push({
+            changedAt: new Date(),
+            changedBy: req.user._id,
+            action: 'unsubmit_class',
+            field: 'totalHours',
+            oldValue: String((teacherInvoice.totalHours + classHours).toFixed(3)),
+            newValue: String(teacherInvoice.totalHours.toFixed(3)),
+            note: deductionReason,
+          });
+
+          // Recalculate amounts if the invoice is still in draft
+          if (teacherInvoice.status === 'draft' && typeof teacherInvoice.calculateAmounts === 'function') {
+            teacherInvoice.calculateAmounts();
+          }
+
+          teacherInvoice.updatedBy = req.user._id;
+          await teacherInvoice.save();
+
+          // Undo the incorrect current-month teacher hours adjustment that
+          // onClassStateChanged applied. The post-save hook subtracts hours
+          // from the teacher's live monthlyHours (which tracks the current
+          // month), but the class belongs to a different month. We add the
+          // hours back so the current month counter stays correct.
+          try {
+            const teacher = await User.findById(classDoc.teacher);
+            if (teacher && teacher.role === 'teacher') {
+              await teacher.addTeachingHours(classHours);
+            }
+          } catch (revertErr) {
+            console.warn('[unsubmit-report] Failed to revert current-month teacher hours:', revertErr?.message);
+          }
+        }
+      } catch (tiErr) {
+        console.warn('[unsubmit-report] Teacher invoice adjustment failed:', tiErr?.message || tiErr);
+      }
+    }
+
+    // Emit socket events
+    try {
+      const io = req.app.get("io");
+      if (io) {
+        io.emit("class:reportUnsubmitted", { classId: classDoc._id, class: classDoc });
+        io.emit("class:updated", { classId: classDoc._id, class: classDoc });
+      }
+    } catch (e) {
+      console.warn("[unsubmit-report] Socket emit error:", e.message);
+    }
+
+    const responseClass = sanitizeClassForRole(classDoc.toObject({ virtuals: true }), req.user?.role);
+    res.json({ message: "Report unsubmitted successfully", class: responseClass });
+  } catch (err) {
+    console.error("[unsubmit-report] Error:", err);
+    res.status(500).json({ message: "Failed to unsubmit report", error: err.message });
+  }
+});
+
+/* -------------------------
    PUT /api/classes/:id/report
    Teacher/Admin submits report -> mark reportSubmitted & completedAt
    ------------------------- */

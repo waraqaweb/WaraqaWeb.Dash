@@ -2622,6 +2622,32 @@ fetchClassesRef.current = fetchClasses;
     alert(response?.message || "Class cancelled successfully!");
   };
 
+  const [unsubmittingReportId, setUnsubmittingReportId] = useState(null);
+  const handleUnsubmitReport = useCallback(async (classItem) => {
+    const isCountable = ['attended', 'missed_by_student', 'absent'].includes(classItem?.status);
+    if (!isCountable || !classItem?.classReport?.submittedAt) return;
+
+    const reason = prompt(
+      'Reason for unsubmitting this report (optional):\n\n' +
+      'This will restore guardian hours and adjust teacher hours/invoice.'
+    );
+    if (reason === null) return; // user cancelled the prompt
+
+    setUnsubmittingReportId(classItem._id);
+    try {
+      const { data } = await api.put(`/classes/${classItem._id}/unsubmit-report`, {
+        reason: reason || '',
+      });
+      await fetchClasses();
+      alert(data?.message || 'Report unsubmitted successfully');
+    } catch (err) {
+      const msg = err?.response?.data?.message || err.message || 'Failed to unsubmit report';
+      alert(msg);
+    } finally {
+      setUnsubmittingReportId(null);
+    }
+  }, [fetchClasses]);
+
   const openGoogleMeet = (link) => {
     if (link) window.open(link, "_blank");
   };
@@ -3217,6 +3243,20 @@ fetchClassesRef.current = fetchClasses;
                     >
                       <Copy className="h-4 w-4" />
                     </button>
+
+                    {reportSubmitted && ['attended', 'missed_by_student', 'absent'].includes(classItem.status) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUnsubmitReport(classItem);
+                        }}
+                        className="icon-button icon-button--orange"
+                        title="Unsubmit Report"
+                        disabled={unsubmittingReportId === classItem._id}
+                      >
+                        <RotateCcw className={`h-4 w-4 ${unsubmittingReportId === classItem._id ? 'animate-spin' : ''}`} />
+                      </button>
+                    )}
 
                     <button
                       onClick={(e) => {

@@ -25,6 +25,22 @@ const roundHours = (value) => {
   return Math.round(numeric * 1000) / 1000;
 };
 
+const isInvoiceSettledForResponse = (invoice) => {
+  if (!invoice) return false;
+  const status = String(invoice.status || '').toLowerCase();
+  if (status === 'paid' || status === 'refunded') return true;
+
+  const total = Number(invoice.adjustedTotal ?? invoice.total ?? 0);
+  const paid = Number(invoice.paidAmount || 0);
+  if (Number.isFinite(total) && total > 0 && Number.isFinite(paid) && paid >= (total - 0.01)) {
+    return true;
+  }
+
+  const remaining = Number(invoice.remainingBalance);
+  if (Number.isFinite(remaining) && remaining <= 0) return true;
+  return false;
+};
+
 const getFixedWindowEndExclusive = (value, days = 30) => {
   const base = value instanceof Date ? value : new Date(value || Date.now());
   return new Date(base.getTime() + (days * 24 * 60 * 60 * 1000));
@@ -1742,6 +1758,10 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
       invoice.markModified('guardianFinancial');
     }
 
+    // Capture guardianFinancial before syncUnpaidInvoiceItems may replace the
+    // invoice with a stale DB-re-read copy (same pattern as `coverage` below).
+    const pendingGuardianFinancial = invoice.guardianFinancial;
+
     const prevMaxHours = Number(previousCoverage?.maxHours ?? 0) || 0;
     const nextMaxHours = Number(coverage?.maxHours ?? 0) || 0;
     const hoursChanged = Math.abs(nextMaxHours - prevMaxHours) > 0.0005;
@@ -1779,6 +1799,16 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
         });
         if (syncResult?.invoice) {
           invoice = syncResult.invoice;
+          // Re-apply the intended coverage and guardianFinancial because
+          // syncUnpaidInvoiceItems internally re-reads the invoice from DB
+          // (which still has the old values) and saves it, overwriting our
+          // in-memory mutations.
+          invoice.coverage = coverage;
+          invoice.markModified('coverage');
+          if (pendingGuardianFinancial) {
+            invoice.guardianFinancial = pendingGuardianFinancial;
+            invoice.markModified('guardianFinancial');
+          }
         }
       } catch (syncErr) {
         console.warn('Coverage update: failed to sync unpaid invoice items', syncErr?.message || syncErr);
@@ -2448,6 +2478,22 @@ router.post('/:id/payment', authenticateToken, async (req, res) => {
     }
     const result = await InvoiceService.processInvoicePayment(invoiceId, paymentPayload, req.user._id);
     if (!result.success) return res.status(400).json(result);
+    if (!isInvoiceSettledForResponse(result.invoice)) {
+      console.warn('=== [Invoices API] POST /invoices/:id/payment unresolved payment result ===', {
+        id: invoiceId,
+        duplicate: result.duplicate,
+        message: result.message,
+        status: result.invoice?.status,
+        paidAmount: result.invoice?.paidAmount,
+        total: result.invoice?.adjustedTotal ?? result.invoice?.total
+      });
+      return res.status(409).json({
+        success: false,
+        message: 'Payment was not applied. Please retry. If it keeps happening, inspect the existing payment record for this invoice.',
+        duplicate: Boolean(result.duplicate),
+        invoice: result.invoice || null
+      });
+    }
 
     console.log('=== [Invoices API] POST /invoices/:id/payment SUCCESS ===', { id: invoiceId, amount: paymentPayload.amount, method: paymentPayload.paymentMethod });
 
@@ -2890,6 +2936,22 @@ router.put('/:id/pay', authenticateToken, async (req, res) => {
     const result = await InvoiceService.processInvoicePayment(id, paymentPayload, req.user._id);
     if (!result.success) {
       return res.status(400).json(result);
+    }
+    if (!isInvoiceSettledForResponse(result.invoice)) {
+      console.warn('=== [Invoices API] PUT /invoices/:id/pay unresolved payment result ===', {
+        id,
+        duplicate: result.duplicate,
+        message: result.message,
+        status: result.invoice?.status,
+        paidAmount: result.invoice?.paidAmount,
+        total: result.invoice?.adjustedTotal ?? result.invoice?.total
+      });
+      return res.status(409).json({
+        success: false,
+        message: 'Payment was not applied. Please retry. If it keeps happening, inspect the existing payment record for this invoice.',
+        duplicate: Boolean(result.duplicate),
+        invoice: result.invoice || null
+      });
     }
 
     console.log('=== [Invoices API] PUT /invoices/:id/pay SUCCESS ===', { id, amount: paymentPayload.amount, method: paymentPayload.paymentMethod });

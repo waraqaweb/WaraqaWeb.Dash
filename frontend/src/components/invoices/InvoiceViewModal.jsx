@@ -229,6 +229,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [maxHours, setMaxHours] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [savingCoverage, setSavingCoverage] = useState(false);
+  const savingCoverageRef = useRef(false);
   const [coverageStatus, setCoverageStatus] = useState(null);
   const [noteEdits, setNoteEdits] = useState({
     notes: '',
@@ -244,11 +245,15 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [seqDraft, setSeqDraft] = useState('');
   const [editingInlineNote, setEditingInlineNote] = useState(null);
   const seqInputRef = useRef(null);
+  const maxHoursInputRef = useRef(null);
+  const endDateInputRef = useRef(null);
 
   const notesLastSavedRef = useRef({ notes: '', internalNotes: '', invoiceReferenceLink: '' });
   const skipNextNotesSave = useRef(false);
   const suppressSocketRefreshUntilRef = useRef(0);
   const coverageLastSavedRef = useRef({ maxHours: '', customEndDate: '', waiveTransferFee: false });
+  const coverageDraftRef = useRef({ maxHours: '', customEndDate: '', waiveTransferFee: false });
+  const coverageDraftHoldUntilRef = useRef(0);
   const skipNextCoverageSave = useRef(false);
   const totalsSyncKeyRef = useRef(null);
   const syncingSnapshotRef = useRef(false);
@@ -258,6 +263,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const userModifiedFiltersRef = useRef(false);
   const coverageEditingRef = useRef(false);
   const seededInitialInvoiceIdRef = useRef(null);
+  const coverageInvoiceSessionRef = useRef(null);
+  const activeCoverageFieldRef = useRef(null);
+  const skipCoverageBlurSaveRef = useRef(null);
 
   const formatDateInput = useCallback((value) => {
     if (!value) return '';
@@ -274,6 +282,46 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     const mon = MONTHS_SHORT[d.getUTCMonth()];
     const yr = d.getUTCFullYear();
     return `${day} ${mon} ${yr}`;
+  }, []);
+
+  const updateCoverageDraft = useCallback((patch) => {
+    coverageDraftRef.current = {
+      ...coverageDraftRef.current,
+      ...patch
+    };
+  }, []);
+
+  const holdCoverageDraft = useCallback((durationMs = 10_000) => {
+    coverageDraftHoldUntilRef.current = Date.now() + durationMs;
+  }, []);
+
+  const buildCoverageDraftInvoice = useCallback((inv) => {
+    if (!inv) return inv;
+
+    const shouldPreserveCoverageDraft = coverageEditingRef.current
+      || userModifiedFiltersRef.current
+      || savingCoverageRef.current
+      || savingCoverageRef.current
+      || coverageDraftHoldUntilRef.current > Date.now();
+
+    if (!shouldPreserveCoverageDraft) return inv;
+
+    const draftMaxHours = coverageDraftRef.current.maxHours;
+    const draftCustomEndDate = coverageDraftRef.current.customEndDate;
+    const draftWaiveTransferFee = Boolean(coverageDraftRef.current.waiveTransferFee);
+    const parsedDraftMaxHours = draftMaxHours !== '' && draftMaxHours !== null && draftMaxHours !== undefined
+      ? Number(draftMaxHours)
+      : null;
+
+    return {
+      ...inv,
+      coverage: {
+        ...(inv.coverage || {}),
+        maxHours: Number.isFinite(parsedDraftMaxHours) ? parsedDraftMaxHours : null,
+        endDate: draftCustomEndDate || null,
+        waiveTransferFee: draftWaiveTransferFee
+      }
+    };
   }, []);
 
   const parseInvoiceNameParts = useCallback((name) => {
@@ -319,29 +367,40 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     if (!inv) return;
     totalsSyncKeyRef.current = null;
     syncingSnapshotRef.current = false;
-    setInvoice(inv);
+    const nextInvoice = buildCoverageDraftInvoice(inv);
+    setInvoice(nextInvoice);
     const nextNotes = {
-      notes: inv?.notes || '',
-      internalNotes: inv?.internalNotes || '',
-      invoiceReferenceLink: inv?.invoiceReferenceLink || ''
+      notes: nextInvoice?.notes || '',
+      internalNotes: nextInvoice?.internalNotes || '',
+      invoiceReferenceLink: nextInvoice?.invoiceReferenceLink || ''
     };
     skipNextNotesSave.current = true;
     setNoteEdits(nextNotes);
     notesLastSavedRef.current = nextNotes;
-    const coverage = inv.coverage || {};
-    const coverageLocked = ['paid', 'refunded'].includes(String(inv?.status || '').toLowerCase());
+    const coverage = nextInvoice.coverage || {};
+    const coverageLocked = ['paid', 'refunded'].includes(String(nextInvoice?.status || '').toLowerCase());
     const hasMaxHours = typeof coverage.maxHours === 'number' && Number.isFinite(coverage.maxHours);
     const normalizedMax = hasMaxHours ? Math.max(0, coverage.maxHours) : null;
     const normalizedEndDate = coverage.endDate ? formatDateInput(coverage.endDate) : '';
     const nextMaxHours = !coverageLocked && normalizedMax && normalizedMax > 0 ? String(normalizedMax) : '';
     const nextCustomEndDate = !coverageLocked ? (normalizedEndDate || '') : '';
 
-    if (!coverageEditingRef.current) {
+    const shouldPreserveCoverageDraft = coverageEditingRef.current
+      || userModifiedFiltersRef.current
+      || savingCoverageRef.current
+      || coverageDraftHoldUntilRef.current > Date.now();
+
+    if (!shouldPreserveCoverageDraft) {
       skipNextCoverageSave.current = true;
       setMaxHours(nextMaxHours);
       setCustomEndDate(nextCustomEndDate);
       const nextWaive = Boolean(coverage.waiveTransferFee);
       setWaiveTransferFee(nextWaive);
+      coverageDraftRef.current = {
+        maxHours: nextMaxHours,
+        customEndDate: nextCustomEndDate || '',
+        waiveTransferFee: nextWaive
+      };
       userModifiedFiltersRef.current = false;
       coverageLastSavedRef.current = {
         maxHours: nextMaxHours,
@@ -351,11 +410,11 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     }
 
     if (!seqEditing) {
-      const parts = parseInvoiceNameParts(inv?.invoiceName || '');
+      const parts = parseInvoiceNameParts(nextInvoice?.invoiceName || '');
       setInvoiceNameParts(parts);
       setSeqDraft(parts.seq || '');
     }
-  }, [seqEditing, parseInvoiceNameParts, formatDateInput]);
+  }, [seqEditing, parseInvoiceNameParts, formatDateInput, buildCoverageDraftInvoice]);
 
   const toNumberOr = (value, fallback = 0) => {
     const numeric = Number(value);
@@ -388,18 +447,25 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   useEffect(() => {
     if (!identifier) return;
     let cancelled = false;
+    const isNewInvoiceSession = coverageInvoiceSessionRef.current !== identifier;
+
+    if (isNewInvoiceSession) {
+      coverageInvoiceSessionRef.current = identifier;
+      setCoverageStatus(null);
+      setResolvedInvoiceId(invoiceId || null);
+
+      // Reset tracking flags only when opening a different invoice.
+      initialClassesFetchedRef.current = false;
+      userModifiedFiltersRef.current = false;
+      coverageEditingRef.current = false;
+      coverageDraftHoldUntilRef.current = 0;
+    }
 
     const fetchInvoiceDetails = async () => {
       try {
         if (!initialInvoice) {
           setLoading(true);
         }
-        setCoverageStatus(null);
-        setResolvedInvoiceId(invoiceId || null);
-        
-        // Reset tracking flags when opening a new invoice
-        initialClassesFetchedRef.current = false;
-        userModifiedFiltersRef.current = false;
         
         const cacheKey = makeCacheKey('invoices:detail', user?._id, { id: identifier });
         const cached = readCache(cacheKey, { deps: ['invoices'] });
@@ -711,6 +777,24 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     const normalized = formatHoursValue(hours);
     return normalized || '';
   }, [getEligibleSortedClasses, formatHoursValue]);
+
+  const commitCoverageFieldDraft = useCallback((field, rawValue) => {
+    const value = rawValue ?? '';
+
+    if (field === 'maxHours') {
+      updateCoverageDraft({ maxHours: value, customEndDate: '' });
+      setMaxHours(value);
+      setCustomEndDate('');
+      return;
+    }
+
+    if (field === 'customEndDate') {
+      const derivedMax = value ? computeMaxHoursFromEndDate(value) : '';
+      updateCoverageDraft({ customEndDate: value, maxHours: derivedMax });
+      setCustomEndDate(value);
+      setMaxHours(derivedMax);
+    }
+  }, [updateCoverageDraft, computeMaxHoursFromEndDate]);
 
 
   const filteredClasses = useMemo(() => {
@@ -1080,19 +1164,43 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     XLSX.writeFile(workbook, `Invoice-${invoice.invoiceName || invoice.invoiceNumber || invoice._id}.xlsx`);
   };
 
-  const handleSaveCoverage = useCallback(async () => {
+  const handleSaveCoverage = useCallback(async (draftOverride = null) => {
     const targetInvoiceId = invoice?._id || resolvedInvoiceId;
     if (!targetInvoiceId) return;
     if (isCoverageLocked) return;
+    if (savingCoverageRef.current) return;
+    savingCoverageRef.current = true;
+    holdCoverageDraft();
     setSavingCoverage(true);
     let succeeded = false;
 
     try {
-      const strategyValue = maxHours ? 'cap_hours' : customEndDate ? 'custom_end' : 'full_period';
+      const effectiveDraft = draftOverride
+        ? {
+            ...coverageDraftRef.current,
+            ...draftOverride
+          }
+        : coverageDraftRef.current;
+      coverageDraftRef.current = effectiveDraft;
+
+      const draftMaxHours = effectiveDraft.maxHours ?? '';
+      const draftCustomEndDate = effectiveDraft.customEndDate ?? '';
+      const draftWaiveTransferFee = Boolean(effectiveDraft.waiveTransferFee);
+
+      // Optimistically mark these values as "last saved" so the auto-save
+      // effect won't see a diff and queue another PUT while this one is in flight.
+      coverageLastSavedRef.current = {
+        maxHours: draftMaxHours || '',
+        customEndDate: draftCustomEndDate || '',
+        waiveTransferFee: draftWaiveTransferFee
+      };
+      userModifiedFiltersRef.current = false;
+
+      const strategyValue = draftMaxHours ? 'cap_hours' : draftCustomEndDate ? 'custom_end' : 'full_period';
 
       let parsedMaxHours = null;
-      if (maxHours !== '' && maxHours !== null && maxHours !== undefined) {
-        const numeric = Number(maxHours);
+      if (draftMaxHours !== '' && draftMaxHours !== null && draftMaxHours !== undefined) {
+        const numeric = Number(draftMaxHours);
         if (Number.isFinite(numeric) && numeric >= 0) {
           parsedMaxHours = numeric;
         }
@@ -1101,8 +1209,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
       const payload = {
         strategy: strategyValue,
         maxHours: parsedMaxHours,
-        endDate: customEndDate || null,
-        waiveTransferFee: Boolean(waiveTransferFee)
+        endDate: draftCustomEndDate || null,
+        waiveTransferFee: draftWaiveTransferFee
       };
 
   totalsSyncKeyRef.current = null;
@@ -1135,31 +1243,89 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           console.error('Refetch after coverage save failed:', refetchErr);
         }
       }
+
+      // Always refresh with includeDynamic=1 after a coverage save so the class list
+      // reflects newly included/excluded scheduled classes.
+      try {
+        const { data: dynRes } = await api.get(`/invoices/${targetInvoiceId}`, { params: { includeDynamic: 1 } });
+        const dynInvoice = dynRes?.invoice || dynRes;
+        if (dynInvoice) syncInvoiceState(dynInvoice);
+      } catch (dynErr) {
+        console.error('Refetch (includeDynamic) after coverage save failed:', dynErr);
+      }
       coverageLastSavedRef.current = {
-        maxHours: maxHours || '',
-        customEndDate: customEndDate || '',
-        waiveTransferFee: Boolean(waiveTransferFee)
+        maxHours: draftMaxHours || '',
+        customEndDate: draftCustomEndDate || '',
+        waiveTransferFee: draftWaiveTransferFee
       };
+      // Keep draft pinned briefly after success so any immediate cached/old refresh
+      // can't overwrite the UI back to the previous server state.
+      holdCoverageDraft(5000);
       userModifiedFiltersRef.current = false;
       setCoverageStatus({ type: 'success', message: 'saved' });
       succeeded = true;
     } catch (err) {
       console.error('Coverage update failed:', err);
+      holdCoverageDraft();
       const message = err?.response?.data?.message || 'Failed to update coverage settings';
       setCoverageStatus({ type: 'error', message });
     } finally {
       setSavingCoverage(false);
+      savingCoverageRef.current = false;
       if (succeeded) {
         setTimeout(() => setCoverageStatus(null), 2000);
       }
     }
-  }, [resolvedInvoiceId, invoice, maxHours, customEndDate, waiveTransferFee, syncInvoiceState, previewTotals, isCoverageLocked]);
+  }, [resolvedInvoiceId, invoice, syncInvoiceState, isCoverageLocked, holdCoverageDraft]);
+
+  useEffect(() => {
+    const handlePointerDownCapture = (event) => {
+      const activeField = activeCoverageFieldRef.current;
+      if (!activeField) return;
+
+      const activeInput = activeField === 'maxHours'
+        ? maxHoursInputRef.current
+        : endDateInputRef.current;
+
+      if (!activeInput) return;
+      if (event.target === activeInput || activeInput.contains?.(event.target)) return;
+
+      coverageEditingRef.current = false;
+      holdCoverageDraft();
+      skipCoverageBlurSaveRef.current = activeField;
+      skipNextCoverageSave.current = true;
+
+      if (activeField === 'maxHours') {
+        const nextValue = activeInput.value;
+        const draftPatch = { maxHours: nextValue, customEndDate: '', waiveTransferFee: coverageDraftRef.current.waiveTransferFee };
+        commitCoverageFieldDraft('maxHours', nextValue);
+        coverageLastSavedRef.current = { maxHours: nextValue, customEndDate: '', waiveTransferFee: coverageDraftRef.current.waiveTransferFee };
+        userModifiedFiltersRef.current = false;
+        handleSaveCoverage(draftPatch);
+        activeCoverageFieldRef.current = null;
+        return;
+      }
+
+      const nextValue = activeInput.value;
+      const derivedMax = nextValue ? computeMaxHoursFromEndDate(nextValue) : '';
+      const draftPatch = { customEndDate: nextValue, maxHours: derivedMax, waiveTransferFee: coverageDraftRef.current.waiveTransferFee };
+      commitCoverageFieldDraft('customEndDate', nextValue);
+      coverageLastSavedRef.current = { maxHours: derivedMax, customEndDate: nextValue, waiveTransferFee: coverageDraftRef.current.waiveTransferFee };
+      userModifiedFiltersRef.current = false;
+      handleSaveCoverage(draftPatch);
+      activeCoverageFieldRef.current = null;
+    };
+
+    document.addEventListener('pointerdown', handlePointerDownCapture, true);
+    return () => document.removeEventListener('pointerdown', handlePointerDownCapture, true);
+  }, [commitCoverageFieldDraft, computeMaxHoursFromEndDate, handleSaveCoverage, holdCoverageDraft]);
 
   useEffect(() => {
     if (!isAdmin) return;
     if (!invoice && !resolvedInvoiceId) return;
     if (isCoverageLocked) return;
     if (coverageEditingRef.current) return;
+    if (savingCoverageRef.current) return;
 
     if (skipNextCoverageSave.current) {
       skipNextCoverageSave.current = false;
@@ -1384,7 +1550,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
         const updated = data.invoice || data;
         if (updated && typeof updated === 'object') {
           // apply returned invoice object from snapshot endpoint
-          setInvoice((prev) => (prev ? { ...prev, ...updated } : updated));
+          const mergedUpdatedInvoice = buildCoverageDraftInvoice(updated);
+          setInvoice((prev) => (prev ? { ...prev, ...mergedUpdatedInvoice } : mergedUpdatedInvoice));
 
           // Attempt to re-fetch authoritative invoice from server to ensure
           // the UI state matches exactly what was persisted (prevents any
@@ -1400,11 +1567,14 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
 
               // If local coverage inputs differ from persisted coverage, persist them.
               try {
-                const localMax = maxHours !== '' && maxHours !== null && maxHours !== undefined ? Number(maxHours) : null;
+                const draftMax = coverageDraftRef.current.maxHours ?? '';
+                const draftEnd = coverageDraftRef.current.customEndDate ?? '';
+                const draftWaive = Boolean(coverageDraftRef.current.waiveTransferFee);
+                const localMax = draftMax !== '' && draftMax !== null && draftMax !== undefined ? Number(draftMax) : null;
                 const persistedMax = refetched.coverage && typeof refetched.coverage.maxHours === 'number' ? refetched.coverage.maxHours : null;
-                const localEnd = customEndDate || null;
+                const localEnd = draftEnd || null;
                 const persistedEnd = refetched.coverage && refetched.coverage.endDate ? refetched.coverage.endDate : null;
-                const localWaive = Boolean(waiveTransferFee);
+                const localWaive = draftWaive;
                 const persistedWaive = Boolean(refetched.coverage && refetched.coverage.waiveTransferFee);
 
                 const maxDiffers = (localMax === null && persistedMax !== null) || (localMax !== null && persistedMax === null) || (localMax !== null && persistedMax !== null && Math.abs(localMax - persistedMax) > 0.0001);
@@ -1412,13 +1582,13 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                 const waiveDiffers = localWaive !== persistedWaive;
 
                 if (maxDiffers || endDiffers || waiveDiffers) {
-                  const strategyValue = maxHours ? 'cap_hours' : customEndDate ? 'custom_end' : 'full_period';
-                  const parsedMaxHours = Number.isFinite(Number(maxHours)) ? Number(maxHours) : null;
+                  const strategyValue = draftMax ? 'cap_hours' : draftEnd ? 'custom_end' : 'full_period';
+                  const parsedMaxHours = Number.isFinite(Number(draftMax)) ? Number(draftMax) : null;
                   const coveragePayload = {
                     strategy: strategyValue,
                     maxHours: parsedMaxHours,
-                    endDate: customEndDate || null,
-                    waiveTransferFee: Boolean(waiveTransferFee),
+                    endDate: draftEnd || null,
+                    waiveTransferFee: draftWaive,
                     previewTotals
                   };
 
@@ -2077,7 +2247,11 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                             type="button"
                             onClick={() => {
                               if (isCoverageLocked) return;
-                              setWaiveTransferFee((prev) => !prev);
+                              setWaiveTransferFee((prev) => {
+                                const nextWaiveTransferFee = !prev;
+                                updateCoverageDraft({ waiveTransferFee: nextWaiveTransferFee });
+                                return nextWaiveTransferFee;
+                              });
                               userModifiedFiltersRef.current = true;
                             }}
                             disabled={isCoverageLocked}
@@ -2122,13 +2296,32 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                         <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
                           <span className="font-semibold text-slate-600">Covered Hours</span>
                           <input
+                            ref={maxHoursInputRef}
                             type="number"
                             value={maxHours}
+                            onKeyDown={(e) => {
+                              if (isCoverageLocked) return;
+                              if (e.key !== 'Enter') return;
+                              e.preventDefault();
+                              const nextValue = e.currentTarget.value;
+                              coverageEditingRef.current = false;
+                              holdCoverageDraft();
+                              skipCoverageBlurSaveRef.current = 'maxHours';
+                              skipNextCoverageSave.current = true;
+                              commitCoverageFieldDraft('maxHours', nextValue);
+                              coverageLastSavedRef.current = { maxHours: nextValue, customEndDate: '', waiveTransferFee: coverageDraftRef.current.waiveTransferFee };
+                              userModifiedFiltersRef.current = false;
+                              handleSaveCoverage({ maxHours: nextValue, customEndDate: '', waiveTransferFee: coverageDraftRef.current.waiveTransferFee });
+                              activeCoverageFieldRef.current = null;
+                              e.currentTarget.blur();
+                            }}
                             onChange={(e) => {
                               if (isCoverageLocked) return;
                               coverageEditingRef.current = true;
+                              activeCoverageFieldRef.current = 'maxHours';
                               const value = e.target.value;
                               userModifiedFiltersRef.current = true;
+                              updateCoverageDraft({ maxHours: value, customEndDate: '' });
                               setMaxHours(value);
                               if (value === '' || value === null || value === undefined) {
                                 setCustomEndDate('');
@@ -2139,11 +2332,25 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                             onFocus={() => {
                               if (isCoverageLocked) return;
                               coverageEditingRef.current = true;
+                              activeCoverageFieldRef.current = 'maxHours';
                             }}
-                            onBlur={() => {
+                            onBlur={(e) => {
                               if (isCoverageLocked) return;
+                              if (skipCoverageBlurSaveRef.current === 'maxHours') {
+                                skipCoverageBlurSaveRef.current = null;
+                                activeCoverageFieldRef.current = null;
+                                return;
+                              }
                               coverageEditingRef.current = false;
-                              handleSaveCoverage();
+                              const value = e.target.value;
+                              skipNextCoverageSave.current = true;
+                              updateCoverageDraft({ maxHours: value });
+                              setMaxHours(value);
+                              holdCoverageDraft();
+                              coverageLastSavedRef.current = { maxHours: value, customEndDate: '', waiveTransferFee: coverageDraftRef.current.waiveTransferFee };
+                              userModifiedFiltersRef.current = false;
+                              handleSaveCoverage({ maxHours: value, customEndDate: '', waiveTransferFee: coverageDraftRef.current.waiveTransferFee });
+                              activeCoverageFieldRef.current = null;
                             }}
                             placeholder="e.g. 10"
                             disabled={isCoverageLocked}
@@ -2153,29 +2360,66 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                         <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-500">
                           <span className="font-semibold text-slate-600">End Date</span>
                           <input
+                            ref={endDateInputRef}
                             type="date"
                             value={customEndDate}
+                            onKeyDown={(e) => {
+                              if (isCoverageLocked) return;
+                              if (e.key !== 'Enter') return;
+                              e.preventDefault();
+                              const nextValue = e.currentTarget.value;
+                              const derivedMax = nextValue ? computeMaxHoursFromEndDate(nextValue) : '';
+                              coverageEditingRef.current = false;
+                              holdCoverageDraft();
+                              skipCoverageBlurSaveRef.current = 'customEndDate';
+                              skipNextCoverageSave.current = true;
+                              commitCoverageFieldDraft('customEndDate', nextValue);
+                              coverageLastSavedRef.current = { maxHours: derivedMax, customEndDate: nextValue, waiveTransferFee: coverageDraftRef.current.waiveTransferFee };
+                              userModifiedFiltersRef.current = false;
+                              handleSaveCoverage({ customEndDate: nextValue, maxHours: derivedMax, waiveTransferFee: coverageDraftRef.current.waiveTransferFee });
+                              activeCoverageFieldRef.current = null;
+                              e.currentTarget.blur();
+                            }}
                             onChange={(e) => {
                               if (isCoverageLocked) return;
                               coverageEditingRef.current = true;
+                              activeCoverageFieldRef.current = 'customEndDate';
                               const value = e.target.value;
                               userModifiedFiltersRef.current = true;
                               setCustomEndDate(value);
                               if (!value) {
+                                updateCoverageDraft({ customEndDate: '', maxHours: '' });
                                 setMaxHours('');
                                 return;
                               }
                               const derivedMax = computeMaxHoursFromEndDate(value);
+                              updateCoverageDraft({ customEndDate: value, maxHours: derivedMax });
                               setMaxHours(derivedMax);
                             }}
                             onFocus={() => {
                               if (isCoverageLocked) return;
                               coverageEditingRef.current = true;
+                              activeCoverageFieldRef.current = 'customEndDate';
                             }}
-                            onBlur={() => {
+                            onBlur={(e) => {
                               if (isCoverageLocked) return;
+                              if (skipCoverageBlurSaveRef.current === 'customEndDate') {
+                                skipCoverageBlurSaveRef.current = null;
+                                activeCoverageFieldRef.current = null;
+                                return;
+                              }
                               coverageEditingRef.current = false;
-                              handleSaveCoverage();
+                              const value = e.target.value;
+                              const derivedMax = value ? computeMaxHoursFromEndDate(value) : '';
+                              skipNextCoverageSave.current = true;
+                              updateCoverageDraft({ customEndDate: value, maxHours: derivedMax });
+                              setCustomEndDate(value);
+                              setMaxHours(derivedMax);
+                              holdCoverageDraft();
+                              coverageLastSavedRef.current = { maxHours: derivedMax, customEndDate: value, waiveTransferFee: coverageDraftRef.current.waiveTransferFee };
+                              userModifiedFiltersRef.current = false;
+                              handleSaveCoverage({ customEndDate: value, maxHours: derivedMax, waiveTransferFee: coverageDraftRef.current.waiveTransferFee });
+                              activeCoverageFieldRef.current = null;
                             }}
                             disabled={isCoverageLocked}
                             className="border-0 border-b border-slate-200 bg-transparent px-0 py-2 text-sm text-slate-700 focus:border-slate-400 focus:outline-none"

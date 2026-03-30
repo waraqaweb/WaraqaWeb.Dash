@@ -2323,13 +2323,13 @@ const InvoicesPage = ({ isActive = true }) => {
                   <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">Variable tags</p>
                   <p className="mt-1 text-xs text-slate-500">Insert variables into any editor field as text tags.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => insertComposerToken(greetingEditorRef, 'guardianEpithet')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{guardianEpithet}}</button>
-                    <button type="button" onClick={() => insertComposerToken(greetingEditorRef, 'guardianFirstName')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{guardianFirstName}}</button>
-                    <button type="button" onClick={() => insertComposerToken(bodyIntroEditorRef, 'studentTargets')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{studentTargets}}</button>
-                    <button type="button" onClick={() => insertComposerToken(bodyIntroEditorRef, 'youOrGuardian')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{youOrGuardian}}</button>
-                    <button type="button" onClick={() => insertComposerToken(bodyMessage1EditorRef, 'paypalLink')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{paypalLink}}</button>
-                    <button type="button" onClick={() => insertComposerToken(bodyMessage2EditorRef, 'publicLink')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{publicLink}}</button>
-                    <button type="button" onClick={() => insertComposerToken(endMessageEditorRef, 'guardianFirstName')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{{guardianFirstName}}</button>
+                    <button type="button" onClick={() => insertComposerToken(greetingEditorRef, 'guardianEpithet')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{'{{guardianEpithet}}'}</button>
+                    <button type="button" onClick={() => insertComposerToken(greetingEditorRef, 'guardianFirstName')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{'{{guardianFirstName}}'}</button>
+                    <button type="button" onClick={() => insertComposerToken(bodyIntroEditorRef, 'studentTargets')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{'{{studentTargets}}'}</button>
+                    <button type="button" onClick={() => insertComposerToken(bodyIntroEditorRef, 'youOrGuardian')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{'{{youOrGuardian}}'}</button>
+                    <button type="button" onClick={() => insertComposerToken(bodyMessage1EditorRef, 'paypalLink')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{'{{paypalLink}}'}</button>
+                    <button type="button" onClick={() => insertComposerToken(bodyMessage2EditorRef, 'publicLink')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{'{{publicLink}}'}</button>
+                    <button type="button" onClick={() => insertComposerToken(endMessageEditorRef, 'guardianFirstName')} className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{'{{guardianFirstName}}'}</button>
                   </div>
                 </div>
 

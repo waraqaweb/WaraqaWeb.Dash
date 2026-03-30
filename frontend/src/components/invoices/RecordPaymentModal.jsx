@@ -625,6 +625,11 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
     setSaving(true);
     setError('');
     try {
+      const targetInvoiceId = localInvoice?._id || invoiceId;
+      if (!targetInvoiceId) {
+        throw new Error('Invoice id is missing');
+      }
+
       if (bonusOverridesEnabled && totalAllocatedBonus > netTipAmount + 0.01) {
         throw new Error(`Teacher bonus allocation exceeds net tip (${netTipAmount.toFixed(2)}).`);
       }
@@ -663,7 +668,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
           : undefined
       };
       
-      const res = await api.post(`/invoices/${invoiceId}/payment`, payload);
+      const res = await api.post(`/invoices/${targetInvoiceId}/payment`, payload);
       const updated = res?.data || {};
       // Propagate updated entities so parent can refresh UI instantly
       if (onUpdated) onUpdated({

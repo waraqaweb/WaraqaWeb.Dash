@@ -418,6 +418,8 @@ const ClassesPage = ({ isActive = true }) => {
   const [seriesScannerList, setSeriesScannerList] = useState([]);
   const [seriesScannerSearch, setSeriesScannerSearch] = useState("");
   const [seriesRecreatingId, setSeriesRecreatingId] = useState(null);
+  const [seriesRecreatingAll, setSeriesRecreatingAll] = useState(false);
+  const [seriesRecreateAllResult, setSeriesRecreateAllResult] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editClass, setEditClass] = useState(null);
   const [editAvailabilityWarning, setEditAvailabilityWarning] = useState(null);
@@ -579,6 +581,29 @@ const ClassesPage = ({ isActive = true }) => {
       alert(err?.response?.data?.message || 'Failed to recreate series instances');
     } finally {
       setSeriesRecreatingId(null);
+    }
+  }, [fetchSeriesScannerList]);
+
+  const handleRecreateAllSeriesInstances = useCallback(async () => {
+    setSeriesRecreatingAll(true);
+    setSeriesRecreateAllResult(null);
+    try {
+      const res = await api.post('/classes/series/recreate-all');
+      const data = res.data || {};
+      setSeriesRecreateAllResult({
+        totalCreated: data.totalCreated ?? 0,
+        processed: data.processed ?? 0,
+        skipped: data.skipped ?? 0,
+      });
+      await fetchSeriesScannerList();
+      await fetchClassesRef.current?.();
+    } catch (err) {
+      console.error('Failed to recreate all series instances:', err);
+      setSeriesRecreateAllResult({
+        error: err?.response?.data?.message || 'Failed to recreate all series instances',
+      });
+    } finally {
+      setSeriesRecreatingAll(false);
     }
   }, [fetchSeriesScannerList]);
 
@@ -4371,7 +4396,7 @@ fetchClassesRef.current = fetchClasses;
 
       <SeriesScannerModal
         isOpen={showSeriesScanner}
-        onClose={() => setShowSeriesScanner(false)}
+        onClose={() => { setShowSeriesScanner(false); setSeriesRecreateAllResult(null); }}
         series={seriesScannerList}
         loading={seriesScannerLoading}
         error={seriesScannerError}
@@ -4387,6 +4412,9 @@ fetchClassesRef.current = fetchClasses;
           handleOpenDeleteModal(pattern);
         }}
         onRecreate={handleRecreateSeriesInstances}
+        onRecreateAll={handleRecreateAllSeriesInstances}
+        recreatingAll={seriesRecreatingAll}
+        recreateAllResult={seriesRecreateAllResult}
       />
 
       <CreateClassModal

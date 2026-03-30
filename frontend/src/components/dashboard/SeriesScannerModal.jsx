@@ -15,6 +15,9 @@ export default function SeriesScannerModal({
   onDelete,
   onRecreate,
   recreatingId,
+  onRecreateAll,
+  recreatingAll,
+  recreateAllResult,
 }) {
   const filtered = useMemo(() => {
     const list = Array.isArray(series) ? series : [];
@@ -77,10 +80,33 @@ export default function SeriesScannerModal({
               />
             </div>
 
-            <div className="text-xs text-gray-500">
-              {Array.isArray(series) ? `${filtered.length} / ${series.length}` : "0"} series
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onRecreateAll}
+                disabled={recreatingAll || loading}
+                className="inline-flex items-center gap-2 rounded-xl border border-[#2C736C] bg-[#2C736C] px-4 py-2 text-sm font-medium text-white hover:bg-[#245e58] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RotateCcw className={`h-4 w-4 ${recreatingAll ? 'animate-spin' : ''}`} />
+                {recreatingAll ? 'Recreating…' : 'Recreate All'}
+              </button>
+              <div className="text-xs text-gray-500">
+                {Array.isArray(series) ? `${filtered.length} / ${series.length}` : "0"} series
+              </div>
             </div>
           </div>
+
+          {recreateAllResult && (
+            <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+              recreateAllResult.error
+                ? 'border-red-200 bg-red-50 text-red-800'
+                : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+            }`}>
+              {recreateAllResult.error
+                ? recreateAllResult.error
+                : `Created ${recreateAllResult.totalCreated} instance(s) across ${recreateAllResult.processed} series (${recreateAllResult.skipped} skipped).`}
+            </div>
+          )}
 
           {error && (
             <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">

@@ -1320,6 +1320,86 @@ router.post("/series/:id/recreate", authenticateToken, requireRole(["admin"]), a
 });
 
 /* -------------------------
+   POST /api/classes/series/recreate-all
+   - Admin-only
+   - Recreate missing instances for ALL active recurring patterns.
+   - Skips patterns whose most recent instances were all cancelled (admin
+     intentionally stopped the series) unless the pattern has no instances yet.
+   Returns: { processed, totalCreated, skipped, results[] }
+   ------------------------- */
+router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  try {
+    const now = new Date();
+    const patterns = await Class.find({ status: 'pattern', isRecurring: true }).lean();
+    const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'];
+
+    const results = [];
+    let totalCreated = 0;
+    let skipped = 0;
+
+    for (const pattern of patterns) {
+      const patternId = pattern._id;
+
+      // Check if the pattern has an endDate that's already in the past
+      if (pattern.recurrence?.endDate) {
+        const endDate = new Date(pattern.recurrence.endDate);
+        if (!Number.isNaN(endDate.getTime()) && endDate < now) {
+          skipped++;
+          continue;
+        }
+      }
+
+      // Check if admin intentionally cancelled all recent instances.
+      // If every instance in the last 60 days was cancelled, skip this pattern.
+      const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+      const recentInstances = await Class.find({
+        parentRecurringClass: patternId,
+        status: { $ne: 'pattern' },
+        scheduledDate: { $gte: sixtyDaysAgo },
+      }).select('status').lean();
+
+      if (recentInstances.length > 0) {
+        const allCancelled = recentInstances.every((inst) =>
+          cancelledStatuses.includes(inst.status)
+        );
+        if (allCancelled) {
+          skipped++;
+          continue;
+        }
+      }
+
+      try {
+        const perDayMap = buildPerDayMap(pattern.recurrenceDetails || []);
+        const created = await generateRecurringClasses(
+          pattern,
+          pattern.recurrence?.generationPeriodMonths || 2,
+          perDayMap,
+          { throwOnError: true }
+        );
+        const count = Array.isArray(created) ? created.length : 0;
+        totalCreated += count;
+        if (count > 0) {
+          results.push({ patternId, subject: pattern.subject, createdCount: count });
+        }
+      } catch (err) {
+        console.error(`recreate-all: failed for pattern ${patternId}:`, err.message);
+        results.push({ patternId, subject: pattern.subject, error: err.message });
+      }
+    }
+
+    return res.json({
+      processed: patterns.length,
+      totalCreated,
+      skipped,
+      results,
+    });
+  } catch (err) {
+    console.error('POST /api/classes/series/recreate-all error:', err);
+    return res.status(500).json({ message: 'Failed to recreate series instances' });
+  }
+});
+
+/* -------------------------
    POST /api/classes/:id/reschedule-request
    Teacher or guardian submits a reschedule request
    ------------------------- */

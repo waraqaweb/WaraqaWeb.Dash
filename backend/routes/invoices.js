@@ -1815,8 +1815,13 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
       }
     }
 
-    // If using maxHours without an explicit endDate, derive endDate from the
-    // updated dynamic class list so increases can extend the coverage window.
+    // If using maxHours without an explicit endDate, derive the last covered
+    // class date from the dynamic class list so the billing period can extend
+    // to cover it.  IMPORTANT: do NOT persist this derived date back to
+    // coverage.endDate — that would create a circular restriction where the
+    // cap limits classes → last class date becomes endDate → endDate limits
+    // future queries → fewer classes even when the cap allows more.
+    let derivedBillingEnd = null;
     const needsDerivedEndDate =
       invoice.type === 'guardian_invoice'
       && Number.isFinite(Number(coverage?.maxHours))
@@ -1834,15 +1839,17 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
           .sort((a, b) => a - b)
           .pop();
         if (lastDate) {
-          coverage.endDate = lastDate;
+          derivedBillingEnd = lastDate;
         }
       } catch (deriveErr) {
         console.warn('Coverage update: failed to derive endDate from dynamic items', deriveErr?.message || deriveErr);
       }
     }
 
-    if (coverage?.endDate) {
-      const nextCoverageEnd = new Date(coverage.endDate);
+    // Extend billingPeriod.endDate from explicit coverage endDate or derived date
+    const effectiveCoverageEnd = coverage?.endDate || derivedBillingEnd;
+    if (effectiveCoverageEnd) {
+      const nextCoverageEnd = new Date(effectiveCoverageEnd);
       if (!Number.isNaN(nextCoverageEnd.getTime())) {
         if (!invoice.billingPeriod || typeof invoice.billingPeriod !== 'object') {
           invoice.billingPeriod = {};

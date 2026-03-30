@@ -66,7 +66,7 @@ const getHoursBalanceMeta = (value) => {
 
   if (num < 0) {
     return {
-      formatted: formatHours2(Math.abs(num)),
+      formatted: `-${formatHours2(Math.abs(num))}`,
       label: 'due',
       tone: 'text-orange-700',
     };

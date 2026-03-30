@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import { Clock, AlertCircle, CheckCircle2, XCircle, Shield } from 'lucide-react';
 import api from '../../api/axios';
 
@@ -17,6 +18,105 @@ const formatCompactDateTime = (value) => {
   const lookup = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
   return `${lookup.day} ${lookup.month} ${lookup.year} ${lookup.hour}:${lookup.minute} ${lookup.dayPeriod || ''}`.trim();
 };
+
+/* ---- Quick-select presets for extension hours ---- */
+const HOUR_PRESETS = [6, 12, 24, 48, 72];
+
+/* ---- Shared extension modal (rendered via portal) ---- */
+function ExtensionModal({ show, hours, reason, processing, onChangeHours, onChangeReason, onGrant, onClose }) {
+  if (!show) return null;
+
+  const content = (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget && !processing) onClose(); }}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl bg-white shadow-2xl ring-1 ring-gray-900/5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* header */}
+        <div className="border-b border-gray-100 px-5 py-4">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2C736C]/10">
+              <Shield className="h-4 w-4 text-[#2C736C]" />
+            </div>
+            <h3 className="text-base font-semibold text-gray-900">Grant Extension</h3>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-gray-500">
+            Reopens the submission window so the teacher can submit the report.
+          </p>
+        </div>
+
+        {/* body */}
+        <div className="space-y-4 px-5 py-4">
+          {/* duration */}
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-gray-700">Duration (hours)</label>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {HOUR_PRESETS.map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  onClick={() => onChangeHours(h)}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+                    Number(hours) === h
+                      ? 'bg-[#2C736C] text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {h}h
+                </button>
+              ))}
+            </div>
+            <input
+              type="number"
+              min="1"
+              max="168"
+              value={hours}
+              onChange={(e) => onChangeHours(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#2C736C] focus:outline-none focus:ring-2 focus:ring-[#2C736C]/20"
+            />
+          </div>
+
+          {/* reason */}
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-gray-700">Reason <span className="font-normal text-gray-400">(optional)</span></label>
+            <textarea
+              value={reason}
+              onChange={(e) => onChangeReason(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm placeholder:text-gray-400 focus:border-[#2C736C] focus:outline-none focus:ring-2 focus:ring-[#2C736C]/20"
+              rows="2"
+              placeholder="Reason for extension…"
+            />
+          </div>
+        </div>
+
+        {/* footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
+            disabled={processing}
+            className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onGrant(); }}
+            disabled={processing}
+            className="rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245e58] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {processing ? 'Granting…' : 'Grant Extension'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return ReactDOM.createPortal(content, document.body);
+}
 
 /**
  * ReportSubmissionStatus Component
@@ -38,12 +138,8 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
       try {
         const res = await api.get('/settings/admin_extension_hours');
         const hours = Number(res.data?.setting?.value) || 24;
-        if (!cancelled) {
-          setExtensionHours(hours);
-        }
-      } catch (err) {
-        // ignore
-      }
+        if (!cancelled) setExtensionHours(hours);
+      } catch (_) { /* ignore */ }
     };
     fetchDefaultHours();
     return () => { cancelled = true; };
@@ -64,9 +160,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     }
   }, [classId]);
 
-  useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
+  useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
   const handleGrantExtension = async () => {
     try {
@@ -75,10 +169,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
         extensionHours: parseInt(extensionHours),
         reason: extensionReason || `Extension granted for ${extensionHours} hours`,
       });
-      
-      // Show success message
-      alert(`✅ Extension granted successfully!\n\nThe teacher now has ${extensionHours} more hours to submit the report.\n\nNew deadline: ${new Date(res.data.expiresAt).toLocaleString()}`);
-      
+      alert(`Extension granted successfully!\n\nThe teacher now has ${extensionHours} more hours to submit the report.\n\nNew deadline: ${new Date(res.data.expiresAt).toLocaleString()}`);
       setShowExtensionModal(false);
       setExtensionReason('');
       await fetchStatus();
@@ -86,7 +177,7 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error('Error granting extension:', err);
-      alert('❌ Failed to grant extension: ' + (err.response?.data?.message || 'Unknown error'));
+      alert('Failed to grant extension: ' + (err.response?.data?.message || 'Unknown error'));
     } finally {
       setProcessing(false);
     }
@@ -100,27 +191,48 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     }
     const wholeHours = Math.floor(hours);
     const minutes = Math.floor((hours - wholeHours) * 60);
-    if (minutes > 0) {
-      return `${wholeHours}h ${minutes}m`;
-    }
+    if (minutes > 0) return `${wholeHours}h ${minutes}m`;
     return `${wholeHours} hour${wholeHours !== 1 ? 's' : ''}`;
   };
 
-  const renderCompactStatus = (
-    title,
-    lines = [],
-    toneClass = 'text-slate-700',
-    action = null,
-    containerClassName = compactBare ? 'px-0 py-0' : 'bg-slate-50 border border-slate-200 rounded-lg px-3 py-2'
-  ) => (
+  /* ---- shared "Extend" trigger button ---- */
+  const extendButton = (size = 'sm') => userRole === 'admin' ? (
+    <button
+      type="button"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowExtensionModal(true); }}
+      className={
+        size === 'xs'
+          ? 'shrink-0 rounded-lg bg-[#2C736C] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-[#245e58]'
+          : 'inline-flex items-center gap-1 rounded-lg bg-[#2C736C] px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-[#245e58]'
+      }
+    >
+      {size !== 'xs' && <Shield className="h-3 w-3" />}
+      Extend
+    </button>
+  ) : null;
+
+  /* ---- shared extension modal (portal) ---- */
+  const extensionModal = (
+    <ExtensionModal
+      show={showExtensionModal}
+      hours={extensionHours}
+      reason={extensionReason}
+      processing={processing}
+      onChangeHours={setExtensionHours}
+      onChangeReason={setExtensionReason}
+      onGrant={handleGrantExtension}
+      onClose={() => setShowExtensionModal(false)}
+    />
+  );
+
+  /* ---- helper for compact rendering ---- */
+  const renderCompactStatus = (title, lines = [], toneClass = 'text-slate-700', action = null, containerClassName = compactBare ? 'px-0 py-0' : 'bg-slate-50 border border-slate-200 rounded-lg px-3 py-2') => (
     <div className={containerClassName}>
       <div className={`flex justify-between gap-3 ${compactInline ? 'items-center' : 'items-start'}`}>
         <div className={`min-w-0 ${compactInline ? 'flex flex-wrap items-center gap-x-2 gap-y-1' : 'space-y-1'}`}>
           <p className={`${compactInline ? 'text-xs' : 'text-sm'} font-semibold ${toneClass}`}>{title}</p>
           {lines.filter(Boolean).slice(0, compactInline ? 1 : 2).map((line, index) => (
-            <p key={index} className={`${compactInline ? 'text-[11px]' : 'text-xs'} ${toneClass} break-words`}>
-              {line}
-            </p>
+            <p key={index} className={`${compactInline ? 'text-[11px]' : 'text-xs'} ${toneClass} break-words`}>{line}</p>
           ))}
         </div>
         {action}
@@ -128,10 +240,9 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     </div>
   );
 
+  // ─── Loading ───
   if (loading) {
-    if (compact) {
-      return renderCompactStatus('Checking submission status…', [], 'text-blue-700', null, compactBare ? 'px-0 py-0' : 'bg-blue-50 border border-blue-200 rounded-lg px-3 py-2');
-    }
+    if (compact) return renderCompactStatus('Checking…', [], 'text-blue-700', null, compactBare ? 'px-0 py-0' : 'bg-blue-50 border border-blue-200 rounded-lg px-3 py-2');
     return (
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <div className="flex items-center gap-2 text-blue-700">
@@ -142,160 +253,63 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
     );
   }
 
+  // ─── Error ───
   if (error) {
-    if (compact) {
-      return renderCompactStatus(error, [], 'text-red-700', null, compactBare ? 'px-0 py-0' : 'bg-red-50 border border-red-200 rounded-lg px-3 py-2');
-    }
+    if (compact) return renderCompactStatus(error, [], 'text-red-700', null, compactBare ? 'px-0 py-0' : 'bg-red-50 border border-red-200 rounded-lg px-3 py-2');
     return (
       <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-        <div className="flex items-center gap-2 text-red-700">
-          <XCircle className="h-5 w-5" />
-          <span>{error}</span>
-        </div>
+        <div className="flex items-center gap-2 text-red-700"><XCircle className="h-5 w-5" /><span>{error}</span></div>
       </div>
     );
   }
 
   if (!status) return null;
 
-  // Report already submitted
+  // ─── Report already submitted ───
   if (status.reportSubmitted) {
-    if (compact) {
-      return renderCompactStatus(
-        compactInline ? 'Submitted' : 'Report Submitted',
-        [],
-        'text-green-700',
-        null,
-        compactBare ? 'px-0 py-0' : 'bg-green-50 border border-green-200 rounded-lg px-3 py-2'
-      );
-    }
+    if (compact) return renderCompactStatus(compactInline ? 'Submitted' : 'Report Submitted', [], 'text-green-700', null, compactBare ? 'px-0 py-0' : 'bg-green-50 border border-green-200 rounded-lg px-3 py-2');
     return (
       <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
         <div className="flex items-center gap-2 text-green-700">
           <CheckCircle2 className="h-5 w-5" />
           <div className="flex-1">
             <p className="font-semibold">Report Submitted</p>
-            <p className="text-sm">
-              Submitted on {new Date(status.submittedAt).toLocaleString()}
-            </p>
+            <p className="text-sm">Submitted on {new Date(status.submittedAt).toLocaleString()}</p>
           </div>
         </div>
       </div>
     );
   }
 
-  // Class hasn't ended yet
+  // ─── Class hasn't ended yet ───
   if (!status.classEnded) {
-    if (compact) {
-      return renderCompactStatus(
-        compactInline ? 'Opens later' : 'Class Scheduled',
-        [status.classEndTime ? `${compactInline ? 'At' : 'Opens'} ${formatCompactDateTime(status.classEndTime)}` : null],
-        'text-blue-700',
-        null,
-        compactBare ? 'px-0 py-0' : 'bg-blue-50 border border-blue-200 rounded-lg px-3 py-2'
-      );
-    }
+    if (compact) return renderCompactStatus(compactInline ? 'Opens later' : 'Class Scheduled', [status.classEndTime ? `${compactInline ? 'At' : 'Opens'} ${formatCompactDateTime(status.classEndTime)}` : null], 'text-blue-700', null, compactBare ? 'px-0 py-0' : 'bg-blue-50 border border-blue-200 rounded-lg px-3 py-2');
     return (
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <div className="flex items-center gap-2 text-blue-700">
           <Clock className="h-5 w-5" />
           <div className="flex-1">
             <p className="font-semibold">Class Scheduled</p>
-            <p className="text-sm">
-              You can submit the report after the class ends at{' '}
-              {new Date(status.classEndTime).toLocaleString()}
-            </p>
+            <p className="text-sm">You can submit the report after the class ends at {new Date(status.classEndTime).toLocaleString()}</p>
           </div>
         </div>
       </div>
     );
   }
 
-  // Class marked as unreported
+  // ─── Unreported ───
   if (status.status === 'unreported') {
     if (compact) {
-      const compactAction = userRole === 'admin' ? (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setShowExtensionModal(true);
-          }}
-          className="shrink-0 rounded bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-700"
-        >
-          Extend
-        </button>
-      ) : null;
       return (
         <>
           {renderCompactStatus(
             compactInline ? 'Closed' : 'Submission Closed',
             [userRole === 'teacher' ? (compactInline ? 'Ask admin' : 'Ask admin to reopen it') : 'Marked as unreported'],
             'text-red-700',
-            compactAction,
+            extendButton('xs'),
             compactBare ? 'px-0 py-0' : 'bg-red-50 border border-red-200 rounded-lg px-3 py-2'
           )}
-          {showExtensionModal && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-                <h3 className="text-lg font-semibold mb-4">Grant Extension</h3>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-                  <p className="font-medium mb-1">What this does</p>
-                  <p>Reopens the submission window for the selected hours. The teacher still needs to submit the report.</p>
-                </div>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Extension Duration (hours)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="168"
-                      value={extensionHours}
-                      onChange={(e) => setExtensionHours(e.target.value)}
-                      className="w-full px-3 py-2 border rounded"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Reason (optional)</label>
-                    <textarea
-                      value={extensionReason}
-                      onChange={(e) => setExtensionReason(e.target.value)}
-                      className="w-full px-3 py-2 border rounded"
-                      rows="3"
-                      placeholder="Reason for extension..."
-                    />
-                  </div>
-                  <div className="flex gap-2 justify-end">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setShowExtensionModal(false);
-                      }}
-                      disabled={processing}
-                      className="px-4 py-2 border rounded hover:bg-gray-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleGrantExtension();
-                      }}
-                      disabled={processing}
-                      className="px-4 py-2 bg-custom-teal text-white rounded hover:bg-custom-teal-dark disabled:opacity-50"
-                    >
-                      {processing ? 'Granting...' : 'Grant Extension'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          {extensionModal}
         </>
       );
     }
@@ -305,123 +319,27 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
           <AlertCircle className="h-5 w-5 mt-0.5" />
           <div className="flex-1">
             <p className="font-semibold">Submission Window Expired</p>
-            <p className="text-sm mb-2">
-              The 72-hour submission window has expired and this class is marked as unreported.
-            </p>
-            {userRole === 'teacher' && (
-              <p className="text-sm font-medium">
-                Please contact an administrator to grant an extension.
-              </p>
-            )}
-            {userRole === 'admin' && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setShowExtensionModal(true);
-                }}
-                className="mt-2 px-3 py-1.5 bg-red-600 text-white text-sm rounded hover:bg-red-700 flex items-center gap-1"
-              >
-                <Shield className="h-4 w-4" />
-                Grant Extension
-              </button>
-            )}
+            <p className="text-sm mb-2">The 72-hour submission window has expired and this class is marked as unreported.</p>
+            {userRole === 'teacher' && <p className="text-sm font-medium">Please contact an administrator to grant an extension.</p>}
+            {userRole === 'admin' && <div className="mt-2">{extendButton('sm')}</div>}
           </div>
         </div>
-
-        {/* Extension Modal */}
-        {showExtensionModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-              <h3 className="text-lg font-semibold mb-4">Grant Extension</h3>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-                <p className="font-medium mb-1">What this does</p>
-                <p>Reopens the submission window for the selected hours. The teacher still needs to submit the report.</p>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Extension Duration (hours)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="168"
-                    value={extensionHours}
-                    onChange={(e) => setExtensionHours(e.target.value)}
-                    className="w-full px-3 py-2 border rounded"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Reason (optional)</label>
-                  <textarea
-                    value={extensionReason}
-                    onChange={(e) => setExtensionReason(e.target.value)}
-                    className="w-full px-3 py-2 border rounded"
-                    rows="3"
-                    placeholder="Reason for extension..."
-                  />
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setShowExtensionModal(false);
-                    }}
-                    disabled={processing}
-                    className="px-4 py-2 border rounded hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleGrantExtension();
-                    }}
-                    disabled={processing}
-                    className="px-4 py-2 bg-custom-teal text-white rounded hover:bg-custom-teal-dark disabled:opacity-50"
-                  >
-                    {processing ? 'Granting...' : 'Grant Extension'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {extensionModal}
       </div>
     );
   }
 
-  // Submission window is open
+  // ─── Submission window open ───
   const isExtended = status.adminExtension && status.adminExtension.granted && !status.adminExtension.expired;
   const timeRemaining = status.timeRemaining;
   const deadline = status.deadline ? new Date(status.deadline) : null;
-
   const isExpiringSoon = timeRemaining !== null && timeRemaining < 24;
   const isVeryUrgent = timeRemaining !== null && timeRemaining < 6;
-
   const bgColor = isVeryUrgent ? 'bg-red-50' : isExpiringSoon ? 'bg-amber-50' : 'bg-green-50';
   const borderColor = isVeryUrgent ? 'border-red-200' : isExpiringSoon ? 'border-amber-200' : 'border-green-200';
   const textColor = isVeryUrgent ? 'text-red-700' : isExpiringSoon ? 'text-amber-700' : 'text-green-700';
 
   if (compact) {
-    const compactAction = userRole === 'admin' && !isExtended ? (
-      <button
-        type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setShowExtensionModal(true);
-        }}
-        className="shrink-0 rounded-lg bg-custom-teal px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-custom-teal-dark"
-      >
-        Extend
-      </button>
-    ) : null;
-
     return (
       <>
         {renderCompactStatus(
@@ -433,70 +351,10 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
             compactInline ? null : (deadline ? `Due ${formatCompactDateTime(deadline)}` : null),
           ],
           textColor,
-          compactAction,
+          !isExtended ? extendButton('xs') : null,
           compactBare ? 'px-0 py-0' : `${bgColor} border ${borderColor} rounded-lg px-3 py-2`
         )}
-
-        {showExtensionModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-              <h3 className="text-lg font-semibold mb-4">Grant Extension</h3>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-                <p className="font-medium mb-1">What this does</p>
-                <p>Reopens the submission window for the selected hours. The teacher still needs to submit the report.</p>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Extension Duration (hours)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="168"
-                    value={extensionHours}
-                    onChange={(e) => setExtensionHours(e.target.value)}
-                    className="w-full px-3 py-2 border rounded"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Reason (optional)</label>
-                  <textarea
-                    value={extensionReason}
-                    onChange={(e) => setExtensionReason(e.target.value)}
-                    className="w-full px-3 py-2 border rounded"
-                    rows="3"
-                    placeholder="Reason for extension..."
-                  />
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setShowExtensionModal(false);
-                    }}
-                    disabled={processing}
-                    className="px-4 py-2 border rounded hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleGrantExtension();
-                    }}
-                    disabled={processing}
-                    className="px-4 py-2 bg-custom-teal text-white rounded hover:bg-custom-teal-dark disabled:opacity-50"
-                  >
-                    {processing ? 'Granting...' : 'Grant Extension'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {extensionModal}
       </>
     );
   }
@@ -510,106 +368,21 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
             <p className={`font-semibold ${textColor}`}>
               {isExtended ? 'Admin Extension Granted' : 'Submission Window Open'}
             </p>
-            {userRole === 'admin' && !isExtended && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setShowExtensionModal(true);
-                }}
-                className="px-2 py-1 text-xs bg-custom-teal text-white rounded hover:bg-custom-teal-dark flex items-center gap-1"
-              >
-                <Shield className="h-3 w-3" />
-                Extend
-              </button>
-            )}
+            {!isExtended && extendButton('sm')}
           </div>
           <div className={`text-sm ${textColor}`}>
-            {timeRemaining !== null && (
-              <p className="font-medium">
-                {formatTimeRemaining(timeRemaining)} remaining
-              </p>
-            )}
-            {deadline && (
-              <p className="mt-1">
-                Deadline: {deadline.toLocaleString()}
-              </p>
-            )}
+            {timeRemaining !== null && <p className="font-medium">{formatTimeRemaining(timeRemaining)} remaining</p>}
+            {deadline && <p className="mt-1">Deadline: {deadline.toLocaleString()}</p>}
             {isExtended && status.adminExtension && (
               <p className="mt-2 text-xs">
-                Extended by {status.adminExtension.grantedBy?.firstName || 'Admin'} on{' '}
-                {new Date(status.adminExtension.grantedAt).toLocaleString()}
-                {status.adminExtension.reason && (
-                  <span className="block mt-1 italic">{status.adminExtension.reason}</span>
-                )}
+                Extended by {status.adminExtension.grantedBy?.firstName || 'Admin'} on {new Date(status.adminExtension.grantedAt).toLocaleString()}
+                {status.adminExtension.reason && <span className="block mt-1 italic">{status.adminExtension.reason}</span>}
               </p>
             )}
           </div>
         </div>
       </div>
-
-      {/* Extension Modal */}
-      {showExtensionModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">Grant Extension</h3>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-              <p className="font-medium mb-1">What this does</p>
-              <p>Reopens the submission window for the selected hours. The teacher still needs to submit the report.</p>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Extension Duration (hours)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="168"
-                  value={extensionHours}
-                  onChange={(e) => setExtensionHours(e.target.value)}
-                  className="w-full px-3 py-2 border rounded"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Reason (optional)</label>
-                <textarea
-                  value={extensionReason}
-                  onChange={(e) => setExtensionReason(e.target.value)}
-                  className="w-full px-3 py-2 border rounded"
-                  rows="3"
-                  placeholder="Reason for extension..."
-                />
-              </div>
-              <div className="flex gap-2 justify-end">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setShowExtensionModal(false);
-                  }}
-                  disabled={processing}
-                  className="px-4 py-2 border rounded hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleGrantExtension();
-                  }}
-                  disabled={processing}
-                  className="px-4 py-2 bg-custom-teal text-white rounded hover:bg-custom-teal-dark disabled:opacity-50"
-                >
-                  {processing ? 'Granting...' : 'Grant Extension'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {extensionModal}
     </div>
   );
 };

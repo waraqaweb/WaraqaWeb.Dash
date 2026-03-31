@@ -24,6 +24,33 @@ const isBrowserOffline = () => {
   }
 };
 
+const buildClassNotificationLink = (classId, { tab = 'previous' } = {}) => {
+  if (!classId) return '';
+  const params = new URLSearchParams();
+  params.set('tab', tab);
+  params.set('layout', 'list');
+  params.set('page', '1');
+  params.set('open', String(classId));
+  return `/dashboard/classes?${params.toString()}`;
+};
+
+const resolveNotificationActionLink = (notification) => {
+  const rawLink = typeof notification?.actionLink === 'string' ? notification.actionLink.trim() : '';
+  const classId = notification?.metadata?.classId || notification?.relatedId;
+  const relatedTo = notification?.relatedTo || notification?.metadata?.relatedTo;
+  const kind = notification?.metadata?.kind;
+
+  if (classId && (kind === 'report_extension' || /^\/classes\/[^/]+\/report(?:\/)?(?:\?|$)/i.test(rawLink))) {
+    return buildClassNotificationLink(classId, { tab: 'previous' });
+  }
+
+  if (classId && relatedTo === 'class' && !rawLink) {
+    return buildClassNotificationLink(classId, { tab: 'previous' });
+  }
+
+  return rawLink;
+};
+
 const NotificationCenter = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -378,7 +405,7 @@ const NotificationCenter = () => {
   };
 
   const handleOpenActionLink = async (notification) => {
-    const link = notification?.actionLink;
+    const link = resolveNotificationActionLink(notification);
     if (!link) return;
     try {
       if (!notification.isRead) {

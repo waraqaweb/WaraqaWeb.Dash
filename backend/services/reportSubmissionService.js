@@ -253,7 +253,7 @@ class ReportSubmissionService {
             relatedTo: 'class',
             relatedId: classDoc._id,
             actionRequired: true,
-            actionLink: `/classes/${classDoc._id}/report`,
+            actionLink: `/dashboard/classes?tab=previous&layout=list&page=1&open=${classDoc._id}`,
             metadata: {
               kind: 'report_extension',
               classId: String(classDoc._id),

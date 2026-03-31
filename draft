@@ -1,13 +1,8 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "filter and search classes"
+git commit -m "fix class notification deep link"
 git push origin main
-
-
----
-
----
 
 ---
 
@@ -17,23 +12,29 @@ chmod +x deploy/scripts/deploy.sh
 ./deploy/scripts/deploy.sh all
 ./deploy/scripts/deploy.sh auto
 
-
-
 cd /opt/waraqa
 git fetch origin main
 git reset --hard origin/main
 docker compose up -d --build frontend
 docker compose up -d --build backend
-./deploy/scripts/deploy.sh auto
-./deploy/scripts/deploy.sh all
 
+---
 
-ssl setup on dashboard
------------------------------------
-and if I click next show all results in the future this is 
+cd C:\waraqa
+git status
+git add -A
+git commit -m "fix class notification deep link"
+git push origin main
+ssh -o BatchMode=yes -o ConnectTimeout=20 -T root@159.89.40.84 "set -e; cd /opt/waraqa; chmod +x deploy/scripts/deploy.sh; ./deploy/scripts/deploy.sh pull; ./deploy/scripts/deploy.sh all; ./deploy/scripts/deploy.sh auto"
 
+---
 
---------------------------------
+## ssl setup on dashboard
+
+and if I click next show all results in the future this is
+
+---
+
 لمعرفة آخر 200 سطر من لوجات الدوكر والـ ssh و الـ dmesg:
 journalctl -u docker -n 200 --no-pager
 docker compose logs --tail 200

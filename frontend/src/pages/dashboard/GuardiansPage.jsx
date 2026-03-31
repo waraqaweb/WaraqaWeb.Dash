@@ -1199,7 +1199,7 @@ const GuardiansPage = () => {
       </div>
 
       {isAdmin() && (
-        <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2">
+        <div className="fixed bottom-24 right-6 z-40 flex flex-col items-end gap-2">
           {showQuickActions && (
             <div className="rounded-lg border border-border bg-card shadow-lg overflow-hidden">
               <button

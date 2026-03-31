@@ -6,13 +6,14 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Users, MessageCircle, Mail, ChevronDown, UserX, UserCheck } from 'lucide-react';
+import { Users, MessageCircle, Mail, ChevronDown, UserX, UserCheck, Plus } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import AddStudentModal from '../../components/dashboard/AddStudentModal';
 import EditStudentModal from '../../components/students/EditStudentModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import PrimaryButton from '../../components/ui/PrimaryButton';
 import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
 import { deleteStudent as deleteStandaloneStudent } from '../../api/students';
@@ -1013,18 +1014,6 @@ const fetchGuardiansList = async () => {
           })}
         </div>
 
-        {/* Hide Add Student button for teachers */}
-        {!isTeacher || !isTeacher() ? (
-          <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="btn-primary flex items-center ml-auto"
-          >
-            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-            Add New Student
-          </button>
-        ) : null}
       </div>
       
       {/* Students List */}
@@ -1369,6 +1358,20 @@ const fetchGuardiansList = async () => {
           </button>
         </div>
       )}
+
+      {!isTeacher || !isTeacher() ? (
+        <div className="fixed bottom-24 right-6 z-40">
+          <PrimaryButton
+            onClick={() => setIsAddModalOpen(true)}
+            circle
+            size="lg"
+            aria-label="Add New Student"
+            title="Add New Student"
+          >
+            <Plus className="h-5 w-5" />
+          </PrimaryButton>
+        </div>
+      ) : null}
 
       {/* Add Student Modal - only for non-teachers */}
       {!isTeacher || !isTeacher() ? (

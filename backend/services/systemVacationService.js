@@ -114,6 +114,26 @@ async function putClassesOnHold(systemVacation) {
   }
 }
 
+function applyVacationHoldToClassDoc(classDoc, systemVacation, actorId = null) {
+  if (!classDoc || !systemVacation) return classDoc;
+
+  const cancelledBy = systemVacation?.createdBy?._id || systemVacation?.createdBy || actorId || null;
+
+  classDoc.status = 'on_hold';
+  classDoc.hidden = true;
+  classDoc.cancellation = {
+    ...(classDoc.cancellation || {}),
+    reason: `System Vacation: ${systemVacation.name}`,
+    cancelledBy,
+    cancelledByRole: 'admin',
+    cancelledAt: new Date(),
+    isTemporary: true,
+    systemVacationId: systemVacation._id,
+  };
+
+  return classDoc;
+}
+
 /**
  * Send notifications to all users about system vacation
  * @param {Object} systemVacation - System vacation document
@@ -168,10 +188,20 @@ async function sendSystemVacationNotifications(systemVacation) {
  */
 async function restoreClassesAfterSystemVacation(systemVacationId) {
   try {
+    const now = new Date();
     const result = await Class.updateMany(
       {
         'cancellation.systemVacationId': systemVacationId,
-        status: 'on_hold'
+        status: 'on_hold',
+        $or: [
+          { endsAt: { $gte: now } },
+          {
+            $and: [
+              { $or: [{ endsAt: { $exists: false } }, { endsAt: null }] },
+              { scheduledDate: { $gte: now } },
+            ],
+          },
+        ],
       },
       {
         $set: {
@@ -373,6 +403,7 @@ module.exports = {
   applySystemVacation,
   putClassesOnHold,
   sendSystemVacationNotifications,
+  applyVacationHoldToClassDoc,
   restoreClassesAfterSystemVacation,
   getCurrentVacation,
   getCurrentOrUpcomingVacation,

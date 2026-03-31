@@ -595,6 +595,7 @@ const ClassesPage = ({ isActive = true }) => {
         totalCreated: data.totalCreated ?? 0,
         processed: data.processed ?? 0,
         skipped: data.skipped ?? 0,
+        totalRemoved: data.totalRemoved ?? 0,
       });
       await fetchSeriesScannerList();
       await fetchClassesRef.current?.();

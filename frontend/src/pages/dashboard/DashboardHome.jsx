@@ -438,7 +438,7 @@ const DashboardHome = ({ isActive = true }) => {
   const [requestsTab, setRequestsTab] = React.useState('teachers');
   const [hijriOffset, setHijriOffset] = React.useState({ default: 0, byRegion: {} });
   const [decorationConfig, setDecorationConfig] = useState({
-    enabled: true,
+    enabled: false,
     offsetX: 0,
     offsetY: 0,
     items: {
@@ -564,22 +564,45 @@ const DashboardHome = ({ isActive = true }) => {
 
   useEffect(() => {
     let active = true;
+    const cacheKey = makeCacheKey('settings:dashboardDecoration');
+
+    try {
+      const cached = readCache(cacheKey, { deps: ['settings'] });
+      if (cached.hit && cached.value) {
+        const value = cached.value.value || cached.value;
+        setDecorationConfig({
+          enabled: Boolean(value?.enabled),
+          offsetX: Number(value?.offsetX || 0),
+          offsetY: Number(value?.offsetY || 0),
+          items: value?.items || undefined,
+        });
+      }
+    } catch (e) {
+      // ignore cache errors and continue with server fetch
+    }
+
     api
       .get('/settings/dashboardDecoration')
       .then((res) => {
         if (!active) return;
         const value = res?.data?.setting?.value;
         if (value && typeof value === 'object') {
-          setDecorationConfig({
-            enabled: true,
+          const normalized = {
+            enabled: Boolean(value.enabled),
             offsetX: Number(value.offsetX || 0),
             offsetY: Number(value.offsetY || 0),
             items: value.items || undefined,
-          });
+          };
+          setDecorationConfig(normalized);
+          writeCache(cacheKey, { value: normalized }, { ttlMs: 60_000, deps: ['settings'] });
         }
       })
       .catch(() => {
-        // keep defaults
+        if (!active) return;
+        setDecorationConfig((prev) => ({
+          ...prev,
+          enabled: false,
+        }));
       });
     return () => {
       active = false;

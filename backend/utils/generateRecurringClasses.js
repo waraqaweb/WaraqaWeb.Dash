@@ -6,6 +6,7 @@ const {
   resolveTeacherTimezone,
   resolveAnchorTimezone,
 } = require('../services/classTimezoneService');
+const systemVacationService = require('../services/systemVacationService');
 const User = require('../models/User');
 
 /**
@@ -32,6 +33,7 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
       fallbackTimezone: pattern?.timeAnchor?.timezone || pattern?.timezone || 'UTC',
     });
     const teacherTimezone = resolveTeacherTimezone(teacherDoc, pattern?.timezone || 'UTC');
+    const activeSystemVacation = await systemVacationService.getCurrentVacation();
 
     // compute generation window (rolling)
     // - start: now
@@ -172,13 +174,27 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
             status: 'scheduled',
           });
 
+          if (
+            activeSystemVacation?.startDate &&
+            activeSystemVacation?.endDate &&
+            instanceDate >= activeSystemVacation.startDate &&
+            instanceDate <= activeSystemVacation.endDate
+          ) {
+            systemVacationService.applyVacationHoldToClassDoc(inst, activeSystemVacation, pattern.createdBy || null);
+          }
+
           // Avoid duplicates when the rolling generation job runs repeatedly.
-          // (No unique index exists in the schema for recurring instances.)
+          // Use a 90-minute tolerance window to catch DST-shifted instances
+          // (same local time can map to different UTC after a DST change).
+          const DST_TOLERANCE_MS = 90 * 60 * 1000;
           const alreadyExists = await Class.exists({
             parentRecurringClass: recurringPattern._id,
-            scheduledDate: instanceDate,
-            status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'] },
-            hidden: { $ne: true },
+            scheduledDate: {
+              $gte: new Date(instanceDate.getTime() - DST_TOLERANCE_MS),
+              $lte: new Date(instanceDate.getTime() + DST_TOLERANCE_MS),
+            },
+            duration: instanceDuration,
+            status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'] },
           });
           if (alreadyExists) continue;
 

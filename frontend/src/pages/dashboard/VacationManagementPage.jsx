@@ -24,6 +24,7 @@ import {
 import VacationModal from '../../components/dashboard/VacationModal';
 import VacationDetailsModal from '../../components/dashboard/VacationDetailsModal';
 import GuardianStudentVacationModal from '../../components/dashboard/GuardianStudentVacationModal';
+import PrimaryButton from '../../components/ui/PrimaryButton';
 
 const VACATION_WHATSAPP_REPORT_STORAGE_PREFIX = 'waraqa.vacations.whatsappReport.v1';
 const ISLAMIC_DECORATIVE_LINE = '۞ ┈┈┈ ✦ ┈┈┈ ۞';
@@ -126,6 +127,7 @@ const VacationManagementPage = () => {
   const [whatsappDraftProgress, setWhatsappDraftProgress] = useState(null);
   const [whatsappDraftReport, setWhatsappDraftReport] = useState(null);
   const [whatsappDraftSession, setWhatsappDraftSession] = useState(null);
+  const [visibleWhatsappReportVacationId, setVisibleWhatsappReportVacationId] = useState(null);
   const whatsappDraftWindowRef = useRef(null);
   const whatsappDraftTimerRef = useRef(null);
   const whatsappDraftSessionRef = useRef(null);
@@ -176,6 +178,55 @@ const VacationManagementPage = () => {
       // ignore storage errors
     }
   }, [user?._id, whatsappDraftReport]);
+
+  const reportMatchesVacation = useCallback((vacation) => {
+    if (!vacation?._id || !whatsappDraftReport?.vacationId) return false;
+    return String(whatsappDraftReport.vacationId) === String(vacation._id);
+  }, [whatsappDraftReport]);
+
+  const toggleVacationWhatsappReport = useCallback((vacationId) => {
+    if (!vacationId) return;
+    setVisibleWhatsappReportVacationId((prev) => (String(prev) === String(vacationId) ? null : vacationId));
+  }, []);
+
+  const renderVacationWhatsappReport = useCallback((vacation) => {
+    if (!vacation?._id || String(visibleWhatsappReportVacationId) !== String(vacation._id)) return null;
+
+    if (!reportMatchesVacation(vacation)) {
+      return (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+          No stored WhatsApp send run was found for this vacation yet.
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Last WhatsApp send run</h3>
+            <p className="text-sm text-gray-600">
+              {whatsappDraftReport.vacationName} • sent {whatsappDraftReport.sent.length}/{whatsappDraftReport.attempted}
+            </p>
+          </div>
+          <div className={`text-sm font-medium ${whatsappDraftReport.failed.length ? 'text-orange-600' : 'text-green-600'}`}>
+            {whatsappDraftReport.failed.length
+              ? `${whatsappDraftReport.failed.length} recipient${whatsappDraftReport.failed.length === 1 ? '' : 's'} not sent`
+              : 'All selected recipients were confirmed as sent'}
+          </div>
+        </div>
+        {whatsappDraftReport.failed.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {whatsappDraftReport.failed.map((entry) => (
+              <div key={`${entry.role}-${entry.id}`} className="rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm text-orange-900">
+                <span className="font-medium">{entry.name}</span> • {entry.role} • {entry.reason}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }, [reportMatchesVacation, visibleWhatsappReportVacationId, whatsappDraftReport]);
 
   const availableTabs = useMemo(() => {
     const tabs = [];
@@ -342,6 +393,34 @@ const VacationManagementPage = () => {
     setEditingVacation(null);
     setShowCreateModal(true);
   };
+
+  const floatingCreateAction = useMemo(() => {
+    if (activeTab === 'individual' && user?.role === 'admin') {
+      return {
+        label: 'Create Vacation',
+        onClick: () => handleCreateVacation('individual'),
+      };
+    }
+    if (activeTab === 'system' && user?.role === 'admin') {
+      return {
+        label: 'Create System Vacation',
+        onClick: () => handleCreateVacation('system'),
+      };
+    }
+    if (activeTab === 'my-vacations' && user?.role === 'guardian') {
+      return {
+        label: 'Request Vacation',
+        onClick: () => setShowGuardianStudentModal(true),
+      };
+    }
+    if (activeTab === 'my-vacations' && user?.role === 'teacher') {
+      return {
+        label: 'Request Vacation',
+        onClick: () => handleCreateVacation('individual'),
+      };
+    }
+    return null;
+  }, [activeTab, user?.role]);
 
   const handleEditVacation = (vacation, typeHint = 'individual') => {
     setEditingVacation(vacation);
@@ -1186,15 +1265,6 @@ const VacationManagementPage = () => {
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Individual Vacations</h2>
         </div>
-        <div className="flex space-x-3">
-          <button
-            onClick={() => handleCreateVacation('individual')}
-            className="bg-custom-teal text-white px-4 py-2 rounded-lg hover:bg-custom-teal-dark flex items-center space-x-2"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Create Vacation</span>
-          </button>
-        </div>
       </div>
 
       {/* Summary */}
@@ -1403,15 +1473,6 @@ const VacationManagementPage = () => {
           <h2 className="text-2xl font-bold text-gray-900">System Vacations</h2>
           <p className="text-gray-600">Manage institution-wide holidays and breaks</p>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
-          <button
-            onClick={() => handleCreateVacation('system')}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center space-x-2"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Create System Vacation</span>
-          </button>
-        </div>
       </div>
 
       {whatsappDraftProgress && (
@@ -1481,33 +1542,6 @@ const VacationManagementPage = () => {
                   </div>
                 );
               })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {whatsappDraftReport && (
-        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-900">Last WhatsApp send run</h3>
-              <p className="text-sm text-gray-600">
-                {whatsappDraftReport.vacationName} • sent {whatsappDraftReport.sent.length}/{whatsappDraftReport.attempted}
-              </p>
-            </div>
-            <div className={`text-sm font-medium ${whatsappDraftReport.failed.length ? 'text-orange-600' : 'text-green-600'}`}>
-              {whatsappDraftReport.failed.length
-                ? `${whatsappDraftReport.failed.length} recipient${whatsappDraftReport.failed.length === 1 ? '' : 's'} not sent`
-                : 'All selected recipients were confirmed as sent'}
-            </div>
-          </div>
-          {whatsappDraftReport.failed.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {whatsappDraftReport.failed.map((entry) => (
-                <div key={`${entry.role}-${entry.id}`} className="rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm text-orange-900">
-                  <span className="font-medium">{entry.name}</span> • {entry.role} • {entry.reason}
-                </div>
-              ))}
             </div>
           )}
         </div>
@@ -1614,7 +1648,16 @@ const VacationManagementPage = () => {
                         <Users className="h-4 w-4" />
                         Send to all active users
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleVacationWhatsappReport(vacation._id)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
+                      >
+                        <Eye className="h-4 w-4" />
+                        {String(visibleWhatsappReportVacationId) === String(vacation._id) ? 'Hide last WhatsApp run' : 'Show last WhatsApp run'}
+                      </button>
                     </div>
+                    {renderVacationWhatsappReport(vacation)}
                   </div>
                   <div className="flex items-center space-x-2">
                     <button 
@@ -1667,21 +1710,6 @@ const VacationManagementPage = () => {
         <div>
           <h2 className="text-2xl font-bold text-gray-900">My Vacations</h2>
           <p className="text-gray-600">Manage your vacation requests and view status</p>
-        </div>
-        <div className="flex space-x-3">
-          <button
-            onClick={() => {
-              if (user?.role === 'guardian') {
-                setShowGuardianStudentModal(true);
-              } else {
-                handleCreateVacation('individual');
-              }
-            }}
-            className="bg-custom-teal text-white px-4 py-2 rounded-lg hover:bg-custom-teal-dark flex items-center space-x-2"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Request Vacation</span>
-          </button>
         </div>
       </div>
 
@@ -1881,6 +1909,20 @@ const VacationManagementPage = () => {
       {activeTab === 'individual' && renderIndividualVacations()}
       {activeTab === 'system' && renderSystemVacations()}
       {activeTab === 'my-vacations' && renderMyVacations()}
+
+      {floatingCreateAction ? (
+        <div className="fixed bottom-24 right-6 z-40">
+          <PrimaryButton
+            onClick={floatingCreateAction.onClick}
+            circle
+            size="lg"
+            aria-label={floatingCreateAction.label}
+            title={floatingCreateAction.label}
+          >
+            <Plus className="h-5 w-5" />
+          </PrimaryButton>
+        </div>
+      ) : null}
 
       {/* Vacation Modal */}
       <VacationModal

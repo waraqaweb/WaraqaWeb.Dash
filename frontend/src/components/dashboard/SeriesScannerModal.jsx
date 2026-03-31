@@ -317,7 +317,7 @@ export default function SeriesScannerModal({
           }`}>
             {recreateAllResult.error
               ? recreateAllResult.error
-              : `Created ${recreateAllResult.totalCreated} instance(s) across ${recreateAllResult.processed} series (${recreateAllResult.skipped} skipped).`}
+              : `Created ${recreateAllResult.totalCreated} instance(s) across ${recreateAllResult.processed} series (${recreateAllResult.skipped} skipped).${recreateAllResult.totalRemoved ? ` Removed ${recreateAllResult.totalRemoved} duplicate(s).` : ''}`}
           </div>
         )}
 

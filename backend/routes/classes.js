@@ -934,6 +934,16 @@ router.get("/", authenticateToken, async (req, res) => {
 
     mark('filters:built');
 
+    const activeSystemVacation = await systemVacationService.getCurrentVacation();
+    if (activeSystemVacation?.startDate && activeSystemVacation?.endDate) {
+      pushAnd({
+        $or: [
+          { scheduledDate: { $lt: activeSystemVacation.startDate } },
+          { scheduledDate: { $gt: activeSystemVacation.endDate } },
+        ],
+      });
+    }
+
     // upcoming / previous filtering
     // Prefer `endsAt` (indexed), but keep legacy docs (missing endsAt) visible via scheduledDate fallback.
     if (filter === "upcoming") {
@@ -1320,16 +1330,115 @@ router.post("/series/:id/recreate", authenticateToken, requireRole(["admin"]), a
 });
 
 /* -------------------------
+   Deduplication helper
+   Finds duplicate class instances that share the same
+   parentRecurringClass + approximate scheduledDate (within 90 min
+   tolerance to catch DST-shifted times) + duration and removes
+   extras, keeping instances with submitted reports or final
+   statuses and the oldest among unreported duplicates.
+   ------------------------- */
+async function deduplicateSeriesInstances() {
+  const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'];
+  const finalStatuses = ['completed', 'attended', 'in_progress', 'missed_by_student', 'no_show_both'];
+  const TOLERANCE_MS = 90 * 60 * 1000; // 90 minutes — covers DST shifts
+
+  const patternIds = await Class.distinct('parentRecurringClass', {
+    parentRecurringClass: { $exists: true, $ne: null },
+    status: { $nin: ['pattern', ...cancelledStatuses] },
+  });
+
+  const idsToRemove = [];
+
+  for (const patternId of patternIds) {
+    const instances = await Class.find({
+      parentRecurringClass: patternId,
+      status: { $nin: ['pattern', ...cancelledStatuses] },
+    })
+      .select('_id scheduledDate duration status classReport.submittedAt')
+      .sort({ scheduledDate: 1 })
+      .lean();
+
+    if (instances.length < 2) continue;
+
+    // Cluster instances that share the same duration and are within
+    // the tolerance window — these are DST-shifted duplicates.
+    const used = new Set();
+    for (let i = 0; i < instances.length; i++) {
+      if (used.has(i)) continue;
+      const base = instances[i];
+      const baseTime = new Date(base.scheduledDate).getTime();
+      const cluster = [base];
+      used.add(i);
+
+      for (let j = i + 1; j < instances.length; j++) {
+        if (used.has(j)) continue;
+        const cand = instances[j];
+        const candTime = new Date(cand.scheduledDate).getTime();
+        if (candTime - baseTime > TOLERANCE_MS) break; // sorted — stop early
+        if (cand.duration !== base.duration) continue;
+        cluster.push(cand);
+        used.add(j);
+      }
+
+      if (cluster.length < 2) continue;
+
+      const safeToRemove = [];
+      const mustKeep = [];
+      for (const doc of cluster) {
+        if (doc.classReport?.submittedAt || finalStatuses.includes(doc.status)) {
+          mustKeep.push(doc);
+        } else {
+          safeToRemove.push(doc);
+        }
+      }
+
+      if (mustKeep.length > 0) {
+        idsToRemove.push(...safeToRemove.map((d) => d._id));
+      } else if (safeToRemove.length > 1) {
+        safeToRemove.sort((a, b) => String(a._id).localeCompare(String(b._id)));
+        idsToRemove.push(...safeToRemove.slice(1).map((d) => d._id));
+      }
+    }
+  }
+
+  if (idsToRemove.length > 0) {
+    await Class.deleteMany({ _id: { $in: idsToRemove } });
+  }
+
+  return { totalRemoved: idsToRemove.length, patternsProcessed: patternIds.length };
+}
+
+/* -------------------------
+   POST /api/classes/series/deduplicate
+   - Admin-only
+   - Finds and removes duplicate class instances
+   Returns: { totalRemoved, groupsProcessed }
+   ------------------------- */
+router.post("/series/deduplicate", authenticateToken, requireRole(["admin"]), async (_req, res) => {
+  try {
+    const result = await deduplicateSeriesInstances();
+    return res.json(result);
+  } catch (err) {
+    console.error('POST /api/classes/series/deduplicate error:', err);
+    return res.status(500).json({ message: 'Failed to deduplicate series instances' });
+  }
+});
+
+/* -------------------------
    POST /api/classes/series/recreate-all
    - Admin-only
-   - Recreate missing instances for all ACTIVE recurring patterns
-     (those that have at least one future non-cancelled instance).
+   - Deduplicate existing instances first, then recreate missing
+     instances for all ACTIVE recurring patterns (those that have
+     at least one future non-cancelled instance).
    - Inactive patterns (no future instances) are skipped — they
      should be handled individually by the admin.
-   Returns: { processed, totalCreated, skipped, results[] }
+   Returns: { processed, totalCreated, skipped, totalRemoved, results[] }
    ------------------------- */
 router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), async (req, res) => {
   try {
+    // Step 1: Deduplicate existing instances before regenerating
+    const dedup = await deduplicateSeriesInstances();
+
     const now = new Date();
     const patterns = await Class.find({ status: 'pattern', isRecurring: true }).lean();
     const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'];
@@ -1373,6 +1482,36 @@ router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), a
         continue;
       }
 
+      // Skip patterns that already have full coverage for the generation window
+      try {
+        const genMonths = pattern.recurrence?.generationPeriodMonths || 2;
+        const windowEnd = new Date(now);
+        windowEnd.setMonth(windowEnd.getMonth() + genMonths);
+        if (pattern.recurrence?.endDate) {
+          const se = new Date(pattern.recurrence.endDate);
+          if (!Number.isNaN(se.getTime()) && se < windowEnd) windowEnd.setTime(se.getTime());
+        }
+        const perDayMapCheck = buildPerDayMap(pattern.recurrenceDetails || []);
+        let expectedSlots = 0;
+        const d = new Date(now);
+        while (d <= windowEnd) {
+          const slots = perDayMapCheck.get(d.getDay());
+          if (slots) expectedSlots += slots.length;
+          d.setDate(d.getDate() + 1);
+        }
+        if (expectedSlots > 0) {
+          const existingCount = await Class.countDocuments({
+            parentRecurringClass: pattern._id,
+            scheduledDate: { $gte: now, $lte: windowEnd },
+            status: { $nin: [...cancelledStatuses, 'pattern'] },
+          });
+          if (existingCount >= expectedSlots) {
+            skipped++;
+            continue;
+          }
+        }
+      } catch (_) { /* proceed to generation on error */ }
+
       try {
         const perDayMap = buildPerDayMap(pattern.recurrenceDetails || []);
         const created = await generateRecurringClasses(
@@ -1396,6 +1535,7 @@ router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), a
       processed: patterns.length - skipped,
       totalCreated,
       skipped,
+      totalRemoved: dedup.totalRemoved,
       results,
     });
   } catch (err) {
@@ -2171,6 +2311,13 @@ router.post(
           ...(reportSubmission ? { reportSubmission } : {}),
         });
 
+        const overlappingSystemVacation = scheduledUtc
+          ? await systemVacationService.getActiveSystemVacationForDate(scheduledUtc)
+          : null;
+        if (overlappingSystemVacation) {
+          systemVacationService.applyVacationHoldToClassDoc(newClass, overlappingSystemVacation, req.user._id);
+        }
+
         console.log("New class object:", JSON.stringify(newClass.toObject(), null, 2));
         await newClass.save();
         console.log("Class saved successfully:", newClass._id);
@@ -2608,6 +2755,13 @@ router.post(
         status: "scheduled",
         ...(reportSubmission ? { reportSubmission } : {}),
       });
+
+      const overlappingSystemVacation = scheduledUtc
+        ? await systemVacationService.getActiveSystemVacationForDate(scheduledUtc)
+        : null;
+      if (overlappingSystemVacation) {
+        systemVacationService.applyVacationHoldToClassDoc(duplicateClass, overlappingSystemVacation, req.user._id);
+      }
 
       await duplicateClass.save();
       await refreshParticipantsFromSchedule(teacherId, studentForClass.guardianId, studentForClass.studentId);

@@ -304,14 +304,7 @@ const SalariesPage = () => {
               <p className="text-sm text-slate-500">Teacher payments and payroll records — review and manage salary invoices.</p>
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              {isAdmin() && (
-                <PrimaryButton onClick={handleOpenCreate} size="md">
-                  <Plus className="h-4 w-4" />
-                  <span className="hidden sm:inline">New Salary</span>
-                </PrimaryButton>
-              )}
-            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center" />
           </div>
 
           {stats && (
@@ -468,6 +461,20 @@ const SalariesPage = () => {
       )}
       {showCreate && (
         <SalaryCreateModal onClose={() => setShowCreate(false)} onCreated={() => { fetchSalaries(); fetchStats(); }} />
+      )}
+
+      {isAdmin() && (
+        <div className="fixed bottom-24 right-6 z-40">
+          <PrimaryButton
+            onClick={handleOpenCreate}
+            circle
+            size="lg"
+            aria-label="New Salary"
+            title="New Salary"
+          >
+            <Plus className="h-5 w-5" />
+          </PrimaryButton>
+        </div>
       )}
     </div>
   );

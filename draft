@@ -1,7 +1,7 @@
 cd C:\waraqa
 git status
 git add -A
-git commit -m "fix class notification deep link"
+git commit -m "plus button and style"
 git push origin main
 
 ---
@@ -23,9 +23,11 @@ docker compose up -d --build backend
 cd C:\waraqa
 git status
 git add -A
-git commit -m "fix class notification deep link"
+git commit -m "plus button and style"
 git push origin main
 ssh -o BatchMode=yes -o ConnectTimeout=20 -T root@159.89.40.84 "set -e; cd /opt/waraqa; chmod +x deploy/scripts/deploy.sh; ./deploy/scripts/deploy.sh pull; ./deploy/scripts/deploy.sh all; ./deploy/scripts/deploy.sh auto"
+
+ssh -o BatchMode=yes -o ConnectTimeout=20 -T root@159.89.40.84 "set -e; cd /opt/waraqa; for i in \$(seq 1 40); do if ps aux | grep -E 'deploy\.sh|docker compose' | grep -v grep >/dev/null; then echo '[wait] deploy still running, sleeping 15s...'; sleep 15; else break; fi; done; if ps aux | grep -E 'deploy\.sh|docker compose' | grep -v grep >/dev/null; then echo '[abort] deploy still running after wait window'; exit 1; fi; if [ -d /tmp/waraqa-deploy.lock ]; then echo '[info] removing stale deploy lock'; rm -rf /tmp/waraqa-deploy.lock; fi; chmod +x deploy/scripts/deploy.sh; ./deploy/scripts/deploy.sh pull; ./deploy/scripts/deploy.sh all; ./deploy/scripts/deploy.sh auto"
 
 ---
 

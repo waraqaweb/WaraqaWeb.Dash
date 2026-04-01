@@ -535,6 +535,9 @@ invoiceSchema.pre('save', async function(next) {
     if (this._skipRecalculate) {
       // clear the flag so future saves behave normally
       try { delete this._skipRecalculate; } catch (e) { this._skipRecalculate = undefined; }
+    } else if (roundCurrency(this.paidAmount || 0) > 0 && this.status !== 'refunded') {
+      // Paid invoices: never recalculate totals — the paid amount and totals
+      // must remain frozen so they match the recorded payment.
     } else {
       this.recalculateTotals();
     }

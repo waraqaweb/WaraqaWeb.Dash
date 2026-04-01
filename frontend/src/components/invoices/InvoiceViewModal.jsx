@@ -18,7 +18,8 @@ import {
   Calendar,
   Sparkles,
   Link2,
-  RefreshCw
+  RefreshCw,
+  Clock
 } from 'lucide-react';
 
 // Helper function to render text with **bold** markdown and bullet points
@@ -200,6 +201,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [revertStatus, setRevertStatus] = useState(null);
   const [refreshingClasses, setRefreshingClasses] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyEntries, setHistoryEntries] = useState([]);
   // Cache teacher names by id to avoid losing labels if snapshots are missing in subsequent updates
   const teacherNameCacheRef = useRef({});
 
@@ -685,7 +689,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
         // Items already stored in the invoice (static path) or returned by the
         // backend dynamic endpoint have already been vetted — always treat them
         // as eligible so the frontend doesn't re-filter past scheduled classes.
-        const eligibleForCoverage = true;
+        // Exception: always hide cancelled classes as a safety net.
+        const normSt = normalizeStatusValue(actualStatus);
+        const eligibleForCoverage = !CANCELLED_CLASS_STATUSES.has(normSt);
 
         const durationMinutes = Number.isFinite(Number(liveClass?.duration))
           ? Number(liveClass.duration)
@@ -713,6 +719,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           reportSubmissionExtendedUntil,
           isEligible: eligibleForCoverage,
           paidByGuardian: Boolean(item.paidByGuardian),
+          isPinned: Boolean(item.isPinned),
         };
       });
 
@@ -1739,6 +1746,26 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     }
   }, [invoice, onInvoiceUpdate, syncInvoiceState]);
 
+  const handleToggleHistory = useCallback(async () => {
+    if (historyOpen) {
+      setHistoryOpen(false);
+      return;
+    }
+    const targetId = invoice?._id;
+    if (!targetId) return;
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      const { data } = await api.get(`/invoices/${targetId}/history`);
+      setHistoryEntries(Array.isArray(data?.entries) ? data.entries : []);
+    } catch (err) {
+      console.error('Failed to load invoice history', err);
+      setHistoryEntries([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [invoice, historyOpen]);
+
   const handleCopyShareLink = useCallback(async () => {
     if (!invoice?.invoiceSlug) return;
     const shareUrl = `${window.location.origin}/public/invoices/${invoice.invoiceSlug}`;
@@ -1780,7 +1807,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     const shareUrl = `${window.location.origin}/public/invoices/${invoice.invoiceSlug}`;
     const message = [
       `This invoice covers from ${startDateText} to ${endDateText}.`,
-      `This is a link to view all classes covered by this invoice: ${shareUrl}`,
+        'This is a link to view all classes covered by this invoice:',
+        shareUrl,
       'Or visit your account on our dashboard for full details.'
     ].join('\n');
 
@@ -2036,6 +2064,16 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                 {isAdmin && (
                   <button
                     type="button"
+                    onClick={handleToggleHistory}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${historyOpen ? 'border-amber-300 bg-amber-100 text-amber-700' : 'border-amber-200 bg-amber-50 text-amber-600 hover:border-amber-300 hover:bg-amber-100'}`}
+                    title="Invoice change history"
+                  >
+                    <Clock className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    type="button"
                     onClick={handleCopyCoverageMessage}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-violet-200 bg-violet-50 text-violet-600 transition hover:border-violet-300 hover:bg-violet-100"
                     title="Copy message"
@@ -2101,6 +2139,95 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                 </div>
               </div>
             </div>
+
+            {isAdmin && historyOpen && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+                <h4 className="mb-3 text-sm font-semibold text-amber-800">Invoice Change History</h4>
+                {historyLoading ? (
+                  <p className="text-xs text-amber-600">Loading history…</p>
+                ) : historyEntries.length === 0 ? (
+                  <p className="text-xs text-slate-500">No history entries found.</p>
+                ) : (
+                  <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                    {historyEntries.map((entry, idx) => {
+                      const actorName = entry.actorId
+                        ? `${entry.actorId.firstName || ''} ${entry.actorId.lastName || ''}`.trim() || 'System'
+                        : 'System';
+                      const actionLabels = {
+                        create: 'Invoice created',
+                        update: 'Invoice updated',
+                        item_update: 'Classes changed',
+                        status_change: 'Status changed',
+                        payment: 'Payment recorded',
+                        refund: 'Refund applied',
+                        refund_adjustment: 'Refund adjusted',
+                        delivery: 'Invoice delivered',
+                        note: 'Note added',
+                        delete: 'Invoice deleted',
+                        restore: 'Invoice restored',
+                        permanent_delete: 'Permanently deleted'
+                      };
+                      const label = actionLabels[entry.action] || entry.action;
+                      const diff = entry.diff || {};
+                      const meta = entry.meta || {};
+                      const details = [];
+
+                      if (entry.action === 'payment') {
+                        if (diff.amount) details.push(`$${Number(diff.amount).toFixed(2)} via ${diff.method || 'unknown'}`);
+                        if (diff.paidAmount) details.push(`Total paid: $${Number(diff.paidAmount).toFixed(2)}`);
+                        if (meta.paidHours) details.push(`${meta.paidHours}h`);
+                        if (meta.note) details.push(meta.note);
+                      } else if (entry.action === 'item_update') {
+                        if (diff.addedCount || (Array.isArray(diff.added) && diff.added.length)) {
+                          const count = diff.addedCount || diff.added?.length || 0;
+                          details.push(`+${count} class${count !== 1 ? 'es' : ''} added`);
+                        }
+                        if (diff.removedCount || (Array.isArray(diff.removed) && diff.removed.length)) {
+                          const count = diff.removedCount || diff.removed?.length || 0;
+                          details.push(`-${count} class${count !== 1 ? 'es' : ''} removed`);
+                        }
+                        if (diff.modifiedCount || (Array.isArray(diff.modified) && diff.modified.length)) {
+                          const count = diff.modifiedCount || diff.modified?.length || 0;
+                          details.push(`${count} class${count !== 1 ? 'es' : ''} modified`);
+                        }
+                        if (diff.subtotal !== undefined) details.push(`Subtotal: $${Number(diff.subtotal).toFixed(2)}`);
+                        if (diff.total !== undefined) details.push(`Total: $${Number(diff.total).toFixed(2)}`);
+                        if (meta.note) details.push(meta.note);
+                      } else if (entry.action === 'status_change') {
+                        if (diff.from && diff.to) details.push(`${diff.from} → ${diff.to}`);
+                        if (meta.note) details.push(meta.note);
+                      } else if (entry.action === 'update') {
+                        if (diff.coverageHours !== undefined) details.push(`Coverage: ${diff.coverageHours}h`);
+                        if (diff.maxHours !== undefined) details.push(`Max hours: ${diff.maxHours}h`);
+                        if (diff.total !== undefined) details.push(`Total: $${Number(diff.total).toFixed(2)}`);
+                        if (meta.note) details.push(meta.note);
+                      } else {
+                        if (meta.note) details.push(meta.note);
+                      }
+
+                      return (
+                        <div key={entry._id || idx} className="rounded-lg border border-amber-100 bg-white px-3 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-slate-700">{label}</span>
+                            <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                              {new Date(entry.at).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 text-[11px] text-slate-500">by {actorName}</div>
+                          {details.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {details.map((d, i) => (
+                                <span key={i} className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">{d}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="mt-6 grid items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
@@ -2657,6 +2784,20 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                                   >
                                     {c.status.replace(/_/g, ' ')}
                                   </span>
+                                  {isAdmin && c.reportSubmissionStatus === 'admin_extended' && (
+                                    <span
+                                      className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 cursor-default"
+                                      title={c.reportSubmissionExtendedUntil
+                                        ? `Extended until ${new Date(c.reportSubmissionExtendedUntil).toLocaleString()}`
+                                        : 'Report submission extended by admin'}
+                                    >Extended</span>
+                                  )}
+                                  {isAdmin && c.isPinned && (
+                                    <span
+                                      className="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 cursor-default"
+                                      title="This class was pinned to the invoice — it was already linked before the latest class-list rebuild and will persist across refreshes"
+                                    >Pinned</span>
+                                  )}
                                   {c.paidByGuardian && (
                                     <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Paid</span>
                                   )}

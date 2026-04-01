@@ -1344,7 +1344,9 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
     const invoice = invoiceDoc.toObject();
     const includeDynamic = ['1', 'true', 'yes'].includes(String(req.query.includeDynamic || '').toLowerCase());
     const isManualInvoice = invoiceDoc?.billingType === 'manual' || invoiceDoc?.generationSource === 'manual';
-    if (includeDynamic && !isManualInvoice) {
+    const isPaidInvoice = ['paid', 'refunded'].includes(String(invoiceDoc.status || '').toLowerCase())
+      || (invoiceDoc.paidAmount > 0);
+    if (includeDynamic && !isManualInvoice && !isPaidInvoice) {
       const dynamicClasses = await InvoiceService.buildDynamicClassList(invoiceDoc);
       invoice.dynamicClasses = dynamicClasses;
     }
@@ -1412,7 +1414,34 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
   }
 });
 
+// -----------------------------------------------
+// Get invoice audit history (Admin)
+// -----------------------------------------------
+router.get('/:id/history', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Only admins can view invoice history' });
+    }
+    const InvoiceAudit = require('../models/InvoiceAudit');
+    const invoiceId = req.params.id;
 
+    const invoice = await Invoice.findById(invoiceId).select('_id invoiceNumber').lean();
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    const entries = await InvoiceAudit.find({ invoiceId })
+      .sort({ at: -1 })
+      .limit(200)
+      .populate('actorId', 'firstName lastName role')
+      .lean();
+
+    res.json({ success: true, entries, invoiceId });
+  } catch (err) {
+    console.error('Get invoice history error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch invoice history' });
+  }
+});
 
 // -----------------------------
 // Create manual invoice (Admin)
@@ -2243,6 +2272,32 @@ router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Only admins' });
 
+    const Invoice = require('../models/Invoice');
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) return res.status(404).json({ success: false, message: 'Invoice not found' });
+
+    // Paid/refunded invoices must not have their class list modified
+    const invoiceStatus = String(invoice.status || '').toLowerCase();
+    if (['paid', 'refunded'].includes(invoiceStatus) || (invoice.paidAmount > 0)) {
+      return res.status(400).json({ success: false, message: 'Cannot refresh classes on a paid invoice' });
+    }
+
+    // Teacher salary invoices don't use the guardian class-sync logic;
+    // just recalculate totals from the existing items list.
+    if (invoice.type === 'teacher_payment') {
+      invoice.recalculateTotals();
+      await invoice.save();
+
+      const freshInvoice = await Invoice.findById(req.params.id)
+        .populate('teacher', 'firstName lastName email')
+        .populate('items.class')
+        .populate('items.student', 'firstName lastName')
+        .populate('items.teacher', 'firstName lastName');
+
+      const invoiceObj = freshInvoice.toObject ? freshInvoice.toObject({ virtuals: true }) : freshInvoice;
+      return res.json({ success: true, invoice: invoiceObj, noChanges: false });
+    }
+
     const result = await InvoiceService.syncUnpaidInvoiceItems(req.params.id, {
       adminUserId: req.user._id,
       note: 'Manual refresh – re-evaluated class eligibility',
@@ -2253,7 +2308,6 @@ router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
     if (!result.success) return res.status(400).json(result);
 
     // Re-fetch the full invoice so the frontend gets the updated data
-    const Invoice = require('../models/Invoice');
     const freshInvoice = await Invoice.findById(req.params.id)
       .populate('guardian', 'firstName lastName email phone')
       .populate('items.class')

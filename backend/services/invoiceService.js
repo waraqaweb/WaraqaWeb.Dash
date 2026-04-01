@@ -2818,6 +2818,10 @@ class InvoiceService {
           reportSubmissionExtendedUntil: extendedUntil
         };
 
+        // Never include cancelled classes regardless of pinning status.
+        const normalizedStatus = normalizeStatusValue(cls?.status);
+        if (CANCELLED_CLASS_STATUSES.has(normalizedStatus)) continue;
+
         // Pinned classes (already linked to this invoice) stay visible unless they
         // are past-scheduled with an expired/missing report window.  This ensures
         // stale "scheduled" classes whose report deadline has long passed are removed
@@ -2827,7 +2831,7 @@ class InvoiceService {
           if (!isPinned) continue;
           // Pinned but ineligible — only keep if report was already submitted
           // or the class reached a final status (attended, completed, etc.)
-          const hasFinalOutcome = ALWAYS_INCLUDED_CLASS_STATUSES.has(normalizeStatusValue(cls?.status));
+          const hasFinalOutcome = ALWAYS_INCLUDED_CLASS_STATUSES.has(normalizedStatus);
           const hasReport = Boolean(cls?.classReport?.submittedAt);
           if (!hasFinalOutcome && !hasReport) continue;
         }
@@ -2880,7 +2884,8 @@ class InvoiceService {
           reportSubmission: cls.reportSubmission || existingItem?.reportSubmission || {},
           reportSubmissionAllowance: allowance,
           reportSubmissionExtendedUntil: extendedUntil,
-          paidByGuardian: Boolean(existingItem?.paidByGuardian)
+          paidByGuardian: Boolean(existingItem?.paidByGuardian),
+          isPinned: isPinned || false
         });
 
         usedMinutes += minutes;
@@ -2890,8 +2895,14 @@ class InvoiceService {
       }
 
       if (!dynamicItems.length && existingItems.length) {
+        const cleanedItems = existingItems
+          .map((item) => (item.toObject ? item.toObject() : item))
+          .filter((item) => {
+            const st = normalizeStatusValue(item?.status || item?.class?.status);
+            return !CANCELLED_CLASS_STATUSES.has(st);
+          });
         return {
-          items: existingItems.map((item) => (item.toObject ? item.toObject() : item)),
+          items: cleanedItems,
           totalMinutes: invoiceItemHours * 60,
           totalHours: invoiceItemHours,
           capMinutes,

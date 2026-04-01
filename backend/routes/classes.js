@@ -4505,7 +4505,7 @@ router.post('/bulk/cancel', authenticateToken, requireRole(['admin']), async (re
 
     const classes = await Class.find({
       _id: { $in: ids },
-      status: { $in: ['scheduled'] }
+      status: { $nin: ['cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'] }
     });
 
     const results = { cancelled: 0, failed: [] };

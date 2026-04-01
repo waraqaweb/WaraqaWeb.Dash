@@ -506,16 +506,14 @@ const SalariesPage = () => {
                       </button>
                       {isAdmin() && (
                         <>
-                          {isUnpaid(salary) && (
-                            <button
-                              onClick={() => openTeacherMsgModal(salary)}
-                              className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50"
-                              type="button"
-                              title="Send salary notification"
-                            >
-                              <MessageSquare className="h-4 w-4" />
-                            </button>
-                          )}
+                          <button
+                            onClick={() => openTeacherMsgModal(salary)}
+                            className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50"
+                            type="button"
+                            title="Send salary notification"
+                          >
+                            <MessageSquare className="h-4 w-4" />
+                          </button>
                           <button onClick={() => handleOpenEdit(salary)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" type="button" title="Edit">
                             <Pencil className="h-4 w-4" />
                           </button>

@@ -1314,11 +1314,11 @@ const DashboardHome = ({ isActive = true }) => {
                 </div>
 
                 {/* Top area: stat columns (Classes, Users, Finance) + charts on the right */}
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-2 items-start">
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-2 items-stretch">
                   {/* Classes column (single consolidated box) */}
                   <div className="flex flex-col gap-1">
                     <div className="text-xs font-medium text-foreground">Classes</div>
-                    <div className="bg-gradient-to-br from-sky-50 via-card to-card rounded-xl p-2 border border-sky-100">
+                    <div className="bg-gradient-to-br from-sky-50 via-card to-card rounded-xl p-2 border border-sky-100 flex-1">
                       <div className="grid grid-cols-1 gap-1">
                         <div className="flex items-center justify-between">
                           <div>
@@ -1373,7 +1373,7 @@ const DashboardHome = ({ isActive = true }) => {
                   {/* Users column (single consolidated box) */}
                   <div className="flex flex-col gap-1">
                     <div className="text-xs font-medium text-foreground">Users</div>
-                    <div className="bg-gradient-to-br from-emerald-50 via-card to-card rounded-xl p-2 border border-emerald-100">
+                    <div className="bg-gradient-to-br from-emerald-50 via-card to-card rounded-xl p-2 border border-emerald-100 flex-1">
                       <div className="grid grid-cols-1 gap-1">
                         <div className="grid grid-cols-2 gap-1">
                           <div className="rounded-md bg-white/70 border border-emerald-100 px-1.5 py-1">
@@ -1417,7 +1417,7 @@ const DashboardHome = ({ isActive = true }) => {
                   {/* Finance column (single consolidated box) */}
                   <div className="flex flex-col gap-1">
                     <div className="text-xs font-medium text-foreground">Finance</div>
-                    <div className="bg-gradient-to-br from-amber-50 via-card to-card rounded-xl p-2 border border-amber-100">
+                    <div className="bg-gradient-to-br from-amber-50 via-card to-card rounded-xl p-2 border border-amber-100 flex-1">
                       <div className="grid grid-cols-1 gap-1">
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Revenue (month to date)</div>

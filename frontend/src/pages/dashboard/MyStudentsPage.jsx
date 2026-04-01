@@ -17,6 +17,8 @@ import PrimaryButton from '../../components/ui/PrimaryButton';
 import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
 import { deleteStudent as deleteStandaloneStudent } from '../../api/students';
+import ExportExcelButton from '../../components/ui/ExportExcelButton';
+import { mapStudentRow, downloadExcel } from '../../utils/exportToExcel';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 
@@ -1012,6 +1014,9 @@ const fetchGuardiansList = async () => {
               </button>
             );
           })}
+          <ExportExcelButton onExport={async () => {
+            await downloadExcel(sortedStudents.map(mapStudentRow), 'students');
+          }} />
         </div>
 
       </div>

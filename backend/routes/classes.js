@@ -1390,7 +1390,7 @@ async function deduplicateSeriesInstances() {
       .sort({ scheduledDate: 1 })
       .lean();
 
-    if (instances.length < 2) continue;
+    if (instances.length < 2 && slotsPerDay.size === 0) continue;
 
     // Group instances by calendar date in pattern timezone
     const tz = pattern?.timezone || 'UTC';
@@ -1412,7 +1412,11 @@ async function deduplicateSeriesInstances() {
       const dow = new Date(yr, mo - 1, dy).getDay();
 
       const daySlots = slotsPerDay.get(dow);
-      const expectedCount = daySlots ? daySlots.length : 1;
+      // If the pattern has recurrenceDetails and this day-of-week is NOT in them,
+      // expectedCount is 0 — ALL instances on this day are erroneous (e.g. Friday
+      // when only Sat/Sun/Thu are scheduled). If the pattern has no recurrenceDetails
+      // at all, we fall back to 1 to avoid accidentally deleting everything.
+      const expectedCount = daySlots ? daySlots.length : (slotsPerDay.size > 0 ? 0 : 1);
 
       if (dateInstances.length <= expectedCount) continue;
 
@@ -1491,91 +1495,62 @@ router.post("/series/deduplicate", authenticateToken, requireRole(["admin"]), as
 /* -------------------------
    POST /api/classes/series/recreate-all
    - Admin-only
-   - Deduplicate existing instances first, then recreate missing
-     instances for all ACTIVE recurring patterns (those that have
-     at least one future non-cancelled instance).
-   - Inactive patterns (no future instances) are skipped — they
-     should be handled individually by the admin.
+   - RESETS recurring class instances:
+     1. Removes duplicates
+     2. Deletes all future unreported instances (and past unreported
+        ones too) for each active pattern
+     3. Regenerates instances fresh from recurrenceDetails
+   - Reported/completed instances are NEVER touched
+   - Inactive patterns (no recurrenceDetails) are skipped
    Returns: { processed, totalCreated, skipped, totalRemoved, results[] }
    ------------------------- */
 router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), async (req, res) => {
   try {
-    // Step 1: Deduplicate existing instances before regenerating
+    const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'];
+    const finalStatuses = ['completed', 'attended', 'in_progress', 'missed_by_student', 'no_show_both'];
+
+    // Step 1: Deduplicate existing instances
     const dedup = await deduplicateSeriesInstances();
 
-    const now = new Date();
     const patterns = await Class.find({ status: 'pattern', isRecurring: true }).lean();
-    const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'];
-
-    // Find which patterns have at least one future active instance
-    const patternIds = patterns.map((p) => p._id);
-    const activePatternRows = patternIds.length
-      ? await Class.aggregate([
-          {
-            $match: {
-              parentRecurringClass: { $in: patternIds },
-              status: { $nin: [...cancelledStatuses, 'pattern'] },
-              hidden: { $ne: true },
-              scheduledDate: { $gte: now },
-            },
-          },
-          { $group: { _id: '$parentRecurringClass' } },
-        ])
-      : [];
-    const activePatternIdSet = new Set(activePatternRows.map((r) => String(r._id)));
 
     const results = [];
     let totalCreated = 0;
+    let totalRemoved = dedup.totalRemoved;
     let skipped = 0;
 
     for (const pattern of patterns) {
       const patternId = String(pattern._id);
 
+      // Skip patterns with no recurrence details (can't regenerate)
+      if (!Array.isArray(pattern.recurrenceDetails) || pattern.recurrenceDetails.length === 0) {
+        skipped++;
+        continue;
+      }
+
       // Skip patterns with expired endDate
       if (pattern.recurrence?.endDate) {
         const endDate = new Date(pattern.recurrence.endDate);
-        if (!Number.isNaN(endDate.getTime()) && endDate < now) {
+        if (!Number.isNaN(endDate.getTime()) && endDate < new Date()) {
           skipped++;
           continue;
         }
       }
 
-      // Skip inactive patterns (no future active instances)
-      if (!activePatternIdSet.has(patternId)) {
-        skipped++;
-        continue;
+      // Step 2: Delete unreported instances (future + past unreported)
+      // Keep: instances with submitted reports or final statuses
+      try {
+        const deleteResult = await Class.deleteMany({
+          parentRecurringClass: pattern._id,
+          status: { $nin: ['pattern', ...cancelledStatuses, ...finalStatuses] },
+          'classReport.submittedAt': { $exists: false },
+        });
+        totalRemoved += deleteResult.deletedCount || 0;
+      } catch (err) {
+        console.error(`recreate-all: failed to clean pattern ${patternId}:`, err.message);
       }
 
-      // Skip patterns that already have full coverage for the generation window
-      try {
-        const genMonths = pattern.recurrence?.generationPeriodMonths || 2;
-        const windowEnd = new Date(now);
-        windowEnd.setMonth(windowEnd.getMonth() + genMonths);
-        if (pattern.recurrence?.endDate) {
-          const se = new Date(pattern.recurrence.endDate);
-          if (!Number.isNaN(se.getTime()) && se < windowEnd) windowEnd.setTime(se.getTime());
-        }
-        const perDayMapCheck = buildPerDayMap(pattern.recurrenceDetails || []);
-        let expectedSlots = 0;
-        const d = new Date(now);
-        while (d <= windowEnd) {
-          const slots = perDayMapCheck.get(d.getDay());
-          if (slots) expectedSlots += slots.length;
-          d.setDate(d.getDate() + 1);
-        }
-        if (expectedSlots > 0) {
-          const existingCount = await Class.countDocuments({
-            parentRecurringClass: pattern._id,
-            scheduledDate: { $gte: now, $lte: windowEnd },
-            status: { $nin: [...cancelledStatuses, 'pattern'] },
-          });
-          if (existingCount >= expectedSlots) {
-            skipped++;
-            continue;
-          }
-        }
-      } catch (_) { /* proceed to generation on error */ }
-
+      // Step 3: Regenerate instances from recurrenceDetails
       try {
         const perDayMap = buildPerDayMap(pattern.recurrenceDetails || []);
         const created = await generateRecurringClasses(
@@ -1599,7 +1574,7 @@ router.post("/series/recreate-all", authenticateToken, requireRole(["admin"]), a
       processed: patterns.length - skipped,
       totalCreated,
       skipped,
-      totalRemoved: dedup.totalRemoved,
+      totalRemoved,
       results,
     });
   } catch (err) {
@@ -4497,6 +4472,66 @@ router.post("/:id/check-can-submit", authenticateToken, async (req, res) => {
 // (kept for historical reference) -- use require('../utils/generateRecurringClasses')
 
 // (duplicate simple GET removed to keep the richer handler above)
+
+// ── Bulk actions ────────────────────────────────────────────────────────────
+
+// Bulk delete classes (Admin)
+router.post('/bulk/delete', authenticateToken, requireRole(['admin']), async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
+    if (ids.length > 500) return res.status(400).json({ success: false, message: 'Maximum 500 classes per batch' });
+
+    const result = await Class.deleteMany({ _id: { $in: ids } });
+
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('class:bulkDeleted', { ids });
+    } catch (_) {}
+
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch (err) {
+    console.error('Bulk delete classes error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk delete', error: err.message });
+  }
+});
+
+// Bulk cancel classes (Admin)
+router.post('/bulk/cancel', authenticateToken, requireRole(['admin']), async (req, res) => {
+  try {
+    const { ids, reason = 'Bulk cancelled by admin' } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
+    if (ids.length > 500) return res.status(400).json({ success: false, message: 'Maximum 500 classes per batch' });
+
+    const classes = await Class.find({
+      _id: { $in: ids },
+      status: { $in: ['scheduled'] }
+    });
+
+    const results = { cancelled: 0, failed: [] };
+
+    for (const classDoc of classes) {
+      try {
+        classDoc.lastModifiedBy = req.user._id;
+        classDoc.lastModifiedAt = new Date();
+        await classDoc.cancelClass(reason, req.user._id, 'admin', false);
+        results.cancelled++;
+      } catch (e) {
+        results.failed.push({ id: String(classDoc._id), error: e.message });
+      }
+    }
+
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('class:bulkUpdated', { ids });
+    } catch (_) {}
+
+    res.json({ success: true, ...results });
+  } catch (err) {
+    console.error('Bulk cancel classes error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk cancel', error: err.message });
+  }
+});
 
 /* -------------------------
    Export router

@@ -25,8 +25,14 @@ import {
   DownloadCloud,
   BadgeCheck,
   TimerReset,
-  Link2
+  Link2,
+  CheckSquare,
+  Trash2
 } from 'lucide-react';
+import useBulkSelect from '../../hooks/useBulkSelect';
+import BulkActionBar from '../../components/ui/BulkActionBar';
+import ExportExcelButton from '../../components/ui/ExportExcelButton';
+import { fetchAllForExport, mapInvoiceRow, downloadExcel } from '../../utils/exportToExcel';
 
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import CircleSpinner from '../../components/ui/CircleSpinner';
@@ -123,6 +129,7 @@ const InvoicesPage = ({ isActive = true }) => {
   const [downloadingDocId, setDownloadingDocId] = useState(null);
   const [copiedInvoiceId, setCopiedInvoiceId] = useState(null);
   const [toast, setToast] = useState({ show: false, type: '', message: '' });
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [bulkWhatsappOpen, setBulkWhatsappOpen] = useState(false);
   const [bulkComposer, setBulkComposer] = useState({
     greeting: 'Assalamu Alaykum {{guardianEpithet}} {{guardianFirstName}},',
@@ -578,6 +585,37 @@ const InvoicesPage = ({ isActive = true }) => {
       alert('Cancel failed');
     }
   };
+
+  // ── Bulk action handlers ──────────────────────────────────────────────────
+  const runBulkAction = async (label, apiCall) => {
+    const ids = [...bulk.selected];
+    if (ids.length === 0) return;
+    if (!window.confirm(`${label} ${ids.length} invoice(s)?`)) return;
+    setBulkActionLoading(true);
+    try {
+      const { data } = await apiCall(ids);
+      const parts = [];
+      if (data.deleted) parts.push(`${data.deleted} deleted`);
+      if (data.cancelled) parts.push(`${data.cancelled} cancelled`);
+      if (data.sent) parts.push(`${data.sent} sent`);
+      if (data.failed?.length) parts.push(`${data.failed.length} failed`);
+      if (data.skipped) parts.push(`${data.skipped} skipped`);
+      setToast({ show: true, type: data.failed?.length ? 'warning' : 'success', message: parts.join(', ') || 'Done' });
+      bulk.clearSelection();
+      bulk.toggleSelectionMode();
+      fetchInvoices();
+      if (isAdmin()) fetchStats();
+    } catch (err) {
+      console.error(`Bulk ${label} error:`, err);
+      setToast({ show: true, type: 'error', message: err?.response?.data?.message || `Bulk ${label} failed` });
+    } finally {
+      setBulkActionLoading(false);
+    }
+  };
+
+  const handleBulkDelete = () => runBulkAction('Delete', (ids) => api.post('/invoices/bulk/delete', { ids }));
+  const handleBulkCancel = () => runBulkAction('Cancel', (ids) => api.post('/invoices/bulk/cancel', { ids }));
+  const handleBulkSend = () => runBulkAction('Send', (ids) => api.post('/invoices/bulk/send', { ids, via: 'email' }));
 
   const toggleExpanded = (invoiceId) => {
     setExpandedInvoice((prev) => (prev === invoiceId ? null : invoiceId));
@@ -1346,6 +1384,8 @@ const InvoicesPage = ({ isActive = true }) => {
     return list;
   }, [filteredInvoices, resolvedActiveTab]);
 
+  const bulk = useBulkSelect(displayedInvoices);
+
   const bulkWhatsappCandidates = useMemo(() => {
     return (displayedInvoices || []).map((invoice) => {
       const phone = normalizeWhatsappPhone(invoice?.guardian?.phone);
@@ -1838,6 +1878,19 @@ const InvoicesPage = ({ isActive = true }) => {
               ))}
             </div>
             {isAdmin() && (
+              <ExportExcelButton onExport={async () => {
+                const params = { limit: 10000 };
+                const resolvedTab = activeTab || 'all';
+                if (resolvedTab !== 'all') { params.status = resolvedTab; }
+                else if (statusFilter !== 'all') { params.status = statusFilter; }
+                if (typeFilter !== 'all') params.type = typeFilter;
+                if (segmentFilter !== 'all') params.segment = segmentFilter;
+                if (normalizedSearchTerm) params.search = normalizedSearchTerm;
+                const data = await fetchAllForExport('/invoices', params);
+                await downloadExcel((data.invoices || []).map(mapInvoiceRow), `invoices-${resolvedTab}`);
+              }} />
+            )}
+            {isAdmin() && (
               <button
                 type="button"
                 onClick={() => setBulkWhatsappOpen(true)}
@@ -1848,7 +1901,46 @@ const InvoicesPage = ({ isActive = true }) => {
                 Bulk WhatsApp
               </button>
             )}
+            {isAdmin() && (
+              <button
+                type="button"
+                onClick={bulk.toggleSelectionMode}
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                  bulk.selectionMode
+                    ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                }`}
+                title={bulk.selectionMode ? 'Exit selection mode' : 'Select invoices for bulk actions'}
+              >
+                <CheckSquare className="h-3.5 w-3.5" />
+                {bulk.selectionMode ? 'Exit select' : 'Select'}
+              </button>
+            )}
           </div>
+
+          {bulk.selectionMode && (
+            <div className="mt-3">
+              <BulkActionBar
+                selectedCount={bulk.selectedCount}
+                isAllSelected={bulk.isAllSelected}
+                onSelectAll={bulk.selectAll}
+                onExit={() => { bulk.clearSelection(); bulk.toggleSelectionMode(); }}
+              >
+                <button type="button" onClick={handleBulkSend} disabled={bulk.selectedCount === 0 || bulkActionLoading}
+                  className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100 disabled:opacity-40">
+                  <Send className="h-3 w-3" /> Send
+                </button>
+                <button type="button" onClick={handleBulkCancel} disabled={bulk.selectedCount === 0 || bulkActionLoading}
+                  className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-40">
+                  <XCircle className="h-3 w-3" /> Cancel
+                </button>
+                <button type="button" onClick={handleBulkDelete} disabled={bulk.selectedCount === 0 || bulkActionLoading}
+                  className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-40">
+                  <Trash2 className="h-3 w-3" /> Delete
+                </button>
+              </BulkActionBar>
+            </div>
+          )}
           {error && (
             <div className="mt-6 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-600">
               {error}
@@ -1903,10 +1995,22 @@ const InvoicesPage = ({ isActive = true }) => {
                   <div
                     key={invoice._id}
                     ref={(node) => setInvoiceCardRef(invoice._id, node)}
-                    className="rounded-xl border border-slate-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                    className={`rounded-xl border bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${bulk.selectionMode && bulk.selected.has(invoice._id) ? 'border-indigo-300 ring-2 ring-indigo-200' : 'border-slate-100'}`}
                   >
                     <div className="flex flex-col gap-3 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        {bulk.selectionMode && (
+                          <button
+                            type="button"
+                            onClick={() => bulk.toggleItem(invoice._id)}
+                            className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-300 transition hover:border-indigo-400"
+                            aria-label={bulk.selected.has(invoice._id) ? 'Deselect' : 'Select'}
+                          >
+                            {bulk.selected.has(invoice._id) && (
+                              <CheckSquare className="h-4 w-4 text-indigo-600" />
+                            )}
+                          </button>
+                        )}
                         <div className="min-w-0 flex-1 space-y-3">
                           <div className="flex flex-wrap items-center gap-3">
                             <Badge tone={statusTone} pill title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>

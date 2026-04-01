@@ -34,6 +34,8 @@ import ProfileEditModal from '../../components/dashboard/ProfileEditModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
+import ExportExcelButton from '../../components/ui/ExportExcelButton';
+import { fetchAllForExport, mapGuardianRow, downloadExcel } from '../../utils/exportToExcel';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const GUARDIAN_STATUS_TABS = [
@@ -802,6 +804,13 @@ const GuardiansPage = () => {
               </button>
             );
           })}
+          <ExportExcelButton onExport={async () => {
+            const params = { role: 'guardian', limit: 10000, sortBy, order: sortOrder };
+            if (statusFilter !== 'all') params.isActive = statusFilter === 'active';
+            if (debouncedSearch) params.search = debouncedSearch;
+            const data = await fetchAllForExport('/users', params);
+            await downloadExcel((data.users || []).map(mapGuardianRow), 'guardians');
+          }} />
         </div>
 
         {/* Guardians List */}

@@ -104,35 +104,13 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
           const hours = typeof slot?.hours === 'number' ? slot.hours : new Date(pattern.scheduledDate).getHours();
           const minutes = typeof slot?.minutes === 'number' ? slot.minutes : new Date(pattern.scheduledDate).getMinutes();
 
-          const anchorLocalTime = slot?.raw?.anchorLocalTime;
-          const anchorDayOffset = Number(slot?.raw?.anchorDayOffset);
-          const anchorTimezone = slot?.raw?.anchorTimezone || resolveAnchorTimezone({
-            anchorMode: pattern.anchoredTimezone || 'student',
-            studentTimezone,
-            teacherTimezone,
-            fallbackTimezone: tzForDay || pattern.timezone || 'UTC',
-          });
-
-          // build UTC date for this day at HH:mm in tz
-          let instanceDate;
-          if ((pattern.anchoredTimezone === 'student' || pattern.anchoredTimezone === 'teacher') && typeof anchorLocalTime === 'string' && Number.isFinite(anchorDayOffset)) {
-            const [anchorHour, anchorMinute] = anchorLocalTime.split(':').map((value) => Number.parseInt(value, 10));
-            const displayDate = new Date(current.getFullYear(), current.getMonth(), current.getDate());
-            const anchorDate = new Date(displayDate.getFullYear(), displayDate.getMonth(), displayDate.getDate() + anchorDayOffset);
-            instanceDate = tzUtils.buildUtcFromParts
-              ? tzUtils.buildUtcFromParts({
-                year: anchorDate.getFullYear(),
-                month: anchorDate.getMonth(),
-                day: anchorDate.getDate(),
-                hour: anchorHour,
-                minute: anchorMinute,
-              }, anchorTimezone)
-              : new Date(anchorDate.getFullYear(), anchorDate.getMonth(), anchorDate.getDate(), anchorHour, anchorMinute);
-          } else {
-            instanceDate = tzUtils.buildUtcFromParts
-              ? tzUtils.buildUtcFromParts({ year: current.getFullYear(), month: current.getMonth(), day: current.getDate(), hour: hours, minute: minutes }, tzForDay)
-              : new Date(current.getFullYear(), current.getMonth(), current.getDate(), hours, minutes);
-          }
+          // Always compute UTC from the slot's display time + display timezone.
+          // This ensures the class time is exactly what the admin entered in the
+          // timezone they selected, for every instance date (handling DST correctly
+          // per-date via moment-timezone).
+          const instanceDate = tzUtils.buildUtcFromParts
+            ? tzUtils.buildUtcFromParts({ year: current.getFullYear(), month: current.getMonth(), day: current.getDate(), hour: hours, minute: minutes }, tzForDay)
+            : new Date(current.getFullYear(), current.getMonth(), current.getDate(), hours, minutes);
 
           const instanceDuration = typeof slot?.duration === 'number' ? slot.duration : pattern.duration;
 

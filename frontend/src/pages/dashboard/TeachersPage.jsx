@@ -39,6 +39,8 @@
 			import api from '../../api/axios';
 			import LoadingSpinner from '../../components/ui/LoadingSpinner';
 			import useMinLoading from '../../components/ui/useMinLoading';
+			import ExportExcelButton from '../../components/ui/ExportExcelButton';
+			import { fetchAllForExport, mapTeacherRow, downloadExcel } from '../../utils/exportToExcel';
 			import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 			const TEACHER_STATUS_TABS = [
@@ -579,7 +581,7 @@
 								</div>
 							)}
 
-							<div className="flex flex-wrap gap-2 mb-6">
+							<div className="flex flex-wrap items-center gap-2 mb-6">
 								{TEACHER_STATUS_TABS.map((tab) => {
 									const isSelected = statusFilter === tab.id;
 									const count = tab.id === 'all' ? statusCounts.all : (statusCounts[tab.id] || 0);
@@ -602,6 +604,13 @@
 										</button>
 									);
 								})}
+								<ExportExcelButton onExport={async () => {
+									const params = { role: 'teacher', limit: 10000, sortBy, order: sortOrder };
+									if (statusFilter !== 'all') params.isActive = statusFilter === 'active';
+									if (debouncedSearch) params.search = debouncedSearch;
+									const data = await fetchAllForExport('/users', params);
+									await downloadExcel((data.users || []).map(mapTeacherRow), 'teachers');
+								}} />
 							</div>
 
 							<div className="space-y-3">

@@ -1424,4 +1424,81 @@ router.put('/notification-preferences', authenticateToken, async (req, res) => {
   }
 });
 
+// ── Bulk actions ────────────────────────────────────────────────────────────
+
+// Bulk mark-paid (Admin)
+router.post('/admin/bulk/mark-paid', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { ids, paymentMethod = 'bank_transfer' } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
+    if (ids.length > 200) return res.status(400).json({ success: false, message: 'Maximum 200 invoices per batch' });
+
+    const results = { paid: 0, failed: [] };
+
+    for (const id of ids) {
+      try {
+        await TeacherSalaryService.markInvoiceAsPaid(id, { paymentMethod }, req.user._id);
+        results.paid++;
+      } catch (e) {
+        results.failed.push({ id, error: e.message });
+      }
+    }
+
+    res.json({ success: true, ...results });
+  } catch (err) {
+    console.error('Bulk mark-paid error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk mark as paid', error: err.message });
+  }
+});
+
+// Bulk publish (Admin)
+router.post('/admin/bulk/publish', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
+    if (ids.length > 200) return res.status(400).json({ success: false, message: 'Maximum 200 invoices per batch' });
+
+    const results = { published: 0, failed: [] };
+
+    for (const id of ids) {
+      try {
+        await TeacherSalaryService.publishInvoice(id, req.user._id);
+        results.published++;
+      } catch (e) {
+        results.failed.push({ id, error: e.message });
+      }
+    }
+
+    res.json({ success: true, ...results });
+  } catch (err) {
+    console.error('Bulk publish error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk publish', error: err.message });
+  }
+});
+
+// Bulk delete teacher invoices (Admin)
+router.post('/admin/bulk/delete', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
+    if (ids.length > 200) return res.status(400).json({ success: false, message: 'Maximum 200 invoices per batch' });
+
+    const results = { deleted: 0, failed: [] };
+
+    for (const id of ids) {
+      try {
+        await TeacherInvoice.findByIdAndDelete(id);
+        results.deleted++;
+      } catch (e) {
+        results.failed.push({ id, error: e.message });
+      }
+    }
+
+    res.json({ success: true, ...results });
+  } catch (err) {
+    console.error('Bulk delete teacher invoices error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk delete', error: err.message });
+  }
+});
+
 module.exports = router;

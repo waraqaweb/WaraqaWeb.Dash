@@ -2818,10 +2818,18 @@ class InvoiceService {
           reportSubmissionExtendedUntil: extendedUntil
         };
 
-        // Pinned classes (already linked to this invoice) always stay visible
+        // Pinned classes (already linked to this invoice) stay visible unless they
+        // are past-scheduled with an expired/missing report window.  This ensures
+        // stale "scheduled" classes whose report deadline has long passed are removed
+        // from the invoice view while reported/attended classes always remain.
         const isPinned = pinnedClassIds.has(classId);
-        if (!isPinned && !isClassEligibleForDynamicInvoice(enrichedClass, now)) {
-          continue;
+        if (!isClassEligibleForDynamicInvoice(enrichedClass, now)) {
+          if (!isPinned) continue;
+          // Pinned but ineligible — only keep if report was already submitted
+          // or the class reached a final status (attended, completed, etc.)
+          const hasFinalOutcome = ALWAYS_INCLUDED_CLASS_STATUSES.has(normalizeStatusValue(cls?.status));
+          const hasReport = Boolean(cls?.classReport?.submittedAt);
+          if (!hasFinalOutcome && !hasReport) continue;
         }
 
         const minutes = Number(cls.duration || 0) || 0;

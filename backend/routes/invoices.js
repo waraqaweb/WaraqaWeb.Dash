@@ -2238,6 +2238,49 @@ router.post('/:id/items', authenticateToken, async (req, res) => {
   }
 });
 
+// Refresh invoice classes – re-run eligibility and sync items (Admin)
+router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Only admins' });
+
+    const result = await InvoiceService.syncUnpaidInvoiceItems(req.params.id, {
+      adminUserId: req.user._id,
+      note: 'Manual refresh – re-evaluated class eligibility',
+      cleanupDuplicates: true,
+      transferOnDuplicate: true
+    });
+
+    if (!result.success) return res.status(400).json(result);
+
+    // Re-fetch the full invoice so the frontend gets the updated data
+    const Invoice = require('../models/Invoice');
+    const freshInvoice = await Invoice.findById(req.params.id)
+      .populate('guardian', 'firstName lastName email phone')
+      .populate('items.class')
+      .populate('items.student', 'firstName lastName')
+      .populate('items.teacher', 'firstName lastName');
+
+    if (freshInvoice) {
+      freshInvoice.recalculateTotals();
+      await freshInvoice.save();
+    }
+
+    const invoiceObj = freshInvoice ? (freshInvoice.toObject ? freshInvoice.toObject({ virtuals: true }) : freshInvoice) : result.invoice;
+
+    res.json({ success: true, invoice: invoiceObj, noChanges: !!result.noChanges });
+
+    try {
+      const io = req.app.get('io');
+      if (io && invoiceObj) io.emit('invoice:updated', { invoice: invoiceObj });
+    } catch (emitErr) {
+      console.warn('Failed to emit invoice:updated (refresh) socket event', emitErr.message);
+    }
+  } catch (err) {
+    console.error('Refresh invoice classes error:', err);
+    res.status(500).json({ success: false, message: 'Failed to refresh invoice classes', error: err.message });
+  }
+});
+
 // Preview invoice item edits (dry-run, no persistence) - Admin
 router.post('/:id/items/preview', authenticateToken, async (req, res) => {
   console.log('=== [Invoices API] POST /invoices/:id/items/preview START ===', { id: req.params.id, body: req.body, user: req.user?._id });
@@ -3093,6 +3136,121 @@ router.post('/:id/rollback', authenticateToken, requireAdmin, async (req, res) =
   }
 });
 
+// ── Bulk actions ────────────────────────────────────────────────────────────
 
+// Bulk delete invoices (Admin)
+router.post('/bulk/delete', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
+    if (ids.length > 200) return res.status(400).json({ success: false, message: 'Maximum 200 invoices per batch' });
+
+    const invoices = await Invoice.find({ _id: { $in: ids } });
+    const results = { deleted: 0, failed: [] };
+
+    for (const invoice of invoices) {
+      try {
+        // Clear billedInInvoiceId from classes
+        const classIds = (invoice.items || []).map(it => it.class || it.lessonId).filter(Boolean);
+        if (classIds.length > 0) {
+          await Class.updateMany(
+            { _id: { $in: classIds }, billedInInvoiceId: invoice._id },
+            { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1, billedInInvoiceId: 1, billedAt: 1 } }
+          );
+        }
+        await Invoice.deleteOne({ _id: invoice._id });
+        results.deleted++;
+      } catch (e) {
+        results.failed.push({ id: String(invoice._id), error: e.message });
+      }
+    }
+
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('invoices:bulkDeleted', { ids: ids.map(String) });
+    } catch (_) {}
+
+    res.json({ success: true, ...results });
+  } catch (err) {
+    console.error('Bulk delete invoices error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk delete', error: err.message });
+  }
+});
+
+// Bulk cancel invoices (Admin)
+router.post('/bulk/cancel', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
+    if (ids.length > 200) return res.status(400).json({ success: false, message: 'Maximum 200 invoices per batch' });
+
+    const invoices = await Invoice.find({ _id: { $in: ids }, status: { $nin: ['paid', 'refunded'] } });
+    const results = { cancelled: 0, skipped: 0, failed: [] };
+
+    for (const invoice of invoices) {
+      try {
+        const timestamp = new Date().toISOString();
+        invoice.status = 'cancelled';
+        invoice.internalNotes = `${invoice.internalNotes || ''}\n[${timestamp}] Bulk cancelled by admin`.trim();
+        invoice.updatedBy = req.user._id;
+        await invoice.save();
+
+        const classIds = (invoice.items || []).map(it => it.class || it.lessonId).filter(Boolean);
+        if (classIds.length > 0) {
+          await Class.updateMany(
+            { _id: { $in: classIds }, billedInInvoiceId: invoice._id },
+            { $unset: { billedInInvoiceId: 1, billedAt: 1 } }
+          );
+        }
+        results.cancelled++;
+      } catch (e) {
+        results.failed.push({ id: String(invoice._id), error: e.message });
+      }
+    }
+
+    results.skipped = ids.length - invoices.length;
+
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('invoices:bulkUpdated', { ids: ids.map(String) });
+    } catch (_) {}
+
+    res.json({ success: true, ...results });
+  } catch (err) {
+    console.error('Bulk cancel invoices error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk cancel', error: err.message });
+  }
+});
+
+// Bulk send invoices (Admin)
+router.post('/bulk/send', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { ids, via = 'email' } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
+    if (ids.length > 200) return res.status(400).json({ success: false, message: 'Maximum 200 invoices per batch' });
+
+    const results = { sent: 0, failed: [] };
+
+    for (const id of ids) {
+      try {
+        const result = await InvoiceService.toggleInvoiceSent(id, { send: true, via, force: false }, req.user._id);
+        if (result.success) results.sent++;
+        else results.failed.push({ id, error: result.message || 'Send failed' });
+      } catch (e) {
+        results.failed.push({ id, error: e.message });
+      }
+    }
+
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('invoices:bulkUpdated', { ids: ids.map(String) });
+    } catch (_) {}
+
+    res.json({ success: true, ...results });
+  } catch (err) {
+    console.error('Bulk send invoices error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk send', error: err.message });
+  }
+});
 
 module.exports = router;

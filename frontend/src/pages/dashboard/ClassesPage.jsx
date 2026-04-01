@@ -13,8 +13,12 @@ import {
   ChevronDown, ChevronUp, Video, Clock, CheckCircle,
   XCircle, AlertCircle, Plus, Trash2, Calendar, User, Users, BookOpen,
   Pencil, Copy, Repeat, Star, FileText, RotateCcw, Globe, MessageCircle, Image,
-  CalendarClock, ShieldCheck
+  CalendarClock, ShieldCheck, CheckSquare
 } from "lucide-react";
+import useBulkSelect from '../../hooks/useBulkSelect';
+import BulkActionBar from '../../components/ui/BulkActionBar';
+import ExportExcelButton from '../../components/ui/ExportExcelButton';
+import { fetchAllForExport, mapClassRow, downloadExcel } from '../../utils/exportToExcel';
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import CircleSpinner from "../../components/ui/CircleSpinner";
 import useMinLoading from "../../components/ui/useMinLoading";
@@ -467,6 +471,8 @@ const ClassesPage = ({ isActive = true }) => {
   const [calendarAvailabilityEnabled, setCalendarAvailabilityEnabled] = useState(false);
   const [calendarAvailabilityLabel, setCalendarAvailabilityLabel] = useState("");
   const [calendarAvailabilityLoading, setCalendarAvailabilityLoading] = useState(false);
+  const [classBulkActionLoading, setClassBulkActionLoading] = useState(false);
+  const [classBulkToast, setClassBulkToast] = useState(null);
   const [timezoneOptions, setTimezoneOptions] = useState([]);
   const [selectedTeacherId, setSelectedTeacherId] = useState(null);
   const [selectedGuardianId, setSelectedGuardianId] = useState(null);
@@ -871,6 +877,36 @@ const ClassesPage = ({ isActive = true }) => {
 
     return working;
   }, [classes, globalFilter, getDisplayStatus, normalizedSearchTerm]);
+
+  const classBulk = useBulkSelect(filteredClasses);
+
+  const runClassBulkAction = async (label, apiCall) => {
+    const ids = [...classBulk.selected];
+    if (ids.length === 0) return;
+    if (!window.confirm(`${label} ${ids.length} class(es)?`)) return;
+    setClassBulkActionLoading(true);
+    try {
+      const { data } = await apiCall(ids);
+      const parts = [];
+      if (data.deleted) parts.push(`${data.deleted} deleted`);
+      if (data.cancelled) parts.push(`${data.cancelled} cancelled`);
+      if (data.failed?.length) parts.push(`${data.failed.length} failed`);
+      setClassBulkToast({ type: data.failed?.length ? 'warning' : 'success', message: parts.join(', ') || 'Done' });
+      setTimeout(() => setClassBulkToast(null), 3500);
+      classBulk.clearSelection();
+      classBulk.toggleSelectionMode();
+      fetchClasses();
+    } catch (err) {
+      console.error(`Bulk ${label} error:`, err);
+      setClassBulkToast({ type: 'error', message: err?.response?.data?.message || `Bulk ${label} failed` });
+      setTimeout(() => setClassBulkToast(null), 4000);
+    } finally {
+      setClassBulkActionLoading(false);
+    }
+  };
+
+  const handleClassBulkDelete = () => runClassBulkAction('Delete', (ids) => api.post('/classes/bulk/delete', { ids }));
+  const handleClassBulkCancel = () => runClassBulkAction('Cancel', (ids) => api.post('/classes/bulk/cancel', { ids }));
 
 
   const mapAvailabilityResponse = useCallback((raw = {}) => createAvailabilityState({
@@ -1428,13 +1464,8 @@ const fetchClasses = useCallback(async () => {
       order: "asc",
     };
 
-    if (searchMode && tabFilter === 'upcoming') {
-      const now = new Date();
-      const monthAhead = new Date(now);
-      monthAhead.setMonth(monthAhead.getMonth() + 1);
-      params.dateFrom = now.toISOString();
-      params.dateTo = monthAhead.toISOString();
-    }
+    // In search mode, don't restrict date range — show all matching results
+    // so the user can see classes across the full generation window.
 
     if (statusFilter !== "all") params.status = statusFilter;
     if (teacherFilter !== "all") params.teacher = teacherFilter;
@@ -3117,7 +3148,7 @@ fetchClassesRef.current = fetchClasses;
             <div
               key={classItem._id}
               id={`class-card-${classItem._id}`}
-              className="bg-white rounded-md border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-150"
+              className={`bg-white rounded-md border overflow-hidden hover:shadow-md transition-shadow duration-150 ${classBulk.selectionMode && classBulk.selected.has(classItem._id) ? 'border-indigo-300 ring-2 ring-indigo-200' : 'border-gray-100'}`}
             >
           {/* Class Summary */}
           <div className="p-3">
@@ -3128,6 +3159,19 @@ fetchClassesRef.current = fetchClasses;
               onClick={() => toggleExpanded(classItem._id)}
             >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+
+                {classBulk.selectionMode && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); classBulk.toggleItem(classItem._id); }}
+                    className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-300 transition hover:border-indigo-400"
+                    aria-label={classBulk.selected.has(classItem._id) ? 'Deselect' : 'Select'}
+                  >
+                    {classBulk.selected.has(classItem._id) && (
+                      <CheckSquare className="h-4 w-4 text-indigo-600" />
+                    )}
+                  </button>
+                )}
 
                 {/* Time & Date with Timezone Info */}
                 <div className="flex w-full flex-shrink-0 flex-col items-start sm:w-28 sm:items-center md:items-start">
@@ -3918,7 +3962,37 @@ fetchClassesRef.current = fetchClasses;
       
       <div className="flex items-center justify-between gap-3 mb-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
-          {/* Left area kept minimal */}
+          {isAdminUser && (
+            <ExportExcelButton onExport={async () => {
+              const params = { filter: tabFilter, limit: 10000 };
+              if (statusFilter !== 'all') params.status = statusFilter;
+              if (teacherFilter !== 'all') params.teacher = teacherFilter;
+              if (guardianFilter !== 'all') params.guardian = guardianFilter;
+              if (normalizedSearchTerm) { params.search = normalizedSearchTerm; params.searchAll = true; }
+              const data = await fetchAllForExport('/classes', params);
+              await downloadExcel((data.classes || []).map(mapClassRow), `classes-${tabFilter}`);
+            }} />
+          )}
+          {isAdminUser && (
+            <button
+              type="button"
+              onClick={classBulk.toggleSelectionMode}
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                classBulk.selectionMode
+                  ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+              }`}
+              title={classBulk.selectionMode ? 'Exit selection mode' : 'Select classes for bulk actions'}
+            >
+              <CheckSquare className="h-3.5 w-3.5" />
+              {classBulk.selectionMode ? 'Exit select' : 'Select'}
+            </button>
+          )}
+          {classBulkToast && (
+            <span className={`text-xs font-medium ${classBulkToast.type === 'success' ? 'text-emerald-600' : classBulkToast.type === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
+              {classBulkToast.message}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {isAdminUser && (
@@ -3933,6 +4007,26 @@ fetchClassesRef.current = fetchClasses;
           )}
         </div>
       </div>
+
+      {classBulk.selectionMode && (
+        <div className="mb-3">
+          <BulkActionBar
+            selectedCount={classBulk.selectedCount}
+            isAllSelected={classBulk.isAllSelected}
+            onSelectAll={classBulk.selectAll}
+            onExit={() => { classBulk.clearSelection(); classBulk.toggleSelectionMode(); }}
+          >
+            <button type="button" onClick={handleClassBulkCancel} disabled={classBulk.selectedCount === 0 || classBulkActionLoading}
+              className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-40">
+              <XCircle className="h-3 w-3" /> Cancel
+            </button>
+            <button type="button" onClick={handleClassBulkDelete} disabled={classBulk.selectedCount === 0 || classBulkActionLoading}
+              className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-40">
+              <Trash2 className="h-3 w-3" /> Delete
+            </button>
+          </BulkActionBar>
+        </div>
+      )}
 
         {shouldShowMeetingHighlights && !isAdminUser && (
           <div className="mt-6 rounded-2xl border border-emerald-100 bg-white/90 px-4 py-3 shadow-sm">

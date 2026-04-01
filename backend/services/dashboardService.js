@@ -420,7 +420,7 @@ async function getStudentStats() {
       );
     }
 
-    const newStudentsLast30Days = (Array.isArray(newStudentsFirstClasses) ? newStudentsFirstClasses : [])
+    const newStudentsRaw = (Array.isArray(newStudentsFirstClasses) ? newStudentsFirstClasses : [])
       .map((row) => {
         const studentLabel = row.studentProfileName || row.studentName || 'Student';
         const teacherLabel = row.teacherName || 'Teacher';
@@ -436,6 +436,30 @@ async function getStudentStats() {
           firstAttendedAt
         };
       });
+
+    // Filter to only students with NO past classes (scheduledDate < now).
+    // This ensures "New students" truly means students who haven't had any lesson yet.
+    const uniqueStudentIds = [...new Set(newStudentsRaw.map((r) => r.studentId).filter(Boolean))];
+    let studentsWithPastClasses = new Set();
+    if (uniqueStudentIds.length) {
+      const now = new Date();
+      const pastClassRows = await Class.aggregate([
+        {
+          $match: {
+            'student.studentId': { $in: uniqueStudentIds },
+            scheduledDate: { $lt: now },
+            status: { $nin: ['pattern'] },
+            hidden: { $ne: true },
+          }
+        },
+        { $group: { _id: '$student.studentId' } }
+      ]);
+      studentsWithPastClasses = new Set((pastClassRows || []).map((r) => String(r._id)));
+    }
+
+    const newStudentsLast30Days = newStudentsRaw.filter(
+      (r) => !studentsWithPastClasses.has(String(r.studentId))
+    );
 
     return {
       totalStudents: totalStudentsAgg[0]?.count || 0,

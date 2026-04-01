@@ -17,7 +17,8 @@ import {
   Mail,
   Calendar,
   Sparkles,
-  Link2
+  Link2,
+  RefreshCw
 } from 'lucide-react';
 
 // Helper function to render text with **bold** markdown and bullet points
@@ -197,6 +198,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [shareStatus, setShareStatus] = useState(null);
   const [revertingPayment, setRevertingPayment] = useState(false);
   const [revertStatus, setRevertStatus] = useState(null);
+  const [refreshingClasses, setRefreshingClasses] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState(null);
   // Cache teacher names by id to avoid losing labels if snapshots are missing in subsequent updates
   const teacherNameCacheRef = useRef({});
 
@@ -1707,6 +1710,35 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     }
   }, [invoice, onInvoiceUpdate, syncInvoiceState]);
 
+  const handleRefreshClasses = useCallback(async () => {
+    const targetId = invoice?._id;
+    if (!targetId) return;
+
+    setRefreshingClasses(true);
+    setRefreshStatus(null);
+
+    try {
+      const { data } = await api.post(`/invoices/${targetId}/refresh-classes`, {});
+      const updatedInvoice = data?.invoice || data;
+      if (updatedInvoice) {
+        syncInvoiceState(updatedInvoice);
+        if (typeof onInvoiceUpdate === 'function') {
+          onInvoiceUpdate(updatedInvoice);
+        }
+      }
+
+      setRefreshStatus({ type: 'success', message: data?.noChanges ? 'No changes' : 'Classes refreshed' });
+      setTimeout(() => setRefreshStatus(null), 3000);
+    } catch (err) {
+      console.error('Failed to refresh invoice classes', err);
+      const message = err?.response?.data?.message || err?.message || 'Refresh failed';
+      setRefreshStatus({ type: 'error', message });
+      setTimeout(() => setRefreshStatus(null), 4000);
+    } finally {
+      setRefreshingClasses(false);
+    }
+  }, [invoice, onInvoiceUpdate, syncInvoiceState]);
+
   const handleCopyShareLink = useCallback(async () => {
     if (!invoice?.invoiceSlug) return;
     const shareUrl = `${window.location.origin}/public/invoices/${invoice.invoiceSlug}`;
@@ -1990,6 +2022,17 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                     Record payment
                   </button>
                 )}
+                {isAdmin && invoice.status !== 'paid' && (
+                  <button
+                    type="button"
+                    onClick={handleRefreshClasses}
+                    disabled={refreshingClasses}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${refreshingClasses ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:border-indigo-300 hover:bg-indigo-100'}`}
+                    title="Refresh classes – re-check eligibility and sync"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${refreshingClasses ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
                 {isAdmin && (
                   <button
                     type="button"
@@ -2043,6 +2086,11 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                   {revertStatus && (
                     <span className={`text-xs font-medium ${revertStatus.type === 'success' ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {revertStatus.message}
+                    </span>
+                  )}
+                  {refreshStatus && (
+                    <span className={`text-xs font-medium ${refreshStatus.type === 'success' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {refreshStatus.message}
                     </span>
                   )}
                   {shareStatus && (
@@ -2568,7 +2616,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-slate-600">
                           {filteredClasses.map((c, index) => (
-                            <tr key={c._id} className={`odd:bg-white even:bg-slate-50/60 ${c.paidByGuardian ? 'outline outline-1 outline-emerald-100' : ''}`}>
+                            <tr key={c._id} className={`group/classrow odd:bg-white even:bg-slate-50/60 ${c.paidByGuardian ? 'outline outline-1 outline-emerald-100' : ''}`}>
                               <td className="px-4 py-3 text-center text-slate-500">{index + 1}</td>
                               <td className="px-4 py-3 text-slate-700">
                                 <span className="flex items-center justify-between gap-3 whitespace-nowrap" title={`${c.date} ${c.time}`}>
@@ -2612,6 +2660,14 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                                   {c.paidByGuardian && (
                                     <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Paid</span>
                                   )}
+                                  <button
+                                    type="button"
+                                    title="Copy class ID"
+                                    className="ml-1 inline-flex items-center rounded p-0.5 text-slate-400 opacity-0 transition-opacity group-hover/classrow:opacity-100 hover:text-slate-700"
+                                    onClick={() => { navigator.clipboard.writeText(c._id); }}
+                                  >
+                                    <Copy className="h-3 w-3" />
+                                  </button>
                                 </span>
                               </td>
                             </tr>

@@ -94,6 +94,18 @@ async function getClassStats() {
     const scheduledToday = (await Class.aggregate([{ $match: { scheduledDate: { $gte: startOfDay, $lt: endOfDay } } }, { $count: 'count' }]))[0]?.count || 0;
     const scheduledNext7 = (await Class.aggregate([{ $match: { scheduledDate: { $gte: now, $lt: next7 }, status: { $in: ['scheduled', 'in_progress'] } } }, { $count: 'count' }]))[0]?.count || 0;
 
+    const hoursTodayAgg = await Class.aggregate([
+      { $match: { scheduledDate: { $gte: startOfDay, $lt: endOfDay } } },
+      { $group: { _id: null, totalMinutes: { $sum: '$duration' } } }
+    ]);
+    const hoursToday = (hoursTodayAgg[0]?.totalMinutes || 0) / 60;
+
+    const hoursNext7Agg = await Class.aggregate([
+      { $match: { scheduledDate: { $gte: now, $lt: next7 }, status: { $in: ['scheduled', 'in_progress'] } } },
+      { $group: { _id: null, totalMinutes: { $sum: '$duration' } } }
+    ]);
+    const hoursNext7 = (hoursNext7Agg[0]?.totalMinutes || 0) / 60;
+
     // scheduled hours until the end of the current month (minutes -> hours)
     const scheduledHoursAgg = await Class.aggregate([
       { $match: { scheduledDate: { $gte: now, $lt: monthEnd }, status: { $in: ['scheduled', 'in_progress'] } } },
@@ -149,6 +161,8 @@ async function getClassStats() {
     return {
       scheduledToday,
       scheduledNext7,
+      hoursToday,
+      hoursNext7,
       completedThisMonth: completed,
       cancelledThisMonth: cancelled,
       classesWithoutReportsCount: withoutReports,
@@ -167,14 +181,17 @@ async function getInvoiceStats() {
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
+    const monthStart = startOfMonth(now);
+    const monthEnd = endOfMonth(now);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
 
     const monthlyAgg = await Invoice.aggregate([
-      { $match: { 'billingPeriod.year': currentYear, 'billingPeriod.month': currentMonth, status: 'paid' } },
-      { $group: { _id: null, total: { $sum: '$total' }, count: { $sum: 1 } } }
+      { $match: { paidDate: { $gte: monthStart, $lt: monthEnd }, status: { $in: ['paid', 'refunded'] } } },
+      { $group: { _id: null, total: { $sum: '$paidAmount' }, count: { $sum: 1 } } }
     ]);
     const ytdAgg = await Invoice.aggregate([
-      { $match: { 'billingPeriod.year': currentYear, status: 'paid' } },
-      { $group: { _id: null, total: { $sum: '$total' } } }
+      { $match: { paidDate: { $gte: yearStart, $lt: monthEnd }, status: { $in: ['paid', 'refunded'] } } },
+      { $group: { _id: null, total: { $sum: '$paidAmount' } } }
     ]);
     const unpaidAgg = await Invoice.aggregate([
       { $match: { status: { $ne: 'paid' } } },
@@ -489,8 +506,8 @@ async function getGrowthStats() {
     const classesThisMonth = (await Class.aggregate([{ $match: { scheduledDate: { $gte: thisMonthStart, $lt: thisMonthEnd } } }, { $count: 'count' }]))[0]?.count || 0;
     const classesLastMonth = (await Class.aggregate([{ $match: { scheduledDate: { $gte: lastMonthStart, $lt: thisMonthStart } } }, { $count: 'count' }]))[0]?.count || 0;
 
-    const revenueThisMonthAgg = await Invoice.aggregate([{ $match: { status: 'paid', 'billingPeriod.year': thisMonthStart.getFullYear(), 'billingPeriod.month': thisMonthStart.getMonth() + 1 } }, { $group: { _id: null, total: { $sum: '$total' } } }]);
-    const revenueLastMonthAgg = await Invoice.aggregate([{ $match: { status: 'paid', 'billingPeriod.year': lastMonthStart.getFullYear(), 'billingPeriod.month': lastMonthStart.getMonth() + 1 } }, { $group: { _id: null, total: { $sum: '$total' } } }]);
+    const revenueThisMonthAgg = await Invoice.aggregate([{ $match: { paidDate: { $gte: thisMonthStart, $lt: thisMonthEnd }, status: { $in: ['paid', 'refunded'] } } }, { $group: { _id: null, total: { $sum: '$paidAmount' } } }]);
+    const revenueLastMonthAgg = await Invoice.aggregate([{ $match: { paidDate: { $gte: lastMonthStart, $lt: thisMonthStart }, status: { $in: ['paid', 'refunded'] } } }, { $group: { _id: null, total: { $sum: '$paidAmount' } } }]);
 
     const revenueThis = revenueThisMonthAgg[0]?.total || 0;
     const revenueLast = revenueLastMonthAgg[0]?.total || 0;

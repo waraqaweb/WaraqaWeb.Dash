@@ -128,7 +128,7 @@ router.get('/stats', authenticateToken, async (req, res) => {
       const isImpersonatedSession = Boolean(decoded?.impersonatedBy || decoded?.isImpersonated);
       const isAdminSession = String(req.user?.role || decoded?.role || '').toLowerCase() === 'admin';
       const deviceId = req.headers['x-device-id'] || null;
-      if (req.user && req.user._id && !isImpersonatedSession && !isAdminSession) {
+      if (req.user && req.user._id && !isImpersonatedSession) {
         await UserActivity.recordVisit(req.user._id, {
           deviceId,
           auth: {
@@ -160,11 +160,9 @@ router.get('/stats', authenticateToken, async (req, res) => {
       const start30 = new Date(Date.UTC(thirtyDaysAgo.getUTCFullYear(), thirtyDaysAgo.getUTCMonth(), thirtyDaysAgo.getUTCDate()));
 
       const activityMatch = { date: { $gte: start30 } };
+      // Only exclude impersonated sessions from device counts
       const authMatch = {
-        $and: [
-          { $or: [ { 'auth.isImpersonated': { $ne: true } }, { 'auth.isImpersonated': { $exists: false } } ] },
-          { $or: [ { 'auth.isAdmin': { $ne: true } }, { 'auth.isAdmin': { $exists: false } } ] }
-        ]
+        $or: [ { 'auth.isImpersonated': { $ne: true } }, { 'auth.isImpersonated': { $exists: false } } ]
       };
 
       const dailyAgg = await UserActivity.aggregate([
@@ -247,6 +245,8 @@ router.get('/stats', authenticateToken, async (req, res) => {
           flatStats.nextAutoGeneration = payload.timestamps?.nextAutoGeneration ?? null;
           // expose timestamps at top-level
           flatStats.timestamps = payload.timestamps ?? {};
+          // expose user growth stats at top level
+          flatStats.newUsersThisMonth = payload.summary.users?.newUsersThisMonth ?? payload.summary.growth?.newUsersThisMonth ?? 0;
           // Attach usage metrics
           flatStats.dailyUniqueDashboardUsers = dailyUniqueDashboardUsers;
           flatStats.uniqueUsersLast30Days = uniqueUsersLast30Days;
@@ -343,6 +343,8 @@ router.get('/stats', authenticateToken, async (req, res) => {
   flatStats.activeUsersByScheduleCount = payload.summary.classes?.activeUsersByScheduleCount ?? payload.summary.classes?.activeUsersCount ?? 0;
   flatStats.nextAutoGeneration = payload.timestamps?.nextAutoGeneration ?? null;
   flatStats.timestamps = payload.timestamps ?? {};
+  // expose user growth stats at top level
+  flatStats.newUsersThisMonth = payload.summary.users?.newUsersThisMonth ?? payload.summary.growth?.newUsersThisMonth ?? 0;
   // Attach usage metrics
   flatStats.dailyUniqueDashboardUsers = dailyUniqueDashboardUsers;
   flatStats.uniqueUsersLast30Days = uniqueUsersLast30Days;

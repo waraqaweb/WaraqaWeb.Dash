@@ -1199,9 +1199,10 @@ const DashboardHome = ({ isActive = true }) => {
             // New users this month (best-effort)
             const newUsersThisMonth = pickFirst([
               data.newUsersThisMonth,
+              data.users?.newUsersThisMonth,
               data.users?.newThisMonth,
               data.summary?.growth?.newUsersThisMonth,
-              data.summary?.users?.newThisMonth,
+              data.summary?.users?.newUsersThisMonth,
               data.users?.newUsersThisMonth,
               data.growth?.newUsersThisMonth,
               data.growth?.newUsers
@@ -1239,9 +1240,13 @@ const DashboardHome = ({ isActive = true }) => {
             // Classes: support old array aggregate and new object
             let classesToday = 0;
             let classesNext7Days = 0;
+            let hoursToday = 0;
+            let hoursNext7 = 0;
             if (data.classes && typeof data.classes === 'object') {
               classesToday = data.classes.scheduledToday ?? data.classes.scheduledTodayCount ?? data.classesToday ?? 0;
               classesNext7Days = data.classes.scheduledNext7 ?? data.classes.scheduledNext7Days ?? data.classesNext7Days ?? 0;
+              hoursToday = data.classes.hoursToday ?? 0;
+              hoursNext7 = data.classes.hoursNext7 ?? 0;
             }
 
             // Revenue
@@ -1267,7 +1272,7 @@ const DashboardHome = ({ isActive = true }) => {
             const inactiveStudentsAfterActivity = data.inactiveStudentsAfterActivity || data.students?.inactiveStudentsAfterActivity || data.summary?.students?.inactiveStudentsAfterActivity || [];
 
             return (
-              <div className="space-y-3 sm:space-y-4">
+              <div className="space-y-2 sm:space-y-3">
                 <div className="flex items-center justify-between">
                       <div>
                         <h2 className="text-xl sm:text-2xl font-bold">{greetingTitle}</h2>
@@ -1308,13 +1313,13 @@ const DashboardHome = ({ isActive = true }) => {
                   </div>
                 </div>
 
-                {/* Top area: three vertical columns for Classes, Users, Finance */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Top area: stat columns (Classes, Users, Finance) + charts on the right */}
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 items-start">
                   {/* Classes column (single consolidated box) */}
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <div className="text-sm font-medium text-foreground">Classes</div>
-                    <div className="bg-gradient-to-br from-sky-50 via-card to-card rounded-xl p-4 border border-sky-100">
-                      <div className="grid grid-cols-1 gap-3">
+                    <div className="bg-gradient-to-br from-sky-50 via-card to-card rounded-xl p-3 border border-sky-100">
+                      <div className="grid grid-cols-1 gap-2">
                         <div className="flex items-center justify-between">
                           <div>
                             <div className="text-xs text-muted-foreground">Upcoming classes (next 30 days)</div>
@@ -1337,12 +1342,18 @@ const DashboardHome = ({ isActive = true }) => {
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Scheduled Today</div>
-                          <div className="text-base sm:text-lg font-semibold">{classesToday ?? data.classesToday ?? data.scheduledToday ?? 0}</div>
+                          <div className="text-right text-sm font-semibold leading-tight">
+                            <span className="text-[11px] font-normal text-muted-foreground">cls </span>{classesToday ?? 0}
+                            <span className="ml-2 text-[11px] font-normal text-muted-foreground">hrs </span>{Number(hoursToday).toFixed(1)}
+                          </div>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Next 7 Days</div>
-                          <div className="text-base sm:text-lg font-semibold">{classesNext7Days ?? data.classesNext7Days ?? data.scheduledNext7 ?? 0}</div>
+                          <div className="text-right text-sm font-semibold leading-tight">
+                            <span className="text-[11px] font-normal text-muted-foreground">cls </span>{classesNext7Days ?? 0}
+                            <span className="ml-2 text-[11px] font-normal text-muted-foreground">hrs </span>{Number(hoursNext7).toFixed(1)}
+                          </div>
                         </div>
 
                         <div className="flex items-center justify-between">
@@ -1360,10 +1371,10 @@ const DashboardHome = ({ isActive = true }) => {
                   </div>
 
                   {/* Users column (single consolidated box) */}
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <div className="text-sm font-medium text-foreground">Users</div>
-                    <div className="bg-gradient-to-br from-emerald-50 via-card to-card rounded-xl p-4 border border-emerald-100">
-                      <div className="grid grid-cols-1 gap-3">
+                    <div className="bg-gradient-to-br from-emerald-50 via-card to-card rounded-xl p-3 border border-emerald-100">
+                      <div className="grid grid-cols-1 gap-2">
                         
 
                         <div className="grid grid-cols-2 gap-2">
@@ -1414,10 +1425,10 @@ const DashboardHome = ({ isActive = true }) => {
                   </div>
 
                   {/* Finance column (single consolidated box) */}
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <div className="text-sm font-medium text-foreground">Finance</div>
-                    <div className="bg-gradient-to-br from-amber-50 via-card to-card rounded-xl p-4 border border-amber-100">
-                      <div className="grid grid-cols-1 gap-3">
+                    <div className="bg-gradient-to-br from-amber-50 via-card to-card rounded-xl p-3 border border-amber-100">
+                      <div className="grid grid-cols-1 gap-2">
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">Revenue (month to date)</div>
                           <div className="text-base sm:text-lg font-semibold">${monthlyRevenue ?? 0}</div>
@@ -1445,25 +1456,24 @@ const DashboardHome = ({ isActive = true }) => {
                       </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Charts moved to the bottom: three compact chart cards */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full">
-                    <DashboardChartCard title="Revenue (Thirty days)" subtitle="Daily revenue">
+                  {/* Charts column - stacked vertically */}
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-foreground">Charts</div>
+                    <DashboardChartCard title="Revenue (30 days)" subtitle="Daily revenue">
                       {(() => {
                         const ts = data.summary?.timeseries ?? data.timeseries ?? null;
                         const dates = (ts && ts.dates) ?? [];
                         const revenue = (ts && ts.revenue) ?? [];
                         const chartData = dates.map((d, i) => ({ date: d.slice(5), revenue: revenue[i] ?? 0 }));
                         return chartData.length === 0 ? (
-                          <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">No revenue data</div>
+                          <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">No revenue data</div>
                         ) : (
-                          <ResponsiveContainer height={140}>
-                            <LineChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 6 }}>
+                          <ResponsiveContainer height={110}>
+                            <LineChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 4 }}>
                               <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
-                              <XAxis dataKey="date" />
-                              <YAxis />
+                              <XAxis dataKey="date" tick={{ fontSize: 9 }} />
+                              <YAxis tick={{ fontSize: 9 }} />
                               <Tooltip />
                               <Line type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={2} dot={false} />
                             </LineChart>
@@ -1471,8 +1481,7 @@ const DashboardHome = ({ isActive = true }) => {
                         );
                       })()}
                     </DashboardChartCard>
-
-                    <DashboardChartCard title="Classes (Thirty days)" subtitle="Scheduled vs completed">
+                    <DashboardChartCard title="Classes (30 days)" subtitle="Scheduled vs completed">
                       {(() => {
                         const ts = data.summary?.timeseries ?? data.timeseries ?? null;
                         const dates = (ts && ts.dates) ?? [];
@@ -1480,13 +1489,13 @@ const DashboardHome = ({ isActive = true }) => {
                         const completed = (ts && ts.classesCompleted) ?? [];
                         const chartData = dates.map((d, i) => ({ date: d.slice(5), scheduled: scheduled[i] ?? 0, completed: completed[i] ?? 0 }));
                         return chartData.length === 0 ? (
-                          <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">No class data</div>
+                          <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">No class data</div>
                         ) : (
-                          <ResponsiveContainer height={140}>
-                            <BarChart data={chartData} margin={{ top: 6, right: 6, left: 0, bottom: 6 }}>
+                          <ResponsiveContainer height={110}>
+                            <BarChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 4 }}>
                               <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
-                              <XAxis dataKey="date" />
-                              <YAxis />
+                              <XAxis dataKey="date" tick={{ fontSize: 9 }} />
+                              <YAxis tick={{ fontSize: 9 }} />
                               <Tooltip />
                               <Bar dataKey="scheduled" fill="#10b981" />
                               <Bar dataKey="completed" fill="#4f46e5" />
@@ -1495,44 +1504,6 @@ const DashboardHome = ({ isActive = true }) => {
                         );
                       })()}
                     </DashboardChartCard>
-                  </div>
-
-                  <div className="bg-card rounded-lg border border-border p-4 h-full flex flex-col">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <h3 className="text-sm font-semibold text-foreground">Requests inbox</h3>
-                        <p className="text-xs text-muted-foreground">Centralized messages for admins</p>
-                      </div>
-                      <div className="flex items-center gap-1 text-[11px]">
-                        <button
-                          type="button"
-                          onClick={() => setRequestsTab('teachers')}
-                          className={`px-2 py-0.5 rounded-full border ${requestsTab === 'teachers' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted/40 text-muted-foreground border-border'}`}
-                        >
-                          Teachers
-                          <span className={`ml-1 font-semibold ${teacherRequestsUnopened > 0 ? 'text-rose-600' : 'text-muted-foreground'}`}>
-                            ({teacherRequestsUnopened})
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setRequestsTab('guardians')}
-                          className={`px-2 py-0.5 rounded-full border ${requestsTab === 'guardians' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted/40 text-muted-foreground border-border'}`}
-                        >
-                          Guardians
-                          <span className={`ml-1 font-semibold ${guardianRequestsUnopened > 0 ? 'text-rose-600' : 'text-muted-foreground'}`}>
-                            ({guardianRequestsUnopened})
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground flex-1 overflow-y-auto text-center">
-                      <div className="min-h-[160px] flex items-center justify-center">
-                        {requestsTab === 'teachers'
-                          ? 'Teacher requests will appear here. This will replace WhatsApp with a structured request flow.'
-                          : 'Guardian requests will appear here. This will replace WhatsApp with a structured request flow.'}
-                      </div>
-                    </div>
                   </div>
                 </div>
 
@@ -1584,7 +1555,7 @@ const DashboardHome = ({ isActive = true }) => {
                 )}
 
                 {/* Secondary lists placed side-by-side to reduce vertical length */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
                   <div className="bg-card rounded-lg border border-border p-4 lg:col-span-2">
                     <h3 className="text-sm font-semibold mb-2">Top owing guardians</h3>
                     <div className="space-y-2 text-sm text-muted-foreground">

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../../api/axios';
-import { Plus, Eye, Pencil, DollarSign, CalendarDays, Tag, UserRound, CheckSquare, Trash2, Send, XCircle, Check, MessageSquare, Copy, CheckCheck, X } from "lucide-react";
+import { Plus, Eye, Pencil, CalendarDays, CheckSquare, Trash2, Send, Check, MessageSquare, Copy, CheckCheck, X } from "lucide-react";
 import useBulkSelect from '../../../hooks/useBulkSelect';
 import BulkActionBar from '../../../components/ui/BulkActionBar';
 import ExportExcelButton from '../../../components/ui/ExportExcelButton';
@@ -272,26 +272,34 @@ const SalariesPage = () => {
 
   const arabicMonths = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 
-  const buildTeacherMessage = (salary) => {
+  const buildTeacherMessage = (salary, publicLink) => {
     const firstName = String(salary?.teacher?.firstName || '').trim() || 'الأستاذ';
     const month = Number(salary?.billingPeriod?.month || 0);
     const monthName = month >= 1 && month <= 12 ? arabicMonths[month - 1] : '—';
     const payDay = salary?.teacherPayment?.payDay || salary?.payDay || '5';
-    return [
+    const lines = [
       'السلام عليكم ورحمة الله وبركاته أستاذ / أستاذة ' + firstName + '،',
       '',
       'نود إعلامكم بأن فاتورة راتبكم عن شهر ' + monthName + ' قد أُعدّت وأصبحت جاهزة للمراجعة.',
       '',
       'وسيتم تحويل المبلغ إلى حسابكم قبل يوم ' + payDay + ' من الشهر الجاري – بإذن الله تعالى – لذا نرجو منكم التكرم بمراجعة الفاتورة، وإفادتنا بأي ملاحظات أو استفسارات ترونها، حتى يتسنى لنا معالجتها قبل إتمام عملية التحويل.',
+    ];
+    if (publicLink) {
+      lines.push('', 'رابط الفاتورة:', publicLink);
+    }
+    lines.push(
       '',
       'نسأل الله أن يبارك في وقتكم وعلمكم، وأن يجزيكم عنا خير الجزاء.',
       '',
       'وجزاكم الله خيرا'
-    ].join('\n');
+    );
+    return lines.join('\n');
   };
 
   const openTeacherMsgModal = (salary) => {
-    setTeacherMsgModal({ salary, message: buildTeacherMessage(salary), copied: false });
+    const slug = salary?.invoiceSlug;
+    const publicLink = slug ? `${window.location.origin}/dashboard/public/invoices/${slug}` : '';
+    setTeacherMsgModal({ salary, message: buildTeacherMessage(salary, publicLink), copied: false });
   };
 
   const handleCopyTeacherMsg = () => {
@@ -320,45 +328,19 @@ const SalariesPage = () => {
 
   const getStatusTone = (status) => {
     switch (status) {
-      case 'paid': return 'bg-emerald-50 text-emerald-700 border border-emerald-100';
-      case 'pending': return 'bg-indigo-50 text-indigo-700 border border-indigo-100';
-      case 'cancelled': return 'bg-amber-50 text-amber-700 border border-amber-100';
-      case 'overdue': return 'bg-rose-50 text-rose-700 border border-rose-100';
-      default: return 'bg-slate-50 text-slate-700 border border-slate-100';
+      case 'paid': return 'bg-emerald-50 text-emerald-700';
+      case 'pending': return 'bg-amber-50 text-amber-700';
+      case 'cancelled': return 'bg-slate-100 text-slate-500';
+      case 'overdue': return 'bg-rose-50 text-rose-700';
+      default: return 'bg-slate-50 text-slate-600';
     }
   };
 
   const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-  const getTierTone = (hourlyRate) => {
-    const rate = Number(hourlyRate || 0);
-    if (!Number.isFinite(rate) || rate <= 0) return 'bg-slate-50 text-slate-600 border border-slate-200';
-    if (rate <= 3.0) return 'bg-cyan-50 text-cyan-700 border border-cyan-200';
-    if (rate <= 3.25) return 'bg-indigo-50 text-indigo-700 border border-indigo-200';
-    if (rate <= 3.5) return 'bg-violet-50 text-violet-700 border border-violet-200';
-    if (rate <= 3.75) return 'bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200';
-    if (rate <= 4.0) return 'bg-amber-50 text-amber-700 border border-amber-200';
-    if (rate <= 4.25) return 'bg-orange-50 text-orange-700 border border-orange-200';
-    return 'bg-rose-50 text-rose-700 border border-rose-200';
-  };
+  const isUnpaid = (s) => !['paid', 'refunded'].includes(String(s?.status || '').toLowerCase());
 
-  const getMonthTone = (monthNumber) => {
-    const tones = {
-      1: 'text-sky-700',
-      2: 'text-indigo-700',
-      3: 'text-emerald-700',
-      4: 'text-lime-700',
-      5: 'text-amber-700',
-      6: 'text-orange-700',
-      7: 'text-rose-700',
-      8: 'text-fuchsia-700',
-      9: 'text-violet-700',
-      10: 'text-purple-700',
-      11: 'text-teal-700',
-      12: 'text-cyan-700'
-    };
-    return tones[Number(monthNumber) || 0] || 'text-slate-700';
-  };
+
 
   const resolvePaymentMonthLabel = (salary) => {
     const paidAt = salary?.paidAt || salary?.paymentDate || null;
@@ -376,115 +358,103 @@ const SalariesPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
-      <div className="mx-auto w-full max-w-7xl px-6 py-8 space-y-8">
-        <div className="rounded-3xl bg-white/80 shadow-sm ring-1 ring-black/5 backdrop-blur-sm">
-          <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-center lg:justify-between lg:p-8">
-            <div className="space-y-1">
-              <h1 className="text-3xl font-semibold text-slate-900 flex items-center gap-3">
-                <DollarSign className="w-6 h-6 text-slate-500" />
-                Salaries
-              </h1>
-              <p className="text-sm text-slate-500">Teacher payments and payroll records — review and manage salary invoices.</p>
-            </div>
-
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              {isAdmin() && (
-                <ExportExcelButton onExport={async () => {
-                  const params = { type: 'teacher_payment', limit: 10000, light: true };
-                  if (globalFilter && globalFilter !== 'all') params.status = globalFilter;
-                  if (debouncedSearch) params.search = debouncedSearch;
-                  const data = await fetchAllForExport('/invoices', params);
-                  await downloadExcel((data.invoices || []).map(mapSalaryRow), 'teacher-salaries');
-                }} />
-              )}
-              {isAdmin() && (
-                <button
-                  type="button"
-                  onClick={bulk.toggleSelectionMode}
-                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                    bulk.selectionMode
-                      ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                  }`}
-                >
-                  <CheckSquare className="h-3.5 w-3.5" />
-                  {bulk.selectionMode ? 'Exit select' : 'Select'}
-                </button>
-              )}
-              {bulkToast && (
-                <span className={`text-xs font-medium ${bulkToast.type === 'success' ? 'text-emerald-600' : bulkToast.type === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
-                  {bulkToast.message}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {stats && (
-            <div className="grid grid-cols-1 gap-4 border-t border-slate-100 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4 lg:px-8">
-              {[{
-                label: 'Total payroll',
-                value: formatCurrency(stats.monthlyRevenue || 0),
-              },{
-                label: 'Paid salaries',
-                value: stats.paidInvoices ?? '--'
-              },{
-                label: 'Pending payments',
-                value: stats.pendingInvoices ?? '--'
-              },{
-                label: 'Zero-hour teachers',
-                value: stats.zeroHourStudents ?? '--'
-              }].map(({ label, value }) => (
-                <div key={label} className="flex flex-col gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 p-4 transition hover:-translate-y-0.5 hover:shadow-md">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</span>
-                    <span className="rounded-full bg-white p-2 text-slate-500 shadow-sm"><DollarSign className="h-4 w-4" /></span>
-                  </div>
-                  <span className="text-2xl font-semibold text-slate-900">{value}</span>
-                </div>
-              ))}
-            </div>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-foreground">Salaries</h1>
+          <p className="text-xs text-muted-foreground">Teacher payments and payroll records.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {isAdmin() && (
+            <ExportExcelButton onExport={async () => {
+              const params = { type: 'teacher_payment', limit: 10000, light: true };
+              if (globalFilter && globalFilter !== 'all') params.status = globalFilter;
+              if (debouncedSearch) params.search = debouncedSearch;
+              const data = await fetchAllForExport('/invoices', params);
+              await downloadExcel((data.invoices || []).map(mapSalaryRow), 'teacher-salaries');
+            }} />
+          )}
+          {isAdmin() && (
+            <button
+              type="button"
+              onClick={bulk.toggleSelectionMode}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
+                bulk.selectionMode
+                  ? 'border-primary/30 bg-primary/5 text-primary'
+                  : 'border-border bg-card text-muted-foreground hover:bg-muted'
+              }`}
+            >
+              <CheckSquare className="h-3.5 w-3.5" />
+              {bulk.selectionMode ? 'Exit' : 'Select'}
+            </button>
+          )}
+          {bulkToast && (
+            <span className={`text-xs font-medium ${bulkToast.type === 'success' ? 'text-emerald-600' : bulkToast.type === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
+              {bulkToast.message}
+            </span>
           )}
         </div>
+      </div>
 
-        <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-black/5">
-
-          {bulk.selectionMode && (
-            <div className="mb-4">
-              <BulkActionBar
-                selectedCount={bulk.selectedCount}
-                isAllSelected={bulk.isAllSelected}
-                onSelectAll={bulk.selectAll}
-                onExit={() => { bulk.clearSelection(); bulk.toggleSelectionMode(); }}
-              >
-                <button type="button" onClick={handleSalaryBulkMarkPaid} disabled={bulk.selectedCount === 0 || bulkActionLoading}
-                  className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-40">
-                  <Check className="h-3 w-3" /> Mark paid
-                </button>
-                <button type="button" onClick={handleSalaryBulkPublish} disabled={bulk.selectedCount === 0 || bulkActionLoading}
-                  className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100 disabled:opacity-40">
-                  <Send className="h-3 w-3" /> Publish
-                </button>
-                <button type="button" onClick={handleSalaryBulkDelete} disabled={bulk.selectedCount === 0 || bulkActionLoading}
-                  className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-40">
-                  <Trash2 className="h-3 w-3" /> Delete
-                </button>
-              </BulkActionBar>
+      {stats && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[{
+            label: 'Total payroll',
+            value: formatCurrency(stats.monthlyRevenue || 0),
+          },{
+            label: 'Paid',
+            value: stats.paidInvoices ?? '--'
+          },{
+            label: 'Pending',
+            value: stats.pendingInvoices ?? '--'
+          },{
+            label: 'Zero-hour',
+            value: stats.zeroHourStudents ?? '--'
+          }].map(({ label, value }) => (
+            <div key={label} className="rounded-xl border border-border bg-card p-3">
+              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{label}</div>
+              <div className="mt-1 text-lg font-semibold text-foreground">{value}</div>
             </div>
-          )}
+          ))}
+        </div>
+      )}
 
-          <div className="mt-2 space-y-4">
+      <div className="rounded-xl border border-border bg-card">
+
+        {bulk.selectionMode && (
+          <div className="border-b border-border p-3">
+            <BulkActionBar
+              selectedCount={bulk.selectedCount}
+              isAllSelected={bulk.isAllSelected}
+              onSelectAll={bulk.selectAll}
+              onExit={() => { bulk.clearSelection(); bulk.toggleSelectionMode(); }}
+            >
+              <button type="button" onClick={handleSalaryBulkMarkPaid} disabled={bulk.selectedCount === 0 || bulkActionLoading}
+                className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-40">
+                <Check className="h-3 w-3" /> Mark paid
+              </button>
+              <button type="button" onClick={handleSalaryBulkPublish} disabled={bulk.selectedCount === 0 || bulkActionLoading}
+                className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-40">
+                <Send className="h-3 w-3" /> Publish
+              </button>
+              <button type="button" onClick={handleSalaryBulkDelete} disabled={bulk.selectedCount === 0 || bulkActionLoading}
+                className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-40">
+                <Trash2 className="h-3 w-3" /> Delete
+              </button>
+            </BulkActionBar>
+          </div>
+        )}
+
+        <div className="divide-y divide-border">
             {showLoading && visibleSalaries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 py-16 text-center text-slate-500">
+              <div className="flex flex-col items-center justify-center gap-2 py-12 text-center text-muted-foreground">
                 <LoadingSpinner />
-                <p className="text-sm">Fetching salary records…</p>
+                <p className="text-sm">Loading…</p>
               </div>
             ) : visibleSalaries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 py-16 text-center text-slate-500">
-                <div>
-                  <p className="text-base font-medium text-slate-700">No salary records</p>
-                  <p className="text-sm text-slate-500">Try a different filter or create a new salary record.</p>
-                </div>
+              <div className="flex flex-col items-center justify-center gap-1 py-12 text-center">
+                <p className="text-sm font-medium text-foreground">No salary records</p>
+                <p className="text-xs text-muted-foreground">Try a different filter or create a new salary record.</p>
               </div>
             ) : (
               visibleSalaries.map((salary) => {
@@ -493,121 +463,96 @@ const SalariesPage = () => {
                 const billingEnd = salary.billingPeriod?.endDate || salary.billingPeriod?.end;
                 const total = salary.internalTotals?.totalUSD ?? salary.total ?? salary.amount ?? 0;
                 const hourlyRate = Number(salary?.teacherPayment?.hourlyRate || 0);
-                const bonus = Number(salary?.teacherPayment?.bonus || 0);
-                const tierTone = getTierTone(hourlyRate);
                 const paymentMonth = resolvePaymentMonthLabel(salary);
-                const paymentMonthTone = getMonthTone(paymentMonth.month);
+                const selected = bulk.selectionMode && bulk.selected.has(salary._id);
 
                 return (
-                  <div key={salary._id} className={`rounded-2xl border bg-gradient-to-br from-white via-white to-slate-50 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${bulk.selectionMode && bulk.selected.has(salary._id) ? 'border-indigo-300 ring-2 ring-indigo-200' : 'border-slate-100'}`}>
-                    <div className="flex flex-col gap-4 p-4 md:p-6 lg:flex-row lg:items-start lg:justify-between">
-                      {bulk.selectionMode && (
-                        <button
-                          type="button"
-                          onClick={() => bulk.toggleItem(salary._id)}
-                          className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-slate-300 transition hover:border-indigo-400"
-                          aria-label={bulk.selected.has(salary._id) ? 'Deselect' : 'Select'}
-                        >
-                          {bulk.selected.has(salary._id) && (
-                            <CheckSquare className="h-4 w-4 text-indigo-600" />
-                          )}
-                        </button>
-                      )}
-                      <div className="flex-1 space-y-2">
-                        <div className="flex items-center gap-3 flex-wrap">
-                          <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${tone}`}>
-                            <span className="capitalize">{salary.status || 'draft'}</span>
-                          </span>
-                          <span className="text-sm font-semibold text-slate-700">{salary.invoiceName || salary.invoiceNumber || `Salary ${String(salary._id).slice(-6)}`}</span>
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${tierTone}`}>
-                            <Tag className="h-3 w-3" />
-                            Tier ${hourlyRate.toFixed(2)}/h
-                          </span>
-                          <span className={`inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold border border-slate-200 ${paymentMonthTone}`}>
-                            <CalendarDays className="h-3 w-3" />
-                            {paymentMonth.label}
-                          </span>
-                        </div>
+                  <div key={salary._id} className={`flex items-center gap-3 px-4 py-3 transition hover:bg-muted/30 ${selected ? 'bg-primary/5' : ''}`}>
+                    {bulk.selectionMode && (
+                      <button
+                        type="button"
+                        onClick={() => bulk.toggleItem(salary._id)}
+                        className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border"
+                        aria-label={selected ? 'Deselect' : 'Select'}
+                      >
+                        {selected && <Check className="h-3 w-3 text-primary" />}
+                      </button>
+                    )}
 
-                        <div className="space-y-1 text-sm text-slate-600">
-                          <div className="flex flex-wrap items-center gap-4">
-                            <div className="inline-flex items-center gap-2 text-slate-700">
-                              <span className="font-medium">Teacher</span>
-                              <span className="text-sm text-slate-500">{salary.teacher?.firstName} {salary.teacher?.lastName}</span>
-                            </div>
-                            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-700">
-                              <UserRound className="h-3 w-3" />
-                              {salary.teacher?.firstName || 'Teacher'}
-                            </span>
-                            <div className="inline-flex items-center gap-2">
-                              <span className="text-sm text-slate-500">{formatDate(billingStart)} → {formatDate(billingEnd)}</span>
-                            </div>
-                            <div className="inline-flex items-center gap-2">
-                              <span className="font-medium text-slate-700">{formatCurrency(total)}</span>
-                            </div>
-                            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold border ${bonus > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-                              Bonus ${bonus.toFixed(2)}
-                            </span>
-                          </div>
-                          {salary.guardian?.email && <p className="text-xs text-slate-400">{salary.guardian.email}</p>}
-                        </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium capitalize ${tone}`}>
+                          {salary.status || 'draft'}
+                        </span>
+                        <span className="text-sm font-medium text-foreground truncate">
+                          {salary.teacher?.firstName} {salary.teacher?.lastName}
+                        </span>
+                        <span className="text-xs text-muted-foreground">{paymentMonth.label}</span>
                       </div>
+                      <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                        <span>{salary.invoiceName || salary.invoiceNumber || `#${String(salary._id).slice(-6)}`}</span>
+                        <span>{formatDate(billingStart)} → {formatDate(billingEnd)}</span>
+                        {hourlyRate > 0 && <span>${hourlyRate.toFixed(2)}/h</span>}
+                      </div>
+                    </div>
 
-                      <div className="flex flex-col items-start gap-3 lg:items-end">
-                        <div className="flex flex-wrap gap-2">
-                          <button onClick={() => handleOpenView(salary)} className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 p-2 text-sky-600 transition hover:border-sky-300 hover:bg-sky-100 hover:text-sky-700" type="button" aria-label="View salary" title="View invoice">
-                            <Eye className="h-4 w-4" />
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-semibold text-foreground">{formatCurrency(total)}</div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => handleOpenView(salary)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" type="button" title="View">
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      {isAdmin() && (
+                        <>
+                          {isUnpaid(salary) && (
+                            <button
+                              onClick={() => openTeacherMsgModal(salary)}
+                              className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50"
+                              type="button"
+                              title="Send salary notification"
+                            >
+                              <MessageSquare className="h-4 w-4" />
+                            </button>
+                          )}
+                          <button onClick={() => handleOpenEdit(salary)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" type="button" title="Edit">
+                            <Pencil className="h-4 w-4" />
                           </button>
-                          {isAdmin() && (
-                            <>
-                              <button
-                                onClick={() => openTeacherMsgModal(salary)}
-                                className="inline-flex items-center justify-center rounded-full border border-green-200 bg-green-50 p-2 text-green-600 transition hover:border-green-300 hover:bg-green-100 hover:text-green-700"
-                                type="button"
-                                aria-label="Send salary notification"
-                                title="Send salary notification (Arabic)"
-                              >
-                                <MessageSquare className="h-4 w-4" />
-                              </button>
-                              <button onClick={() => handleOpenEdit(salary)} className="inline-flex items-center justify-center rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-900" type="button" aria-label="Edit salary">
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                              <button onClick={() => handleDelete(salary._id)} className="inline-flex items-center justify-center rounded-full border border-rose-100 p-2 text-rose-500 transition hover:border-rose-200 hover:text-rose-700" type="button" aria-label="Delete salary">
-                                Delete
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
+                          <button onClick={() => handleDelete(salary._id)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 hover:text-rose-600" type="button" title="Delete">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
               })
             )}
 
-            {totalPages > 1 && (
-              <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <PrimaryButton
-                  variant="subtle"
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage <= 1}
-                >
-                  Previous
-                </PrimaryButton>
-                <div className="text-sm text-slate-500">
-                  Page <span className="font-medium text-slate-700">{currentPage}</span> of{' '}
-                  <span className="font-medium text-slate-700">{totalPages}</span>
-                </div>
-                <PrimaryButton
-                  variant="subtle"
-                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage >= totalPages}
-                >
-                  Next
-                </PrimaryButton>
-              </div>
-            )}
-          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-border px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span className="text-xs text-muted-foreground">
+                {currentPage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

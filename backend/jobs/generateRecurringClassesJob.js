@@ -11,7 +11,7 @@ async function runGenerateRecurringClasses(options = {}) {
         for (const slot of p.recurrenceDetails) {
           const d = Number(slot.dayOfWeek);
           const [hh, mm] = (slot.time || '').split(':').map((s) => parseInt(s, 10));
-          const entry = { hours: hh, minutes: mm, duration: slot.duration || p.duration, timezone: slot.timezone || p.timezone };
+          const entry = { hours: hh, minutes: mm, duration: slot.duration || p.duration, timezone: slot.timezone || p.timezone, raw: slot.raw || {} };
           const existing = perDayMap.get(d) || [];
           existing.push(entry);
           perDayMap.set(d, existing);

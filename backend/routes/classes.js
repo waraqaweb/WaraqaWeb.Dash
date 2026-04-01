@@ -139,7 +139,7 @@ function buildPerDayMap(recurrenceDetails = []) {
         minutes: mm,
         duration: typeof slot.duration === "number" ? slot.duration : undefined,
         timezone: slot.timezone || undefined,
-        raw: slot
+        raw: slot.raw || slot,
       };
       const existing = map.get(d) || [];
       existing.push(entry);
@@ -1331,17 +1331,32 @@ router.post("/series/:id/recreate", authenticateToken, requireRole(["admin"]), a
 
 /* -------------------------
    Deduplication helper
-   Finds duplicate class instances that share the same
-   parentRecurringClass + approximate scheduledDate (within 90 min
-   tolerance to catch DST-shifted times) + duration and removes
-   extras, keeping instances with submitted reports or final
-   statuses and the oldest among unreported duplicates.
+   Groups instances by calendar date (in the pattern's timezone) and
+   compares the count against the pattern's recurrenceDetails.  For each
+   date that has MORE instances than expected slots, the excess instances
+   are removed — keeping those with submitted reports or final statuses,
+   and preferring times closest to the expected slot times.
+   Also handles DST-shifted duplicates (same slot → different UTC).
    ------------------------- */
 async function deduplicateSeriesInstances() {
   const cancelledStatuses = ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'];
   const finalStatuses = ['completed', 'attended', 'in_progress', 'missed_by_student', 'no_show_both'];
-  const TOLERANCE_MS = 90 * 60 * 1000; // 90 minutes — covers DST shifts
+  const MATCH_TOLERANCE_MS = 3 * 60 * 60 * 1000; // 3 hours — generous for DST + timezone edge cases
 
+  // Load all pattern classes with their recurrenceDetails
+  const patterns = await Class.find({ status: 'pattern', isRecurring: true })
+    .select('_id recurrenceDetails recurrence timezone scheduledDate duration')
+    .lean();
+
+  if (patterns.length === 0) return { totalRemoved: 0, patternsProcessed: 0 };
+
+  // Index patterns by _id for quick lookup
+  const patternMap = new Map();
+  for (const p of patterns) {
+    patternMap.set(String(p._id), p);
+  }
+
+  // Get all parentRecurringClass ids that have instances
   const patternIds = await Class.distinct('parentRecurringClass', {
     parentRecurringClass: { $exists: true, $ne: null },
     status: { $nin: ['pattern', ...cancelledStatuses] },
@@ -1350,53 +1365,102 @@ async function deduplicateSeriesInstances() {
   const idsToRemove = [];
 
   for (const patternId of patternIds) {
+    const pattern = patternMap.get(String(patternId));
+
+    // Build expected-slots-per-dayOfWeek from recurrenceDetails
+    const slotsPerDay = new Map(); // dayOfWeek → [{ time, timezone }]
+    if (pattern && Array.isArray(pattern.recurrenceDetails) && pattern.recurrenceDetails.length > 0) {
+      for (const slot of pattern.recurrenceDetails) {
+        const day = Number(slot.dayOfWeek);
+        if (!Number.isInteger(day) || day < 0 || day > 6) continue;
+        const existing = slotsPerDay.get(day) || [];
+        existing.push({
+          time: slot.time || '',
+          timezone: slot.timezone || pattern?.timezone || 'UTC',
+        });
+        slotsPerDay.set(day, existing);
+      }
+    }
+
     const instances = await Class.find({
       parentRecurringClass: patternId,
       status: { $nin: ['pattern', ...cancelledStatuses] },
     })
-      .select('_id scheduledDate duration status classReport.submittedAt')
+      .select('_id scheduledDate duration status classReport.submittedAt timezone')
       .sort({ scheduledDate: 1 })
       .lean();
 
     if (instances.length < 2) continue;
 
-    // Cluster instances that share the same duration and are within
-    // the tolerance window — these are DST-shifted duplicates.
-    const used = new Set();
-    for (let i = 0; i < instances.length; i++) {
-      if (used.has(i)) continue;
-      const base = instances[i];
-      const baseTime = new Date(base.scheduledDate).getTime();
-      const cluster = [base];
-      used.add(i);
-
-      for (let j = i + 1; j < instances.length; j++) {
-        if (used.has(j)) continue;
-        const cand = instances[j];
-        const candTime = new Date(cand.scheduledDate).getTime();
-        if (candTime - baseTime > TOLERANCE_MS) break; // sorted — stop early
-        if (cand.duration !== base.duration) continue;
-        cluster.push(cand);
-        used.add(j);
+    // Group instances by calendar date in pattern timezone
+    const tz = pattern?.timezone || 'UTC';
+    const byDate = new Map();
+    for (const inst of instances) {
+      let dateKey;
+      try {
+        dateKey = new Date(inst.scheduledDate).toLocaleDateString('en-CA', { timeZone: tz });
+      } catch {
+        dateKey = new Date(inst.scheduledDate).toISOString().slice(0, 10);
       }
+      if (!byDate.has(dateKey)) byDate.set(dateKey, []);
+      byDate.get(dateKey).push(inst);
+    }
 
-      if (cluster.length < 2) continue;
+    for (const [dateKey, dateInstances] of byDate) {
+      // Determine day-of-week for this calendar date
+      const [yr, mo, dy] = dateKey.split('-').map(Number);
+      const dow = new Date(yr, mo - 1, dy).getDay();
 
-      const safeToRemove = [];
-      const mustKeep = [];
-      for (const doc of cluster) {
-        if (doc.classReport?.submittedAt || finalStatuses.includes(doc.status)) {
-          mustKeep.push(doc);
-        } else {
-          safeToRemove.push(doc);
+      const daySlots = slotsPerDay.get(dow);
+      const expectedCount = daySlots ? daySlots.length : 1;
+
+      if (dateInstances.length <= expectedCount) continue;
+
+      // Compute expected UTC times for each slot on this date
+      const expectedUtcMs = [];
+      if (daySlots) {
+        for (const s of daySlots) {
+          const timeMatch = (s.time || '').match(/^(\d{2}):(\d{2})$/);
+          if (!timeMatch) continue;
+          const hh = parseInt(timeMatch[1], 10);
+          const mm = parseInt(timeMatch[2], 10);
+          try {
+            const utc = tzUtils.buildUtcFromParts({ year: yr, month: mo - 1, day: dy, hour: hh, minute: mm }, s.timezone);
+            expectedUtcMs.push(utc.getTime());
+          } catch { /* skip */ }
         }
       }
 
-      if (mustKeep.length > 0) {
-        idsToRemove.push(...safeToRemove.map((d) => d._id));
-      } else if (safeToRemove.length > 1) {
-        safeToRemove.sort((a, b) => String(a._id).localeCompare(String(b._id)));
-        idsToRemove.push(...safeToRemove.slice(1).map((d) => d._id));
+      // Match instances to the closest expected time
+      const matchedIndices = new Set();
+      for (const expMs of expectedUtcMs) {
+        let bestIdx = -1;
+        let bestDist = Infinity;
+        for (let i = 0; i < dateInstances.length; i++) {
+          if (matchedIndices.has(i)) continue;
+          const dist = Math.abs(new Date(dateInstances[i].scheduledDate).getTime() - expMs);
+          if (dist < bestDist && dist <= MATCH_TOLERANCE_MS) {
+            bestDist = dist;
+            bestIdx = i;
+          }
+        }
+        if (bestIdx >= 0) matchedIndices.add(bestIdx);
+      }
+
+      // If no expected times available (no recurrenceDetails), keep the oldest N
+      if (expectedUtcMs.length === 0) {
+        for (let i = 0; i < Math.min(expectedCount, dateInstances.length); i++) {
+          matchedIndices.add(i); // sorted by scheduledDate, keep earliest
+        }
+      }
+
+      // Unmatched instances are candidates for removal
+      for (let i = 0; i < dateInstances.length; i++) {
+        if (matchedIndices.has(i)) continue;
+        const inst = dateInstances[i];
+        // Never remove instances with submitted reports or final statuses
+        if (inst.classReport?.submittedAt || finalStatuses.includes(inst.status)) continue;
+        idsToRemove.push(inst._id);
       }
     }
   }

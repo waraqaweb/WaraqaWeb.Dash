@@ -59,6 +59,7 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
           minutes: Number.isFinite(mm) ? mm : undefined,
           duration: typeof slot.duration === 'number' ? slot.duration : pattern.duration,
           timezone: slot.timezone || pattern.timezone || 'UTC',
+          raw: slot.raw || {},
         };
         const existing = perDayMap.get(d) || [];
         existing.push(entry);
@@ -80,30 +81,22 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
       }
     }
 
-    // iterate day-by-day
+    // iterate day-by-day — only generate for days that have slot definitions
+    // in the perDayMap (derived from recurrenceDetails). Never fall back to
+    // pattern.scheduledDate for individual day slots, as interpreting stored
+    // UTC hours as local time in a different timezone produces wrong times.
+    const activeDays = Array.from(perDayMap.keys());
     let current = new Date(startDate);
     while (current <= endDate) {
       const dow = current.getDay(); // 0-6
-      let activeDays = Array.isArray(pattern.recurrence?.daysOfWeek) && pattern.recurrence.daysOfWeek.length > 0
-        ? pattern.recurrence.daysOfWeek
-        : Array.from(perDayMap.keys());
-      if ((!activeDays || activeDays.length === 0) && pattern.scheduledDate) {
-        const scheduled = new Date(pattern.scheduledDate);
-        if (!Number.isNaN(scheduled.getTime())) {
-          activeDays = [scheduled.getDay()];
-        }
-      }
 
       if (activeDays.includes(dow)) {
         const slotsFromMap = perDayMap.get(dow);
-        const slotsForDay = Array.isArray(slotsFromMap) && slotsFromMap.length > 0
-          ? slotsFromMap
-          : [{
-              hours: new Date(pattern.scheduledDate).getHours(),
-              minutes: new Date(pattern.scheduledDate).getMinutes(),
-              duration: pattern.duration,
-              timezone: pattern.timezone || 'UTC',
-            }];
+        if (!Array.isArray(slotsFromMap) || slotsFromMap.length === 0) {
+          current.setDate(current.getDate() + 1);
+          continue;
+        }
+        const slotsForDay = slotsFromMap;
 
         for (const slot of slotsForDay) {
           const tzForDay = slot?.timezone || pattern.timezone || 'UTC';

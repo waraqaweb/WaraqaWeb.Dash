@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../../api/axios';
-import { Plus, Eye, Pencil, DollarSign, CalendarDays, Tag, UserRound, CheckSquare, Trash2, Send, XCircle, Check } from "lucide-react";
+import { Plus, Eye, Pencil, DollarSign, CalendarDays, Tag, UserRound, CheckSquare, Trash2, Send, XCircle, Check, MessageSquare, Copy, CheckCheck, X } from "lucide-react";
 import useBulkSelect from '../../../hooks/useBulkSelect';
 import BulkActionBar from '../../../components/ui/BulkActionBar';
 import ExportExcelButton from '../../../components/ui/ExportExcelButton';
@@ -43,6 +43,7 @@ const SalariesPage = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [bulkToast, setBulkToast] = useState(null);
+  const [teacherMsgModal, setTeacherMsgModal] = useState(null); // { salary, message, copied }
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -268,6 +269,52 @@ const SalariesPage = () => {
   const handleSalaryBulkMarkPaid = () => runSalaryBulkAction('Mark as paid', (ids) => api.post('/teacher-salary/admin/bulk/mark-paid', { ids }));
   const handleSalaryBulkPublish = () => runSalaryBulkAction('Publish', (ids) => api.post('/teacher-salary/admin/bulk/publish', { ids }));
   const handleSalaryBulkDelete = () => runSalaryBulkAction('Delete', (ids) => api.post('/teacher-salary/admin/bulk/delete', { ids }));
+
+  const arabicMonths = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+
+  const buildTeacherMessage = (salary) => {
+    const firstName = String(salary?.teacher?.firstName || '').trim() || 'الأستاذ';
+    const month = Number(salary?.billingPeriod?.month || 0);
+    const monthName = month >= 1 && month <= 12 ? arabicMonths[month - 1] : '—';
+    const payDay = salary?.teacherPayment?.payDay || salary?.payDay || '5';
+    return [
+      'السلام عليكم ورحمة الله وبركاته أستاذ / أستاذة ' + firstName + '،',
+      '',
+      'نود إعلامكم بأن فاتورة راتبكم عن شهر ' + monthName + ' قد أُعدّت وأصبحت جاهزة للمراجعة.',
+      '',
+      'وسيتم تحويل المبلغ إلى حسابكم قبل يوم ' + payDay + ' من الشهر الجاري – بإذن الله تعالى – لذا نرجو منكم التكرم بمراجعة الفاتورة، وإفادتنا بأي ملاحظات أو استفسارات ترونها، حتى يتسنى لنا معالجتها قبل إتمام عملية التحويل.',
+      '',
+      'نسأل الله أن يبارك في وقتكم وعلمكم، وأن يجزيكم عنا خير الجزاء.',
+      '',
+      'وجزاكم الله خيرا'
+    ].join('\n');
+  };
+
+  const openTeacherMsgModal = (salary) => {
+    setTeacherMsgModal({ salary, message: buildTeacherMessage(salary), copied: false });
+  };
+
+  const handleCopyTeacherMsg = () => {
+    if (!teacherMsgModal) return;
+    navigator.clipboard.writeText(teacherMsgModal.message).then(() => {
+      setTeacherMsgModal((m) => m ? { ...m, copied: true } : m);
+      setTimeout(() => setTeacherMsgModal((m) => m ? { ...m, copied: false } : m), 2000);
+    });
+  };
+
+  const handleSendTeacherWhatsapp = () => {
+    if (!teacherMsgModal) return;
+    const phone = String(
+      teacherMsgModal.salary?.teacher?.phone ||
+      teacherMsgModal.salary?.teacher?.whatsapp ||
+      ''
+    ).replace(/\D/g, '').replace(/^0+/, '');
+    if (!phone) {
+      alert('No phone number found for this teacher.');
+      return;
+    }
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(teacherMsgModal.message)}`, '_blank', 'noopener,noreferrer');
+  };
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
   const formatDate = (d) => d ? formatDateDDMMMYYYY(d) : '—';
 
@@ -341,7 +388,36 @@ const SalariesPage = () => {
               <p className="text-sm text-slate-500">Teacher payments and payroll records — review and manage salary invoices.</p>
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center" />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              {isAdmin() && (
+                <ExportExcelButton onExport={async () => {
+                  const params = { type: 'teacher_payment', limit: 10000, light: true };
+                  if (globalFilter && globalFilter !== 'all') params.status = globalFilter;
+                  if (debouncedSearch) params.search = debouncedSearch;
+                  const data = await fetchAllForExport('/invoices', params);
+                  await downloadExcel((data.invoices || []).map(mapSalaryRow), 'teacher-salaries');
+                }} />
+              )}
+              {isAdmin() && (
+                <button
+                  type="button"
+                  onClick={bulk.toggleSelectionMode}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                    bulk.selectionMode
+                      ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  <CheckSquare className="h-3.5 w-3.5" />
+                  {bulk.selectionMode ? 'Exit select' : 'Select'}
+                </button>
+              )}
+              {bulkToast && (
+                <span className={`text-xs font-medium ${bulkToast.type === 'success' ? 'text-emerald-600' : bulkToast.type === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
+                  {bulkToast.message}
+                </span>
+              )}
+            </div>
           </div>
 
           {stats && (
@@ -372,34 +448,6 @@ const SalariesPage = () => {
         </div>
 
         <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-black/5">
-          {isAdmin() && (
-            <div className="mb-4 flex items-center gap-3">
-              <ExportExcelButton onExport={async () => {
-                const params = { type: 'teacher_payment', limit: 10000, light: true };
-                if (globalFilter && globalFilter !== 'all') params.status = globalFilter;
-                if (debouncedSearch) params.search = debouncedSearch;
-                const data = await fetchAllForExport('/invoices', params);
-                await downloadExcel((data.invoices || []).map(mapSalaryRow), 'teacher-salaries');
-              }} />
-              <button
-                type="button"
-                onClick={bulk.toggleSelectionMode}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                  bulk.selectionMode
-                    ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <CheckSquare className="h-3.5 w-3.5" />
-                {bulk.selectionMode ? 'Exit select' : 'Select'}
-              </button>
-              {bulkToast && (
-                <span className={`text-xs font-medium ${bulkToast.type === 'success' ? 'text-emerald-600' : bulkToast.type === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
-                  {bulkToast.message}
-                </span>
-              )}
-            </div>
-          )}
 
           {bulk.selectionMode && (
             <div className="mb-4">
@@ -512,6 +560,15 @@ const SalariesPage = () => {
                           </button>
                           {isAdmin() && (
                             <>
+                              <button
+                                onClick={() => openTeacherMsgModal(salary)}
+                                className="inline-flex items-center justify-center rounded-full border border-green-200 bg-green-50 p-2 text-green-600 transition hover:border-green-300 hover:bg-green-100 hover:text-green-700"
+                                type="button"
+                                aria-label="Send salary notification"
+                                title="Send salary notification (Arabic)"
+                              >
+                                <MessageSquare className="h-4 w-4" />
+                              </button>
                               <button onClick={() => handleOpenEdit(salary)} className="inline-flex items-center justify-center rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-900" type="button" aria-label="Edit salary">
                                 <Pencil className="h-4 w-4" />
                               </button>
@@ -576,6 +633,51 @@ const SalariesPage = () => {
           >
             <Plus className="h-5 w-5" />
           </PrimaryButton>
+        </div>
+      )}
+
+      {/* Teacher Arabic message modal */}
+      {teacherMsgModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setTeacherMsgModal(null)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">رسالة راتب المعلم</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {teacherMsgModal.salary?.teacher?.firstName} {teacherMsgModal.salary?.teacher?.lastName}
+                  {teacherMsgModal.salary?.billingPeriod?.month ? ` — ${arabicMonths[teacherMsgModal.salary.billingPeriod.month - 1]} ${teacherMsgModal.salary.billingPeriod.year || ''}` : ''}
+                </p>
+              </div>
+              <button type="button" onClick={() => setTeacherMsgModal(null)} className="rounded-full p-1 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="px-6 py-4">
+              <textarea
+                dir="rtl"
+                rows={12}
+                value={teacherMsgModal.message}
+                onChange={(e) => setTeacherMsgModal((m) => m ? { ...m, message: e.target.value, copied: false } : m)}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 font-sans leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-green-300"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-slate-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={handleCopyTeacherMsg}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                {teacherMsgModal.copied ? <CheckCheck className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                {teacherMsgModal.copied ? 'Copied!' : 'Copy'}
+              </button>
+              <button
+                type="button"
+                onClick={handleSendTeacherWhatsapp}
+                className="inline-flex items-center gap-2 rounded-full border border-green-300 bg-green-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-green-600"
+              >
+                <MessageSquare className="h-4 w-4" />
+                WhatsApp
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -3939,6 +3939,37 @@ fetchClassesRef.current = fetchClasses;
                     Pending reschedules: {pendingRescheduleCount}
                   </div>
                 )}
+                {isAdminUser && (
+                  <ExportExcelButton onExport={async () => {
+                    const params = { filter: tabFilter, limit: 10000 };
+                    if (statusFilter !== 'all') params.status = statusFilter;
+                    if (teacherFilter !== 'all') params.teacher = teacherFilter;
+                    if (guardianFilter !== 'all') params.guardian = guardianFilter;
+                    if (normalizedSearchTerm) { params.search = normalizedSearchTerm; params.searchAll = true; }
+                    const data = await fetchAllForExport('/classes', params);
+                    await downloadExcel((data.classes || []).map(mapClassRow), `classes-${tabFilter}`);
+                  }} />
+                )}
+                {isAdminUser && (
+                  <button
+                    type="button"
+                    onClick={classBulk.toggleSelectionMode}
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                      classBulk.selectionMode
+                        ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                    title={classBulk.selectionMode ? 'Exit selection mode' : 'Select classes for bulk actions'}
+                  >
+                    <CheckSquare className="h-3.5 w-3.5" />
+                    {classBulk.selectionMode ? 'Exit select' : 'Select'}
+                  </button>
+                )}
+                {classBulkToast && (
+                  <span className={`text-xs font-medium ${classBulkToast.type === 'success' ? 'text-emerald-600' : classBulkToast.type === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
+                    {classBulkToast.message}
+                  </span>
+                )}
              </div>
                <div className="flex w-full max-w-xs flex-col gap-3">
                  <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-inner">
@@ -3961,39 +3992,7 @@ fetchClassesRef.current = fetchClasses;
       )}
       
       <div className="flex items-center justify-between gap-3 mb-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-3">
-          {isAdminUser && (
-            <ExportExcelButton onExport={async () => {
-              const params = { filter: tabFilter, limit: 10000 };
-              if (statusFilter !== 'all') params.status = statusFilter;
-              if (teacherFilter !== 'all') params.teacher = teacherFilter;
-              if (guardianFilter !== 'all') params.guardian = guardianFilter;
-              if (normalizedSearchTerm) { params.search = normalizedSearchTerm; params.searchAll = true; }
-              const data = await fetchAllForExport('/classes', params);
-              await downloadExcel((data.classes || []).map(mapClassRow), `classes-${tabFilter}`);
-            }} />
-          )}
-          {isAdminUser && (
-            <button
-              type="button"
-              onClick={classBulk.toggleSelectionMode}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                classBulk.selectionMode
-                  ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-              }`}
-              title={classBulk.selectionMode ? 'Exit selection mode' : 'Select classes for bulk actions'}
-            >
-              <CheckSquare className="h-3.5 w-3.5" />
-              {classBulk.selectionMode ? 'Exit select' : 'Select'}
-            </button>
-          )}
-          {classBulkToast && (
-            <span className={`text-xs font-medium ${classBulkToast.type === 'success' ? 'text-emerald-600' : classBulkToast.type === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
-              {classBulkToast.message}
-            </span>
-          )}
-        </div>
+        <div />
         <div className="flex flex-wrap items-center gap-3">
           {isAdminUser && (
             <button

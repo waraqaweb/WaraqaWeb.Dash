@@ -1443,6 +1443,105 @@ router.get('/:id/history', authenticateToken, async (req, res) => {
   }
 });
 
+// -----------------------------------------------
+// Settle (confirm) an adjustment on a paid invoice
+// -----------------------------------------------
+router.post('/:id/adjustments/:adjId/settle', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) return res.status(404).json({ success: false, message: 'Invoice not found' });
+
+    const adj = (invoice.adjustments || []).id(req.params.adjId);
+    if (!adj) return res.status(404).json({ success: false, message: 'Adjustment not found' });
+
+    if (adj.settled) return res.status(400).json({ success: false, message: 'Already settled' });
+
+    adj.settled = true;
+    adj.settledAt = new Date();
+    adj.settledBy = req.user._id;
+    invoice._skipRecalculate = true;
+    await invoice.save();
+
+    await invoice.recordAuditEntry({
+      action: 'update',
+      actorId: req.user._id,
+      diff: { adjustmentSettled: { id: adj._id, type: adj.type, reason: adj.reason, hoursDelta: adj.hoursDelta } },
+      meta: { description: `Adjustment settled: ${adj.description}` }
+    });
+
+    res.json({ success: true, adjustment: adj });
+  } catch (err) {
+    console.error('Settle adjustment error:', err);
+    res.status(500).json({ success: false, message: 'Failed to settle adjustment' });
+  }
+});
+
+// -----------------------------------------------
+// Unsettle (undo) an adjustment settlement
+// -----------------------------------------------
+router.post('/:id/adjustments/:adjId/unsettle', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) return res.status(404).json({ success: false, message: 'Invoice not found' });
+
+    const adj = (invoice.adjustments || []).id(req.params.adjId);
+    if (!adj) return res.status(404).json({ success: false, message: 'Adjustment not found' });
+
+    if (!adj.settled) return res.status(400).json({ success: false, message: 'Not settled yet' });
+
+    adj.settled = false;
+    adj.settledAt = undefined;
+    adj.settledBy = undefined;
+    adj.settledInInvoiceId = undefined;
+    invoice._skipRecalculate = true;
+    await invoice.save();
+
+    await invoice.recordAuditEntry({
+      action: 'update',
+      actorId: req.user._id,
+      diff: { adjustmentUnsettled: { id: adj._id, type: adj.type, reason: adj.reason } },
+      meta: { description: `Adjustment unsettled: ${adj.description}` }
+    });
+
+    res.json({ success: true, adjustment: adj });
+  } catch (err) {
+    console.error('Unsettle adjustment error:', err);
+    res.status(500).json({ success: false, message: 'Failed to unsettle adjustment' });
+  }
+});
+
+// -----------------------------------------------
+// Get all unsettled adjustments for a guardian
+// -----------------------------------------------
+router.get('/guardian/:guardianId/unsettled-adjustments', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const invoices = await Invoice.find({
+      guardian: req.params.guardianId,
+      'adjustments.0': { $exists: true }
+    }).select('invoiceNumber adjustments guardianFinancial.hourlyRate status').lean();
+
+    const unsettled = [];
+    for (const inv of invoices) {
+      for (const adj of (inv.adjustments || [])) {
+        if (!adj.settled) {
+          unsettled.push({
+            ...adj,
+            invoiceId: inv._id,
+            invoiceNumber: inv.invoiceNumber,
+            invoiceStatus: inv.status
+          });
+        }
+      }
+    }
+    unsettled.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    res.json({ success: true, adjustments: unsettled });
+  } catch (err) {
+    console.error('Get unsettled adjustments error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch unsettled adjustments' });
+  }
+});
+
 // -----------------------------
 // Create manual invoice (Admin)
 // -----------------------------

@@ -340,12 +340,13 @@ async function dryRun(month, year) {
 function initializeJob(redisClient = null) {
   redis = redisClient;
 
-  // Schedule job to run on 1st of every month at 00:05 Cairo time
+  // Schedule job to run on 1st of every month at 02:00 Cairo time
+  // Moved from 00:05 to 02:00 to avoid race with classes reported around midnight
   // Cron format: minute hour day month day-of-week
-  const schedule = '5 0 1 * *'; // At 00:05 on day-of-month 1
+  const schedule = '0 2 1 * *'; // At 02:00 on day-of-month 1
 
   console.log('[GenerateTeacherInvoicesJob] Initializing scheduler...');
-  console.log(`[GenerateTeacherInvoicesJob] Schedule: ${schedule} (1st of month at 00:05 ${CAIRO_TZ})`);
+  console.log(`[GenerateTeacherInvoicesJob] Schedule: ${schedule} (1st of month at 02:00 ${CAIRO_TZ})`);
 
   const task = cron.schedule(schedule, generateTeacherInvoices, {
     scheduled: true,

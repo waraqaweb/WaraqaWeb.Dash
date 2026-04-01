@@ -1070,15 +1070,17 @@ router.post('/admin/zero-monthly-hours', authenticateToken, requireAdmin, async 
           results.summary.invoicesCreated++;
         }
 
-        // Zero monthly fields
+        // Subtract invoiced hours (delta, not zero) to preserve new-month hours
         teacher.teacherInfo = teacher.teacherInfo || {};
         const beforeSnapshot = { monthlyHours: teacher.teacherInfo.monthlyHours || 0 };
+        const invoicedHours = aggregated?.totalHours ?? beforeSnapshot.monthlyHours;
 
-        console.log(`[zero-monthly-hours] Zeroing teacher ${teacher._id}. beforeMonthlyHours=${beforeSnapshot.monthlyHours}, aggregatedHours=${aggregated?.totalHours ?? 'N/A'}, invoiceId=${invoice?._id || 'none'}`);
+        console.log(`[zero-monthly-hours] Subtracting ${invoicedHours}h from teacher ${teacher._id}. beforeMonthlyHours=${beforeSnapshot.monthlyHours}, aggregatedHours=${aggregated?.totalHours ?? 'N/A'}, invoiceId=${invoice?._id || 'none'}`);
 
-        teacher.teacherInfo.monthlyHours = 0;
-        teacher.teacherInfo.monthlyRate = 0;
-        teacher.teacherInfo.monthlyEarnings = 0;
+        const remaining = Math.max(0, Math.round(((teacher.teacherInfo.monthlyHours || 0) - invoicedHours) * 1000) / 1000);
+        teacher.teacherInfo.monthlyHours = remaining;
+        teacher.teacherInfo.monthlyRate = typeof teacher.calculateMonthlyRate === 'function' ? teacher.calculateMonthlyRate() : 0;
+        teacher.teacherInfo.monthlyEarnings = remaining * (teacher.teacherInfo.monthlyRate || 0) + (teacher.teacherInfo.bonus || 0);
         teacher.teacherInfo.lastMonthlyReset = new Date();
         await teacher.save();
 
@@ -1091,9 +1093,9 @@ router.post('/admin/zero-monthly-hours', authenticateToken, requireAdmin, async 
             actor: req.user._id,
             actorRole: 'admin',
             before: beforeSnapshot,
-            after: { monthlyHours: 0 },
+            after: { monthlyHours: remaining, subtracted: invoicedHours },
             metadata: {
-              reason: 'monthly_hours_zeroed_via_admin_endpoint',
+              reason: 'monthly_hours_subtracted_via_admin_endpoint',
               month,
               year,
               invoiceId: invoice?._id || null,

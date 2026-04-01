@@ -204,6 +204,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyEntries, setHistoryEntries] = useState([]);
+  const [settlingAdj, setSettlingAdj] = useState(null); // adjustment _id being settled/unsettled
+  const [guardianUnsettled, setGuardianUnsettled] = useState([]); // unsettled adjustments from OTHER invoices
   // Cache teacher names by id to avoid losing labels if snapshots are missing in subsequent updates
   const teacherNameCacheRef = useRef({});
 
@@ -1766,6 +1768,55 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     }
   }, [invoice, historyOpen]);
 
+  // --- Adjustments memo & handlers ---
+  const adjustmentsByClassId = useMemo(() => {
+    const map = {};
+    if (Array.isArray(invoice?.adjustments)) {
+      for (const adj of invoice.adjustments) {
+        const cid = adj.classId ? String(adj.classId) : null;
+        if (cid) { if (!map[cid]) map[cid] = []; map[cid].push(adj); }
+      }
+    }
+    return map;
+  }, [invoice?.adjustments]);
+
+  const invoiceAdjustments = useMemo(() => Array.isArray(invoice?.adjustments) ? invoice.adjustments : [], [invoice?.adjustments]);
+
+  const handleSettleAdjustment = useCallback(async (adjId, settle) => {
+    const targetId = invoice?._id;
+    if (!targetId || !adjId) return;
+    setSettlingAdj(adjId);
+    try {
+      await api.post(`/invoices/${targetId}/adjustments/${adjId}/${settle ? 'settle' : 'unsettle'}`);
+      // Refresh invoice
+      const { data } = await api.get(`/invoices/${targetId}`);
+      if (data?.invoice) setInvoice(data.invoice);
+    } catch (err) {
+      console.error('Settle/unsettle failed:', err);
+    } finally {
+      setSettlingAdj(null);
+    }
+  }, [invoice?._id]);
+
+  // Fetch unsettled adjustments from other paid invoices for this guardian (admin + unpaid invoice only)
+  useEffect(() => {
+    if (!isAdmin) return;
+    const guardianId = invoice?.guardian?._id || invoice?.guardian;
+    const status = String(invoice?.status || '').toLowerCase();
+    if (!guardianId || status === 'paid' || status === 'refunded') { setGuardianUnsettled([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/invoices/guardian/${guardianId}/unsettled-adjustments`);
+        if (!cancelled && Array.isArray(data?.adjustments)) {
+          // Exclude adjustments from THIS invoice
+          setGuardianUnsettled(data.adjustments.filter(a => String(a.invoiceId) !== String(invoice?._id)));
+        }
+      } catch { if (!cancelled) setGuardianUnsettled([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin, invoice?.guardian, invoice?.status, invoice?._id]);
+
   const handleCopyShareLink = useCallback(async () => {
     if (!invoice?.invoiceSlug) return;
     const shareUrl = `${window.location.origin}/public/invoices/${invoice.invoiceSlug}`;
@@ -2719,6 +2770,28 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
             </div>
           </div>
 
+          {/* Unsettled credits banner from other paid invoices */}
+          {isAdmin && guardianUnsettled.length > 0 && (
+            <div className="mx-4 mb-4 sm:mx-8 rounded-2xl border border-emerald-200 bg-emerald-50/50 px-5 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+                <Sparkles className="h-4 w-4" />
+                Guardian has unsettled credits from paid invoices
+              </div>
+              <div className="mt-2 space-y-1">
+                {guardianUnsettled.map((adj) => (
+                  <div key={adj._id} className="flex items-center gap-2 text-xs text-emerald-700">
+                    <span className="font-medium">{adj.invoiceNumber}:</span>
+                    <span>{adj.description}</span>
+                    <span className="font-semibold">${Math.abs(adj.amountDelta || 0).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 text-xs font-semibold text-emerald-800">
+                Total unsettled credit: ${guardianUnsettled.reduce((s, a) => s + Math.abs(a.amountDelta || 0), 0).toFixed(2)}
+              </div>
+            </div>
+          )}
+
           {!hideClassBreakdown && (
             <div className="px-4 pb-6 sm:px-8 sm:pb-8">
               <div className="flex h-full w-full flex-col rounded-3xl border border-slate-200 bg-white shadow-sm">
@@ -2742,8 +2815,13 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-slate-600">
-                          {filteredClasses.map((c, index) => (
-                            <tr key={c._id} className={`group/classrow odd:bg-white even:bg-slate-50/60 ${c.paidByGuardian ? 'outline outline-1 outline-emerald-100' : ''}`}>
+                          {filteredClasses.map((c, index) => {
+                            const classAdjs = adjustmentsByClassId[c._id] || [];
+                            const hasDeleteAdj = classAdjs.some(a => a.reason === 'class_deleted');
+                            const hasCancelAdj = classAdjs.some(a => a.reason === 'class_cancelled' && a.type === 'credit');
+                            const isGreyedOut = hasDeleteAdj || hasCancelAdj;
+                            return (
+                            <tr key={c._id} className={`group/classrow ${isGreyedOut ? 'bg-slate-100/70 opacity-60' : 'odd:bg-white even:bg-slate-50/60'} ${c.paidByGuardian && !isGreyedOut ? 'outline outline-1 outline-emerald-100' : ''}`}>
                               <td className="px-4 py-3 text-center text-slate-500">{index + 1}</td>
                               <td className="px-4 py-3 text-slate-700">
                                 <span className="flex items-center justify-between gap-3 whitespace-nowrap" title={`${c.date} ${c.time}`}>
@@ -2801,6 +2879,12 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                                   {c.paidByGuardian && (
                                     <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Paid</span>
                                   )}
+                                  {hasDeleteAdj && (
+                                    <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-600 cursor-default" title="This class was deleted after invoicing — a credit adjustment was created">Deleted</span>
+                                  )}
+                                  {hasCancelAdj && !hasDeleteAdj && (
+                                    <span className="inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-semibold text-orange-600 cursor-default" title="This class was cancelled after invoicing — a credit adjustment was created">Cancelled</span>
+                                  )}
                                   <button
                                     type="button"
                                     title="Copy class ID"
@@ -2812,7 +2896,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                                 </span>
                               </td>
                             </tr>
-                          ))}
+                          );})}
                         </tbody>
                       </table>
                     </div>
@@ -2821,6 +2905,69 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
               </div>
             </div>
           )}
+
+          {/* Adjustments section */}
+          {invoiceAdjustments.length > 0 && (
+            <div className="px-4 pb-6 sm:px-8 sm:pb-8">
+              <div className="flex h-full w-full flex-col rounded-3xl border border-amber-200 bg-amber-50/30 shadow-sm">
+                <div className="px-5 py-4">
+                  <h3 className="text-sm font-semibold text-amber-800">Adjustments ({invoiceAdjustments.length})</h3>
+                  <p className="mt-1 text-xs text-amber-600">Classes changed after this invoice was paid</p>
+                </div>
+                <div className="divide-y divide-amber-100">
+                  {invoiceAdjustments.map((adj) => {
+                    const isCredit = adj.type === 'credit';
+                    const reasonLabel = { class_deleted: 'Deleted', class_cancelled: 'Cancelled', duration_changed: 'Duration changed', manual: 'Manual' }[adj.reason] || adj.reason;
+                    return (
+                      <div key={adj._id} className={`flex items-start gap-3 px-5 py-3 ${adj.settled ? 'bg-emerald-50/40' : ''}`}>
+                        <span className={`mt-0.5 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${isCredit ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {isCredit ? 'Credit' : 'Debit'}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-slate-700">{adj.description || reasonLabel}</span>
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{reasonLabel}</span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-500">
+                            {adj.hoursDelta != null && <span>{adj.hoursDelta > 0 ? '+' : ''}{Number(adj.hoursDelta).toFixed(2)}h</span>}
+                            {adj.amountDelta != null && <span>{adj.amountDelta > 0 ? '+' : ''}${Number(adj.amountDelta).toFixed(2)}</span>}
+                            {adj.createdAt && <span>{new Date(adj.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
+                            {adj.settled && <span className="text-emerald-600 font-medium">Settled</span>}
+                          </div>
+                        </div>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            disabled={settlingAdj === adj._id}
+                            onClick={() => handleSettleAdjustment(adj._id, !adj.settled)}
+                            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                              adj.settled
+                                ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                            } disabled:opacity-50`}
+                          >
+                            {settlingAdj === adj._id ? '...' : adj.settled ? 'Undo' : 'Confirm'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {(() => {
+                  const totalCredit = invoiceAdjustments.filter(a => a.type === 'credit' && !a.settled).reduce((s, a) => s + Math.abs(a.amountDelta || 0), 0);
+                  const totalDebit = invoiceAdjustments.filter(a => a.type === 'debit' && !a.settled).reduce((s, a) => s + Math.abs(a.amountDelta || 0), 0);
+                  const net = totalCredit - totalDebit;
+                  if (net <= 0) return null;
+                  return (
+                    <div className="border-t border-amber-200 px-5 py-3 text-xs font-semibold text-amber-800">
+                      Unsettled credit balance: ${net.toFixed(2)}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
           </div>
         </div>
       </div>

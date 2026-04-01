@@ -808,26 +808,37 @@ class TeacherSalaryService {
                   results.invoices.push(invoice);
                   results.summary.created++;
 
-                  // After successfully creating an invoice, zero the teacher's monthly counters
+                  // After successfully creating an invoice, subtract the invoiced hours from the
+                  // teacher's running monthly counter.  We use a delta instead of zeroing because
+                  // the teacher may have already submitted reports for new-month classes between
+                  // midnight and cron execution — zeroing would lose those hours.
                   try {
-                    console.log(`[generateMonthlyInvoices] Zeroing monthly hours for teacher ${teacher._id}. beforeHours=${beforeHours}`);
+                    const invoicedHours = typeof totalHours === 'number' ? totalHours : beforeHours;
+                    console.log(`[generateMonthlyInvoices] Subtracting ${invoicedHours}h from monthly hours for teacher ${teacher._id}. beforeHours=${beforeHours}`);
 
-                    if (teacher && teacher.teacherInfo) {
-                      teacher.teacherInfo.monthlyHours = 0;
-                      teacher.teacherInfo.monthlyRate = 0;
-                      teacher.teacherInfo.monthlyEarnings = 0;
-                      teacher.teacherInfo.lastMonthlyReset = new Date();
-                      await teacher.save();
+                    // Re-read the latest value to avoid stale-document races
+                    const freshTeacher = await User.findById(teacher._id).select('teacherInfo role').exec();
+                    if (freshTeacher && freshTeacher.teacherInfo) {
+                      const currentHours = Number(freshTeacher.teacherInfo.monthlyHours || 0);
+                      const remaining = Math.max(0, Math.round((currentHours - invoicedHours) * 1000) / 1000);
+                      freshTeacher.teacherInfo.monthlyHours = remaining;
+                      freshTeacher.teacherInfo.monthlyRate = freshTeacher.calculateMonthlyRate ? freshTeacher.calculateMonthlyRate() : 0;
+                      freshTeacher.teacherInfo.monthlyEarnings = remaining * (freshTeacher.teacherInfo.monthlyRate || 0) + (freshTeacher.teacherInfo.bonus || 0);
+                      freshTeacher.teacherInfo.lastMonthlyReset = new Date();
+                      await freshTeacher.save();
                     } else {
-                      // Fallback: update directly if teacher doc isn't populated fully
+                      // Fallback: atomic decrement to avoid races
                       await User.updateOne({ _id: teacher._id }, {
+                        $inc: { 'teacherInfo.monthlyHours': -invoicedHours },
                         $set: {
-                          'teacherInfo.monthlyHours': 0,
-                          'teacherInfo.monthlyRate': 0,
-                          'teacherInfo.monthlyEarnings': 0,
                           'teacherInfo.lastMonthlyReset': new Date()
                         }
                       }).exec();
+                      // Ensure non-negative
+                      await User.updateOne(
+                        { _id: teacher._id, 'teacherInfo.monthlyHours': { $lt: 0 } },
+                        { $set: { 'teacherInfo.monthlyHours': 0 } }
+                      ).exec();
                     }
 
                     // Audit per-teacher change (non-blocking)
@@ -839,10 +850,10 @@ class TeacherSalaryService {
                         actor: userId || null,
                         actorRole: userId ? 'admin' : 'system',
                         before: { monthlyHours: beforeHours },
-                        after: { monthlyHours: 0 },
-                        metadata: { reason: 'monthly_hours_zeroed_after_invoice_creation', month, year }
+                        after: { monthlyHoursSubtracted: invoicedHours },
+                        metadata: { reason: 'monthly_hours_subtracted_after_invoice_creation', month, year }
                       });
-                      console.log(`[generateMonthlyInvoices] Audit logged for zeroing teacher ${teacher._id}`);
+                      console.log(`[generateMonthlyInvoices] Audit logged for subtracting hours teacher ${teacher._id}`);
                     } catch (auditErr) {
                       console.warn(`[generateMonthlyInvoices] Audit log failed for teacher ${teacher._id}:`, auditErr && auditErr.message);
                     }

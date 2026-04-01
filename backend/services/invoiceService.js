@@ -380,6 +380,82 @@ const isClassEligibleForDynamicInvoice = (cls, now = new Date()) => {
 class InvoiceService {
 
   /**
+   * Create an adjustment entry on a paid invoice when a class changes post-payment.
+   * @param {Object} options
+   * @param {string|ObjectId} options.invoiceId - The paid invoice ID
+   * @param {string} options.type - 'credit' or 'debit'
+   * @param {string} options.reason - 'class_deleted', 'duration_changed', 'class_cancelled', 'manual'
+   * @param {Object} options.classDoc - The class document (or snapshot)
+   * @param {string} options.description - Human-readable description
+   * @param {number} options.hoursDelta - Negative = credit (guardian overpaid)
+   * @param {number} options.amountDelta - Negative = credit
+   * @param {number} [options.previousDuration] - For duration changes
+   * @param {number} [options.newDuration] - For duration changes
+   * @param {ObjectId} [options.actorId] - Who triggered this
+   */
+  static async createPaidInvoiceAdjustment(options) {
+    const Invoice = require('../models/Invoice');
+    const {
+      invoiceId, type, reason, classDoc, description,
+      hoursDelta, amountDelta, previousDuration, newDuration, actorId
+    } = options;
+
+    const invoice = await Invoice.findById(invoiceId);
+    if (!invoice) {
+      console.warn(`[createPaidInvoiceAdjustment] Invoice ${invoiceId} not found`);
+      return null;
+    }
+
+    const studentName = classDoc?.student?.studentName
+      || [classDoc?.student?.firstName, classDoc?.student?.lastName].filter(Boolean).join(' ')
+      || '';
+
+    const adjustment = {
+      type,
+      reason,
+      classId: classDoc?._id || null,
+      classSnapshot: {
+        scheduledDate: classDoc?.scheduledDate || classDoc?.dateTime || null,
+        duration: previousDuration || Number(classDoc?.duration || 0),
+        subject: classDoc?.subject || '',
+        studentName
+      },
+      description,
+      hoursDelta,
+      amountDelta,
+      previousDuration: previousDuration || undefined,
+      newDuration: newDuration || undefined,
+      settled: false,
+      createdAt: new Date(),
+      createdBy: actorId || null
+    };
+
+    if (!Array.isArray(invoice.adjustments)) {
+      invoice.adjustments = [];
+    }
+    invoice.adjustments.push(adjustment);
+    invoice.markModified('adjustments');
+    invoice._skipRecalculate = true;
+    await invoice.save();
+
+    await invoice.recordAuditEntry({
+      actor: actorId,
+      action: 'update',
+      diff: {
+        adjustmentAdded: {
+          type, reason, hoursDelta, amountDelta,
+          classId: classDoc?._id?.toString() || null,
+          description
+        }
+      },
+      meta: { note: `Post-payment adjustment: ${description}` }
+    });
+
+    console.log(`[createPaidInvoiceAdjustment] Created ${type} adjustment on invoice ${invoiceId}: ${description}`);
+    return adjustment;
+  }
+
+  /**
    * Check guardians according to billing system and create invoices.
    */
   static async checkAndCreateZeroHourInvoices() {
@@ -1954,110 +2030,68 @@ class InvoiceService {
       if (!item) return { success: false, reason: 'item_not_found' };
 
       // 🔥 NEW: If the class's linked invoice is paid, check if we need to recalculate
-      if (inv.status === 'paid') {
-        // Check for status changes that require recalculation even for paid invoices
-        // "Was attended" means any countable status (attended, missed_by_student, absent)
+      if (inv.status === 'paid' || inv.paidAmount > 0) {
+        // PAID INVOICE: Create adjustment entries instead of modifying items directly
         const wasCountableInInvoice = prev.status === 'attended' || prev.status === 'missed_by_student' || prev.status === 'absent' || item.attended === true;
         const becameCancelledNow = String(classDoc.status).startsWith('cancelled') || classDoc.status === 'no_show_both';
         const wasCancelledBefore = String(prev.status || '').startsWith('cancelled') || prev.status === 'no_show_both';
         const isCountableNow = classDoc.status === 'attended' || classDoc.status === 'missed_by_student' || classDoc.status === 'absent';
 
-        // Scenario: Countable → Cancelled (attended/absent → cancelled)
-        // Remove from invoice, replace with unpaid class
+        const adjRate = Number(item.rate || inv.guardianFinancial?.hourlyRate || 10);
+
+        // Countable → Cancelled: create credit adjustment
         if (statusChanged && wasCountableInInvoice && becameCancelledNow) {
-          console.log(`🔄 [Invoice Recalculation] Paid invoice - Countable → Cancelled`);
-          console.log(`🔄 [Invoice Recalculation] Previous status: ${prev.status}, New status: ${classDoc.status}`);
-          console.log(`🔄 [Invoice Recalculation] Class ${classId} will be removed from invoice ${inv.invoiceNumber}`);
-          console.log(`🔄 [Invoice Recalculation] Item ID to remove: ${item._id}`);
-          
-          // Remove this class from the invoice
-          const itemsToRemove = [String(item._id)];
-          const removeResult = await InvoiceService.updateInvoiceItems(
-            String(inv._id),
-            {
-              removeItemIds: itemsToRemove,
-              note: `Class cancelled: ${classDoc.subject || 'Class'} on ${classDoc.scheduledDate}`,
-              allowPaidModification: true
-            },
-            null
-          );
-          
-          console.log(`✅ [Invoice Recalculation] Remove result:`, removeResult);
-
-          // Trigger recalculation to replace with next unpaid class
-          const recalcResult = await InvoiceService.recalculateInvoiceCoverage(
-            inv._id,
-            {
-              trigger: 'status_change_cancelled',
-              deletedClassId: classId,
-              adminUserId: null
-            }
-          );
-
-          console.log(`✅ [Invoice Recalculation] Recalc result:`, recalcResult);
-          
-          return {
-            success: true,
-            statusChange: 'countable_to_cancelled',
-            removedFromInvoice: true,
-            recalcResult,
-            hoursUpdated: statusChanged && !skipHourAdjustment
-          };
+          const dur = Number(classDoc.duration || 60);
+          const hrs = dur / 60;
+          const amt = Math.round(hrs * adjRate * 100) / 100;
+          const dateStr = classDoc.scheduledDate ? new Date(classDoc.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+          try {
+            await InvoiceService.createPaidInvoiceAdjustment({
+              invoiceId: inv._id, type: 'credit', reason: 'class_cancelled', classDoc,
+              description: `Class on ${dateStr} (${classDoc.subject || 'Class'}) cancelled — ${hrs.toFixed(2)}h credit`,
+              hoursDelta: -hrs, amountDelta: -amt, previousDuration: dur, actorId: null
+            });
+          } catch (adjErr) { console.error('[onClassStateChanged] adjustment error (cancel):', adjErr.message); }
+          await InvoiceService.removeClassFromUnpaidInvoices(classId, invoiceId);
+          return { success: true, statusChange: 'countable_to_cancelled', adjustmentCreated: true, hoursUpdated: statusChanged && !skipHourAdjustment };
         }
 
-        // Scenario: Cancelled → Countable (cancelled → attended/absent)
-        // Re-add to invoice
+        // Cancelled → Countable: create debit adjustment (class re-activated)
         if (statusChanged && wasCancelledBefore && isCountableNow) {
-          console.log(`🔄 [Invoice Recalculation] Paid invoice - Cancelled → Attended, re-adding class`);
-          
-          const rate = Number(item.rate || inv.guardianFinancial?.hourlyRate || 10);
-          const duration = Number(classDoc.duration || 60);
-          const hours = duration / 60;
-          const amount = Math.round(hours * rate * 100) / 100;
-
-          const studentName = classDoc.student?.studentName || item.studentSnapshot?.firstName || '';
-          const [firstName, ...rest] = String(studentName).trim().split(' ').filter(Boolean);
-          const lastName = rest.join(' ');
-
-          await InvoiceService.updateInvoiceItems(
-            String(inv._id),
-            {
-              addItems: [{
-                lessonId: String(classId),
-                class: classId,
-                student: item.student || classDoc.student?.studentId,
-                studentSnapshot: {
-                  firstName: firstName || studentName,
-                  lastName: lastName || '',
-                  email: ''
-                },
-                teacher: item.teacher || classDoc.teacher,
-                description: `${classDoc.subject || 'Class'} (Re-added after status change)`,
-                date: classDoc.scheduledDate,
-                duration: duration,
-                rate: rate,
-                amount: amount,
-                attended: true
-              }],
-              note: `Class re-added: changed from cancelled to attended`,
-              allowPaidModification: true
-            },
-            null
-          );
-
-          console.log(`✅ [Invoice Recalculation] Successfully re-added attended class`);
-          
-          return {
-            success: true,
-            statusChange: 'cancelled_to_attended',
-            addedToInvoice: true,
-            hoursUpdated: statusChanged && !skipHourAdjustment
-          };
+          const dur = Number(classDoc.duration || 60);
+          const hrs = dur / 60;
+          const amt = Math.round(hrs * adjRate * 100) / 100;
+          const dateStr = classDoc.scheduledDate ? new Date(classDoc.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+          try {
+            await InvoiceService.createPaidInvoiceAdjustment({
+              invoiceId: inv._id, type: 'debit', reason: 'class_cancelled', classDoc,
+              description: `Class on ${dateStr} (${classDoc.subject || 'Class'}) re-activated — ${hrs.toFixed(2)}h debit`,
+              hoursDelta: hrs, amountDelta: amt, previousDuration: 0, newDuration: dur, actorId: null
+            });
+          } catch (adjErr) { console.error('[onClassStateChanged] adjustment error (reactivate):', adjErr.message); }
+          return { success: true, statusChange: 'cancelled_to_countable', adjustmentCreated: true, hoursUpdated: statusChanged && !skipHourAdjustment };
         }
 
-        // No status change requiring recalculation - just remove from unpaid invoices
+        // Duration changed on paid invoice: create credit or debit adjustment
+        if (durationChanged) {
+          const oldHrs = prevDuration / 60;
+          const newHrs = currentDuration / 60;
+          const hrsDiff = newHrs - oldHrs;
+          const amtDiff = Math.round(hrsDiff * adjRate * 100) / 100;
+          const dateStr = classDoc.scheduledDate ? new Date(classDoc.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+          try {
+            await InvoiceService.createPaidInvoiceAdjustment({
+              invoiceId: inv._id, type: hrsDiff < 0 ? 'credit' : 'debit', reason: 'duration_changed', classDoc,
+              description: `Class on ${dateStr} duration ${prevDuration}→${currentDuration} min — ${Math.abs(hrsDiff).toFixed(2)}h ${hrsDiff < 0 ? 'credit' : 'debit'}`,
+              hoursDelta: hrsDiff, amountDelta: amtDiff, previousDuration: prevDuration, newDuration: currentDuration, actorId: null
+            });
+          } catch (adjErr) { console.error('[onClassStateChanged] adjustment error (duration):', adjErr.message); }
+          return { success: true, durationChange: true, adjustmentCreated: true, hoursUpdated: !skipHourAdjustment };
+        }
+
+        // No changes requiring adjustment
         await InvoiceService.removeClassFromUnpaidInvoices(classId, invoiceId);
-        return { success: true, reason: 'paid_invoice_no_recalc_needed', hoursUpdated: statusChanged && !skipHourAdjustment };
+        return { success: true, reason: 'paid_invoice_no_change', hoursUpdated: statusChanged && !skipHourAdjustment };
       }
 
       const newMinutes = Number(classDoc.duration || 0) || 0;

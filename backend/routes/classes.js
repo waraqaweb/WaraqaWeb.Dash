@@ -3559,6 +3559,37 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
     const studentId = classDoc.student?.studentId;
 
     if (scope === "single") {
+      // If class is billed in a paid invoice, create a credit adjustment before deletion
+      if (classDoc.billedInInvoiceId) {
+        try {
+          const Invoice = require('../models/Invoice');
+          const billedInvoice = await Invoice.findById(classDoc.billedInInvoiceId).select('status paidAmount').lean();
+          if (billedInvoice && (billedInvoice.status === 'paid' || billedInvoice.paidAmount > 0)) {
+            const guardian = await User.findById(guardianId).select('guardianInfo.hourlyRate').lean();
+            const rate = guardian?.guardianInfo?.hourlyRate || 10;
+            const classDuration = Number(classDoc.duration || 60);
+            const classHours = classDuration / 60;
+            const amount = Math.round((classHours * rate) * 100) / 100;
+            const dateStr = classDoc.scheduledDate
+              ? new Date(classDoc.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+              : 'unknown date';
+            await InvoiceService.createPaidInvoiceAdjustment({
+              invoiceId: classDoc.billedInInvoiceId,
+              type: 'credit',
+              reason: 'class_deleted',
+              classDoc,
+              description: `Class on ${dateStr} (${classDoc.subject || 'Class'}) deleted — ${classHours.toFixed(2)}h credit`,
+              hoursDelta: -classHours,
+              amountDelta: -amount,
+              previousDuration: classDuration,
+              actorId: req.user._id
+            });
+          }
+        } catch (adjErr) {
+          console.error('Failed to create paid invoice adjustment for deleted class:', adjErr.message);
+        }
+      }
+
       await Class.findByIdAndDelete(classDoc._id);
       // Notification trigger: class cancelled
       try {
@@ -3578,6 +3609,27 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
       const parentId = classDoc.parentRecurringClass || classDoc._id;
       const baseDate = classDoc.scheduledDate || new Date();
       const toDelete = await Class.find({ parentRecurringClass: parentId, scheduledDate: { $gte: baseDate } }).lean();
+      // Create adjustments for any classes billed in paid invoices
+      try {
+        const Invoice = require('../models/Invoice');
+        const billedClasses = toDelete.filter(c => c.billedInInvoiceId);
+        for (const cls of billedClasses) {
+          const inv = await Invoice.findById(cls.billedInInvoiceId).select('status paidAmount').lean();
+          if (inv && (inv.status === 'paid' || inv.paidAmount > 0)) {
+            const gDoc = await User.findById(cls.student?.guardianId).select('guardianInfo.hourlyRate').lean();
+            const rate = gDoc?.guardianInfo?.hourlyRate || 10;
+            const dur = Number(cls.duration || 60);
+            const hrs = dur / 60;
+            const amt = Math.round((hrs * rate) * 100) / 100;
+            const dateStr = cls.scheduledDate ? new Date(cls.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'unknown date';
+            await InvoiceService.createPaidInvoiceAdjustment({
+              invoiceId: cls.billedInInvoiceId, type: 'credit', reason: 'class_deleted', classDoc: cls,
+              description: `Class on ${dateStr} (${cls.subject || 'Class'}) deleted — ${hrs.toFixed(2)}h credit`,
+              hoursDelta: -hrs, amountDelta: -amt, previousDuration: dur, actorId: req.user._id
+            });
+          }
+        }
+      } catch (adjErr) { console.error('Bulk delete adjustment error (future):', adjErr.message); }
       const ids = toDelete.map(d => d._id);
       const result = await Class.deleteMany({ parentRecurringClass: parentId, scheduledDate: { $gte: baseDate } });
       try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { ids, parentId }); } catch (e) {}
@@ -3594,6 +3646,27 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
       }
 
       const toDelete = await Class.find({ parentRecurringClass: parentId, scheduledDate: { $lt: baseDate } }).lean();
+      // Create adjustments for any classes billed in paid invoices
+      try {
+        const Invoice = require('../models/Invoice');
+        const billedClasses = toDelete.filter(c => c.billedInInvoiceId);
+        for (const cls of billedClasses) {
+          const inv = await Invoice.findById(cls.billedInInvoiceId).select('status paidAmount').lean();
+          if (inv && (inv.status === 'paid' || inv.paidAmount > 0)) {
+            const gDoc = await User.findById(cls.student?.guardianId).select('guardianInfo.hourlyRate').lean();
+            const rate = gDoc?.guardianInfo?.hourlyRate || 10;
+            const dur = Number(cls.duration || 60);
+            const hrs = dur / 60;
+            const amt = Math.round((hrs * rate) * 100) / 100;
+            const dateStr = cls.scheduledDate ? new Date(cls.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'unknown date';
+            await InvoiceService.createPaidInvoiceAdjustment({
+              invoiceId: cls.billedInInvoiceId, type: 'credit', reason: 'class_deleted', classDoc: cls,
+              description: `Class on ${dateStr} (${cls.subject || 'Class'}) deleted — ${hrs.toFixed(2)}h credit`,
+              hoursDelta: -hrs, amountDelta: -amt, previousDuration: dur, actorId: req.user._id
+            });
+          }
+        }
+      } catch (adjErr) { console.error('Bulk delete adjustment error (past):', adjErr.message); }
       const ids = toDelete.map((d) => d._id);
       const result = await Class.deleteMany({ parentRecurringClass: parentId, scheduledDate: { $lt: baseDate } });
       try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { ids, parentId, scope: "past" }); } catch (e) {}
@@ -3604,6 +3677,27 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
     if (scope === "all") {
       const parentId = classDoc.parentRecurringClass || classDoc._id;
       const children = await Class.find({ parentRecurringClass: parentId }).lean();
+      // Create adjustments for any classes billed in paid invoices
+      try {
+        const Invoice = require('../models/Invoice');
+        const billedClasses = children.filter(c => c.billedInInvoiceId);
+        for (const cls of billedClasses) {
+          const inv = await Invoice.findById(cls.billedInInvoiceId).select('status paidAmount').lean();
+          if (inv && (inv.status === 'paid' || inv.paidAmount > 0)) {
+            const gDoc = await User.findById(cls.student?.guardianId).select('guardianInfo.hourlyRate').lean();
+            const rate = gDoc?.guardianInfo?.hourlyRate || 10;
+            const dur = Number(cls.duration || 60);
+            const hrs = dur / 60;
+            const amt = Math.round((hrs * rate) * 100) / 100;
+            const dateStr = cls.scheduledDate ? new Date(cls.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'unknown date';
+            await InvoiceService.createPaidInvoiceAdjustment({
+              invoiceId: cls.billedInInvoiceId, type: 'credit', reason: 'class_deleted', classDoc: cls,
+              description: `Class on ${dateStr} (${cls.subject || 'Class'}) deleted — ${hrs.toFixed(2)}h credit`,
+              hoursDelta: -hrs, amountDelta: -amt, previousDuration: dur, actorId: req.user._id
+            });
+          }
+        }
+      } catch (adjErr) { console.error('Bulk delete adjustment error (all):', adjErr.message); }
       const childIds = children.map(c => c._id);
       const result = await Class.deleteMany({ parentRecurringClass: parentId });
       await Class.findByIdAndDelete(parentId);

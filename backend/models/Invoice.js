@@ -176,6 +176,34 @@ invoiceItemSchema.path('student').set(function(value) {
 
 // adjustments removed: no longer storing manual adjustment entries on invoices
 
+// Post-payment adjustments: credits/debits when classes change after invoice is paid
+const invoiceAdjustmentSchema = new Schema({
+  type: { type: String, enum: ['credit', 'debit'], required: true },
+  reason: {
+    type: String,
+    enum: ['class_deleted', 'duration_changed', 'class_cancelled', 'manual'],
+    required: true
+  },
+  classId: { type: Schema.Types.ObjectId, ref: 'Class' },
+  classSnapshot: {
+    scheduledDate: Date,
+    duration: Number,       // original duration in minutes
+    subject: String,
+    studentName: String
+  },
+  description: { type: String, required: true, trim: true },
+  hoursDelta: { type: Number, required: true },   // negative = credit (guardian overpaid)
+  amountDelta: { type: Number, required: true },   // negative = credit
+  previousDuration: { type: Number },              // for duration changes: old minutes
+  newDuration: { type: Number },                   // for duration changes: new minutes
+  settled: { type: Boolean, default: false },
+  settledInInvoiceId: { type: Schema.Types.ObjectId, ref: 'Invoice' },
+  settledAt: { type: Date },
+  settledBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  createdAt: { type: Date, default: Date.now },
+  createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
+}, { _id: true });
+
 const transferFeeSchema = new Schema({
   mode: { type: String, enum: ['fixed', 'percent'], default: 'fixed' },
   value: { type: Number, default: 0 },
@@ -338,6 +366,9 @@ const invoiceSchema = new mongoose.Schema({
   emailSentMethod: { type: String, enum: [null, 'email','paypal','whatsapp','manual'], default: null },
 
   paymentLogs: { type: [paymentLogSchema], default: [] },
+
+  // Post-payment adjustments for classes that changed after invoice was paid
+  adjustments: { type: [invoiceAdjustmentSchema], default: [] },
 
   delivery: {
     status: {
@@ -1195,8 +1226,7 @@ invoiceSchema.methods.getExportSnapshot = function(options = {}) {
   const studentTotals = mapToTotals(studentMap);
   const teacherTotals = mapToTotals(teacherMap);
 
-  // adjustments removed: no adjustments array or total
-  const adjustmentsTotal = 0;
+  const adjustmentsTotal = Array.isArray(this.adjustments) ? this.adjustments.reduce((sum, a) => sum + (a.amountDelta || 0), 0) : 0;
 
   const dueAmount = roundCurrency(this.getDueAmount());
   const dueDate = ensureDate(this.dueDate);
@@ -1442,7 +1472,20 @@ invoiceSchema.methods.getExportSnapshot = function(options = {}) {
     items: includeItems ? items : [],
     students: studentTotals,
     teachers: teacherTotals,
-    // adjustments removed
+    adjustments: Array.isArray(this.adjustments) ? this.adjustments.map(a => ({
+      _id: a._id ? a._id.toString() : null,
+      type: a.type,
+      reason: a.reason,
+      description: a.description || '',
+      hoursDelta: a.hoursDelta || 0,
+      amountDelta: a.amountDelta || 0,
+      previousDuration: a.previousDuration || null,
+      newDuration: a.newDuration || null,
+      settled: Boolean(a.settled),
+      classSnapshot: a.classSnapshot || null,
+      createdAt: a.createdAt ? a.createdAt.toISOString() : null
+    })) : [],
+    adjustmentsTotal: roundCurrency(adjustmentsTotal),
     notes: {
       public: this.notes || null,
       internal: this.internalNotes || null

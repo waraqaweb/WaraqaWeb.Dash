@@ -262,6 +262,40 @@ const InvoicePublicPage = () => {
           )}
         </section>
 
+        {/* Adjustments section on public invoice */}
+        {Array.isArray(invoice.adjustments) && invoice.adjustments.length > 0 && (
+          <section className="rounded-3xl border border-amber-100 bg-amber-50/30 p-6 shadow-lg">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-800">Adjustments</h2>
+            <p className="mt-1 text-xs text-amber-600">Changes made after this invoice was finalized</p>
+            <div className="mt-4 space-y-3">
+              {invoice.adjustments.map((adj, idx) => {
+                const isCredit = adj.type === 'credit';
+                return (
+                  <div key={adj._id || idx} className="flex items-start gap-3 rounded-xl bg-white/60 px-4 py-3">
+                    <span className={`mt-0.5 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${isCredit ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                      {isCredit ? 'Credit' : 'Debit'}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-slate-700">{adj.description}</p>
+                      <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-500">
+                        {adj.hoursDelta != null && <span>{adj.hoursDelta > 0 ? '+' : ''}{Number(adj.hoursDelta).toFixed(2)}h</span>}
+                        {adj.amountDelta != null && <span>{adj.amountDelta > 0 ? '+' : ''}{formatCurrency(adj.amountDelta, currency)}</span>}
+                        {adj.settled && <span className="text-emerald-600 font-medium">Settled</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {(() => {
+              const net = invoice.adjustments.filter(a => a.type === 'credit' && !a.settled).reduce((s, a) => s + Math.abs(a.amountDelta || 0), 0)
+                - invoice.adjustments.filter(a => a.type === 'debit' && !a.settled).reduce((s, a) => s + Math.abs(a.amountDelta || 0), 0);
+              if (net <= 0) return null;
+              return <div className="mt-3 border-t border-amber-200 pt-3 text-xs font-semibold text-amber-800">Credit balance: {formatCurrency(net, currency)}</div>;
+            })()}
+          </section>
+        )}
+
         {notes?.public && (
           <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-lg">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Notes</h2>

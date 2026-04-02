@@ -3637,44 +3637,36 @@ class InvoiceService {
         return { success: true, noActionNeeded: true };
       }
 
-      console.log(`🗑️ [Class Deletion Handler] Class ${classId} was in ${affectedInvoices.length} paid invoice(s)`);
+      // PAID invoices are immutable historical records — do NOT remove items.
+      // The class may be deleted/rescheduled but the invoice should still reflect
+      // what was originally billed and paid for. Removing items from paid invoices
+      // causes the total to drop below paidAmount and orphaned classes get
+      // auto-attached to confusing new invoices.
+      console.log(`🗑️ [Class Deletion Handler] Class ${classId} is in ${affectedInvoices.length} paid invoice(s) — skipping removal (paid invoices are immutable)`);
 
       const results = [];
       for (const invoice of affectedInvoices) {
-        console.log(`🗑️ [Class Deletion Handler] Recalculating invoice ${invoice.invoiceNumber}`);
-        
-        // First, remove the deleted class from the invoice
-        const itemsToRemove = invoice.items
-          .filter(item => String(item.class) === String(classId))
-          .map(item => String(item._id));
-
-        if (itemsToRemove.length > 0) {
-          await InvoiceService.updateInvoiceItems(
-            String(invoice._id),
-            {
-              removeItemIds: itemsToRemove,
-              note: `Removed deleted class ${classId}`,
-              allowPaidModification: true
-            },
-            adminUserId
-          );
+        // Only record a note — do not modify items or trigger recalculation
+        try {
+          if (!Array.isArray(invoice.changeHistory)) invoice.changeHistory = [];
+          invoice.changeHistory.push({
+            changedAt: new Date(),
+            changedBy: adminUserId || null,
+            action: 'info',
+            changes: `Class ${classId} was deleted but invoice items preserved (paid invoice is immutable).`,
+            note: 'Class deletion noted'
+          });
+          invoice.markModified('changeHistory');
+          invoice._skipRecalculate = true;
+          await invoice.save();
+        } catch (noteErr) {
+          console.warn(`🗑️ [Class Deletion Handler] Failed to record note on invoice ${invoice._id}:`, noteErr.message);
         }
-
-        // Then trigger recalculation to find replacement
-        const recalcResult = await InvoiceService.recalculateInvoiceCoverage(
-          invoice._id,
-          {
-            trigger: 'class_deleted',
-            deletedClassId: classId,
-            session,
-            adminUserId
-          }
-        );
 
         results.push({
           invoiceId: invoice._id,
           invoiceNumber: invoice.invoiceNumber,
-          recalcResult
+          action: 'skipped_paid_immutable'
         });
       }
 

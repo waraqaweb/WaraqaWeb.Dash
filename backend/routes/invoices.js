@@ -2174,10 +2174,18 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       if (incomingName) {
         invoice.invoiceName = incomingName;
         invoice.invoiceNameManual = true;
-        invoice.invoiceSlug = slugifyInvoiceName(
+        let candidateSlug = slugifyInvoiceName(
           incomingName,
           invoice.invoiceSequence || Date.now()
         );
+        const slugDuplicate = await Invoice.findOne({
+          _id: { $ne: invoice._id },
+          invoiceSlug: candidateSlug
+        }).select('_id').lean();
+        if (slugDuplicate) {
+          candidateSlug = `${candidateSlug}-${Date.now()}`;
+        }
+        invoice.invoiceSlug = candidateSlug;
       } else {
         invoice.invoiceNameManual = false;
       }

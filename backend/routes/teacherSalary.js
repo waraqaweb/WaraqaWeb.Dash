@@ -320,7 +320,6 @@ router.get('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, r
       .populate({
         path: 'classIds',
         populate: [
-          { path: 'student', select: 'firstName lastName' },
           { path: 'teacher', select: 'firstName lastName' }
         ]
       })
@@ -330,12 +329,24 @@ router.get('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, r
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
+    // Helper to safely build a display name, avoiding literal 'undefined' tokens
+    const safeName = (obj) => {
+      if (!obj) return null;
+      const first = obj.firstName || '';
+      const last = obj.lastName || '';
+      const name = `${first} ${last}`.trim();
+      if (!name || /^(undefined|null)(\s+(undefined|null))?$/i.test(name)) return null;
+      return name;
+    };
+
     // Format classes for frontend display
-    const classes = (invoice.classIds || []).map(cls => ({
+    // Note: Class.student is an embedded subdocument with { studentName, studentId, guardianId }
+    // NOT a ref, so we use cls.student?.studentName directly
+    const classes = (invoice.classIds || []).filter(cls => cls && cls._id).map(cls => ({
       _id: cls._id,
       date: cls.scheduledDate,
-      studentName: cls.student ? `${cls.student.firstName} ${cls.student.lastName}` : 'N/A',
-      teacherName: cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : 'N/A',
+      studentName: cls.student?.studentName || safeName(cls.student) || 'N/A',
+      teacherName: safeName(cls.teacher) || 'N/A',
       subject: cls.subject || '-',
       duration: cls.duration || 0,
       hours: (cls.duration || 0) / 60,
@@ -343,11 +354,16 @@ router.get('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, r
       rateUSD: invoice.rateSnapshot?.rate || 0
     }));
 
+    // Recompute totalHours from actual linked classes to catch any discrepancy
+    const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
+
     res.json({ 
       success: true, 
       invoice: {
         ...invoice,
-        classes
+        classes,
+        totalHours: computedTotalHours,
+        _storedTotalHours: invoice.totalHours,
       }
     });
   } catch (error) {
@@ -1217,7 +1233,6 @@ router.get('/teacher/invoices/:id', authenticateToken, requireTeacher, async (re
       .populate({
         path: 'classIds',
         populate: [
-          { path: 'student', select: 'firstName lastName' },
           { path: 'teacher', select: 'firstName lastName' }
         ]
       })
@@ -1237,12 +1252,22 @@ router.get('/teacher/invoices/:id', authenticateToken, requireTeacher, async (re
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
+    // Helper to safely build a display name
+    const safeName = (obj) => {
+      if (!obj) return null;
+      const first = obj.firstName || '';
+      const last = obj.lastName || '';
+      const name = `${first} ${last}`.trim();
+      if (!name || /^(undefined|null)(\s+(undefined|null))?$/i.test(name)) return null;
+      return name;
+    };
+
     // Format classes for frontend display
-    const classes = (invoice.classIds || []).map(cls => ({
+    const classes = (invoice.classIds || []).filter(cls => cls && cls._id).map(cls => ({
       _id: cls._id,
       date: cls.scheduledDate,
-      studentName: cls.student ? `${cls.student.firstName} ${cls.student.lastName}` : 'N/A',
-      teacherName: cls.teacher ? `${cls.teacher.firstName} ${cls.teacher.lastName}` : 'N/A',
+      studentName: cls.student?.studentName || safeName(cls.student) || 'N/A',
+      teacherName: safeName(cls.teacher) || 'N/A',
       subject: cls.subject || '-',
       duration: cls.duration || 0,
       hours: (cls.duration || 0) / 60,
@@ -1250,11 +1275,16 @@ router.get('/teacher/invoices/:id', authenticateToken, requireTeacher, async (re
       rateUSD: invoice.rateSnapshot?.rate || 0
     }));
 
+    // Recompute totalHours from actual linked classes
+    const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
+
     res.json({ 
       success: true, 
       invoice: {
         ...invoice,
-        classes
+        classes,
+        totalHours: computedTotalHours,
+        _storedTotalHours: invoice.totalHours,
       }
     });
   } catch (error) {

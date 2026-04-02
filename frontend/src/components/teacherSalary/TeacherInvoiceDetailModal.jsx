@@ -26,6 +26,8 @@ import {
   Wallet,
   FileSpreadsheet,
   Info,
+  Copy,
+  Link,
   Edit3,
   Save,
   Trash2
@@ -42,6 +44,14 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
   const [ratePartitions, setRatePartitions] = useState([]);
   const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const [deleting, setDeleting] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(null);
+
+  const copyToClipboard = (text, key) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 1500);
+    }).catch(() => {});
+  };
   
   const [editedValues, setEditedValues] = useState({
     grossAmountUSD: '',
@@ -408,6 +418,28 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                     <span>{formatInvoicePeriod(invoice.month, invoice.year)}</span>
                   </div>
                 </div>
+                {user?.role === 'admin' && (
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    <button
+                      onClick={() => copyToClipboard(invoice._id, 'id')}
+                      className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+                      title="Copy Invoice ID"
+                    >
+                      <Copy className="w-3 h-3" />
+                      {copiedKey === 'id' ? 'Copied!' : `ID: ${invoice._id}`}
+                    </button>
+                    {invoice.shareToken && (
+                      <button
+                        onClick={() => copyToClipboard(`${window.location.origin}/dashboard/teacher-salary/shared/${invoice.shareToken}`, 'link')}
+                        className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+                        title="Copy Public Link"
+                      >
+                        <Link className="w-3 h-3" />
+                        {copiedKey === 'link' ? 'Copied!' : 'Public Link'}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-1.5">
@@ -447,6 +479,9 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
               </div>
               <p className="text-2xl font-bold text-slate-900">{totalHours.toFixed(2)}</p>
               <p className="text-xs text-slate-500 mt-1">{classes.length} classes</p>
+              {invoice._storedTotalHours != null && Math.abs(invoice._storedTotalHours - totalHours) >= 0.001 && (
+                <p className="text-[10px] text-amber-600 mt-0.5">DB stored: {invoice._storedTotalHours.toFixed(2)}</p>
+              )}
             </Card>
             
             <Card padding="md" className="rounded-xl">
@@ -744,8 +779,21 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                       const safeHours = Number.isFinite(hours) ? hours : 0;
                       const amount = safeHours * hourlyRate;
                       return (
-                        <tr key={cls._id || index} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-2 py-2 text-sm text-slate-700 whitespace-nowrap">{formatDateWithDay(cls.date)}</td>
+                        <tr key={cls._id || index} className="hover:bg-slate-50 transition-colors group relative">
+                          <td className="px-2 py-2 text-sm text-slate-700 whitespace-nowrap">
+                            <div className="flex items-center gap-1">
+                              {formatDateWithDay(cls.date)}
+                              {user?.role === 'admin' && cls._id && (
+                                <button
+                                  onClick={() => copyToClipboard(String(cls._id), `cls-${cls._id}`)}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center text-slate-400 hover:text-slate-600"
+                                  title={`Copy Class ID: ${cls._id}`}
+                                >
+                                  {copiedKey === `cls-${cls._id}` ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                                </button>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-2 py-2 text-sm font-medium text-slate-900">{formatStudentName(cls)}</td>
                           <td className="px-2 py-2 text-sm text-slate-700">{cls.subject || '-'}</td>
                           <td className="px-2 py-2 text-center">

@@ -480,7 +480,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
               <p className="text-2xl font-bold text-slate-900">{totalHours.toFixed(2)}</p>
               <p className="text-xs text-slate-500 mt-1">{classes.length} classes</p>
               {invoice._storedTotalHours != null && Math.abs(invoice._storedTotalHours - totalHours) >= 0.001 && (
-                <p className="text-[10px] text-amber-600 mt-0.5">DB stored: {invoice._storedTotalHours.toFixed(2)}</p>
+                <p className="text-[10px] text-amber-600 mt-0.5" title="The invoice was originally created with this value. The number above is recalculated from the actual linked classes.">Originally recorded: {invoice._storedTotalHours.toFixed(2)}</p>
               )}
             </Card>
             

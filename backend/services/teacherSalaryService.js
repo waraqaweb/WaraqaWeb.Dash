@@ -353,10 +353,12 @@ class TeacherSalaryService {
         return null;
       }
 
+      // Always use the actual aggregated class hours as the invoice total.
+      // The snapshot is stored for reference but never inflates totalHours above
+      // what the linked classes actually sum to.
       let invoiceHours = totalHours;
       if (snapshotHours !== null && snapshotHours > invoiceHours) {
-        console.log(`[createTeacherInvoice] Overriding aggregated hours (${invoiceHours}) with snapshot (${snapshotHours}) for teacher ${teacherId}`);
-        invoiceHours = snapshotHours;
+        console.log(`[createTeacherInvoice] Snapshot (${snapshotHours}) > aggregated (${invoiceHours}) for teacher ${teacherId}; using aggregated (class-based) hours`);
       }
 
       invoiceHours = Math.round(invoiceHours * 1000) / 1000;

@@ -27,6 +27,7 @@ import DashboardLayout from './components/layout/DashboardLayout';
 import InvoiceViewModal from './components/invoices/InvoiceViewModal';
 import RecordPaymentModal from './components/invoices/RecordPaymentModal';
 import InvoicePublicPage from './components/invoices/InvoicePublicPage';
+import TeacherInvoicePublicPage from './components/teacherSalary/TeacherInvoicePublicPage';
 import PublicEvaluationBookingPage from './components/meetings/PublicEvaluationBookingPage';
 import PublicStudentRegistrationPage from './components/registration/PublicStudentRegistrationPage';
 import PublicTeacherContractPage from './components/registration/PublicTeacherContractPage';
@@ -223,6 +224,11 @@ const AppRoutes = () => {
       <Route
         path="/public/invoices/:slug"
         element={<InvoicePublicPage />}
+      />
+
+      <Route
+        path="/dashboard/teacher-salary/shared/:token"
+        element={<TeacherInvoicePublicPage />}
       />
 
       <Route

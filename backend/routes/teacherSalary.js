@@ -28,6 +28,55 @@ const getPeriodLabel = (month, year) => {
     return 'All periods';
   }
   const idx = Math.min(Math.max(month - 1, 0), 11);
+
+/**
+ * Recompute financial fields when totalHours differs from stored value.
+ * Respects admin overrides — only recalculates non-overridden fields.
+ */
+function recomputeFinancials(invoice, computedTotalHours) {
+  if (Math.abs((invoice.totalHours || 0) - computedTotalHours) < 0.001) return invoice;
+
+  const roundCurrency = (v) => { const n = Number(v || 0); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+  const ov = invoice.overrides || {};
+  const rate = Number(invoice.rateSnapshot?.rate || 0);
+  const exchangeRate = (ov.exchangeRate != null ? Number(ov.exchangeRate) : Number(invoice.exchangeRateSnapshot?.rate || 1));
+
+  const grossUSD = ov.grossAmountUSD != null ? roundCurrency(ov.grossAmountUSD) : roundCurrency(computedTotalHours * rate);
+  const bonusesUSD = ov.bonusesUSD != null ? roundCurrency(ov.bonusesUSD) : roundCurrency(invoice.bonusesUSD || 0);
+  const extrasUSD = ov.extrasUSD != null ? roundCurrency(ov.extrasUSD) : roundCurrency(invoice.extrasUSD || 0);
+  const totalUSD = ov.totalUSD != null ? roundCurrency(ov.totalUSD) : roundCurrency(grossUSD + bonusesUSD + extrasUSD);
+
+  const grossEGP = ov.grossAmountEGP != null ? roundCurrency(ov.grossAmountEGP) : roundCurrency(grossUSD * exchangeRate);
+  const bonusesEGP = ov.bonusesEGP != null ? roundCurrency(ov.bonusesEGP) : roundCurrency(bonusesUSD * exchangeRate);
+  const extrasEGP = ov.extrasEGP != null ? roundCurrency(ov.extrasEGP) : roundCurrency(extrasUSD * exchangeRate);
+  const totalEGP = ov.totalEGP != null ? roundCurrency(ov.totalEGP) : roundCurrency(totalUSD * exchangeRate);
+
+  let transferFeeEGP;
+  if (ov.transferFeeEGP != null) {
+    transferFeeEGP = roundCurrency(ov.transferFeeEGP);
+  } else {
+    const fee = invoice.transferFeeSnapshot || {};
+    if (fee.model === 'flat') transferFeeEGP = roundCurrency(fee.value || 0);
+    else if (fee.model === 'percentage') transferFeeEGP = roundCurrency(totalEGP * (fee.value || 0) / 100);
+    else transferFeeEGP = 0;
+  }
+
+  const netEGP = ov.netAmountEGP != null ? roundCurrency(ov.netAmountEGP) : roundCurrency(Math.max(0, totalEGP - transferFeeEGP));
+
+  return {
+    ...invoice,
+    grossAmountUSD: grossUSD,
+    bonusesUSD,
+    extrasUSD,
+    totalUSD,
+    grossAmountEGP: grossEGP,
+    bonusesEGP,
+    extrasEGP,
+    totalEGP,
+    transferFeeEGP,
+    netAmountEGP: netEGP
+  };
+}
   return `${MONTH_NAMES[idx]} ${year}`;
 };
 
@@ -357,10 +406,13 @@ router.get('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, r
     // Recompute totalHours from actual linked classes to catch any discrepancy
     const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
 
+    // Recompute financial fields if hours changed
+    const corrected = recomputeFinancials(invoice, computedTotalHours);
+
     res.json({ 
       success: true, 
       invoice: {
-        ...invoice,
+        ...corrected,
         classes,
         totalHours: computedTotalHours,
         _storedTotalHours: invoice.totalHours,
@@ -1278,10 +1330,13 @@ router.get('/teacher/invoices/:id', authenticateToken, requireTeacher, async (re
     // Recompute totalHours from actual linked classes
     const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
 
+    // Recompute financial fields if hours changed
+    const corrected = recomputeFinancials(invoice, computedTotalHours);
+
     res.json({ 
       success: true, 
       invoice: {
-        ...invoice,
+        ...corrected,
         classes,
         totalHours: computedTotalHours,
         _storedTotalHours: invoice.totalHours,
@@ -1390,10 +1445,47 @@ router.get('/shared/:token', async (req, res) => {
       return res.status(404).json({ error: 'Invoice not found or link expired' });
     }
 
-    // Populate teacher info
+    // Populate teacher and classes
     await invoice.populate('teacher', 'firstName lastName email');
+    await invoice.populate('classIds');
 
-    res.json({ success: true, invoice });
+    const inv = invoice.toObject();
+    const safeName = (obj) => {
+      if (!obj) return null;
+      const first = obj.firstName || '';
+      const last = obj.lastName || '';
+      const name = `${first} ${last}`.trim();
+      if (!name || /^(undefined|null)(\s+(undefined|null))?$/i.test(name)) return null;
+      return name;
+    };
+
+    const classes = (inv.classIds || []).filter(cls => cls && cls._id).map(cls => ({
+      _id: cls._id,
+      date: cls.scheduledDate,
+      studentName: cls.student?.studentName || safeName(cls.student) || 'N/A',
+      subject: cls.subject || '-',
+      duration: cls.duration || 0,
+      hours: (cls.duration || 0) / 60,
+      status: cls.status || 'scheduled'
+    }));
+
+    const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
+
+    // Recompute financial fields if hours changed
+    const corrected = recomputeFinancials(inv, computedTotalHours);
+
+    res.json({
+      success: true,
+      invoice: {
+        ...corrected,
+        classes,
+        totalHours: computedTotalHours,
+        // Strip internal fields from public response
+        changeHistory: undefined,
+        internalNotes: undefined,
+        classIds: undefined
+      }
+    });
   } catch (error) {
     console.error('[GET /shared/:token] Error:', error);
     res.status(500).json({ error: error.message });

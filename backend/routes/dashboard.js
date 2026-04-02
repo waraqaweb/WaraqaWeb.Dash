@@ -9,6 +9,12 @@
 
 const express = require('express');
 const mongoose = require('mongoose');
+const dayjs = require('dayjs');
+const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const CAIRO_TZ = 'Africa/Cairo';
 const User = require('../models/User');
 const UserActivity = require('../models/UserActivity');
 const Class = require('../models/Class');
@@ -143,8 +149,9 @@ router.get('/stats', authenticateToken, async (req, res) => {
     }
     const role = req.user?.role;
     const now = new Date();
-    const currentMonth = now.getMonth() + 1;
-    const currentYear = now.getFullYear();
+    const nowCairo = dayjs().tz(CAIRO_TZ);
+    const currentMonth = nowCairo.month() + 1;
+    const currentYear = nowCairo.year();
 
     // Compute dashboard usage metrics (daily unique users, unique last 30 days, current active users)
     let dailyUniqueDashboardUsers = 0;
@@ -458,8 +465,8 @@ router.get('/stats', authenticateToken, async (req, res) => {
       }
 
       // Hours & classes completed this month
-      const monthStart = new Date(currentYear, currentMonth - 1, 1);
-      const monthEnd = new Date(currentYear, currentMonth, 1);
+      const monthStart = nowCairo.startOf('month').toDate();
+      const monthEnd = nowCairo.add(1, 'month').startOf('month').toDate();
 
       // Aggregate all classes for general stats (classes/cancellations, etc.)
       const teacherAggAll = await Class.aggregate([

@@ -28,6 +28,8 @@ const getPeriodLabel = (month, year) => {
     return 'All periods';
   }
   const idx = Math.min(Math.max(month - 1, 0), 11);
+  return `${MONTH_NAMES[idx]} ${year}`;
+};
 
 /**
  * Recompute financial fields when totalHours differs from stored value.
@@ -77,8 +79,6 @@ function recomputeFinancials(invoice, computedTotalHours) {
     netAmountEGP: netEGP
   };
 }
-  return `${MONTH_NAMES[idx]} ${year}`;
-};
 
 const getPreviousPeriod = (month, year) => {
   if (!month || !year) return null;

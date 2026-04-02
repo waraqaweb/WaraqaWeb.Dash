@@ -21,9 +21,17 @@ const GuardianHoursAudit = require('../models/GuardianHoursAudit');
 const AccountStatusAudit = require('../models/AccountStatusAudit');
 const Notification = require('../models/Notification');
 const Class = require('../models/Class');
+const TeacherInvoice = require('../models/TeacherInvoice');
+const TeacherSalaryAudit = require('../models/TeacherSalaryAudit');
 const { getTeacherVacationSummaryMap } = require('../services/teacherVacationService');
 const { computeGuardianHoursFromPaidInvoices, normalizeId, roundHours } = require('../services/guardianHoursService');
 const { isValidTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
+const dayjs = require('dayjs');
+const utcPlugin = require('dayjs/plugin/utc');
+const timezonePlugin = require('dayjs/plugin/timezone');
+dayjs.extend(utcPlugin);
+dayjs.extend(timezonePlugin);
+const CAIRO_TZ = 'Africa/Cairo';
 const { 
   authenticateToken, 
   requireAdmin, 
@@ -509,9 +517,9 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
     // (which is a mutable snapshot).
     let usersPayload = users;
     if (shouldIncludeComputedHours && Array.isArray(users) && users.length) {
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const nowCairo = dayjs().tz(CAIRO_TZ);
+      const monthStart = nowCairo.startOf('month').toDate();
+      const monthEnd = nowCairo.add(1, 'month').startOf('month').toDate();
       const teacherIds = users.map((u) => u && u._id).filter(Boolean);
 
       let hoursByTeacherId = {};
@@ -1185,6 +1193,221 @@ router.post('/admin/account-logs', [
           studentName,
           classDate: cls?.scheduledDate || null,
           classId: cls?._id || null,
+        });
+      });
+    }
+
+    // Teacher-specific logs: classes taught (hours added) and teacher invoices
+    if (user.role === 'teacher') {
+      // 1. Classes taught by this teacher (each class = hours earned)
+      const teacherClasses = await Class.find({
+        teacher: user._id,
+        deleted: { $ne: true },
+        status: { $in: ['attended', 'missed_by_student', 'completed', 'absent'] }
+      })
+        .select('scheduledDate duration status classReport student billedInTeacherInvoiceId')
+        .populate('student', 'firstName lastName')
+        .sort({ scheduledDate: -1 })
+        .limit(maxLimit)
+        .lean();
+
+      // Build a map of classId → reporter from classReport
+      const reporterIds = new Set();
+      teacherClasses.forEach((cls) => {
+        const reporter = cls?.classReport?.submittedBy || cls?.classReport?.reportedBy;
+        if (reporter) reporterIds.add(String(reporter));
+      });
+      reporterIds.forEach((id) => actorIds.add(id));
+
+      // Compute running balance: sort classes chronologically for balance tracking
+      const sortedTeacherClasses = [...teacherClasses].sort((a, b) =>
+        new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime()
+      );
+
+      let runningBalance = 0;
+      const classBalances = new Map();
+      sortedTeacherClasses.forEach((cls) => {
+        if (!shouldCountClass(cls)) return;
+        const durationMinutes = Number(cls?.duration || 0) || 0;
+        const hours = Number.isFinite(durationMinutes) && durationMinutes > 0
+          ? Math.round((durationMinutes / 60) * 1000) / 1000
+          : 0;
+        if (!hours) return;
+        const before = Math.round(runningBalance * 1000) / 1000;
+        runningBalance += hours;
+        const after = Math.round(runningBalance * 1000) / 1000;
+        classBalances.set(String(cls._id), { before, after });
+      });
+
+      teacherClasses.forEach((cls) => {
+        if (!shouldCountClass(cls)) return;
+        const durationMinutes = Number(cls?.duration || 0) || 0;
+        const hours = Number.isFinite(durationMinutes) && durationMinutes > 0
+          ? Math.round((durationMinutes / 60) * 1000) / 1000
+          : 0;
+        if (!hours) return;
+        const studentName = buildStudentName(cls?.student || {});
+        const reporter = cls?.classReport?.submittedBy || cls?.classReport?.reportedBy;
+        const reportDate = cls?.classReport?.submittedAt || cls?.classReport?.reportedAt || cls?.updatedAt;
+        const balance = classBalances.get(String(cls._id));
+        const billed = !!cls.billedInTeacherInvoiceId;
+        logs.push({
+          timestamp: reportDate || cls?.scheduledDate || new Date(),
+          source: 'class',
+          action: 'hours_taught',
+          success: true,
+          message: studentName
+            ? `Class taught (${studentName}) — ${hours}h${billed ? ' [billed]' : ''}`
+            : `Class taught — ${hours}h${billed ? ' [billed]' : ''}`,
+          hours,
+          hoursIndicator: 'added',
+          indicatorLabel: studentName || null,
+          studentName,
+          classDate: cls?.scheduledDate || null,
+          classId: cls?._id || null,
+          classDuration: durationMinutes,
+          classStatus: cls?.status || null,
+          billed,
+          balanceBefore: balance?.before,
+          balanceAfter: balance?.after,
+          balanceNote: 'teacher hours (cumulative)',
+          actorId: reporter || null,
+        });
+      });
+
+      // 2. Teacher Invoices (from TeacherInvoice model)
+      const teacherInvoices = await TeacherInvoice.find({
+        teacher: user._id,
+        deleted: { $ne: true }
+      })
+        .select('invoiceNumber month year status totalHours totalUSD totalEGP netAmountEGP lockedMonthlyHours createdAt updatedAt paidAt paidBy rateSnapshot changeHistory bonuses extras')
+        .sort({ createdAt: -1 })
+        .limit(maxLimit)
+        .lean();
+
+      teacherInvoices.forEach((inv) => {
+        const billingPeriod = `${inv.year}-${String(inv.month).padStart(2, '0')}`;
+        const invoiceBase = {
+          invoiceNumber: inv.invoiceNumber,
+          billingPeriod: { label: billingPeriod, month: inv.month, year: inv.year },
+          hours: inv.totalHours,
+        };
+
+        // Invoice creation
+        if (inv.createdAt) {
+          logs.push({
+            timestamp: inv.createdAt,
+            source: 'teacher-invoice',
+            action: 'invoice_created',
+            success: true,
+            message: `Teacher invoice ${inv.invoiceNumber} created — ${inv.totalHours}h, $${(inv.totalUSD || 0).toFixed(2)} USD`,
+            ...invoiceBase,
+            amount: inv.totalUSD,
+            amountEGP: inv.totalEGP,
+            netEGP: inv.netAmountEGP,
+            lockedMonthlyHours: inv.lockedMonthlyHours,
+            balanceBefore: inv.lockedMonthlyHours != null ? Math.round((inv.lockedMonthlyHours) * 1000) / 1000 : undefined,
+            balanceAfter: inv.lockedMonthlyHours != null ? Math.round(Math.max(0, (inv.lockedMonthlyHours || 0) - (inv.totalHours || 0)) * 1000) / 1000 : undefined,
+            balanceNote: 'monthly hours (before → after invoice)',
+          });
+        }
+
+        // Payment
+        if (inv.paidAt) {
+          if (inv.paidBy) actorIds.add(String(inv.paidBy));
+          logs.push({
+            timestamp: inv.paidAt,
+            source: 'teacher-invoice',
+            action: 'invoice_paid',
+            success: true,
+            message: `Teacher invoice ${inv.invoiceNumber} marked as paid — EGP ${(inv.netAmountEGP || inv.totalEGP || 0).toFixed(2)}`,
+            ...invoiceBase,
+            amount: inv.totalUSD,
+            amountEGP: inv.netAmountEGP || inv.totalEGP,
+            actorId: inv.paidBy || null,
+          });
+        }
+
+        // Change history
+        const changeHistory = Array.isArray(inv.changeHistory) ? inv.changeHistory : [];
+        changeHistory.forEach((ch) => {
+          if (ch?.changedBy) actorIds.add(String(ch.changedBy));
+          logs.push({
+            timestamp: ch.changedAt || inv.updatedAt || inv.createdAt,
+            source: 'teacher-invoice',
+            action: ch.action || 'invoice_update',
+            success: true,
+            message: ch.description || `Teacher invoice ${inv.invoiceNumber} updated`,
+            ...invoiceBase,
+            actorId: ch.changedBy || null,
+            reason: ch.reason || null,
+          });
+        });
+
+        // Bonuses
+        const bonuses = Array.isArray(inv.bonuses) ? inv.bonuses : [];
+        bonuses.forEach((b) => {
+          if (b?.addedBy) actorIds.add(String(b.addedBy));
+          logs.push({
+            timestamp: b.addedAt || inv.updatedAt,
+            source: 'teacher-invoice',
+            action: 'bonus_added',
+            success: true,
+            message: `Bonus $${(b.amountUSD || 0).toFixed(2)} added to ${inv.invoiceNumber} — ${b.reason || 'No reason'}`,
+            ...invoiceBase,
+            amount: b.amountUSD,
+            actorId: b.addedBy || null,
+            reason: b.reason || null,
+          });
+        });
+
+        // Extras
+        const extras = Array.isArray(inv.extras) ? inv.extras : [];
+        extras.forEach((e) => {
+          if (e?.addedBy) actorIds.add(String(e.addedBy));
+          logs.push({
+            timestamp: e.addedAt || inv.updatedAt,
+            source: 'teacher-invoice',
+            action: `extra_${e.category || 'other'}`,
+            success: true,
+            message: `${(e.category || 'Extra').charAt(0).toUpperCase() + (e.category || 'extra').slice(1)} $${(e.amountUSD || 0).toFixed(2)} — ${e.reason || 'No reason'} (${inv.invoiceNumber})`,
+            ...invoiceBase,
+            amount: e.amountUSD,
+            actorId: e.addedBy || null,
+            reason: e.reason || null,
+          });
+        });
+      });
+
+      // 3. TeacherSalaryAudit entries (rate changes, settings, job runs, etc.)
+      const salaryAuditLogs = await TeacherSalaryAudit.find({
+        $or: [
+          { entityType: 'User', entityId: user._id },
+          { entityType: 'TeacherInvoice', 'metadata.teacherId': user._id },
+          { actor: user._id, entityType: 'TeacherInvoice' }
+        ]
+      })
+        .sort({ timestamp: -1 })
+        .limit(maxLimit)
+        .lean();
+
+      salaryAuditLogs.forEach((entry) => {
+        if (entry.actor) actorIds.add(String(entry.actor));
+        const beforeHours = entry?.before?.monthlyHours;
+        const afterHours = entry?.after?.monthlyHours;
+        logs.push({
+          timestamp: entry.timestamp || new Date(),
+          source: 'salary-audit',
+          action: entry.action,
+          success: entry.success !== false,
+          message: entry.reason || `Salary action: ${entry.action}`,
+          actorId: entry.actor || null,
+          balanceBefore: Number.isFinite(Number(beforeHours)) ? Math.round(Number(beforeHours) * 1000) / 1000 : undefined,
+          balanceAfter: Number.isFinite(Number(afterHours)) ? Math.round(Number(afterHours) * 1000) / 1000 : undefined,
+          balanceNote: beforeHours !== undefined || afterHours !== undefined ? 'monthly hours' : undefined,
+          metadata: entry.metadata || null,
+          before: entry.before || null,
+          after: entry.after || null,
         });
       });
     }

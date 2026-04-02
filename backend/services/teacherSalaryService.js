@@ -20,6 +20,7 @@ const User = require('../models/User');
 const Class = require('../models/Class');
 const notificationService = require('./notificationService');
 
+const CAIRO_TZ = 'Africa/Cairo';
 const TEACHER_VISIBLE_STATUSES = ['published', 'paid', 'archived'];
 
 class TeacherSalaryService {
@@ -128,11 +129,11 @@ class TeacherSalaryService {
    */
   static async aggregateTeacherHours(teacherId, month, year) {
     try {
-      // Calculate UTC date range for the month
-      const startDate = dayjs.utc(`${year}-${String(month).padStart(2, '0')}-01`).startOf('month').toDate();
-      const endDate = dayjs.utc(startDate).add(1, 'month').toDate();
+      // Calculate date range using Cairo timezone boundaries (admin dashboard timezone)
+      const startDate = dayjs.tz(`${year}-${String(month).padStart(2, '0')}-01`, CAIRO_TZ).startOf('month').toDate();
+      const endDate = dayjs.tz(`${year}-${String(month).padStart(2, '0')}-01`, CAIRO_TZ).add(1, 'month').startOf('month').toDate();
 
-      console.log(`[aggregateTeacherHours] Teacher: ${teacherId}, Period: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+      console.log(`[aggregateTeacherHours] Teacher: ${teacherId}, Period: ${startDate.toISOString()} to ${endDate.toISOString()} (Cairo TZ)`);
 
       // Query classes: include current countable statuses used in production data.
       // We include 'completed' as some flows mark attended lessons that way.
@@ -1451,8 +1452,8 @@ class TeacherSalaryService {
       throw new Error('Teacher, month, and year are required');
     }
 
-    const startDate = dayjs.utc(`${year}-${String(month).padStart(2, '0')}-01`).startOf('month').toDate();
-    const endDate = dayjs.utc(startDate).add(1, 'month').toDate();
+    const startDate = dayjs.tz(`${year}-${String(month).padStart(2, '0')}-01`, CAIRO_TZ).startOf('month').toDate();
+    const endDate = dayjs.tz(`${year}-${String(month).padStart(2, '0')}-01`, CAIRO_TZ).add(1, 'month').startOf('month').toDate();
 
     const invoices = await TeacherInvoice.find({
       teacher: teacherId,

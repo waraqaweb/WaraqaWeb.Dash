@@ -22,7 +22,11 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env'
 const mongoose = require('mongoose');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const CAIRO_TZ = 'Africa/Cairo';
 
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/waraqa';
 const DRY_RUN = process.env.DRY_RUN === '1';
@@ -34,11 +38,11 @@ async function main() {
   const User = require('../models/User');
   const Class = require('../models/Class');
 
-  const now = dayjs.utc();
+  const now = dayjs().tz(CAIRO_TZ);
   const startOfMonth = now.startOf('month').toDate();
   const endOfMonth = now.add(1, 'month').startOf('month').toDate();
 
-  console.log(`[repair-teacher-hours] Current month range: ${startOfMonth.toISOString()} — ${endOfMonth.toISOString()}`);
+  console.log(`[repair-teacher-hours] Current month range (Cairo): ${startOfMonth.toISOString()} — ${endOfMonth.toISOString()}`);
   console.log(`[repair-teacher-hours] DRY_RUN=${DRY_RUN}\n`);
 
   const teachers = await User.find({ role: 'teacher', disabled: { $ne: true } })

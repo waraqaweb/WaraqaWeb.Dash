@@ -734,6 +734,9 @@
 														<h4 className="font-semibold text-foreground mb-3">Contact Information</h4>
 														<div className="space-y-2 text-sm">
 															<div className="flex items-center space-x-2">
+																<span className="text-[11px] text-muted-foreground font-mono select-all">ID: {teacher._id}</span>
+															</div>
+															<div className="flex items-center space-x-2">
 																<Mail className="h-4 w-4 text-muted-foreground" />
 																<span>{teacher.email}</span>
 															</div>

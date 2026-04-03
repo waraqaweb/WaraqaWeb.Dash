@@ -36,7 +36,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
   const getNavigationItems = () => {
     // Ordered navigation as requested:
     // Dashboard, Classes, Teachers, Guardians, Students, Vacations, Invoices, Salaries, Feedbacks
-    const salariesLink = isAdmin() ? '/admin/teacher-salaries' : '/teacher/salary';
+    const salariesLink = isAdmin() ? '/dashboard/salaries' : '/teacher/salary';
     
     // Presenter roles: always admin, plus teacher/student/guardian if global setting enabled
     const presenterRoles = ['admin'];

@@ -19,7 +19,7 @@ import MyStudentsPage from './MyStudentsPage';
 import ClassesPage from './ClassesPage';
 import InvoicesPage from './InvoicesPage';
 import ClassReportPage from './ClassReportPage';
-import SalariesPage from './salaries/SalariesPage';
+import TeacherSalaries from '../admin/TeacherSalaries';
 import LibraryDashboard from '../library/LibraryDashboard';
 import TeacherAvailabilityPage from './TeacherAvailabilityPage';
 import MeetingAvailabilityAdminPage from './MeetingAvailabilityAdminPage';
@@ -294,7 +294,7 @@ const Dashboard = () => {
       case 'invoices':
         return <InvoicesPage isActive={isActive} />;
       case 'salaries':
-        return <SalariesPage isActive={isActive} />;
+        return <TeacherSalaries isActive={isActive} />;
       case 'library':
         return <LibraryDashboard isActive={isActive} />;
       case 'availability':

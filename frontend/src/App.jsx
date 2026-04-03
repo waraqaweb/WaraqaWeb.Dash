@@ -43,7 +43,6 @@ import SalaryViewModal from './pages/dashboard/salaries/SalaryViewModal';
 import SalaryEditModal from './pages/dashboard/salaries/SalaryEditModal';
 import SalaryCreateModal from './pages/dashboard/salaries/SalaryCreateModal';
 // Teacher Salary pages
-import TeacherSalaries from './pages/admin/TeacherSalaries';
 import TeacherSalaryDashboard from './pages/teacher/SalaryDashboard';
 import LibraryDashboard from './pages/library/LibraryDashboard';
 import PresenterPublicPage from './pages/PresenterPublicPage';
@@ -441,13 +440,7 @@ const AppRoutes = () => {
       {/* Teacher Salary System Routes - Wrapped in DashboardLayout for consistent layout */}
       <Route
         path="/admin/teacher-salaries"
-        element={
-          <ProtectedRoute requiredRole="admin">
-            <DashboardLayout activeView="teacher-salaries">
-              <TeacherSalaries />
-            </DashboardLayout>
-          </ProtectedRoute>
-        }
+        element={<Navigate to="/dashboard/salaries" replace />}
       />
       <Route
         path="/teacher/salary"

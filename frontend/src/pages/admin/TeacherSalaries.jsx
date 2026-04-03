@@ -16,6 +16,10 @@ import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
+import useBulkSelect from '../../hooks/useBulkSelect';
+import BulkActionBar from '../../components/ui/BulkActionBar';
+import ExportExcelButton from '../../components/ui/ExportExcelButton';
+import { fetchAllForExport, mapSalaryRow, downloadExcel } from '../../utils/exportToExcel';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import TeacherInvoiceDetailModal from '../../components/teacherSalary/TeacherInvoiceDetailModal';
@@ -52,7 +56,8 @@ import {
   Link2,
   CheckCheck,
   Copy,
-  MessageSquare
+  MessageSquare,
+  CheckSquare
 } from 'lucide-react';
 
 const formatEGPSummary = (value) => new Intl.NumberFormat('en-EG', {
@@ -504,6 +509,46 @@ const TeacherSalaries = () => {
     return list;
   }, [invoices, activeStatusTab]);
 
+  const bulk = useBulkSelect(orderedInvoices);
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [bulkToast, setBulkToast] = useState(null);
+
+  const runBulkAction = async (label, apiCall) => {
+    const ids = [...bulk.selected];
+    if (ids.length === 0) return;
+    if (!window.confirm(`${label} ${ids.length} invoice(s)?`)) return;
+    setBulkActionLoading(true);
+    try {
+      const { data } = await apiCall(ids);
+      const parts = [];
+      if (data.paid) parts.push(`${data.paid} paid`);
+      if (data.published) parts.push(`${data.published} published`);
+      if (data.deleted) parts.push(`${data.deleted} deleted`);
+      if (data.failed?.length) parts.push(`${data.failed.length} failed`);
+      setBulkToast({ type: data.failed?.length ? 'warning' : 'success', message: parts.join(', ') || 'Done' });
+      setTimeout(() => setBulkToast(null), 3500);
+      bulk.clearSelection();
+      bulk.toggleSelectionMode();
+      fetchInvoices();
+    } catch (err) {
+      console.error(`Bulk ${label} error:`, err);
+      setBulkToast({ type: 'error', message: err?.response?.data?.message || `Bulk ${label} failed` });
+      setTimeout(() => setBulkToast(null), 4000);
+    } finally {
+      setBulkActionLoading(false);
+    }
+  };
+
+  const handleBulkMarkPaid = () => runBulkAction('Mark as paid', (ids) => api.post('/teacher-salary/admin/bulk/mark-paid', { ids }));
+  const handleBulkPublish = () => runBulkAction('Publish', (ids) => api.post('/teacher-salary/admin/bulk/publish', { ids }));
+  const handleBulkDelete = () => runBulkAction('Delete', (ids) => api.post('/teacher-salary/admin/bulk/delete', { ids }));
+
+  // Clear selection on tab change
+  const handleStatusTabChangeWithClear = (status) => {
+    bulk.clearSelection();
+    handleStatusTabChange(status);
+  };
+
   if (!isAdmin) {
     return null;
   }
@@ -597,22 +642,83 @@ const TeacherSalaries = () => {
 
         {/* Invoices List */}
           <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleStatusTabChange('unpaid')}
-              className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${activeStatusTab === 'unpaid' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-            >
-              Unpaid
-            </button>
-            <button
-              type="button"
-              onClick={() => handleStatusTabChange('paid')}
-              className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${activeStatusTab === 'paid' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-            >
-              Paid
-            </button>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleStatusTabChangeWithClear('unpaid')}
+                className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${activeStatusTab === 'unpaid' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                Unpaid
+              </button>
+              <button
+                type="button"
+                onClick={() => handleStatusTabChangeWithClear('paid')}
+                className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${activeStatusTab === 'paid' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                Paid
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <ExportExcelButton onExport={async () => {
+                const params = { page: 1, limit: 10000, sortBy, sortOrder, ...salaryFilters };
+                Object.keys(params).forEach(key => { if (!params[key]) delete params[key]; });
+                const response = await api.get('/teacher-salary/admin/invoices', { params });
+                const rows = (response.data.invoices || []).map(inv => ({
+                  'Invoice #': inv.invoiceNumber || '',
+                  'Teacher': `${inv.teacher?.firstName || ''} ${inv.teacher?.lastName || ''}`.trim(),
+                  'Month': inv.month && inv.year ? `${inv.month}/${inv.year}` : '',
+                  'Status': inv.status || '',
+                  'Hours': inv.totalHours?.toFixed(2) || '0',
+                  'Rate (USD)': inv.rateSnapshot?.rate || inv.hourlyRateUSD || '',
+                  'Total (EGP)': inv.netAmountEGP || inv.totalEGP || inv.finalTotal || '',
+                  'Paid At': inv.paidAt ? new Date(inv.paidAt).toLocaleDateString() : '',
+                }));
+                await downloadExcel(rows, 'teacher-salaries');
+              }} />
+              <button
+                type="button"
+                onClick={bulk.toggleSelectionMode}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
+                  bulk.selectionMode
+                    ? 'border-primary/30 bg-primary/5 text-primary'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <CheckSquare className="h-3.5 w-3.5" />
+                {bulk.selectionMode ? 'Exit' : 'Select'}
+              </button>
+              {bulkToast && (
+                <span className={`text-xs font-medium ${bulkToast.type === 'success' ? 'text-emerald-600' : bulkToast.type === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
+                  {bulkToast.message}
+                </span>
+              )}
+            </div>
           </div>
+
+          {bulk.selectionMode && (
+            <div className="border-b border-slate-100 pb-3 mb-3">
+              <BulkActionBar
+                selectedCount={bulk.selectedCount}
+                isAllSelected={bulk.isAllSelected}
+                onSelectAll={bulk.selectAll}
+                onExit={() => { bulk.clearSelection(); bulk.toggleSelectionMode(); }}
+              >
+                <button type="button" onClick={handleBulkMarkPaid} disabled={bulk.selectedCount === 0 || bulkActionLoading}
+                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-40">
+                  <Check className="h-3 w-3" /> Mark paid
+                </button>
+                <button type="button" onClick={handleBulkPublish} disabled={bulk.selectedCount === 0 || bulkActionLoading}
+                  className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-40">
+                  <Send className="h-3 w-3" /> Publish
+                </button>
+                <button type="button" onClick={handleBulkDelete} disabled={bulk.selectedCount === 0 || bulkActionLoading}
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-40">
+                  <Trash className="h-3 w-3" /> Delete
+                </button>
+              </BulkActionBar>
+            </div>
+          )}
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <LoadingSpinner />
@@ -636,11 +742,22 @@ const TeacherSalaries = () => {
               <div className="space-y-4">
                 {orderedInvoices.map((invoice) => {
                   const statusColor = getStatusColor(invoice.status);
+                  const selected = bulk.selectionMode && bulk.selected.has(invoice._id);
                   return (
-                    <div key={invoice._id} className="rounded-xl border border-slate-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+                    <div key={invoice._id} className={`rounded-xl border border-slate-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${selected ? 'ring-2 ring-primary/30 bg-primary/5' : ''}`}>
                       <div className="flex flex-col gap-3 p-3 md:p-4 lg:flex-row lg:items-start lg:justify-between">
                         <div className="flex-1 space-y-2">
                           <div className="flex items-center gap-3 flex-wrap">
+                            {bulk.selectionMode && (
+                              <button
+                                type="button"
+                                onClick={() => bulk.toggleItem(invoice._id)}
+                                className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300"
+                                aria-label={selected ? 'Deselect' : 'Select'}
+                              >
+                                {selected && <Check className="h-3 w-3 text-primary" />}
+                              </button>
+                            )}
                             <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${statusColor}`}>
                               <span className="capitalize">{invoice.status || 'draft'}</span>
                             </span>

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../../api/axios';
-import { Plus, Eye, Pencil, CalendarDays, CheckSquare, Trash2, Send, Check, MessageSquare, Copy, CheckCheck, X } from "lucide-react";
+import { Plus, Eye, Pencil, CalendarDays, CheckSquare, Trash2, Send, Check, MessageSquare, Copy, CheckCheck, X, Link2, Clock, DollarSign, ExternalLink } from "lucide-react";
 import useBulkSelect from '../../../hooks/useBulkSelect';
 import BulkActionBar from '../../../components/ui/BulkActionBar';
 import ExportExcelButton from '../../../components/ui/ExportExcelButton';
@@ -44,6 +44,7 @@ const SalariesPage = () => {
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [bulkToast, setBulkToast] = useState(null);
   const [teacherMsgModal, setTeacherMsgModal] = useState(null); // { salary, message, copied }
+  const [copiedLinkId, setCopiedLinkId] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -298,7 +299,7 @@ const SalariesPage = () => {
 
   const openTeacherMsgModal = (salary) => {
     const slug = salary?.invoiceSlug;
-    const publicLink = slug ? `${window.location.origin}/dashboard/public/invoices/${slug}` : '';
+    const publicLink = slug ? `${window.location.origin}/dashboard/teacher-salary/shared/${slug}` : '';
     setTeacherMsgModal({ salary, message: buildTeacherMessage(salary, publicLink), copied: false });
   };
 
@@ -323,16 +324,39 @@ const SalariesPage = () => {
     }
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(teacherMsgModal.message)}`, '_blank', 'noopener,noreferrer');
   };
+
+  const handleCopyPublicLink = (salary) => {
+    const slug = salary?.invoiceSlug;
+    if (!slug) return;
+    const url = `${window.location.origin}/dashboard/teacher-salary/shared/${slug}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedLinkId(salary._id);
+      setTimeout(() => setCopiedLinkId(null), 2000);
+    });
+  };
+
+  const handleOpenWhatsapp = (salary) => {
+    const phone = String(salary?.teacher?.phone || salary?.teacher?.whatsapp || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (!phone) {
+      alert('No phone number found for this teacher.');
+      return;
+    }
+    const slug = salary?.invoiceSlug;
+    const publicLink = slug ? `${window.location.origin}/dashboard/teacher-salary/shared/${slug}` : '';
+    const msg = buildTeacherMessage(salary, publicLink);
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener,noreferrer');
+  };
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
   const formatDate = (d) => d ? formatDateDDMMMYYYY(d) : '—';
 
   const getStatusTone = (status) => {
     switch (status) {
-      case 'paid': return 'bg-emerald-50 text-emerald-700';
-      case 'pending': return 'bg-amber-50 text-amber-700';
-      case 'cancelled': return 'bg-slate-100 text-slate-500';
-      case 'overdue': return 'bg-rose-50 text-rose-700';
-      default: return 'bg-slate-50 text-slate-600';
+      case 'paid': return 'bg-emerald-100/80 text-emerald-700 ring-1 ring-emerald-200';
+      case 'published': return 'bg-sky-100/80 text-sky-700 ring-1 ring-sky-200';
+      case 'pending': return 'bg-amber-100/80 text-amber-700 ring-1 ring-amber-200';
+      case 'cancelled': return 'bg-slate-100 text-slate-400 ring-1 ring-slate-200';
+      case 'overdue': return 'bg-rose-100/80 text-rose-700 ring-1 ring-rose-200';
+      default: return 'bg-slate-100 text-slate-500 ring-1 ring-slate-200';
     }
   };
 
@@ -462,66 +486,133 @@ const SalariesPage = () => {
                 const billingStart = salary.billingPeriod?.startDate || salary.billingPeriod?.start;
                 const billingEnd = salary.billingPeriod?.endDate || salary.billingPeriod?.end;
                 const total = salary.internalTotals?.totalUSD ?? salary.total ?? salary.amount ?? 0;
+                const totalEGP = salary.internalTotals?.totalEGP ?? salary.totalEGP ?? null;
                 const hourlyRate = Number(salary?.teacherPayment?.hourlyRate || 0);
+                const totalHours = salary?.internalTotals?.totalHours ?? salary?.totalHours ?? null;
                 const paymentMonth = resolvePaymentMonthLabel(salary);
                 const selected = bulk.selectionMode && bulk.selected.has(salary._id);
+                const isPaid = ['paid', 'refunded'].includes(String(salary.status || '').toLowerCase());
+                const hasSlug = !!salary?.invoiceSlug;
+                const linkCopied = copiedLinkId === salary._id;
 
                 return (
-                  <div key={salary._id} className={`flex items-center gap-3 px-4 py-3 transition hover:bg-muted/30 ${selected ? 'bg-primary/5' : ''}`}>
-                    {bulk.selectionMode && (
-                      <button
-                        type="button"
-                        onClick={() => bulk.toggleItem(salary._id)}
-                        className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border"
-                        aria-label={selected ? 'Deselect' : 'Select'}
-                      >
-                        {selected && <Check className="h-3 w-3 text-primary" />}
-                      </button>
-                    )}
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium capitalize ${tone}`}>
-                          {salary.status || 'draft'}
-                        </span>
-                        <span className="text-sm font-medium text-foreground truncate">
-                          {salary.teacher?.firstName} {salary.teacher?.lastName}
-                        </span>
-                        <span className="text-xs text-muted-foreground">{paymentMonth.label}</span>
-                      </div>
-                      <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                        <span>{salary.invoiceName || salary.invoiceNumber || `#${String(salary._id).slice(-6)}`}</span>
-                        <span>{formatDate(billingStart)} → {formatDate(billingEnd)}</span>
-                        {hourlyRate > 0 && <span>${hourlyRate.toFixed(2)}/h</span>}
-                      </div>
-                    </div>
-
-                    <div className="text-right shrink-0">
-                      <div className="text-sm font-semibold text-foreground">{formatCurrency(total)}</div>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => handleOpenView(salary)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" type="button" title="View">
-                        <Eye className="h-4 w-4" />
-                      </button>
-                      {isAdmin() && (
-                        <>
-                          <button
-                            onClick={() => openTeacherMsgModal(salary)}
-                            className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50"
-                            type="button"
-                            title="Send salary notification"
-                          >
-                            <MessageSquare className="h-4 w-4" />
-                          </button>
-                          <button onClick={() => handleOpenEdit(salary)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" type="button" title="Edit">
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button onClick={() => handleDelete(salary._id)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 hover:text-rose-600" type="button" title="Delete">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </>
+                  <div key={salary._id} className={`group relative px-4 py-3.5 transition hover:bg-muted/40 ${selected ? 'bg-primary/5' : ''} ${isPaid ? 'opacity-80' : ''}`}>
+                    <div className="flex items-start gap-3">
+                      {bulk.selectionMode && (
+                        <button
+                          type="button"
+                          onClick={() => bulk.toggleItem(salary._id)}
+                          className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border"
+                          aria-label={selected ? 'Deselect' : 'Select'}
+                        >
+                          {selected && <Check className="h-3 w-3 text-primary" />}
+                        </button>
                       )}
+
+                      <div className="min-w-0 flex-1">
+                        {/* Top section: info + amount */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1 space-y-1.5">
+                            {/* Row 1: Teacher name + tags */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="text-[15px] font-semibold text-foreground leading-tight truncate max-w-[180px] sm:max-w-none">
+                                {salary.teacher?.firstName} {salary.teacher?.lastName}
+                              </h3>
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${tone}`}>
+                                {salary.status || 'draft'}
+                              </span>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200">
+                                <CalendarDays className="h-3 w-3" />
+                                {paymentMonth.label}
+                              </span>
+                            </div>
+
+                            {/* Row 2: Invoice ref + date range + rate */}
+                            <div className="flex items-center gap-2 text-[12px] text-muted-foreground flex-wrap">
+                              <span className="font-mono text-[11px] text-muted-foreground/70">
+                                {salary.invoiceNumber || salary.invoiceName || `#${String(salary._id).slice(-6)}`}
+                              </span>
+                              <span className="hidden sm:inline text-muted-foreground/30">·</span>
+                              <span className="hidden sm:inline-flex items-center gap-1">
+                                <Clock className="h-3 w-3" />
+                                {formatDate(billingStart)} – {formatDate(billingEnd)}
+                              </span>
+                              {hourlyRate > 0 && (
+                                <>
+                                  <span className="text-muted-foreground/30">·</span>
+                                  <span className="inline-flex items-center gap-1">
+                                    <DollarSign className="h-3 w-3" />
+                                    {hourlyRate.toFixed(2)}/h
+                                  </span>
+                                </>
+                              )}
+                              {totalHours != null && totalHours > 0 && (
+                                <>
+                                  <span className="text-muted-foreground/30">·</span>
+                                  <span>{Number(totalHours).toFixed(1)}h</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Amount - always visible */}
+                          <div className="text-right shrink-0">
+                            <div className={`text-[15px] font-bold tabular-nums ${isPaid ? 'text-emerald-600' : 'text-foreground'}`}>
+                              {formatCurrency(total)}
+                            </div>
+                            {totalEGP != null && totalEGP > 0 && (
+                              <div className="text-[11px] text-muted-foreground tabular-nums">
+                                {Number(totalEGP).toLocaleString('en', { maximumFractionDigits: 0 })} EGP
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Action buttons - below content on mobile */}
+                        <div className="flex items-center gap-0.5 mt-2 sm:mt-0 justify-end sm:justify-start">
+                          <button onClick={() => handleOpenView(salary)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition" type="button" title="View invoice">
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          {isAdmin() && (
+                            <>
+                              {hasSlug && (
+                                <button
+                                  onClick={() => handleCopyPublicLink(salary)}
+                                  className={`rounded-lg p-1.5 transition ${linkCopied ? 'text-emerald-600 bg-emerald-50' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                                  type="button"
+                                  title={linkCopied ? 'Link copied!' : 'Copy public link'}
+                                >
+                                  {linkCopied ? <CheckCheck className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleOpenWhatsapp(salary)}
+                                className="rounded-lg p-1.5 text-green-600 hover:bg-green-50 hover:text-green-700 transition"
+                                type="button"
+                                title="Send via WhatsApp"
+                              >
+                                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                                  <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => openTeacherMsgModal(salary)}
+                                className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition"
+                                type="button"
+                                title="Compose message"
+                              >
+                                <MessageSquare className="h-4 w-4" />
+                              </button>
+                              <button onClick={() => handleOpenEdit(salary)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition" type="button" title="Edit">
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                              <button onClick={() => handleDelete(salary._id)} className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition" type="button" title="Delete">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );

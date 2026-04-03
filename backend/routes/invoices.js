@@ -2323,7 +2323,17 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       });
     }
     console.log("[Invoices API] Saving invoice...");
-    await invoice.save();
+    try {
+      await invoice.save();
+    } catch (saveErr) {
+      // Handle duplicate invoiceSlug — retry with timestamp suffix
+      if (saveErr.code === 11000 && saveErr.keyPattern?.invoiceSlug) {
+        invoice.invoiceSlug = `${invoice.invoiceSlug}-${Date.now()}`;
+        await invoice.save();
+      } else {
+        throw saveErr;
+      }
+    }
     await invoice.populate([
       { path: 'guardian', select: 'firstName lastName email phone guardianInfo.epithet' },
       { path: 'teacher', select: 'firstName lastName email' },

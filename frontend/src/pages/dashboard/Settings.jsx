@@ -15,6 +15,7 @@ import {
   setNotificationPreferences,
 } from '../../utils/notificationPreferences';
 import { getHomepageAnnouncementContainerClass, getHomepageAnnouncementTextClass } from '../../utils/homepageAnnouncement';
+import TrashPage from './TrashPage';
 
 const parseLinesOrComma = (text) => {
   if (!text) return [];
@@ -834,6 +835,7 @@ const Settings = () => {
       { key: 'branding', label: 'Branding' },
       { key: 'library', label: 'Library' },
       { key: 'subjectsCatalog', label: 'Subjects Catalog' },
+      { key: 'trash', label: 'Trash' },
     ];
   }, [user?.role]);
 
@@ -3141,6 +3143,11 @@ const Settings = () => {
               </div>
             )}
           </div>
+        )}
+
+        {/* Trash section */}
+        {user?.role === 'admin' && activeSection === 'trash' && (
+          <TrashPage />
         )}
 
           {/* Maintenance card */}

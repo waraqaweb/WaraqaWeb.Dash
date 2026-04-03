@@ -2026,8 +2026,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
         <div className="flex-1 overflow-y-auto">
           <div className="space-y-8">
           <div className="bg-white/95 px-4 py-5 sm:px-8 sm:py-6">
-            <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap pb-1 pr-12 sm:pr-14">
-              <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex flex-col gap-2 pr-12 sm:pr-14">
+              {/* Row 1: Invoice name + status badges */}
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="flex min-w-0 items-center gap-1.5 text-xl font-semibold text-slate-900 sm:text-2xl">
                   <span>{`${invoiceNameParts.prefix || 'Waraqa'}-${invoiceNameParts.month || ''}-${invoiceNameParts.year || ''}-`}</span>
                   {seqEditing || !invoiceNameParts.seq ? (
@@ -2074,23 +2075,33 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                     </button>
                   )}
                 </h2>
-                <span className={`inline-flex w-16 justify-start text-xs font-semibold leading-4 ${invoiceNameStatus ? (invoiceNameStatus.type === 'success' ? 'text-emerald-600' : invoiceNameStatus.type === 'error' ? 'text-rose-600' : 'text-slate-500') : 'text-transparent'}`}>
-                  {invoiceNameStatus?.message || 'Saved'}
-                </span>
+                {invoiceNameStatus && invoiceNameStatus.type === 'success' && (
+                  <span className="text-xs font-semibold text-emerald-600">{invoiceNameStatus.message}</span>
+                )}
+                {invoiceNameStatus && invoiceNameStatus.type === 'progress' && (
+                  <span className="text-xs font-semibold text-slate-500">{invoiceNameStatus.message}</span>
+                )}
+                <div className="flex items-center gap-2 text-sm text-slate-600">
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusTone}`} title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {invoice.status}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs">
+                      <Calendar className="h-3.5 w-3.5 text-slate-500" />
+                      <span>{formatDateDisplay(invoice.createdAt)}</span>
+                  </span>
+                </div>
               </div>
 
-              <div className="flex items-center gap-2 text-sm text-slate-600 shrink-0">
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusTone}`} title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>
-                    <Sparkles className="h-3.5 w-3.5" />
-                    {invoice.status}
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs">
-                    <Calendar className="h-3.5 w-3.5 text-slate-500" />
-                    <span>{formatDateDisplay(invoice.createdAt)}</span>
-                </span>
-              </div>
+              {/* Error message - shown on its own line so it's always visible */}
+              {invoiceNameStatus && invoiceNameStatus.type === 'error' && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+                  {invoiceNameStatus.message}
+                </div>
+              )}
 
-              <div className="ml-auto flex items-center gap-1.5 shrink-0">
+              {/* Row 2: Action buttons */}
+              <div className="flex items-center gap-1.5 flex-wrap">
                 {isAdmin && (
                   <button
                     type="button"

@@ -37,6 +37,7 @@ const onboardingRoutes = require('./routes/onboarding');
 const meetingRoutes = require('./routes/meetings');
 const leadRoutes = require('./routes/leads');
 const teacherContractRoutes = require('./routes/teacherContract');
+const trashRoutes = require('./routes/trash');
 
 // Create Express application
 const app = express();
@@ -333,6 +334,7 @@ app.use('/api/whiteboard', whiteboardRoutes);
 app.use('/api/meetings', meetingRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/teacher-contract', teacherContractRoutes);
+app.use('/api/trash', trashRoutes);
 
 const vacationManagementRoutes = require('./routes/vacationManagement');
 app.use('/api/vacation-management', vacationManagementRoutes);

@@ -1846,7 +1846,7 @@ const InvoicesPage = ({ isActive = true }) => {
               ].map(({ key, label }) => (
                 <button
                   key={key}
-                  onClick={() => setActiveTab(key)}
+                  onClick={() => { setActiveTab(key); bulk.clearSelection(); }}
                   className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     activeTab === key
                       ? 'bg-white text-slate-900 shadow'
@@ -1865,7 +1865,7 @@ const InvoicesPage = ({ isActive = true }) => {
               ].map(({ key, label }) => (
                 <button
                   key={key}
-                  onClick={() => setDeliveryFilter((prev) => (prev === key ? '' : key))}
+                  onClick={() => { setDeliveryFilter((prev) => (prev === key ? '' : key)); bulk.clearSelection(); }}
                   className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     deliveryFilter === key
                       ? 'bg-white text-slate-900 shadow'

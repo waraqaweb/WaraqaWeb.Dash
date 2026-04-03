@@ -13,6 +13,7 @@ const teacherInvoicePDFService = require('../services/teacherInvoicePDFService')
 const TeacherInvoice = require('../models/TeacherInvoice');
 const SalarySettings = require('../models/SalarySettings');
 const MonthlyExchangeRates = require('../models/MonthlyExchangeRates');
+const { saveToTrash, saveMultipleToTrash } = require('../utils/trash');
 const TeacherSalaryAudit = require('../models/TeacherSalaryAudit');
 const MonthlyReports = require('../models/MonthlyReports');
 const User = require('../models/User');
@@ -561,10 +562,26 @@ router.post('/admin/invoices/:id/bonuses', authenticateToken, requireAdmin, asyn
  */
 router.delete('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const invoice = await TeacherInvoice.findById(req.params.id).select('status').lean();
+    const invoice = await TeacherInvoice.findById(req.params.id);
     if (!invoice) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
+
+    // Save to trash before deleting
+    await saveToTrash({
+      itemType: 'teacher_invoice',
+      doc: invoice,
+      label: invoice.invoiceNumber || `Salary ${invoice._id}`,
+      meta: {
+        invoiceNumber: invoice.invoiceNumber,
+        teacherName: invoice.teacherName || '',
+        status: invoice.status,
+        total: invoice.internalTotals?.totalUSD ?? invoice.total,
+        billingMonth: invoice.billingPeriod?.month,
+        billingYear: invoice.billingPeriod?.year,
+      },
+      userId: req.user._id,
+    });
 
     const preserveHours = (() => {
       const raw = req.query.preserveHours ?? req.body?.preserveHours ?? req.headers['x-preserve-hours'];
@@ -1606,6 +1623,23 @@ router.post('/admin/bulk/delete', authenticateToken, requireAdmin, async (req, r
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
     if (ids.length > 200) return res.status(400).json({ success: false, message: 'Maximum 200 invoices per batch' });
+
+    // Save all to trash before deleting
+    const toTrash = await TeacherInvoice.find({ _id: { $in: ids } });
+    await saveMultipleToTrash({
+      itemType: 'teacher_invoice',
+      docs: toTrash,
+      labelFn: (s) => s.invoiceNumber || `Salary ${s._id}`,
+      metaFn: (s) => ({
+        invoiceNumber: s.invoiceNumber,
+        teacherName: s.teacherName || '',
+        status: s.status,
+        total: s.internalTotals?.totalUSD ?? s.total,
+        billingMonth: s.billingPeriod?.month,
+        billingYear: s.billingPeriod?.year,
+      }),
+      userId: req.user._id,
+    });
 
     const results = { deleted: 0, failed: [] };
 

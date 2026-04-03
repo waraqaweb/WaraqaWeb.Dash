@@ -1321,6 +1321,7 @@ const ClassesPage = ({ isActive = true }) => {
     loadedClassPagesRef.current = new Set();
     setCurrentPage(1);
     setTabFilter(nextTab);
+    classBulk.clearSelection();
   };
 
   const canOpenReport = (classItem) => {

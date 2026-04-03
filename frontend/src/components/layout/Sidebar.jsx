@@ -24,7 +24,8 @@ import {
   Clock,
   BookOpen,
   X,
-  Monitor
+  Monitor,
+  Trash2
 } from 'lucide-react';
 
 const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
@@ -55,6 +56,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
       { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },
       { id: 'presenter', label: 'Curricula', icon: Monitor, roles: presenterRoles, link: '/dashboard/interactive-learning' },
+    { id: 'trash', label: 'Trash', icon: Trash2, roles: ['admin'], link: '/dashboard/trash' },
     ];
 
     // Filter by current user's role

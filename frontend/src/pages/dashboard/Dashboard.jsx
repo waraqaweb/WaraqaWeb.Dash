@@ -33,6 +33,7 @@ import TeacherContractPage from './TeacherContractPage';
 import { Menu, X } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import VacationManagementPage from './VacationManagementPage';
+import TrashPage from './TrashPage';
 import { DeleteClassCountdownProvider, useDeleteClassCountdown } from '../../contexts/DeleteClassCountdownContext';
 import { DeleteActionCountdownProvider, useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import DeleteCountdownToast from '../../components/ui/DeleteCountdownToast';
@@ -308,8 +309,8 @@ const Dashboard = () => {
       case 'class-reports':
         return <ClassReportPage isActive={isActive} />;
       case 'vacation-management':
-        return <VacationManagementPage isActive={isActive} />;
-      /* Removed 'reports' and 'users' pages from the dashboard: these pages are intentionally
+        return <VacationManagementPage isActive={isActive} />;    case 'trash':
+      return <TrashPage isActive={isActive} />;      /* Removed 'reports' and 'users' pages from the dashboard: these pages are intentionally
          not rendered here so they are not accessible via direct URL anymore. */
       case "settings":
         return <Settings isActive={isActive} />;

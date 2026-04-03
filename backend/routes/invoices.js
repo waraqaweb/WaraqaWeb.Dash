@@ -12,6 +12,7 @@ const { ensureSequenceAtLeast, formatSequence, slugifyInvoiceName } = require('.
 const { allocateNextSequence, buildInvoiceIdentifiers } = require('../utils/invoiceNaming');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const GuardianHoursAudit = require('../models/GuardianHoursAudit');
+const { saveToTrash, saveMultipleToTrash } = require('../utils/trash');
 
 const roundCurrency = (value) => {
   const numeric = Number(value);
@@ -2922,6 +2923,20 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       // Continue delete even if audit fails
     }
 
+    // Save to trash before permanent delete
+    await saveToTrash({
+      itemType: 'invoice',
+      doc: invoice,
+      label: invoice.invoiceNumber || invoice.invoiceName || `Invoice ${invoice._id}`,
+      meta: {
+        invoiceNumber: invoice.invoiceNumber,
+        guardianName: invoice.guardianName || '',
+        total: invoice.total,
+        status: invoice.status,
+      },
+      userId: req.user._id,
+    });
+
     // Permanently delete the invoice from database
     await Invoice.deleteOne({ _id: invoice._id });
 
@@ -3318,6 +3333,15 @@ router.post('/bulk/delete', authenticateToken, requireAdmin, async (req, res) =>
 
     const invoices = await Invoice.find({ _id: { $in: ids } });
     const results = { deleted: 0, failed: [] };
+
+    // Save all to trash before deleting
+    await saveMultipleToTrash({
+      itemType: 'invoice',
+      docs: invoices,
+      labelFn: (s) => s.invoiceNumber || s.invoiceName || `Invoice ${s._id}`,
+      metaFn: (s) => ({ invoiceNumber: s.invoiceNumber, guardianName: s.guardianName || '', total: s.total, status: s.status }),
+      userId: req.user._id,
+    });
 
     for (const invoice of invoices) {
       try {

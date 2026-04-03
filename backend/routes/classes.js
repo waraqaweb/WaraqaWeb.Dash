@@ -40,6 +40,7 @@ const {
 // timezone helpers (you must have these implemented)
 const tzUtils = require("../utils/timezone"); // expects toUtc(dateString, tz) and buildUtcFromParts(parts, tz)
 const { generateRecurringClasses } = require("../utils/generateRecurringClasses");
+const { saveToTrash, saveMultipleToTrash } = require("../utils/trash");
 
 /* -------------------------
    GET /api/classes/reschedule-requests/stats
@@ -3537,6 +3538,14 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
 
         const toDelete = await Class.find(filter).lean();
         const ids = toDelete.map((d) => d._id);
+        // Save to trash before deleting
+        await saveMultipleToTrash({
+          itemType: 'class',
+          docs: toDelete,
+          labelFn: (s) => `${s.subject || 'Class'} — ${s.scheduledDate ? new Date(s.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}`,
+          metaFn: (s) => ({ subject: s.subject, scheduledDate: s.scheduledDate, duration: s.duration }),
+          userId: req.user._id,
+        });
         const result = await Class.deleteMany(filter);
         try {
           const io = req.app.get("io");
@@ -3590,6 +3599,20 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
         }
       }
 
+      // Save to trash before deleting
+      await saveToTrash({
+        itemType: 'class',
+        doc: classDoc,
+        label: `${classDoc.subject || 'Class'} — ${classDoc.scheduledDate ? new Date(classDoc.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}`,
+        meta: {
+          subject: classDoc.subject,
+          teacherName: classDoc.teacher?.toString(),
+          scheduledDate: classDoc.scheduledDate,
+          duration: classDoc.duration,
+        },
+        userId: req.user._id,
+      });
+
       await Class.findByIdAndDelete(classDoc._id);
       // Notification trigger: class cancelled
       try {
@@ -3630,6 +3653,14 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
           }
         }
       } catch (adjErr) { console.error('Bulk delete adjustment error (future):', adjErr.message); }
+      // Save all to trash before deleting
+      await saveMultipleToTrash({
+        itemType: 'class',
+        docs: toDelete,
+        labelFn: (s) => `${s.subject || 'Class'} — ${s.scheduledDate ? new Date(s.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}`,
+        metaFn: (s) => ({ subject: s.subject, scheduledDate: s.scheduledDate, duration: s.duration }),
+        userId: req.user._id,
+      });
       const ids = toDelete.map(d => d._id);
       const result = await Class.deleteMany({ parentRecurringClass: parentId, scheduledDate: { $gte: baseDate } });
       try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { ids, parentId }); } catch (e) {}
@@ -3667,6 +3698,13 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
           }
         }
       } catch (adjErr) { console.error('Bulk delete adjustment error (past):', adjErr.message); }
+      await saveMultipleToTrash({
+        itemType: 'class',
+        docs: toDelete,
+        labelFn: (s) => `${s.subject || 'Class'} — ${s.scheduledDate ? new Date(s.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}`,
+        metaFn: (s) => ({ subject: s.subject, scheduledDate: s.scheduledDate, duration: s.duration }),
+        userId: req.user._id,
+      });
       const ids = toDelete.map((d) => d._id);
       const result = await Class.deleteMany({ parentRecurringClass: parentId, scheduledDate: { $lt: baseDate } });
       try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { ids, parentId, scope: "past" }); } catch (e) {}
@@ -3698,6 +3736,15 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
           }
         }
       } catch (adjErr) { console.error('Bulk delete adjustment error (all):', adjErr.message); }
+      // Save parent + children to trash
+      const allDocs = [classDoc.toObject ? classDoc.toObject() : classDoc, ...children];
+      await saveMultipleToTrash({
+        itemType: 'class',
+        docs: allDocs,
+        labelFn: (s) => `${s.subject || 'Class'} — ${s.scheduledDate ? new Date(s.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}`,
+        metaFn: (s) => ({ subject: s.subject, scheduledDate: s.scheduledDate, duration: s.duration }),
+        userId: req.user._id,
+      });
       const childIds = children.map(c => c._id);
       const result = await Class.deleteMany({ parentRecurringClass: parentId });
       await Class.findByIdAndDelete(parentId);
@@ -4575,6 +4622,16 @@ router.post('/bulk/delete', authenticateToken, requireRole(['admin']), async (re
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids array required' });
     if (ids.length > 500) return res.status(400).json({ success: false, message: 'Maximum 500 classes per batch' });
+
+    // Save to trash before deleting
+    const toTrash = await Class.find({ _id: { $in: ids } }).lean();
+    await saveMultipleToTrash({
+      itemType: 'class',
+      docs: toTrash,
+      labelFn: (s) => `${s.subject || 'Class'} — ${s.scheduledDate ? new Date(s.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}`,
+      metaFn: (s) => ({ subject: s.subject, scheduledDate: s.scheduledDate, duration: s.duration }),
+      userId: req.user._id,
+    });
 
     const result = await Class.deleteMany({ _id: { $in: ids } });
 

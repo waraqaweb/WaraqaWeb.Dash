@@ -2111,6 +2111,64 @@ router.post(
         .populate("teacher", "firstName lastName email phone profilePicture")
         .populate("student.guardianId", "firstName lastName email phone");
 
+      // If the cancelled class was billed in an invoice, remove it
+      try {
+        if (saved.billedInInvoiceId) {
+          const Invoice = require("../models/Invoice");
+          const InvoiceService = require("../services/invoiceService");
+          const billedInvoice = await Invoice.findById(saved.billedInInvoiceId);
+          if (billedInvoice && !['cancelled', 'refunded'].includes(billedInvoice.status)) {
+            const classIdStr = String(saved._id);
+            const removedItem = (billedInvoice.items || []).find(it => {
+              const itId = it.class ? String(it.class) : (it.lessonId || null);
+              return itId === classIdStr;
+            });
+
+            if (removedItem) {
+              const hours = (Number(removedItem.duration || 0) / 60);
+              const amount = Number(removedItem.amount || 0);
+
+              if (billedInvoice.status === 'paid') {
+                // Paid invoice: record credit adjustment, remove item, freeze totals
+                await InvoiceService.createPaidInvoiceAdjustment({
+                  invoiceId: billedInvoice._id,
+                  type: 'credit',
+                  reason: 'class_cancelled',
+                  classDoc: saved,
+                  description: `Class cancelled (${saved.status}) — removed from paid invoice`,
+                  hoursDelta: -hours,
+                  amountDelta: -amount,
+                  actorId: req.user._id
+                });
+                billedInvoice.items = billedInvoice.items.filter(it => {
+                  const itId = it.class ? String(it.class) : (it.lessonId || null);
+                  return itId !== classIdStr;
+                });
+                billedInvoice.markModified('items');
+                billedInvoice._skipRecalculate = true;
+                await billedInvoice.save();
+              } else {
+                // Unpaid invoice: remove item and recalculate
+                billedInvoice.items = billedInvoice.items.filter(it => {
+                  const itId = it.class ? String(it.class) : (it.lessonId || null);
+                  return itId !== classIdStr;
+                });
+                billedInvoice.markModified('items');
+                await billedInvoice.save();
+              }
+
+              // Unlink class from invoice
+              await Class.updateOne(
+                { _id: saved._id },
+                { $unset: { billedInInvoiceId: 1, billedAt: 1 } }
+              );
+            }
+          }
+        }
+      } catch (invoiceErr) {
+        console.warn("[cancel] Failed to remove cancelled class from invoice:", invoiceErr.message);
+      }
+
       try {
         const notificationService = require("../services/notificationService");
         const actor = req.user;

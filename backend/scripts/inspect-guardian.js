@@ -4,9 +4,9 @@ const mongoose = require('mongoose');
 
 (async () => {
   await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/waraqadb');
-  const Class = require('./models/Class');
-  const Invoice = require('./models/Invoice');
-  const User = require('./models/User');
+  const Class = require('../models/Class');
+  const Invoice = require('../models/Invoice');
+  const User = require('../models/User');
 
   // The specific class
   const cls = await Class.findById('69b184fa5727102e2774e050').lean();

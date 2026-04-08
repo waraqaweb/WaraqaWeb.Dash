@@ -1,7 +1,7 @@
 const Invoice = require('../models/Invoice');
 const Class = require('../models/Class');
 
-const COUNTABLE_CLASS_STATUSES = new Set(['attended', 'missed_by_student']);
+const COUNTABLE_CLASS_STATUSES = new Set(['attended', 'missed_by_student', 'absent']);
 const COUNTABLE_ATTENDANCE = new Set(['attended', 'missed_by_student']);
 
 const roundHours = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 1000) / 1000;
@@ -168,12 +168,11 @@ const computeGuardianHoursFromPaidInvoices = async (guardianIds = []) => {
 
   for (const guardianId of normalized) {
     const allocation = allocations.get(guardianId) || { studentPaid: new Map(), studentStart: new Map() };
-    const consumed = await computeConsumedHours(guardianId, allocation.studentStart);
     const consumedAll = await computeConsumedHoursAllTime(guardianId);
     const studentHours = new Map();
 
     allocation.studentPaid.forEach((paidHours, studentId) => {
-      const used = consumed.get(studentId) || 0;
+      const used = consumedAll.get(studentId) || 0;
       const remaining = roundHours(paidHours - used);
       studentHours.set(studentId, remaining);
     });

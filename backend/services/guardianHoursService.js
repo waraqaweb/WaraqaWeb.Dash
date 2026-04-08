@@ -45,7 +45,6 @@ const resolveItemHours = (item) => {
 
 const shouldCountClass = (cls) => {
   const attendance = cls?.classReport?.attendance || null;
-  if (attendance === 'missed_by_student' && cls?.classReport?.countAbsentForBilling === false) return false;
   if (attendance && COUNTABLE_ATTENDANCE.has(attendance)) return true;
   const status = cls?.status || null;
   return COUNTABLE_CLASS_STATUSES.has(status);

@@ -545,7 +545,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
         const detailPayload = {
           attendance: apiAttendance,
           absenceExcused: Boolean(rest.absenceExcused),
-          countAbsentForBilling: false,
+          countAbsentForBilling: true,
           classScore: Number.isFinite(Number(rest.classScore)) ? Number(rest.classScore) : 5,
         };
 

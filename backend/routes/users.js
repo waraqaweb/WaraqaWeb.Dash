@@ -941,7 +941,6 @@ router.post('/admin/account-logs', [
 
     const shouldCountClass = (cls) => {
       const attendance = cls?.classReport?.attendance || null;
-      if (attendance === 'missed_by_student' && cls?.classReport?.countAbsentForBilling === false) return false;
       if (attendance && ['attended', 'missed_by_student'].includes(attendance)) return true;
       const status = cls?.status || null;
       return ['attended', 'missed_by_student', 'absent'].includes(status);

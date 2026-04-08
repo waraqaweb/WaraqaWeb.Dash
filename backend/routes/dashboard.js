@@ -1010,27 +1010,27 @@ router.get('/stats', authenticateToken, async (req, res) => {
         studentsOnVacationList = [];
       }
       // Fetch guardian record to read guardianInfo.totalHours (remaining hours)
+      // Use the same computation as the admin view (paymentLogs-based) for consistency
       let guardianHours = null;
       try {
-        const UsersModel = require('../models/User');
-        const result = UsersModel && typeof UsersModel.findById === 'function'
-          ? UsersModel.findById(guardianId)
-          : null;
-
-        let guardianUser = null;
-        if (result && typeof result.select === 'function') {
-          const selected = result.select('guardianInfo');
-          guardianUser = typeof selected.lean === 'function' ? await selected.lean() : await selected;
-        } else if (result && typeof result.then === 'function') {
-          guardianUser = await result;
-        } else if (result) {
-          guardianUser = result;
+        const { computeGuardianHoursFromPaidInvoices, syncComputedHoursToStorage } = require('../services/guardianHoursService');
+        const hoursMap = await computeGuardianHoursFromPaidInvoices([guardianId]);
+        const hoursEntry = hoursMap.get(String(guardianId));
+        guardianHours = hoursEntry ? Number(hoursEntry.totalHours || 0) : null;
+        // Fire-and-forget sync to keep stored values up to date
+        if (hoursMap.size) {
+          syncComputedHoursToStorage(hoursMap).catch((e) => console.warn('dashboard: guardian hours sync error:', e && e.message));
         }
-
-        guardianHours = guardianUser?.guardianInfo?.totalHours ?? guardianUser?.guardianInfo?.hoursRemaining ?? null;
       } catch (e) {
-        console.warn('dashboard: failed to fetch guardian hours', e && e.message);
-        guardianHours = null;
+        console.warn('dashboard: failed to compute guardian hours', e && e.message);
+        // Fallback to stored value
+        try {
+          const UsersModel = require('../models/User');
+          const guardianUser = await UsersModel.findById(guardianId).select('guardianInfo.totalHours').lean();
+          guardianHours = guardianUser?.guardianInfo?.totalHours ?? null;
+        } catch (e2) {
+          guardianHours = null;
+        }
       }
 
       // Compute pending invoices via aggregate (safer in test environments where .find may not be stubbed)

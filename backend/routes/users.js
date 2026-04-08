@@ -24,7 +24,7 @@ const Class = require('../models/Class');
 const TeacherInvoice = require('../models/TeacherInvoice');
 const TeacherSalaryAudit = require('../models/TeacherSalaryAudit');
 const { getTeacherVacationSummaryMap } = require('../services/teacherVacationService');
-const { computeGuardianHoursFromPaidInvoices, normalizeId, roundHours } = require('../services/guardianHoursService');
+const { computeGuardianHoursFromPaidInvoices, syncComputedHoursToStorage, normalizeId, roundHours } = require('../services/guardianHoursService');
 const { isValidTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 const dayjs = require('dayjs');
 const utcPlugin = require('dayjs/plugin/utc');
@@ -579,6 +579,8 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
     if (String(role || '').toLowerCase() === 'guardian' && Array.isArray(usersPayload)) {
       const guardianIds = usersPayload.map((u) => normalizeId(u?._id)).filter(Boolean);
       const guardianHoursMap = await computeGuardianHoursFromPaidInvoices(guardianIds);
+      // Fire-and-forget: sync computed hours to embedded + standalone storage
+      syncComputedHoursToStorage(guardianHoursMap).catch((e) => console.warn('guardian list sync error:', e && e.message));
       usersPayload = usersPayload.map((user) => {
         const guardianId = normalizeId(user?._id);
         const entry = guardianId ? guardianHoursMap.get(guardianId) : null;
@@ -2418,6 +2420,8 @@ router.get('/:guardianId/students', authenticateToken, async (req, res) => {
 
     const combinedStudents = Array.from(byKey.values());
     const guardianHoursMap = await computeGuardianHoursFromPaidInvoices([guardianId]);
+    // Fire-and-forget: sync computed hours to embedded + standalone storage
+    syncComputedHoursToStorage(guardianHoursMap).catch((e) => console.warn('guardian students sync error:', e && e.message));
     const studentsWithHours = applyComputedStudentHours(combinedStudents, guardianHoursMap);
     const guardianHoursEntry = guardianHoursMap.get(String(guardianId));
     const totalHours = Number(guardianHoursEntry?.totalHours || 0);

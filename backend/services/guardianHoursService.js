@@ -48,14 +48,37 @@ const buildPaidInvoiceAllocations = (invoices = []) => {
     const entry = perGuardian.get(guardianId);
     const items = Array.isArray(invoice.items) ? invoice.items : [];
 
+    // Sum per-student hours from items (used for proportional distribution)
+    const perStudentItems = new Map();
+    let totalItemHours = 0;
     for (const item of items) {
       const studentId = normalizeId(item?.student);
       if (!studentId) continue;
-
       const hours = resolveItemHours(item);
       if (!Number.isFinite(hours) || hours <= 0) continue;
+      perStudentItems.set(studentId, roundHours((perStudentItems.get(studentId) || 0) + hours));
+      totalItemHours = roundHours(totalItemHours + hours);
+    }
 
-      entry.studentPaid.set(studentId, roundHours((entry.studentPaid.get(studentId) || 0) + hours));
+    // Sum paid hours from paymentLogs (reflects actual payment, survives item removal)
+    let totalPaidHours = 0;
+    const paymentLogs = Array.isArray(invoice.paymentLogs) ? invoice.paymentLogs : [];
+    for (const log of paymentLogs) {
+      if (!log || Number(log.amount || 0) <= 0) continue;
+      if (log.method === 'refund' || log.method === 'tip_distribution') continue;
+      totalPaidHours = roundHours(totalPaidHours + (Number(log.paidHours) || 0));
+    }
+
+    // Use paymentLogs.paidHours when available (it reflects what was actually paid,
+    // even if items were later removed e.g. cancelled classes). Fall back to item totals.
+    const effectiveCredit = totalPaidHours > 0 ? totalPaidHours : totalItemHours;
+
+    if (totalItemHours > 0 && effectiveCredit > 0) {
+      const scale = effectiveCredit / totalItemHours;
+      perStudentItems.forEach((itemHours, studentId) => {
+        const allocated = roundHours(itemHours * scale);
+        entry.studentPaid.set(studentId, roundHours((entry.studentPaid.get(studentId) || 0) + allocated));
+      });
     }
   }
 
@@ -96,7 +119,7 @@ const computeGuardianHoursFromPaidInvoices = async (guardianIds = []) => {
     deleted: { $ne: true },
     status: 'paid'
   })
-    .select('guardian items.student items.duration items.quantityHours')
+    .select('guardian items.student items.duration items.quantityHours paymentLogs.paidHours paymentLogs.amount paymentLogs.method')
     .lean();
 
   const allocations = buildPaidInvoiceAllocations(invoices);
@@ -126,8 +149,69 @@ const computeGuardianHoursFromPaidInvoices = async (guardianIds = []) => {
   return result;
 };
 
+/**
+ * Sync computed student hours to standalone Student documents and embedded guardianInfo.
+ * Call after computing hours to keep all storage layers consistent.
+ * @param {Map} hoursMap - result from computeGuardianHoursFromPaidInvoices
+ */
+const syncComputedHoursToStorage = async (hoursMap) => {
+  if (!hoursMap || !hoursMap.size) return;
+
+  const User = require('../models/User');
+  const Student = require('../models/Student');
+
+  for (const [guardianId, entry] of hoursMap) {
+    if (!entry || !entry.studentHours) continue;
+
+    try {
+      const guardian = await User.findById(guardianId).select('guardianInfo');
+      if (!guardian || !guardian.guardianInfo) continue;
+
+      const embedded = Array.isArray(guardian.guardianInfo.students) ? guardian.guardianInfo.students : [];
+      let embeddedChanged = false;
+
+      for (const es of embedded) {
+        // Try to find hours for this embedded student (check embedded _id, then standaloneStudentId)
+        const embeddedId = normalizeId(es._id);
+        const standaloneId = normalizeId(es.standaloneStudentId);
+        let hours = null;
+
+        if (embeddedId && entry.studentHours.has(embeddedId)) {
+          hours = entry.studentHours.get(embeddedId);
+        } else if (standaloneId && entry.studentHours.has(standaloneId)) {
+          hours = entry.studentHours.get(standaloneId);
+        }
+
+        if (hours != null) {
+          const rounded = roundHours(hours);
+          // Sync to embedded student
+          if (Math.abs((es.hoursRemaining || 0) - rounded) > 0.001) {
+            es.hoursRemaining = rounded;
+            embeddedChanged = true;
+          }
+          // Sync to standalone student
+          if (standaloneId) {
+            await Student.updateOne(
+              { _id: standaloneId },
+              { $set: { hoursRemaining: rounded } }
+            );
+          }
+        }
+      }
+
+      if (embeddedChanged) {
+        guardian.markModified('guardianInfo.students');
+        await guardian.save();
+      }
+    } catch (err) {
+      console.warn(`syncComputedHoursToStorage: failed for guardian ${guardianId}:`, err && err.message);
+    }
+  }
+};
+
 module.exports = {
   computeGuardianHoursFromPaidInvoices,
+  syncComputedHoursToStorage,
   normalizeId,
   roundHours
 };

@@ -2061,7 +2061,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           <X className="h-5 w-5" />
         </button>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
           <div className="space-y-8">
           <div className="bg-white/95 px-4 py-5 sm:px-8 sm:py-6">
             <div className="flex flex-col gap-2 pr-12 sm:pr-14">

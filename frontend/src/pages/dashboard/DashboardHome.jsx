@@ -1783,12 +1783,12 @@ const DashboardHome = ({ isActive = true }) => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <StatCard title="Unbilled hours (this month)" value={`${Number(data.hoursThisMonth || 0).toFixed(2)}`} Icon={Clock} color="bg-slate-100 text-slate-700" />
-          <StatCard title="Active Students" value={data.activeStudentCount || data.studentsWithClassesThisMonth || 0} Icon={Users} color="bg-amber-50 text-amber-700" />
-          <StatCard title="Cancellations (month)" value={data.cancellationsThisMonth || 0} Icon={AlertCircle} color="bg-rose-50 text-rose-700" />
-          <StatCard title="Classes (this month)" value={data.classesCompletedThisMonth || 0} Icon={Calendar} color="bg-violet-50 text-violet-700" />
-          <StatCard title="Vacation hours used" value={`${Number(data.vacationSummary?.usedDays || 0) * 24} hours`} Icon={RefreshCcw} color="bg-emerald-50 text-emerald-700" />
+        <div className="flex gap-3 overflow-x-auto pb-2 sm:pb-0 sm:grid sm:grid-cols-2 lg:grid-cols-5 sm:gap-4 sm:overflow-visible">
+          <div className="min-w-[140px] sm:min-w-0"><StatCard title="Unbilled hours (this month)" value={`${Number(data.hoursThisMonth || 0).toFixed(2)}`} Icon={Clock} color="bg-slate-100 text-slate-700" compact /></div>
+          <div className="min-w-[140px] sm:min-w-0"><StatCard title="Active Students" value={data.activeStudentCount || data.studentsWithClassesThisMonth || 0} Icon={Users} color="bg-amber-50 text-amber-700" compact /></div>
+          <div className="min-w-[140px] sm:min-w-0"><StatCard title="Cancellations (month)" value={data.cancellationsThisMonth || 0} Icon={AlertCircle} color="bg-rose-50 text-rose-700" compact /></div>
+          <div className="min-w-[140px] sm:min-w-0"><StatCard title="Classes (this month)" value={data.classesCompletedThisMonth || 0} Icon={Calendar} color="bg-violet-50 text-violet-700" compact /></div>
+          <div className="min-w-[140px] sm:min-w-0"><StatCard title="Vacation hours used" value={`${Number(data.vacationSummary?.usedDays || 0) * 24} hours`} Icon={RefreshCcw} color="bg-emerald-50 text-emerald-700" compact /></div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
@@ -1949,11 +1949,11 @@ const DashboardHome = ({ isActive = true }) => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-          <StatCard title="Remaining hours" value={`${formatHours2(data.guardianHours ?? data.guardianInfo?.totalHours ?? 0)} hrs`} Icon={Clock} color="bg-primary/10 text-primary" />
-          <StatCard title="My Students" value={myChildrenCount} Icon={Users} color="bg-sidebar-accent/25 text-sidebar-accent-foreground" />
+        <div className="flex gap-3 overflow-x-auto pb-2 md:pb-0 md:grid md:grid-cols-2 lg:grid-cols-4 md:gap-4 lg:gap-6 md:overflow-visible">
+          <div className="min-w-[160px] md:min-w-0"><StatCard title="Remaining hours" value={`${formatHours2(data.guardianHours ?? data.guardianInfo?.totalHours ?? 0)} hrs`} Icon={Clock} color="bg-primary/10 text-primary" compact /></div>
+          <div className="min-w-[140px] md:min-w-0"><StatCard title="My Students" value={myChildrenCount} Icon={Users} color="bg-sidebar-accent/25 text-sidebar-accent-foreground" compact /></div>
           {/* Combined Hours card: total hours + small per-student list */}
-          <div className="bg-gradient-to-br from-primary/5 via-card to-card rounded-lg border border-primary/15 p-4">
+          <div className="min-w-[200px] md:min-w-0 bg-gradient-to-br from-primary/5 via-card to-card rounded-lg border border-primary/15 p-4">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Consumed hours (last 30 days)</p>
@@ -1989,7 +1989,7 @@ const DashboardHome = ({ isActive = true }) => {
           </div>
 
           {/* Custom Last Paid Hours card: larger hours, smaller timestamp, small message when none */}
-          <div className="bg-gradient-to-br from-sidebar-accent/10 via-card to-card rounded-lg border border-sidebar-accent/25 p-4">
+          <div className="min-w-[200px] md:min-w-0 bg-gradient-to-br from-sidebar-accent/10 via-card to-card rounded-lg border border-sidebar-accent/25 p-4">
             <p className="text-sm font-medium text-muted-foreground">Last paid hours</p>
             {lastPaid && (lastPaid.hours != null) ? (
               <div className="mt-2">
@@ -2075,11 +2075,11 @@ const DashboardHome = ({ isActive = true }) => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Enrolled Classes" value={stats.data.enrolledClasses || 0} Icon={Calendar} color="bg-purple-50 text-purple-700" />
-        <StatCard title="Attendance Rate" value={`${stats.data.attendance || 0}%`} Icon={CheckCircle} color="bg-green-50 text-green-700" />
-        <StatCard title="Completed Classes" value={stats.data.completedClasses || 0} Icon={Clock} color="bg-blue-50 text-blue-700" />
-        <StatCard title="Pending Assignments" value={stats.data.assignments || 0} Icon={AlertCircle} color="bg-yellow-50 text-yellow-700" />
+      <div className="flex gap-3 overflow-x-auto pb-2 md:pb-0 md:grid md:grid-cols-2 lg:grid-cols-4 md:gap-4 lg:gap-6 md:overflow-visible">
+        <div className="min-w-[140px] md:min-w-0"><StatCard title="Enrolled Classes" value={stats.data.enrolledClasses || 0} Icon={Calendar} color="bg-purple-50 text-purple-700" compact /></div>
+        <div className="min-w-[140px] md:min-w-0"><StatCard title="Attendance Rate" value={`${stats.data.attendance || 0}%`} Icon={CheckCircle} color="bg-green-50 text-green-700" compact /></div>
+        <div className="min-w-[140px] md:min-w-0"><StatCard title="Completed Classes" value={stats.data.completedClasses || 0} Icon={Clock} color="bg-blue-50 text-blue-700" compact /></div>
+        <div className="min-w-[140px] md:min-w-0"><StatCard title="Pending Assignments" value={stats.data.assignments || 0} Icon={AlertCircle} color="bg-yellow-50 text-yellow-700" compact /></div>
       </div>
     </div>
   );

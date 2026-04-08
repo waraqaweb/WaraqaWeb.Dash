@@ -657,7 +657,7 @@ const SalariesPage = () => {
       )}
 
       {isAdmin() && (
-        <div className="fixed bottom-24 right-6 z-40">
+        <div className="fixed bottom-8 right-6 z-40">
           <PrimaryButton
             onClick={handleOpenCreate}
             circle
@@ -673,16 +673,16 @@ const SalariesPage = () => {
       {/* Teacher Arabic message modal */}
       {teacherMsgModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setTeacherMsgModal(null)}>
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="w-full max-w-lg rounded-2xl bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border px-6 py-4">
               <div>
-                <h3 className="text-base font-semibold text-slate-900">رسالة راتب المعلم</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <h3 className="text-base font-semibold text-foreground">رسالة راتب المعلم</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
                   {teacherMsgModal.salary?.teacher?.firstName} {teacherMsgModal.salary?.teacher?.lastName}
                   {teacherMsgModal.salary?.billingPeriod?.month ? ` — ${arabicMonths[teacherMsgModal.salary.billingPeriod.month - 1]} ${teacherMsgModal.salary.billingPeriod.year || ''}` : ''}
                 </p>
               </div>
-              <button type="button" onClick={() => setTeacherMsgModal(null)} className="rounded-full p-1 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+              <button type="button" onClick={() => setTeacherMsgModal(null)} className="rounded-full p-1 text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
             </div>
             <div className="px-6 py-4">
               <textarea
@@ -690,14 +690,14 @@ const SalariesPage = () => {
                 rows={12}
                 value={teacherMsgModal.message}
                 onChange={(e) => setTeacherMsgModal((m) => m ? { ...m, message: e.target.value, copied: false } : m)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 font-sans leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-green-300"
+                className="w-full rounded-xl border border-border bg-muted p-3 text-sm text-foreground font-sans leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
-            <div className="flex items-center justify-end gap-3 border-t border-slate-100 px-6 py-4">
+            <div className="flex items-center justify-end gap-3 border-t border-border px-6 py-4">
               <button
                 type="button"
                 onClick={handleCopyTeacherMsg}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
               >
                 {teacherMsgModal.copied ? <CheckCheck className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
                 {teacherMsgModal.copied ? 'Copied!' : 'Copy'}

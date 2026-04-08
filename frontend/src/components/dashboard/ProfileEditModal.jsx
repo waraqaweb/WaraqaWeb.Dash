@@ -364,13 +364,13 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
 
     return (
       <div className="relative">
-        <input ref={inputRef} className="w-full border rounded px-2 py-1 mb-2" placeholder="Start typing country..." value={inputValue} onChange={(e)=>{ setInputValue(e.target.value); setFilter(e.target.value); }} onKeyDown={handleKeyDown} onBlur={() => setTimeout(() => { const v = inputValue?.trim(); if (v) { onChange(v); setFilter(''); } else { setFilter(''); } }, 150)} />
+        <input ref={inputRef} className="w-full border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" placeholder="Start typing country..." value={inputValue} onChange={(e)=>{ setInputValue(e.target.value); setFilter(e.target.value); }} onKeyDown={handleKeyDown} onBlur={() => setTimeout(() => { const v = inputValue?.trim(); if (v) { onChange(v); setFilter(''); } else { setFilter(''); } }, 150)} />
         {showList && (
-          <div ref={listRef} className="absolute left-0 right-0 top-full mt-1 bg-white border rounded shadow max-h-40 overflow-auto z-50">
+          <div ref={listRef} className="absolute left-0 right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-xl max-h-48 overflow-auto z-50">
             {filtered.map((c,i) => (
-              <div key={i} className={`p-2 cursor-pointer ${i === highlight ? 'bg-gray-100' : (c===value? 'bg-gray-50':'')}`} onMouseDown={(e)=>{ e.preventDefault(); onChange(c); setInputValue(c); setFilter(''); }}>{c}</div>
+              <div key={i} className={`px-3 py-2 cursor-pointer text-sm transition-colors ${i === highlight ? 'bg-muted' : (c===value? 'bg-muted/50':'')} hover:bg-muted`} onMouseDown={(e)=>{ e.preventDefault(); onChange(c); setInputValue(c); setFilter(''); }}>{c}</div>
             ))}
-            {filtered.length === 0 && <div className="p-2 text-sm text-gray-500">No results</div>}
+            {filtered.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">No results</div>}
           </div>
         )}
       </div>
@@ -418,9 +418,9 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
       <div>
         <div className="flex flex-wrap gap-2 mb-2">
           {(value||[]).map((s,i) => (
-            <div key={i} className="px-2 py-1 bg-gray-100 rounded-full text-sm flex items-center gap-2">
+            <div key={i} className="px-2.5 py-1 bg-muted rounded-full text-sm flex items-center gap-2">
               <span>{s}</span>
-              <button type="button" onClick={() => remove(s)} className="text-xs text-red-600">×</button>
+              <button type="button" onClick={() => remove(s)} className="text-xs text-rose-500 hover:text-rose-700">×</button>
             </div>
           ))}
         </div>
@@ -429,17 +429,17 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Add course (type to search)..."
-            className="w-full border rounded px-2 py-1"
+            className="w-full border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
             onKeyDown={handleKeyDown}
             onFocus={() => setShowList(true)}
             onBlur={() => setTimeout(() => setShowList(false), 150)}
           />
           {showList && (
-            <div ref={listRef} className="absolute left-0 right-0 top-full mt-1 bg-white border rounded shadow max-h-40 overflow-auto z-50">
+            <div ref={listRef} className="absolute left-0 right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-xl max-h-48 overflow-auto z-50">
               {filtered.map((s,i) => (
-                <div key={i} className={`p-2 cursor-pointer ${i === highlight ? 'bg-gray-100' : ''}`} onMouseDown={(e)=>{ e.preventDefault(); add(s); }}>{s}</div>
+                <div key={i} className={`px-3 py-2 cursor-pointer text-sm transition-colors ${i === highlight ? 'bg-muted' : ''} hover:bg-muted`} onMouseDown={(e)=>{ e.preventDefault(); add(s); }}>{s}</div>
               ))}
-              {filtered.length === 0 && <div className="p-2 text-sm text-gray-500">No matches</div>}
+              {filtered.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>}
             </div>
           )}
         </div>
@@ -657,40 +657,60 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
     }
   };
 
+  /* Reusable toggle-switch for boolean fields */
+  const Toggle = ({ checked, onChange, disabled }) => (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={!!checked}
+      disabled={disabled}
+      onClick={() => !disabled && onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+        checked ? 'bg-primary' : 'bg-muted-foreground/30'
+      } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+    >
+      <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
+    </button>
+  );
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black bg-opacity-40" onClick={() => onClose && onClose()} />
-      <div className="relative bg-white rounded-lg shadow-lg w-full max-w-5xl p-6 z-50 max-h-[90vh] overflow-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Edit Profile</h3>
-          <div className="flex items-center gap-2">
-            <button onClick={() => onClose && onClose()} className="text-gray-500">Close</button>
-          </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black/50" onClick={() => onClose && onClose()} />
+      <div className="relative bg-card rounded-xl shadow-xl w-full max-w-5xl z-50 max-h-[90vh] flex flex-col">
+        {/* Sticky header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+          <h3 className="text-lg font-semibold text-foreground">Edit Profile</h3>
+          <button onClick={() => onClose && onClose()} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5" style={{ WebkitOverflowScrolling: 'touch' }}>
 
         <div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             {/* Avatar column */}
             <div className="flex flex-col items-center md:items-start md:justify-start">
-              <div className="w-full max-w-[160px] h-[160px] bg-gray-100 rounded-full overflow-hidden border shadow-sm">
+              <div className="w-full max-w-[160px] h-[160px] bg-muted rounded-full overflow-hidden border border-border shadow-sm">
                 {preview ? (
                   <img src={preview} alt="preview" className="h-full w-full object-cover" />
                 ) : form.profilePicture ? (
                   <img src={form.profilePicture} alt="avatar" className="h-full w-full object-cover" />
                 ) : (
-                  <div className="h-full w-full flex items-center justify-center text-gray-400">No image</div>
+                  <div className="h-full w-full flex items-center justify-center text-muted-foreground">No image</div>
                 )}
               </div>
 
               <div className="mt-3 w-full flex flex-col items-stretch gap-2">
                 <input type="file" accept="image/*" onChange={(e) => handleFile(e.target.files[0])} className="text-sm w-full" disabled={isUploading} />
-                <div className="text-xs text-gray-500">{isUploading ? 'Saving image...' : (uploadFile ? 'Preparing image — will save automatically' : 'Select an image to crop and it will auto-save')}</div>
-                <button onClick={deletePicture} className="px-3 py-1 bg-red-100 text-red-700 rounded text-sm w-full md:w-auto">Remove</button>
+                <div className="text-xs text-muted-foreground">{isUploading ? 'Saving image...' : (uploadFile ? 'Preparing image — will save automatically' : 'Select an image to crop and it will auto-save')}</div>
+                <button onClick={deletePicture} className="px-3 py-1.5 bg-rose-100 text-rose-700 rounded-lg text-sm font-medium w-full md:w-auto hover:bg-rose-200 transition">Remove</button>
               </div>
 
               {preview && (
                 <div className="mt-4 w-full">
-                  <div className="relative h-48 bg-gray-200 rounded overflow-hidden">
+                  <div className="relative h-48 bg-muted rounded-lg overflow-hidden">
                     <Cropper image={preview} crop={crop} zoom={zoom} aspect={1} onCropChange={setCrop} onZoomChange={setZoom} onCropComplete={onCropComplete} />
                   </div>
                   <div className="flex items-center gap-3 mt-2">
@@ -703,51 +723,51 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
 
             {/* Main form area */}
             <div className="md:col-span-3">
-              <h4 className="font-semibold mb-2">Personal Information</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 gap-4">
+              <h4 className="text-sm font-semibold text-foreground mb-3">Personal Information</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">First Name</label>
-                  <input className="w-full min-w-0 border rounded px-2 py-1" value={form.firstName||''} onChange={(e)=>setField('firstName', e.target.value)} disabled={!canEdit('firstName')} />
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">First Name</label>
+                  <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.firstName||''} onChange={(e)=>setField('firstName', e.target.value)} disabled={!canEdit('firstName')} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Last Name</label>
-                  <input className="w-full min-w-0 border rounded px-2 py-1" value={form.lastName||''} onChange={(e)=>setField('lastName', e.target.value)} disabled={!canEdit('lastName')} />
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Last Name</label>
+                  <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.lastName||''} onChange={(e)=>setField('lastName', e.target.value)} disabled={!canEdit('lastName')} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Email</label>
-                  <input className="w-full min-w-0 border rounded px-2 py-1" value={form.email||''} onChange={(e)=>setField('email', e.target.value)} disabled={!canEdit('email')} />
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Email</label>
+                  <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.email||''} onChange={(e)=>setField('email', e.target.value)} disabled={!canEdit('email')} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Phone</label>
-                  <input className="w-full min-w-0 border rounded px-2 py-1" value={form.phone||''} onChange={(e)=>setField('phone', e.target.value)} disabled={!canEdit('phone')} />
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Phone</label>
+                  <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.phone||''} onChange={(e)=>setField('phone', e.target.value)} disabled={!canEdit('phone')} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Date of Birth</label>
-                  <input type="date" className="w-full min-w-0 border rounded px-2 py-1" value={form.dateOfBirth ? (form.dateOfBirth.includes('T') ? new Date(form.dateOfBirth).toISOString().split('T')[0] : form.dateOfBirth) : ''} onChange={(e)=>setField('dateOfBirth', e.target.value)} disabled={!canEdit('dateOfBirth')} />
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Date of Birth</label>
+                  <input type="date" className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.dateOfBirth ? (form.dateOfBirth.includes('T') ? new Date(form.dateOfBirth).toISOString().split('T')[0] : form.dateOfBirth) : ''} onChange={(e)=>setField('dateOfBirth', e.target.value)} disabled={!canEdit('dateOfBirth')} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Gender</label>
-                  <select className="w-full min-w-0 border rounded px-2 py-1" value={form.gender||'male'} onChange={(e)=>setField('gender', e.target.value)} disabled={!canEdit('gender')}>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Gender</label>
+                  <select className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.gender||'male'} onChange={(e)=>setField('gender', e.target.value)} disabled={!canEdit('gender')}>
                     <option value="male">Male</option>
                     <option value="female">Female</option>
                   </select>
                 </div>
-                <div className="md:col-span-2 flex gap-4 items-start">
+                <div className="sm:col-span-2 flex gap-4 items-start">
                   <div className="flex-1 min-w-0">
-                    <label className="block text-sm font-medium text-gray-700">Timezone</label>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Timezone</label>
                     <div>
                       <TimezoneSelector value={form.timezone||''} onChange={(tz)=>setField('timezone', tz)} disabled={!canEdit('timezone')} />
                     </div>
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <label className="block text-sm font-medium text-gray-700">Spoken Languages</label>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Spoken Languages</label>
                     <SpokenLanguagesSelect value={form.spokenLanguages || []} onChange={(arr) => setField('spokenLanguages', arr)} />
                   </div>
                 </div>
-                <div className="md:col-span-2">
+                <div className="sm:col-span-2">
                   {isAdmin ? (
-                    <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <p className="text-sm font-medium text-amber-900">Reset password</p>
@@ -769,53 +789,53 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                       ) : null}
                     </div>
                   ) : (
-                    <p className="text-xs text-gray-500">To change your password, use the Change Password action on the Profile page.</p>
+                    <p className="text-xs text-muted-foreground">To change your password, use the Change Password action on the Profile page.</p>
                   )}
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 my-6" />
+              <div className="border-t border-border my-6" />
 
               {/* Address */}
               <div className="mt-4">
-                <h4 className="font-semibold mb-2">Address</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700">Street</label>
-                    <input className="w-full min-w-0 border rounded px-2 py-1" value={form.address?.street||''} onChange={(e)=>setField('address.street', e.target.value)} disabled={!canEdit('address')} />
+                <h4 className="text-sm font-semibold text-foreground mb-3">Address</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Street</label>
+                    <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.address?.street||''} onChange={(e)=>setField('address.street', e.target.value)} disabled={!canEdit('address')} />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">City</label>
-                    <input className="w-full min-w-0 border rounded px-2 py-1" value={form.address?.city||''} onChange={(e)=>setField('address.city', e.target.value)} disabled={!canEdit('address')} />
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">City</label>
+                    <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.address?.city||''} onChange={(e)=>setField('address.city', e.target.value)} disabled={!canEdit('address')} />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">State</label>
-                    <input className="w-full min-w-0 border rounded px-2 py-1" value={form.address?.state||''} onChange={(e)=>setField('address.state', e.target.value)} disabled={!canEdit('address')} />
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">State</label>
+                    <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.address?.state||''} onChange={(e)=>setField('address.state', e.target.value)} disabled={!canEdit('address')} />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Zip Code</label>
-                    <input className="w-full min-w-0 border rounded px-2 py-1" value={form.address?.zipCode||''} onChange={(e)=>setField('address.zipCode', e.target.value)} disabled={!canEdit('address')} />
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Zip Code</label>
+                    <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.address?.zipCode||''} onChange={(e)=>setField('address.zipCode', e.target.value)} disabled={!canEdit('address')} />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Country</label>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Country</label>
                     <CountrySelect value={form.address?.country||''} onChange={(v)=>setField('address.country', v)} />
                   </div>
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 my-6" />
+              <div className="border-t border-border my-6" />
 
               {/* Financial */}
               <div className="mt-4">
-                <h4 className="font-semibold mb-2">Financial</h4>
+                <h4 className="text-sm font-semibold text-foreground mb-3">Financial</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {(form.role === 'guardian') && (
                   <>
                     {isAdmin && (
                       <div>
-                        <label className="block text-sm font-medium text-gray-700">Epithet (admin only)</label>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Epithet (admin only)</label>
                         <input
-                          className="w-full min-w-0 border rounded px-2 py-1"
+                          className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                           value={form.guardianInfo?.epithet || ''}
                           onChange={(e)=>setField('guardianInfo.epithet', e.target.value)}
                           placeholder="Mr, Mrs, brother, sister"
@@ -823,8 +843,8 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                       </div>
                     )}
                     <div>
-                      <label className="block text-sm font-medium text-gray-700">Payment Method</label>
-                      <select className="w-full min-w-0 border rounded px-2 py-1" value={form.paymentMethod ?? form.guardianInfo?.paymentMethod ?? (form.role === 'guardian' ? 'paypal' : '')} onChange={(e)=>setField('paymentMethod', e.target.value)}>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Payment Method</label>
+                      <select className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.paymentMethod ?? form.guardianInfo?.paymentMethod ?? (form.role === 'guardian' ? 'paypal' : '')} onChange={(e)=>setField('paymentMethod', e.target.value)}>
                         <option value="">(leave as saved)</option>
                         <option value="paypal">PayPal</option>
                         <option value="bank">Bank account</option>
@@ -833,13 +853,13 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700">Hourly Rate (guardian)</label>
-                      <input type="number" className="w-full min-w-0 border rounded px-2 py-1" value={form.guardianInfo?.hourlyRate ?? ''} onChange={(e)=>setField('guardianInfo.hourlyRate', e.target.value ? Number(e.target.value) : '')} disabled={!isAdmin} min="0" step="0.25" />
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Hourly Rate (guardian)</label>
+                      <input type="number" className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.guardianInfo?.hourlyRate ?? ''} onChange={(e)=>setField('guardianInfo.hourlyRate', e.target.value ? Number(e.target.value) : '')} disabled={!isAdmin} min="0" step="0.25" />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700">Instapay Name</label>
-                      <input className="w-full min-w-0 border rounded px-2 py-1" value={form.instapayName||''} onChange={(e)=>setField('instapayName', e.target.value)} disabled={!canEdit('instapayName')} />
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Instapay Name</label>
+                      <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.instapayName||''} onChange={(e)=>setField('instapayName', e.target.value)} disabled={!canEdit('instapayName')} />
                     </div>
 
                     <div />
@@ -851,7 +871,7 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 my-6" />
+              <div className="border-t border-border my-6" />
 
               {/* Educational (teacher-only) */}
               {form.role === 'teacher' && (
@@ -859,31 +879,31 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                   {/* Ensure teacher can edit Instapay Name here (visible to teacher + admins) */}
                   {(form.role === 'teacher' || isAdmin) && (
                     <div className="mb-4">
-                      <label className="block text-sm font-medium text-gray-700">Instapay Name</label>
-                      <input className="w-full min-w-0 border rounded px-2 py-1" value={form.instapayName||''} onChange={(e)=>setField('instapayName', e.target.value)} disabled={!canEdit('instapayName')} />
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Instapay Name</label>
+                      <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.instapayName||''} onChange={(e)=>setField('instapayName', e.target.value)} disabled={!canEdit('instapayName')} />
                     </div>
                   )}
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700">Default Meeting Link</label>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Default Meeting Link</label>
                     <input
                       type="url"
-                      className="w-full min-w-0 border rounded px-2 py-1"
+                      className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                       value={form.googleMeetLink || ''}
                       onChange={(e) => setField('googleMeetLink', e.target.value)}
                       disabled={!canEdit('googleMeetLink')}
                       placeholder="https://meet.google.com/..."
                     />
-                    <p className="text-xs text-gray-500 mt-1">Used to auto-fill the meeting link when this teacher is assigned to a class.</p>
+                    <p className="text-xs text-muted-foreground mt-1">Used to auto-fill the meeting link when this teacher is assigned to a class.</p>
                   </div>
-                  <h4 className="font-semibold mb-2">Educational</h4>
+                  <h4 className="text-sm font-semibold text-foreground mb-3">Educational</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700">Bio</label>
-                      <textarea className="w-full min-w-0 border rounded px-2 py-1" value={form.bio||''} onChange={(e)=>setField('bio', e.target.value)} disabled={!canEdit('bio')} />
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Bio</label>
+                      <textarea className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.bio||''} onChange={(e)=>setField('bio', e.target.value)} disabled={!canEdit('bio')} />
                     </div>
                     
                     <div>
-                      <label className="block text-sm font-medium text-gray-700">Qualifications</label>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Qualifications</label>
                       <QualificationsEditor qualifications={form.qualifications || []} readOnly={!canEdit('qualifications')} onChange={(q) => setField('qualifications', q)} />
                     </div>
                     <div className="md:col-span-2">
@@ -900,31 +920,31 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                       />
                     </div>
                     {isAdmin && (
-                      <div className="md:col-span-2 rounded-lg border border-gray-200 p-4">
-                        <h5 className="font-medium text-gray-900">Yearly vacation allowance</h5>
-                        <p className="mt-1 text-xs text-gray-500">Set one number for all future years and optionally a different number for {currentYear} only.</p>
+                      <div className="md:col-span-2 rounded-lg border border-border p-4">
+                        <h5 className="font-medium text-foreground">Yearly vacation allowance</h5>
+                        <p className="mt-1 text-xs text-muted-foreground">Set one number for all future years and optionally a different number for {currentYear} only.</p>
                         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
-                            <label className="block text-sm font-medium text-gray-700">Default days per year (future years)</label>
+                            <label className="block text-xs font-medium text-muted-foreground mb-1">Default days per year (future years)</label>
                             <input
                               type="number"
                               min="0"
-                              className="w-full min-w-0 border rounded px-2 py-1"
+                              className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                               value={form.vacationAllowanceDefaultDaysPerYear ?? ''}
                               onChange={(e) => setField('vacationAllowanceDefaultDaysPerYear', e.target.value === '' ? '' : Number(e.target.value))}
                             />
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700">{currentYear} days only</label>
+                            <label className="block text-xs font-medium text-muted-foreground mb-1">{currentYear} days only</label>
                             <input
                               type="number"
                               min="0"
-                              className="w-full min-w-0 border rounded px-2 py-1"
+                              className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                               value={form.vacationAllowanceCurrentYearDays ?? ''}
                               onChange={(e) => setField('vacationAllowanceCurrentYearDays', e.target.value === '' ? '' : Number(e.target.value))}
                               placeholder="Leave empty to use future years value"
                             />
-                            <p className="mt-1 text-xs text-gray-500">Leave this empty if {currentYear} should use the future-years number.</p>
+                            <p className="mt-1 text-xs text-muted-foreground">Leave this empty if {currentYear} should use the future-years number.</p>
                           </div>
                         </div>
                       </div>
@@ -933,19 +953,16 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                 </div>
               )}
 
-              <div className="border-t border-gray-200 my-6" />
+              <div className="border-t border-border my-6" />
 
               {/* System / Admin */}
               {isAdmin && (
                 <div className="mt-4">
-                  <div className="border-t border-gray-200 my-6" />
-                  <h4 className="font-semibold mb-2">System</h4>
+                  <h4 className="text-sm font-semibold text-foreground mb-3">System</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    
-                    
                     <div>
-                      <label className="block text-sm font-medium text-gray-700">Role</label>
-                      <select className="w-full min-w-0 border rounded px-2 py-1" value={form.role||'guardian'} onChange={(e)=>setField('role', e.target.value)}>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Role</label>
+                      <select className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.role||'guardian'} onChange={(e)=>setField('role', e.target.value)}>
                         <option value="admin">Admin</option>
                         <option value="teacher">Teacher</option>
                         <option value="guardian">Guardian</option>
@@ -953,51 +970,75 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                       </select>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700">Last Login</label>
-                      <input className="w-full min-w-0 border rounded px-2 py-1 bg-gray-50" value={form.lastLogin||''} onChange={(e)=>setField('lastLogin', e.target.value)} />
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Last Login</label>
+                      <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-muted/50 text-foreground text-sm" value={form.lastLogin||''} onChange={(e)=>setField('lastLogin', e.target.value)} />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700">Login Attempts</label>
-                      <input className="w-full min-w-0 border rounded px-2 py-1 bg-gray-50" value={form.loginAttempts||0} onChange={(e)=>setField('loginAttempts', e.target.value)} />
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Login Attempts</label>
+                      <input className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-muted/50 text-foreground text-sm" value={form.loginAttempts||0} onChange={(e)=>setField('loginAttempts', e.target.value)} />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700">Lock Until</label>
-                      <input type="datetime-local" className="w-full min-w-0 border rounded px-2 py-1" value={form.lockUntil ? new Date(form.lockUntil).toISOString().slice(0,16) : ''} onChange={(e)=>setField('lockUntil', e.target.value)} />
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Lock Until</label>
+                      <input type="datetime-local" className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.lockUntil ? new Date(form.lockUntil).toISOString().slice(0,16) : ''} onChange={(e)=>setField('lockUntil', e.target.value)} />
                     </div>
 
                     <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700">Transfer Fee Type</label>
-                        <select className="w-full min-w-0 border rounded px-2 py-1" value={form.guardianInfo?.transferFee?.mode || 'fixed'} onChange={(e)=>setField('guardianInfo.transferFee.mode', e.target.value)}>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Transfer Fee Type</label>
+                        <select className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.guardianInfo?.transferFee?.mode || 'fixed'} onChange={(e)=>setField('guardianInfo.transferFee.mode', e.target.value)}>
                           <option value="fixed">Fixed amount</option>
                           <option value="percent">Percentage</option>
                         </select>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700">Transfer Fee Value</label>
-                        <input type="number" className="w-full min-w-0 border rounded px-2 py-1" value={form.guardianInfo?.transferFee?.value ?? ''} onChange={(e)=>setField('guardianInfo.transferFee.value', e.target.value ? Number(e.target.value) : '')} min="0" step="0.25" />
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Transfer Fee Value</label>
+                        <input type="number" className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" value={form.guardianInfo?.transferFee?.value ?? ''} onChange={(e)=>setField('guardianInfo.transferFee.value', e.target.value ? Number(e.target.value) : '')} min="0" step="0.25" />
                       </div>
                     </div>
-                    
                   </div>
-                      <div className="flex items-center gap-2">
-                      <label className="text-sm font-medium text-gray-700">Active</label>
-                      <input type="checkbox" checked={!!form.isActive} onChange={(e)=>setField('isActive', e.target.checked)} />
-                      <label className="text-sm font-medium text-gray-700">Email Verified</label>
-                      <input type="checkbox" checked={!!form.isEmailVerified} onChange={(e) => setField('isEmailVerified', e.target.checked)} />
-                    
-                      <label className="flex items-center gap-2"><input type="checkbox" checked={!!form.notifications?.email} onChange={(e)=>setField('notifications',{...(form.notifications||{}), email: e.target.checked})} disabled={!canEdit('notifications')} /> Email</label>
-                      <label className="flex items-center gap-2"><input type="checkbox" checked={!!form.notifications?.sms} onChange={(e)=>setField('notifications',{...(form.notifications||{}), sms: e.target.checked})} disabled={!canEdit('notifications')} /> SMS</label>
-                      <label className="flex items-center gap-2"><input type="checkbox" checked={!!form.notifications?.push} onChange={(e)=>setField('notifications',{...(form.notifications||{}), push: e.target.checked})} disabled={!canEdit('notifications')} /> Push</label>
+
+                  {/* Toggle switches */}
+                  <div className="mt-5 rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Active</p>
+                        <p className="text-xs text-muted-foreground">Account is active and can sign in</p>
+                      </div>
+                      <Toggle checked={!!form.isActive} onChange={(v)=>setField('isActive', v)} />
                     </div>
+                    <div className="border-t border-border/50" />
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Email Verified</p>
+                        <p className="text-xs text-muted-foreground">Email address has been confirmed</p>
+                      </div>
+                      <Toggle checked={!!form.isEmailVerified} onChange={(v)=>setField('isEmailVerified', v)} />
+                    </div>
+                    <div className="border-t border-border/50" />
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-1">Notifications</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-foreground">Email notifications</p>
+                      <Toggle checked={!!form.notifications?.email} onChange={(v)=>setField('notifications',{...(form.notifications||{}), email: v})} disabled={!canEdit('notifications')} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-foreground">SMS notifications</p>
+                      <Toggle checked={!!form.notifications?.sms} onChange={(v)=>setField('notifications',{...(form.notifications||{}), sms: v})} disabled={!canEdit('notifications')} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-foreground">Push notifications</p>
+                      <Toggle checked={!!form.notifications?.push} onChange={(v)=>setField('notifications',{...(form.notifications||{}), push: v})} disabled={!canEdit('notifications')} />
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
           </div>
         </div>
+        </div>
+        {/* End scrollable body */}
 
-        {/* Footer actions */}
-        <div className="mt-6 flex justify-end gap-3">
+        {/* Sticky footer actions */}
+        <div className="flex justify-end gap-3 px-6 py-4 border-t border-border shrink-0">
           <button onClick={() => onClose && onClose()} className="btn-secondary">Cancel</button>
           <button onClick={handleSave} disabled={loading} className="btn-submit focus:outline-none focus:ring-2 focus:ring-primary/40">{loading ? 'Saving...' : 'Save'}</button>
         </div>

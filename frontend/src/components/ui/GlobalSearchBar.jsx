@@ -265,7 +265,7 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
           {searchTerm && (
             <button
               onClick={clearSearch}
-              className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-300"
+              className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary/30"
               aria-label="Clear search"
             >
               <X className="h-4 w-4" />
@@ -280,8 +280,8 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
               onClick={() => setShowFilters(!showFilters)}
               className={`inline-flex items-center gap-1 rounded-md p-2 text-sm font-medium transition-colors ${
                 filterIndicatorCount > 0
-                  ? 'bg-[#2C736C] text-white hover:bg-[#245b56]'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
               title="Filter options"
             >
@@ -302,7 +302,7 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
                       onClick={() => {
                         setFiltersForView(TEACHER_SALARY_VIEW_KEY, createDefaultTeacherSalaryFilters());
                       }}
-                      className="text-xs font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
+                      className="text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
                     >
                       Reset
                     </button>
@@ -351,7 +351,7 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
                   <div className="flex justify-end pt-1">
                     <button
                       onClick={() => setShowFilters(false)}
-                      className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56]"
+                      className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
                     >
                       Done
                     </button>
@@ -363,7 +363,7 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
                     <p className="text-sm font-medium text-foreground">Lead filters</p>
                     <button
                       onClick={() => setFiltersForView(AVAILABILITY_VIEW_KEY, createDefaultAvailabilityFilters())}
-                      className="text-xs font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
+                      className="text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
                     >
                       Reset
                     </button>
@@ -411,7 +411,7 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
                   <div className="flex justify-end pt-1">
                     <button
                       onClick={() => setShowFilters(false)}
-                      className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56]"
+                      className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
                     >
                       Done
                     </button>
@@ -442,8 +442,8 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
                           }}
                           className={`w-full rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
                             globalFilter === filter.value
-                              ? 'bg-[#2C736C] text-white'
-                              : 'hover:bg-slate-100'
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-foreground hover:bg-muted'
                           }`}
                         >
                           {filter.label}

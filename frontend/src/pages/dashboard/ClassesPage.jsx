@@ -4172,6 +4172,7 @@ fetchClassesRef.current = fetchClasses;
           onCreate={() => navigate('/classes/create', { state: { background: location } })}
           onShare={() => handleOpenShareModal()}
           onSeriesScanner={() => setShowSeriesScanner(true)}
+          onMeetingAvailability={() => navigate('/dashboard/availability?source=classes')}
         />
       )}
 

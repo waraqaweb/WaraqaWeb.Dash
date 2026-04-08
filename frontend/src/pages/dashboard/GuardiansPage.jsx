@@ -28,7 +28,10 @@ import {
   DownloadCloud,
   X,
   Baby,
-  Edit
+  Edit,
+  Plus,
+  FileText,
+  History
 } from 'lucide-react';
 import ProfileEditModal from '../../components/dashboard/ProfileEditModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
@@ -1208,18 +1211,41 @@ const GuardiansPage = () => {
       </div>
 
       {isAdmin() && (
-        <div className="fixed bottom-24 right-6 z-40 flex flex-col items-end gap-2">
+        <div className="fixed bottom-8 right-6 z-40 flex flex-col items-end">
+          {/* Scrim overlay when open on mobile */}
           {showQuickActions && (
-            <div className="rounded-lg border border-border bg-card shadow-lg overflow-hidden">
+            <div className="fixed inset-0 bg-black/20 sm:hidden" onClick={() => setShowQuickActions(false)} />
+          )}
+
+          <div className={`flex flex-col items-end gap-2.5 mb-3 relative z-10 ${showQuickActions ? '' : 'pointer-events-none'}`}>
+            <div
+              className={`flex items-center gap-3 transition-all duration-200 ${
+                showQuickActions ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'
+              }`}
+              style={{ transitionDelay: showQuickActions ? '0ms' : '0ms' }}
+            >
+              <span className="whitespace-nowrap rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-lg border border-border">
+                Legacy balance
+              </span>
               <button
                 onClick={() => {
                   setShowLegacyQuick(true);
                   setShowQuickActions(false);
                 }}
-                className="block w-full px-4 py-2 text-left text-sm text-foreground hover:bg-muted"
+                className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 flex items-center justify-center shrink-0"
               >
-                Legacy balance
+                <FileText className="h-4 w-4" />
               </button>
+            </div>
+            <div
+              className={`flex items-center gap-3 transition-all duration-200 ${
+                showQuickActions ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'
+              }`}
+              style={{ transitionDelay: showQuickActions ? '40ms' : '0ms' }}
+            >
+              <span className="whitespace-nowrap rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-lg border border-border">
+                Account history
+              </span>
               <button
                 onClick={() => {
                   setShowAccountLogs(true);
@@ -1227,18 +1253,19 @@ const GuardiansPage = () => {
                   setAccountLogsError('');
                   setShowQuickActions(false);
                 }}
-                className="block w-full px-4 py-2 text-left text-sm text-foreground hover:bg-muted"
+                className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 flex items-center justify-center shrink-0"
               >
-                Account history
+                <History className="h-4 w-4" />
               </button>
             </div>
-          )}
+          </div>
+
           <button
             onClick={() => setShowQuickActions((prev) => !prev)}
-            className="h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 flex items-center justify-center text-2xl"
+            className="relative z-10 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 flex items-center justify-center"
             title="Quick actions"
           >
-            +
+            <Plus className={`h-5 w-5 transition-transform duration-200 ${showQuickActions ? 'rotate-45' : ''}`} />
           </button>
         </div>
       )}
@@ -1390,7 +1417,7 @@ const GuardiansPage = () => {
                   className="h-9 w-full rounded-md border border-border bg-input px-3 text-sm text-foreground"
                 />
                 {showAccountOptions && filteredAccountGuardians.length > 0 && (
-                  <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-card shadow-lg">
+                  <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-card shadow-xl">
                     {filteredAccountGuardians.map((g) => (
                       <button
                         key={g._id}
@@ -1402,9 +1429,14 @@ const GuardiansPage = () => {
                           setAccountLogQuery(guardianOptionValue(g));
                           setShowAccountOptions(false);
                         }}
-                        className="block w-full px-3 py-2 text-left text-sm text-foreground hover:bg-muted"
+                        className="flex w-full flex-col gap-0.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors last:border-0 hover:bg-muted"
                       >
-                        {guardianOptionValue(g)}
+                        <span className="text-sm font-medium text-foreground">
+                          {guardianOptionLabel(g)}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {g.email || '—'} &middot; {g._id}
+                        </span>
                       </button>
                     ))}
                   </div>

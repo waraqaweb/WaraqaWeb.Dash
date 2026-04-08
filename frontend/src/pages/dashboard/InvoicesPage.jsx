@@ -2487,7 +2487,7 @@ const InvoicesPage = ({ isActive = true }) => {
       )}
       {/* Floating action buttons (bottom-right) */}
       {isAdmin() && (
-        <div ref={fabRef} className="fixed bottom-6 right-6 z-50 flex items-end">
+        <div ref={fabRef} className="fixed bottom-8 right-6 z-50 flex items-end">
           <div className="relative flex flex-col items-end">
             {/* Animated cluster items (appear when fabOpen=true) */}
             <div className="flex flex-col items-end gap-3 mb-2">

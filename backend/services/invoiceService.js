@@ -840,7 +840,7 @@ class InvoiceService {
         const unpaidQuery = {
           'student.guardianId': guardian._id,
           hidden: { $ne: true },
-          status: { $ne: 'pattern' },
+          status: { $nin: [...NOT_ELIGIBLE_STATUSES] },
           paidByGuardian: { $ne: true },
           // Exclude classes that are in active invoices
           _id: { $nin: invoicedClassIds }
@@ -852,6 +852,7 @@ class InvoiceService {
         let unpaidClasses = await Class.find(unpaidQuery)
           .populate("student.guardianId", "firstName lastName email")
           .populate("teacher")
+          .select('scheduledDate duration subject status teacher student reportSubmission date')
           .lean();
 
         console.log(`🔍 [Zero-Hour Invoice] Processing guardian: ${guardian.firstName} ${guardian.lastName}`);
@@ -884,9 +885,17 @@ class InvoiceService {
         const endDate = getFixedWindowEndExclusive(startDate, getDaysInMonth(startDate));
 
         // Filter classes to only include those within the current calendar-month boundary
+        // and that pass eligibility checks (expired admin extensions, submission windows, etc.)
+        const nowMonthly = new Date();
         const selectedClasses = unpaidClasses.filter(cls => {
           const clsDate = new Date(cls.scheduledDate || cls.date);
-          return clsDate >= new Date(startDate) && clsDate < endDate;
+          if (clsDate < new Date(startDate) || clsDate >= endDate) return false;
+          const enriched = {
+            ...cls,
+            reportSubmissionAllowance: ensureDate(cls?.reportSubmission?.teacherDeadline),
+            reportSubmissionExtendedUntil: ensureDate(cls?.reportSubmission?.adminExtension?.expiresAt)
+          };
+          return isClassEligibleForDynamicInvoice(enriched, nowMonthly);
         });
 
         // Debug logging
@@ -931,6 +940,8 @@ class InvoiceService {
         const invoice = new Invoice({
           type: "guardian_invoice",
           guardian: guardian._id,
+          billingType: 'monthly',
+          generationSource: 'auto-monthly',
           billingPeriod: {
             startDate,
             endDate: endDate, // Use the calculated one month end date
@@ -940,7 +951,7 @@ class InvoiceService {
           items,
           subtotal,
           total: subtotal,
-          status: "draft",
+          status: "pending",
           dueDate: new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000),
           paymentMethod: guardian.guardianInfo?.preferredPaymentMethod || "credit_card",
           notes: "Automatic monthly invoice",
@@ -1048,7 +1059,7 @@ class InvoiceService {
           'student.guardianId': guardian._id,
           'student.studentId': { $in: studentIds },
           billedInInvoiceId: null,
-          status: { $ne: 'cancelled' }
+          status: { $nin: [...NOT_ELIGIBLE_STATUSES] }
         })
           .sort({ scheduledDate: 1 })
           .select('scheduledDate')
@@ -1119,16 +1130,27 @@ class InvoiceService {
           
           // Query for ALL classes within the month (attended, missed, scheduled, AND pending report submission)
           // Start from EARLIEST unbilled class, not the triggering class
-          const additional = await Class.find({
+          let additional = await Class.find({
             'student.guardianId': guardian._id,
             'student.studentId': { $in: studentIds },
             scheduledDate: { $gte: billingStartDate, $lt: searchEndDate },
             // Exclude classes that are in active invoices
             _id: { $nin: billedIds },
-            status: { $nin: ['cancelled', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian', 'cancelled_by_admin', 'cancelled_by_system', 'on_hold', 'pattern'] }
+            status: { $nin: [...NOT_ELIGIBLE_STATUSES] }
           })
             .select('_id subject scheduledDate duration student teacher status billedInInvoiceId classReport reportSubmission')
             .lean();
+
+          // Post-filter: catch expired admin extensions / submission windows
+          const nowFirstLesson = new Date();
+          additional = additional.filter(cls => {
+            const enriched = {
+              ...cls,
+              reportSubmissionAllowance: ensureDate(cls?.reportSubmission?.teacherDeadline),
+              reportSubmissionExtendedUntil: ensureDate(cls?.reportSubmission?.adminExtension?.expiresAt)
+            };
+            return isClassEligibleForDynamicInvoice(enriched, nowFirstLesson);
+          });
           
           console.log(`[First-Lesson Invoice] Additional classes found: ${additional.length}`);
 
@@ -1409,13 +1431,14 @@ class InvoiceService {
           // ✅ FIRST: Find ALL unpaid classes to determine the billing start date
           const allUnpaidQuery = {
             'student.guardianId': guardian._id,
-            _id: { $nin: billedIds }
+            _id: { $nin: billedIds },
+            status: { $nin: [...NOT_ELIGIBLE_STATUSES] }
           };
           if (trackedStudentIds.length > 0) {
             allUnpaidQuery['student.studentId'] = { $in: trackedStudentIds };
           }
           let allUnpaidClasses = await Class.find(allUnpaidQuery)
-            .select('scheduledDate')
+            .select('scheduledDate status reportSubmission')
             .sort({ scheduledDate: 1 })
             .lean();
 
@@ -1425,9 +1448,10 @@ class InvoiceService {
             }
             allUnpaidClasses = await Class.find({
               'student.guardianId': guardian._id,
-              _id: { $nin: billedIds }
+              _id: { $nin: billedIds },
+              status: { $nin: [...NOT_ELIGIBLE_STATUSES] }
             })
-              .select('scheduledDate')
+              .select('scheduledDate status reportSubmission')
               .sort({ scheduledDate: 1 })
               .lean();
           }
@@ -1442,13 +1466,13 @@ class InvoiceService {
           console.log(`🔍 [Zero-Hour PAYG Invoice] Total unpaid classes: ${allUnpaidClasses.length}`);
           console.log(`🔍 [Zero-Hour PAYG Invoice] Billing period: ${billingStart.toISOString()} → ${billingEnd.toISOString()}`);
           
-          // ✅ Include ALL classes (scheduled, attended, missed, AND pending report submission) within billing period
+          // ✅ Include classes within billing period — use shared NOT_ELIGIBLE filter
           const upcomingQuery = {
             'student.guardianId': guardian._id,
             scheduledDate: { $gte: billingStart, $lt: billingEnd },
             _id: { $nin: billedIds },
             paidByGuardian: { $ne: true },
-            status: { $nin: ['cancelled', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian', 'cancelled_by_admin', 'cancelled_by_system', 'on_hold', 'pattern'] }
+            status: { $nin: [...NOT_ELIGIBLE_STATUSES] }
           };
           if (trackedStudentIds.length > 0) {
             upcomingQuery['student.studentId'] = { $in: trackedStudentIds };
@@ -1474,7 +1498,18 @@ class InvoiceService {
               .lean();
           }
 
-          console.log(`🔍 [Zero-Hour PAYG Invoice] Found ${upcoming.length} classes in billing period`);
+          // Post-filter through classifyClassStatus to catch expired admin extensions
+          const now_ = new Date();
+          upcoming = upcoming.filter(cls => {
+            const enriched = {
+              ...cls,
+              reportSubmissionAllowance: ensureDate(cls?.reportSubmission?.teacherDeadline),
+              reportSubmissionExtendedUntil: ensureDate(cls?.reportSubmission?.adminExtension?.expiresAt)
+            };
+            return isClassEligibleForDynamicInvoice(enriched, now_);
+          });
+
+          console.log(`🔍 [Zero-Hour PAYG Invoice] Found ${upcoming.length} eligible classes in billing period`);
 
           if (Array.isArray(upcoming) && upcoming.length > 0) {
             const rate = guardian.guardianInfo?.hourlyRate || defaultRate;
@@ -3472,17 +3507,9 @@ class InvoiceService {
         .filter((id) => mongoose.Types.ObjectId.isValid(id))
         .map((id) => new mongoose.Types.ObjectId(id));
 
-      const disallowedStatuses = [
-        'pattern',
-        'cancelled',
-        'cancelled_by_teacher',
-        'cancelled_by_student',
-        'cancelled_by_guardian',
-        'cancelled_by_admin',
-        'cancelled_by_system'
-      ];
+      const disallowedStatuses = [...NOT_ELIGIBLE_STATUSES];
 
-      const additionalClasses = await Class.find({
+      let additionalClasses = await Class.find({
         'student.guardianId': guardianId,
         'student.studentId': { $in: studentIds },
         status: { $nin: disallowedStatuses },
@@ -3498,7 +3525,19 @@ class InvoiceService {
         ]
       })
         .sort({ scheduledDate: 1 })
+        .select('scheduledDate duration subject status teacher student reportSubmission')
         .lean();
+
+      // Post-filter: catch expired admin extensions / submission windows
+      const nowExtend = new Date();
+      additionalClasses = additionalClasses.filter(cls => {
+        const enriched = {
+          ...cls,
+          reportSubmissionAllowance: ensureDate(cls?.reportSubmission?.teacherDeadline),
+          reportSubmissionExtendedUntil: ensureDate(cls?.reportSubmission?.adminExtension?.expiresAt)
+        };
+        return isClassEligibleForDynamicInvoice(enriched, nowExtend);
+      });
 
       if (!additionalClasses.length) {
         return { added: 0 };

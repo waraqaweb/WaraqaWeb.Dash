@@ -19,23 +19,6 @@ const normalizeId = (value) => {
   return null;
 };
 
-const pickInvoiceStartDate = (invoice) => {
-  const billingStart = invoice?.billingPeriod?.startDate ? new Date(invoice.billingPeriod.startDate) : null;
-  if (billingStart && !Number.isNaN(billingStart.getTime())) return billingStart;
-
-  const itemDates = Array.isArray(invoice?.items)
-    ? invoice.items
-        .map((item) => (item?.date ? new Date(item.date) : null))
-        .filter((date) => date && !Number.isNaN(date.getTime()))
-    : [];
-  if (itemDates.length) {
-    return new Date(Math.min(...itemDates.map((d) => d.getTime())));
-  }
-
-  const createdAt = invoice?.createdAt ? new Date(invoice.createdAt) : null;
-  return createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null;
-};
-
 const resolveItemHours = (item) => {
   const qty = Number(item?.quantityHours);
   if (Number.isFinite(qty) && qty > 0) return qty;
@@ -59,14 +42,10 @@ const buildPaidInvoiceAllocations = (invoices = []) => {
     if (!guardianId) continue;
 
     if (!perGuardian.has(guardianId)) {
-      perGuardian.set(guardianId, {
-        studentPaid: new Map(),
-        studentStart: new Map()
-      });
+      perGuardian.set(guardianId, { studentPaid: new Map() });
     }
 
     const entry = perGuardian.get(guardianId);
-    const invoiceStart = pickInvoiceStartDate(invoice);
     const items = Array.isArray(invoice.items) ? invoice.items : [];
 
     for (const item of items) {
@@ -77,52 +56,10 @@ const buildPaidInvoiceAllocations = (invoices = []) => {
       if (!Number.isFinite(hours) || hours <= 0) continue;
 
       entry.studentPaid.set(studentId, roundHours((entry.studentPaid.get(studentId) || 0) + hours));
-
-      if (invoiceStart) {
-        const currentStart = entry.studentStart.get(studentId);
-        if (!currentStart || invoiceStart < currentStart) {
-          entry.studentStart.set(studentId, invoiceStart);
-        }
-      }
     }
   }
 
   return perGuardian;
-};
-
-const computeConsumedHours = async (guardianId, studentStartMap) => {
-  const consumed = new Map();
-  if (!studentStartMap || studentStartMap.size === 0) return consumed;
-
-  const minStart = Array.from(studentStartMap.values())
-    .filter(Boolean)
-    .reduce((min, date) => (min && min < date ? min : date), null);
-  if (!minStart) return consumed;
-
-  const classDocs = await Class.find({
-    'student.guardianId': guardianId,
-    scheduledDate: { $gte: minStart }
-  })
-    .select('scheduledDate duration status classReport student.studentId student._id')
-    .lean();
-
-  for (const cls of classDocs || []) {
-    if (!shouldCountClass(cls)) continue;
-    const studentId = normalizeId(cls?.student?.studentId) || normalizeId(cls?.student?._id);
-    if (!studentId) continue;
-    const startDate = studentStartMap.get(studentId);
-    if (startDate) {
-      const clsDate = cls?.scheduledDate ? new Date(cls.scheduledDate) : null;
-      if (!clsDate || Number.isNaN(clsDate.getTime()) || clsDate < startDate) continue;
-    }
-
-    const minutes = Number(cls?.duration || 0) || 0;
-    if (minutes <= 0) continue;
-    const hours = minutes / 60;
-    consumed.set(studentId, roundHours((consumed.get(studentId) || 0) + hours));
-  }
-
-  return consumed;
 };
 
 const computeConsumedHoursAllTime = async (guardianId) => {
@@ -159,14 +96,14 @@ const computeGuardianHoursFromPaidInvoices = async (guardianIds = []) => {
     deleted: { $ne: true },
     status: 'paid'
   })
-    .select('guardian billingPeriod.startDate createdAt items.student items.date items.duration items.quantityHours')
+    .select('guardian items.student items.duration items.quantityHours')
     .lean();
 
   const allocations = buildPaidInvoiceAllocations(invoices);
   const result = new Map();
 
   for (const guardianId of normalized) {
-    const allocation = allocations.get(guardianId) || { studentPaid: new Map(), studentStart: new Map() };
+    const allocation = allocations.get(guardianId) || { studentPaid: new Map() };
     const consumedAll = await computeConsumedHoursAllTime(guardianId);
     const studentHours = new Map();
 

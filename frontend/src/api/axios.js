@@ -70,7 +70,10 @@ const resolveApiBase = () => {
 
   const isProductionHost = (() => {
     const origin = window.location?.origin || '';
-    return !/localhost|127\.0\.0\.1|::1/.test(origin);
+    if (/localhost|127\.0\.0\.1|::1/.test(origin)) return false;
+    // Private/LAN IPs are not production hosts
+    if (/^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(origin)) return false;
+    return true;
   })();
 
   const looksLikeInternalApiBase = (url) => {
@@ -100,8 +103,18 @@ const resolveApiBase = () => {
   }
 
   const isLocal = /localhost|127\.0\.0\.1|::1/.test(origin);
+  // Detect private/LAN IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+  const isPrivateNetwork = /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(origin);
   const normalizedOrigin = origin.endsWith('/') ? origin.slice(0, -1) : origin;
-  return isLocal ? 'http://127.0.0.1:5000/api' : `${normalizedOrigin}/api`;
+  if (isLocal) return 'http://127.0.0.1:5000/api';
+  if (isPrivateNetwork) {
+    // Same host but backend port — no nginx proxy in local dev
+    try {
+      const u = new URL(normalizedOrigin);
+      return `${u.protocol}//${u.hostname}:5000/api`;
+    } catch (_) { /* fall through */ }
+  }
+  return `${normalizedOrigin}/api`;
 };
 
 const API_BASE = resolveApiBase() || 'http://127.0.0.1:5000/api';

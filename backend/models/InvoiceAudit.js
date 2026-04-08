@@ -8,7 +8,7 @@ const invoiceAuditSchema = new Schema({
   actorId: { type: Schema.Types.ObjectId, ref: 'User' },
   action: {
     type: String,
-    enum: ['create', 'update', 'item_update', 'status_change', 'payment', 'refund', 'refund_adjustment', 'delivery', 'note', 'delete', 'restore', 'permanent_delete'],
+    enum: ['create', 'update', 'item_update', 'status_change', 'payment', 'refund', 'refund_adjustment', 'undo_refund', 'delivery', 'note', 'delete', 'restore', 'permanent_delete', 'domino_shift'],
     required: true
   },
   at: { type: Date, default: Date.now },

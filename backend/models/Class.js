@@ -908,13 +908,9 @@ classSchema.post('save', async function(doc) {
       return;
     }
 
-    if (isSameStatusResubmission && durationChanged && doc.billedInInvoiceId) {
-      const InvoiceService = require('../services/invoiceService');
-      InvoiceService.onClassStateChanged(doc.toObject(), { ...prev, skipHourAdjustment: true }).catch((err) => {
-        console.warn('[Class.postSave] onClassStateChanged failed', err && err.message);
-      });
-      return;
-    }
+    // When duration changed on a same-status resubmission, let it fall through
+    // to the normal path so teacher hours, guardian hours, AND invoice all update
+    // in one pass. No double-counting risk because status didn't change.
     
     // If status actually changed between different statuses, always allow hour adjustment
     if (statusChanged) {

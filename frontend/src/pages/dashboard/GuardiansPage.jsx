@@ -1124,8 +1124,8 @@ const GuardiansPage = () => {
       <div>
         <h4 className="font-semibold text-foreground mb-3">Linked Students</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {studentsToShow.map((student) => (
-            <div key={student._id} className="bg-card border border-border rounded-lg p-3 flex flex-col space-y-1">
+          {studentsToShow.map((student, idx) => (
+            <div key={`${student._id}-${idx}`} className="bg-card border border-border rounded-lg p-3 flex flex-col space-y-1">
               <div className="flex items-center space-x-3">
                 <div className="h-10 w-10 bg-secondary rounded-full flex items-center justify-center">
                   {getStudentPictureUrl(student) ? (

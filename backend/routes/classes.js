@@ -2938,10 +2938,12 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
         }
       }
 
-      const updated = await Class.findByIdAndUpdate(req.params.id, updatePayload, { new: true, runValidators: true }).lean();
-      
-      // Note: Teacher hour adjustments for duration changes are now handled automatically
-      // by the Class model's post('save') hook which calls InvoiceService.onClassStateChanged
+      // Use .save() instead of findByIdAndUpdate so that pre/post save hooks fire.
+      // This ensures onClassStateChanged is called for duration/status changes,
+      // which updates guardian hours and invoice item snapshots.
+      Object.assign(classDoc, updatePayload);
+      await classDoc.save();
+      const updated = classDoc.toObject();
 
       // Notification trigger: class rescheduled or time changed
       try {

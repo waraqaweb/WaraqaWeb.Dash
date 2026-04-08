@@ -525,13 +525,17 @@ const InvoicesPage = ({ isActive = true }) => {
 
   const handleDeleteInvoice = async (invoice) => {
     const statusLabel = invoice?.status || 'invoice';
+    const needsForce = ['paid', 'partially_paid', 'refunded'].includes(invoice?.status);
     setConfirmModal({
       open: true,
       action: 'delete',
       invoiceId: invoice?._id,
+      forceDelete: needsForce,
       countdownMessage: `Deleting ${statusLabel} invoice`,
       title: `Delete ${statusLabel} invoice`,
-      message: 'Delete this invoice permanently? It will be removed from lists and hours will not change.',
+      message: needsForce
+        ? 'This invoice has payments. Deleting it will void the invoice and reverse credited hours. Continue?'
+        : 'Delete this invoice permanently? It will be removed from lists and hours will not change.',
       confirmText: 'Delete',
       danger: true
     });
@@ -549,9 +553,11 @@ const InvoicesPage = ({ isActive = true }) => {
     });
   };
 
-  const performDeleteInvoice = async (invoiceId) => {
+  const performDeleteInvoice = async (invoiceId, force = false) => {
     try {
-      const { data } = await api.delete(`/invoices/${invoiceId}`, { params: { preserveHours: false } });
+      const params = { preserveHours: false };
+      if (force) params.force = true;
+      const { data } = await api.delete(`/invoices/${invoiceId}`, { params });
       if (data.success) {
         setInvoices((prev) => (prev || []).filter((inv) => inv?._id !== invoiceId));
         alert('Invoice deleted permanently');
@@ -2542,9 +2548,10 @@ const InvoicesPage = ({ isActive = true }) => {
           const id = confirmModal.invoiceId;
           setConfirmModal((s) => ({ ...s, open: false }));
           if (action === 'delete') {
+            const forceFlag = !!confirmModal.forceDelete;
             startDeleteCountdown({
               message: confirmModal.countdownMessage || 'Deleting invoice',
-              onDelete: () => performDeleteInvoice(id),
+              onDelete: () => performDeleteInvoice(id, forceFlag),
               preDelaySeconds: 0,
               undoSeconds: 3
             });

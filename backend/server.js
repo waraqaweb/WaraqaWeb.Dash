@@ -130,12 +130,24 @@ const devFrontendOrigins = isProduction
     'http://127.0.0.1:3001'
   ];
 
+// In dev mode, also accept requests from private/LAN IPs (e.g. 192.168.x.x:3000)
+// so other devices on the same network can use the app.
+const isPrivateNetworkOrigin = (origin) => {
+  if (!origin || isProduction) return false;
+  return /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(origin);
+};
+
 const frontendOrigins = Array.from(new Set([...envFrontendOrigins, ...devFrontendOrigins]));
 
 // Set up Socket.io for real-time communication
 const io = socketIo(server, {
   cors: {
-    origin: frontendOrigins,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (frontendOrigins.includes(origin)) return callback(null, true);
+      if (isPrivateNetworkOrigin(origin)) return callback(null, true);
+      return callback(null, false);
+    },
     methods: ["GET", "POST"]
   }
 });
@@ -158,6 +170,7 @@ app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (frontendOrigins.includes(origin)) return callback(null, true);
+    if (isPrivateNetworkOrigin(origin)) return callback(null, true);
     return callback(new Error(`CORS blocked for origin: ${origin}`));
   },
   credentials: true

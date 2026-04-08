@@ -8,6 +8,10 @@ require('../models/Student');
 const generateInvoiceDoc = require('../utils/generateInvoiceDoc');
 const { buildGuardianFinancialSnapshot } = require('../utils/guardianFinancial');
 const dayjs = require('dayjs');
+const utcPlugin = require('dayjs/plugin/utc');
+const timezonePlugin = require('dayjs/plugin/timezone');
+dayjs.extend(utcPlugin);
+dayjs.extend(timezonePlugin);
 const notificationService = require('./notificationService');
 const TeacherSalaryService = require('./teacherSalaryService');
 
@@ -139,6 +143,16 @@ const CANCELLED_CLASS_STATUSES = new Set([
   'on_hold',
   'pattern'
 ]);
+
+/** Statuses that are never billable (cancelled + teacher-fault + expired) */
+const NOT_ELIGIBLE_STATUSES = new Set([
+  ...CANCELLED_CLASS_STATUSES,
+  'no_show_both',       // Neither party showed up
+  'unreported'          // Marked as unreported by admin (report window fully expired)
+]);
+
+/** Confirmed = already happened and counted toward hours */
+const CONFIRMED_CLASS_STATUSES = new Set(['attended', 'missed_by_student']);
 
 const ALWAYS_INCLUDED_CLASS_STATUSES = new Set(['attended', 'missed_by_student']);
 const FUTURE_ELIGIBLE_STATUSES = new Set(['scheduled', 'in_progress', 'completed']);
@@ -354,27 +368,47 @@ const isSubmissionWindowActive = (cls, now) => {
   return isAdminExtensionActive(cls?.reportSubmission, now);
 };
 
-const isClassEligibleForDynamicInvoice = (cls, now = new Date()) => {
+/**
+ * Classify a class into one of three categories for invoice purposes:
+ *   'confirmed'     — already happened and counted (attended, missed_by_student)
+ *   'eligible'      — expected to count (scheduled, report window active, future)
+ *   'not_eligible'  — won't count (cancelled, no_show_both, expired window, etc.)
+ */
+const classifyClassStatus = (cls, now = new Date()) => {
   const status = normalizeStatusValue(cls?.status);
-  if (CANCELLED_CLASS_STATUSES.has(status)) return false;
-  if (ALWAYS_INCLUDED_CLASS_STATUSES.has(status)) return true;
 
+  // 1) Confirmed (final outcomes that always count)
+  if (CONFIRMED_CLASS_STATUSES.has(status)) return 'confirmed';
+
+  // 2) Hard not-eligible (cancelled, pattern, on_hold, no_show_both, unreported)
+  if (NOT_ELIGIBLE_STATUSES.has(status)) return 'not_eligible';
+
+  // 3) Future classes with eligible status → eligible
   const scheduledDate = ensureDate(cls?.scheduledDate || cls?.dateTime);
-  if (!scheduledDate) return false;
+  if (!scheduledDate) return 'not_eligible';
 
   if (scheduledDate > now) {
-    return FUTURE_ELIGIBLE_STATUSES.has(status) || !status;
+    if (FUTURE_ELIGIBLE_STATUSES.has(status) || !status) return 'eligible';
+    return 'not_eligible';
   }
 
-  // If admin explicitly granted an extension, the class is always billable
-  // (admin acknowledgement that the class happened, even if the extension since expired)
-  if (cls?.reportSubmission?.adminExtension?.granted) return true;
-
-  if (isSubmissionWindowActive(cls, now)) {
-    return true;
+  // 4) Past class: check if report window is still active
+  if (cls?.reportSubmission?.adminExtension?.granted) {
+    // Admin extension was granted — check if it expired
+    const expiresAt = ensureDate(cls.reportSubmission.adminExtension.expiresAt);
+    if (!expiresAt || now <= expiresAt) return 'eligible';
+    // Extension expired → not eligible (unless reopened by a new extension)
+    return 'not_eligible';
   }
 
-  return false;
+  if (isSubmissionWindowActive(cls, now)) return 'eligible';
+
+  // 5) Past class with expired submission window → not eligible
+  return 'not_eligible';
+};
+
+const isClassEligibleForDynamicInvoice = (cls, now = new Date()) => {
+  return classifyClassStatus(cls, now) !== 'not_eligible';
 };
 
 class InvoiceService {
@@ -761,7 +795,13 @@ class InvoiceService {
             writeConcern: { w: 'majority' }
           });
         } catch (createErr) {
-          if (createErr?.code === 20 || createErr?.codeName === 'IllegalOperation') {
+          const ceCode = createErr?.code;
+          const ceName = createErr?.codeName;
+          const ceMsg = createErr?.message || '';
+          if (ceCode === 20 || ceName === 'IllegalOperation'
+              || ceMsg.includes('Transaction numbers')
+              || ceMsg.includes('replica set')
+              || ceCode === 263 || ceName === 'OperationNotSupportedInTransaction') {
             console.warn('⚠️ Transactions unsupported on current MongoDB deployment; falling back to non-transactional zero-hour invoice creation.');
             fallbackToNonTransactional = true;
           } else {
@@ -1598,6 +1638,102 @@ class InvoiceService {
   }
 
   /**
+   * Record a cross-month teacher hour adjustment.
+   *
+   * When a class from a past month has its hours changed (duration edit,
+   * status flip, deletion) the teacher's running `monthlyHours` counter
+   * must NOT be touched — it belongs to the current calendar month.
+   *
+   * Instead we:
+   *  1. Try to add an `extra` line to the nearest upcoming draft teacher
+   *     invoice so it shows up on the next pay run.
+   *  2. If no draft invoice exists yet, store a pending adjustment on
+   *     `teacherInfo.pendingCrossMonthAdjustments` so it is picked up
+   *     automatically when the next invoice is generated.
+   */
+  static async recordTeacherCrossMonthAdjustment({ teacher, classDoc, hoursDelta, reason }) {
+    const CAIRO_TZ = 'Africa/Cairo';
+    try {
+      const TeacherInvoice = require('../models/TeacherInvoice');
+      const User = require('../models/User');
+
+      const teacherId = teacher._id || teacher;
+      const teacherDoc = teacher._id ? teacher : await User.findById(teacherId);
+      if (!teacherDoc) return;
+
+      const classMonth = dayjs(classDoc.scheduledDate).tz(CAIRO_TZ);
+      const origMonth = classMonth.month() + 1;   // 1-12
+      const origYear  = classMonth.year();
+
+      // Determine the teacher's rate for the adjustment amount
+      let rateUSD = 0;
+      try {
+        const rateInfo = await TeacherSalaryService.getTeacherRate(teacherDoc, 0);
+        rateUSD = rateInfo?.rate || teacherDoc.teacherInfo?.hourlyRate || 0;
+      } catch (_) {
+        rateUSD = teacherDoc.teacherInfo?.hourlyRate || 0;
+      }
+      const amountUSD = Math.round(hoursDelta * rateUSD * 100) / 100;
+
+      const dateStr = classDoc.scheduledDate
+        ? new Date(classDoc.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        : '';
+      const description = reason
+        || `Cross-month adjustment for class (${classDoc.subject || 'Class'}) on ${dateStr}: ${hoursDelta > 0 ? '+' : ''}${hoursDelta.toFixed(2)}h`;
+
+      console.log(`\n📆 [Cross-Month Adjustment] Teacher ${teacherDoc.firstName} ${teacherDoc.lastName}`);
+      console.log(`   Class month: ${origYear}-${String(origMonth).padStart(2, '0')}`);
+      console.log(`   Hours delta: ${hoursDelta > 0 ? '+' : ''}${hoursDelta.toFixed(2)}h`);
+      console.log(`   Amount: $${amountUSD} @ $${rateUSD}/h`);
+
+      // Try to find the nearest upcoming draft/published teacher invoice
+      const upcomingInvoice = await TeacherInvoice.findOne({
+        teacher: teacherId,
+        status: { $in: ['draft', 'published'] },
+        deleted: { $ne: true }
+      }).sort({ year: 1, month: 1 });
+
+      if (upcomingInvoice) {
+        const cat = amountUSD < 0 ? 'penalty' : 'reimbursement';
+        upcomingInvoice.addExtra({
+          category: cat,
+          amountUSD,
+          reason: description.length >= 5 ? description.slice(0, 200) : `Adj: ${description}`.slice(0, 200)
+        }, null);
+        upcomingInvoice.calculateAmounts();
+        await upcomingInvoice.save();
+
+        console.log(`   ✅ Added extra to invoice ${upcomingInvoice.invoiceNumber} (${upcomingInvoice.year}-${String(upcomingInvoice.month).padStart(2, '0')})`);
+        return { applied: true, invoiceId: upcomingInvoice._id };
+      }
+
+      // No draft invoice yet — store as a pending adjustment
+      if (!teacherDoc.teacherInfo) teacherDoc.teacherInfo = {};
+      if (!Array.isArray(teacherDoc.teacherInfo.pendingCrossMonthAdjustments)) {
+        teacherDoc.teacherInfo.pendingCrossMonthAdjustments = [];
+      }
+      teacherDoc.teacherInfo.pendingCrossMonthAdjustments.push({
+        classId: classDoc._id,
+        classDate: classDoc.scheduledDate,
+        classSubject: classDoc.subject || '',
+        originalMonth: origMonth,
+        originalYear: origYear,
+        hoursDelta,
+        reason: description.slice(0, 300),
+        createdAt: new Date()
+      });
+      teacherDoc.markModified('teacherInfo.pendingCrossMonthAdjustments');
+      await teacherDoc.save();
+
+      console.log(`   📌 Stored as pending adjustment (no draft invoice yet)`);
+      return { applied: false, pending: true };
+    } catch (err) {
+      console.error(`[recordTeacherCrossMonthAdjustment] Error:`, err.message);
+      return { applied: false, error: err.message };
+    }
+  }
+
+  /**
    * Handle class state changes and reflect them on the linked invoice.
    * - If invoice is unpaid: directly modify the item (duration/attendance) and recalc.
    * - If invoice is paid/partially: apply adjustments (increase or refund/remove) with audit and notifications.
@@ -1636,349 +1772,157 @@ class InvoiceService {
       console.log(`📊 [Class State Change] Skip Hour Adjustment: ${skipHourAdjustment}`);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
 
-      // 💰 UPDATE TEACHER AND GUARDIAN HOURS based on status change
-      // 🔒 SKIP if this is a report re-submission (already adjusted hours before)
-      if (statusChanged && !skipHourAdjustment) {
+      // Extract guardian ID at the top level so both status-change and duration-change blocks can use it
+      const guardianId = classDoc.student?.guardianId?._id || classDoc.student?.guardianId;
+
+      // ─────────────────────────────────────────────────────────────
+      // 💰 UNIFIED HOUR ADJUSTMENT (undo-then-apply pattern)
+      //
+      // Instead of separate blocks for (non→countable, countable→non,
+      // countable→countable, duration-only) this single block computes:
+      //   oldContrib = wasCountable ? prevDuration/60 : 0
+      //   newContrib = isNowCountable ? currentDuration/60 : 0
+      //   net = newContrib − oldContrib
+      //
+      // • net > 0 → teacher gains hours, guardian loses hours
+      // • net < 0 → teacher loses hours, guardian gains hours
+      // • net = 0 → no adjustment needed
+      //
+      // This naturally handles every combination:
+      //   scheduled→attended       : 0 → 1h  = +1h
+      //   attended→cancelled       : 1h → 0  = −1h  (uses PREVIOUS duration)
+      //   attended→missed_by_student: 1h → 1h = 0   (same duration, no change)
+      //   attended 60→attended 45  : 1h → 0.75h = −0.25h
+      //   attended→missed_by_student + duration 60→45: 1h → 0.75h = −0.25h
+      //
+      // For teachers the adjustment is split by month:
+      //   • Same month as class: addTeachingHours() (running counter)
+      //   • Different month: recordTeacherCrossMonthAdjustment()
+      //     puts an extra on the nearest upcoming teacher invoice
+      //     (or stores a pending adjustment if none exists yet).
+      //
+      // Guardian hours are always adjusted immediately (running balance,
+      // no monthly reset).
+      // ─────────────────────────────────────────────────────────────
+
+      const shouldAdjustHours = !skipHourAdjustment && (
+        statusChanged ||
+        (!statusChanged && durationChanged && isNowCountable)
+      );
+
+      if (shouldAdjustHours) {
+        // Undo-then-apply: compute net contribution change
+        const oldContrib = wasCountable ? prevDuration / 60 : 0;
+        const newContrib = isNowCountable ? currentDuration / 60 : 0;
+        const netHoursDiff = newContrib - oldContrib;
+
+        const triggerLabel = statusChanged
+          ? `Status ${prev.status || 'N/A'} → ${classDoc.status}`
+          : `Duration ${prevDuration} → ${currentDuration} min (status unchanged: ${classDoc.status})`;
+
         console.log(`\n╔════════════════════════════════════════════════════════════════╗`);
-        console.log(`║  💰 HOUR ADJUSTMENT PROCESS - CLASS STATUS CHANGE            ║`);
+        console.log(`║  💰 HOUR ADJUSTMENT (undo-then-apply)                        ║`);
         console.log(`╚════════════════════════════════════════════════════════════════╝`);
         console.log(`📋 Class ID: ${classId}`);
         console.log(`📅 Date: ${classDoc.scheduledDate || 'N/A'}`);
         console.log(`📚 Subject: ${classDoc.subject || 'N/A'}`);
-        console.log(`⏱️  Duration: ${classDoc.duration || 60} minutes`);
-        console.log(`🔄 Status Change: ${prev.status || 'N/A'} → ${classDoc.status}`);
-        console.log(`📊 Was Countable: ${wasCountable ? 'YES ✅' : 'NO ❌'}`);
-        console.log(`📊 Now Countable: ${isNowCountable ? 'YES ✅' : 'NO ❌'}`);
+        console.log(`🔄 Trigger: ${triggerLabel}`);
+        console.log(`📊 Old contrib: ${oldContrib.toFixed(2)}h (${wasCountable ? 'countable' : 'non-countable'}, ${prevDuration} min)`);
+        console.log(`📊 New contrib: ${newContrib.toFixed(2)}h (${isNowCountable ? 'countable' : 'non-countable'}, ${currentDuration} min)`);
+        console.log(`📊 Net diff: ${netHoursDiff > 0 ? '+' : ''}${netHoursDiff.toFixed(4)}h`);
         console.log(`════════════════════════════════════════════════════════════════\n`);
 
-        const classDuration = Number(classDoc.duration || 60);
-        const classHours = classDuration / 60;
         const User = require('../models/User');
-        
-        // Extract guardian ID - handle both populated and unpopulated cases
-        const guardianId = classDoc.student?.guardianId?._id || classDoc.student?.guardianId;
-        
-        console.log(`🔍 [Debug] Class student structure:`, {
-          hasStudent: !!classDoc.student,
-          hasGuardianId: !!guardianId,
-          guardianId: guardianId?.toString(),
-          studentStructure: classDoc.student
-        });
 
-        // Scenario: Was NOT countable → NOW countable (e.g., scheduled → attended, cancelled → attended)
-        // Action: ADD hours to teacher, SUBTRACT from guardian
-        if (!wasCountable && isNowCountable) {
-          console.log(`┌─────────────────────────────────────────────────────────────┐`);
-          console.log(`│  📈 NON-COUNTABLE → COUNTABLE (Class Now Counts for Billing) │`);
-          console.log(`└─────────────────────────────────────────────────────────────┘`);
-          console.log(`💡 Action Plan:`);
-          console.log(`   ✓ ADD ${classHours.toFixed(2)}h to teacher (they worked)`);
-          console.log(`   ✓ SUBTRACT ${classHours.toFixed(2)}h from guardian (they used hours)\n`);
+        if (netHoursDiff !== 0) {
+          // ── Cross-month detection (teacher only) ──────────────────
+          const CAIRO_TZ = 'Africa/Cairo';
+          const classMonth = classDoc.scheduledDate ? dayjs(classDoc.scheduledDate).tz(CAIRO_TZ) : null;
+          const nowCairo = dayjs().tz(CAIRO_TZ);
+          const isSameMonth = classMonth
+            ? (classMonth.month() === nowCairo.month() && classMonth.year() === nowCairo.year())
+            : true; // if no scheduledDate, treat as current month
 
-          // Add hours to teacher
-          if (classDoc.teacher) {
-            console.log(`👨‍🏫 UPDATING TEACHER HOURS...`);
-            console.log(`─────────────────────────────────────────────────────────────`);
-            try {
-              const teacher = await User.findById(classDoc.teacher);
-              if (teacher && teacher.role === 'teacher') {
-                const oldHours = Number(teacher.teacherInfo?.monthlyHours || 0);
-                console.log(`📌 Teacher: ${teacher.firstName} ${teacher.lastName} (${teacher._id})`);
-                console.log(`📉 Current Hours: ${oldHours.toFixed(2)}h`);
-                console.log(`➕ Adding: +${classHours.toFixed(2)}h`);
-                
-                await teacher.addTeachingHours(classHours);
-                const newHours = Number(teacher.teacherInfo?.monthlyHours || 0);
-                
-                console.log(`📈 New Hours: ${newHours.toFixed(2)}h`);
-                console.log(`✅ Teacher hours updated successfully!`);
-                console.log(`─────────────────────────────────────────────────────────────\n`);
-              } else {
-                console.log(`⚠️  Teacher not found or invalid role`);
-                console.log(`─────────────────────────────────────────────────────────────\n`);
-              }
-            } catch (err) {
-              console.error(`❌ [Teacher Hours] Failed to update:`, err.message);
-              console.error(`Stack:`, err.stack);
-              console.log(`─────────────────────────────────────────────────────────────\n`);
-            }
-          } else {
-            console.log(`⚠️  No teacher assigned to this class - skipping teacher hours`);
-            console.log(`─────────────────────────────────────────────────────────────\n`);
-          }
-
-          // Subtract hours from guardian (ONLY guardian total, not individual students)
-          if (guardianId) {
-            console.log(`\n👪 UPDATING GUARDIAN HOURS...`);
-            console.log(`─────────────────────────────────────────────────────────────`);
-            try {
-              const guardian = await User.findById(guardianId);
-              if (guardian && guardian.role === 'guardian') {
-                const oldTotalHours = Number(guardian.guardianInfo?.totalHours || 0);
-                
-                console.log(`📌 Guardian: ${guardian.firstName} ${guardian.lastName} (${guardian._id})`);
-                console.log(`📈 Current Total Hours: ${oldTotalHours.toFixed(2)}h`);
-                console.log(`➖ Subtracting: -${classHours.toFixed(2)}h`);
-                
-                // Find the student in guardian's students array
-                const studentId = classDoc.student?.studentId?._id || classDoc.student?.studentId;
-                if (studentId && Array.isArray(guardian.guardianInfo?.students)) {
-                  const studentIndex = findGuardianStudentIndex(guardian, studentId);
-                  
-                  if (studentIndex !== -1) {
-                    const student = guardian.guardianInfo.students[studentIndex];
-                    const oldStudentHours = Number(student.hoursRemaining || 0);
-                    
-                    // Update student's hours (can go negative)
-                    guardian.guardianInfo.students[studentIndex].hoursRemaining = oldStudentHours - classHours;
-                    // Record cumulative consumed hours for this guardian (all-time counter)
-                    try {
-                      guardian.guardianInfo.cumulativeConsumedHours = (guardian.guardianInfo.cumulativeConsumedHours || 0) + classHours;
-                    } catch (incErr) {
-                      console.warn('Failed to increment guardian cumulativeConsumedHours', incErr && incErr.message);
-                    }
-                    guardian.markModified('guardianInfo.students');
-                    
-                    console.log(`👦 Student: ${student.firstName} ${student.lastName}`);
-                    console.log(`   📉 Old Hours: ${oldStudentHours.toFixed(2)}h`);
-                    console.log(`   📈 New Hours: ${(oldStudentHours - classHours).toFixed(2)}h`);
-                  } else {
-                    console.log(`⚠️  Student not found in guardian's students array`);
-                  }
-                }
-                
-                const newTotalHoursValue = oldTotalHours - classHours;
-                guardian.guardianInfo.totalHours = newTotalHoursValue;
-                guardian.markModified('guardianInfo');
-
-                await guardian.save();
-                const newTotalHours = Number(guardian.guardianInfo?.totalHours || 0);
-                
-                console.log(`📉 New Total Hours: ${newTotalHours.toFixed(2)}h`);
-                console.log(`✅ Guardian hours updated successfully!`);
-                console.log(`─────────────────────────────────────────────────────────────\n`);
-              } else {
-                console.log(`⚠️  Guardian not found or invalid role`);
-                console.log(`─────────────────────────────────────────────────────────────\n`);
-              }
-            } catch (err) {
-              console.error(`❌ [Guardian Hours] Failed to update:`, err.message);
-              console.error(`Stack:`, err.stack);
-              console.log(`─────────────────────────────────────────────────────────────\n`);
-            }
-          } else {
-            console.log(`⚠️  No guardian assigned to this class - skipping guardian hours`);
-            console.log(`─────────────────────────────────────────────────────────────\n`);
-          }
-        }
-
-        // Scenario: WAS countable → NOW NOT countable (e.g., attended → cancelled, attended → scheduled)
-        // Action: SUBTRACT hours from teacher, ADD to guardian
-        if (wasCountable && !isNowCountable) {
-          console.log(`\n💰 [Hours Update] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-          console.log(`💰 [Hours Update] Class ${classId}: Status changed to NON-COUNTABLE (${classDoc.status})`);
-          console.log(`💰 [Hours Update] Action: SUBTRACT ${classHours}h from teacher, ADD to guardian`);
-          console.log(`💰 [Hours Update] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-
-          // Subtract hours from teacher
+          // ── TEACHER HOURS ─────────────────────────────────────────
           if (classDoc.teacher) {
             try {
               const teacher = await User.findById(classDoc.teacher);
               if (teacher && teacher.role === 'teacher') {
                 const oldHours = Number(teacher.teacherInfo?.monthlyHours || 0);
-                await teacher.addTeachingHours(-classHours); // Negative to subtract
-                const newHours = Number(teacher.teacherInfo?.monthlyHours || 0);
-                
-                console.log(`✅ [Teacher Hours] Updated ${teacher._id} (${teacher.firstName} ${teacher.lastName})`);
-                console.log(`   📉 OLD: ${oldHours.toFixed(2)}h`);
-                console.log(`   📈 NEW: ${newHours.toFixed(2)}h`);
-                console.log(`   ➖ CHANGE: -${classHours.toFixed(2)}h\n`);
+                console.log(`👨‍🏫 Teacher: ${teacher.firstName} ${teacher.lastName}`);
+                console.log(`   Current monthlyHours: ${oldHours.toFixed(2)}h`);
+                console.log(`   Adjustment: ${netHoursDiff > 0 ? '+' : ''}${netHoursDiff.toFixed(4)}h`);
+                console.log(`   Same month as class: ${isSameMonth ? 'YES' : 'NO'}`);
+
+                if (isSameMonth) {
+                  await teacher.addTeachingHours(netHoursDiff);
+                  console.log(`   ✅ monthlyHours updated → ${Number(teacher.teacherInfo?.monthlyHours || 0).toFixed(2)}h`);
+                } else {
+                  // Cross-month: record adjustment on nearest teacher invoice
+                  const dateStr = classDoc.scheduledDate
+                    ? new Date(classDoc.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : '';
+                  const reason = statusChanged
+                    ? `Class (${classDoc.subject || 'Class'}) on ${dateStr}: status changed ${prev.status}→${classDoc.status} (${netHoursDiff > 0 ? '+' : ''}${netHoursDiff.toFixed(2)}h)`
+                    : `Class (${classDoc.subject || 'Class'}) on ${dateStr}: duration ${prevDuration}→${currentDuration} min (${netHoursDiff > 0 ? '+' : ''}${netHoursDiff.toFixed(2)}h)`;
+                  await InvoiceService.recordTeacherCrossMonthAdjustment({
+                    teacher, classDoc, hoursDelta: netHoursDiff, reason
+                  });
+                  console.log(`   📆 Cross-month adjustment recorded`);
+                }
+              } else {
+                console.log(`   ⚠️  Teacher not found or invalid role`);
               }
             } catch (err) {
-              console.error(`❌ [Hours Update] Failed to update teacher hours:`, err);
+              console.error(`   ❌ Teacher hours failed:`, err.message);
             }
           }
 
-          // Add hours to guardian (ONLY guardian total, not individual students)
+          // ── GUARDIAN HOURS (always immediate) ─────────────────────
           if (guardianId) {
-            console.log(`\n👪 UPDATING GUARDIAN HOURS...`);
-            console.log(`─────────────────────────────────────────────────────────────`);
             try {
               const guardian = await User.findById(guardianId);
               if (guardian && guardian.role === 'guardian') {
-                const oldTotalHours = Number(guardian.guardianInfo?.totalHours || 0);
-                
-                console.log(`📌 Guardian: ${guardian.firstName} ${guardian.lastName} (${guardian._id})`);
-                console.log(`📉 Current Total Hours: ${oldTotalHours.toFixed(2)}h`);
-                console.log(`➕ Adding: +${classHours.toFixed(2)}h`);
-                
-                // Find the student in guardian's students array
+                const oldTotal = Number(guardian.guardianInfo?.totalHours || 0);
+                console.log(`👪 Guardian: ${guardian.firstName} ${guardian.lastName}`);
+                console.log(`   Current totalHours: ${oldTotal.toFixed(2)}h`);
+                console.log(`   Adjustment: ${netHoursDiff > 0 ? '-' : '+'}${Math.abs(netHoursDiff).toFixed(4)}h`);
+
+                // Update student's hoursRemaining
                 const studentId = classDoc.student?.studentId?._id || classDoc.student?.studentId;
                 if (studentId && Array.isArray(guardian.guardianInfo?.students)) {
                   const studentIndex = findGuardianStudentIndex(guardian, studentId);
-                  
                   if (studentIndex !== -1) {
                     const student = guardian.guardianInfo.students[studentIndex];
-                    const oldStudentHours = Number(student.hoursRemaining || 0);
-                    
-                    // Update student's hours (add back)
-                    guardian.guardianInfo.students[studentIndex].hoursRemaining = oldStudentHours + classHours;
-                    // Note: Do NOT decrement cumulativeConsumedHours when hours are added back. Cumulative tracks historical consumption.
+                    const oldSH = Number(student.hoursRemaining || 0);
+                    guardian.guardianInfo.students[studentIndex].hoursRemaining = oldSH - netHoursDiff;
                     guardian.markModified('guardianInfo.students');
-                    
-                    console.log(`👦 Student: ${student.firstName} ${student.lastName}`);
-                    console.log(`   📉 Old Hours: ${oldStudentHours.toFixed(2)}h`);
-                    console.log(`   📈 New Hours: ${(oldStudentHours + classHours).toFixed(2)}h`);
-                  } else {
-                    console.log(`⚠️  Student not found in guardian's students array`);
+                    console.log(`   Student ${student.firstName}: ${oldSH.toFixed(2)}h → ${(oldSH - netHoursDiff).toFixed(2)}h`);
                   }
                 }
-                
-                const newTotalHoursValue = oldTotalHours + classHours;
-                guardian.guardianInfo.totalHours = newTotalHoursValue;
-                guardian.markModified('guardianInfo');
 
+                // Cumulative consumed (only increments, never decrements)
+                if (netHoursDiff > 0) {
+                  try {
+                    guardian.guardianInfo.cumulativeConsumedHours = (guardian.guardianInfo.cumulativeConsumedHours || 0) + netHoursDiff;
+                  } catch (_) { /* non-fatal */ }
+                }
+
+                guardian.guardianInfo.totalHours = oldTotal - netHoursDiff;
+                guardian.markModified('guardianInfo');
                 await guardian.save();
-                const newTotalHours = Number(guardian.guardianInfo?.totalHours || 0);
-                
-                console.log(`📈 New Total Hours: ${newTotalHours.toFixed(2)}h`);
-                console.log(`✅ Guardian hours updated successfully!`);
-                console.log(`─────────────────────────────────────────────────────────────\n`);
-              } else {
-                console.log(`⚠️  Guardian not found or invalid role`);
-                console.log(`─────────────────────────────────────────────────────────────\n`);
+                console.log(`   ✅ totalHours → ${Number(guardian.guardianInfo?.totalHours || 0).toFixed(2)}h`);
               }
             } catch (err) {
-              console.error(`❌ [Guardian Hours] Failed to update:`, err.message);
-              console.error(`Stack:`, err.stack);
-              console.log(`─────────────────────────────────────────────────────────────\n`);
+              console.error(`   ❌ Guardian hours failed:`, err.message);
             }
-          } else {
-            console.log(`⚠️  No guardian assigned to this class - skipping guardian hours`);
-            console.log(`─────────────────────────────────────────────────────────────\n`);
           }
+        } else {
+          console.log(`📊 Net diff is 0 — no hour adjustment needed`);
         }
       } else if (statusChanged && skipHourAdjustment) {
         console.log(`\n🔒 [Hours Update] SKIPPED - Report re-submission detected`);
         console.log(`🔒 [Hours Update] Hours were already adjusted during first submission\n`);
-      }
-
-      // 🕐 HANDLE DURATION CHANGES for reported classes
-      // If duration changed for a countable (reported) class, adjust hours
-      if (durationChanged && isNowCountable && !skipHourAdjustment) {
-        console.log(`\n╔════════════════════════════════════════════════════════════════╗`);
-        console.log(`║  ⏱️  DURATION CHANGE DETECTED - ADJUSTING HOURS              ║`);
-        console.log(`╚════════════════════════════════════════════════════════════════╝`);
-        console.log(`📋 Class ID: ${classId}`);
-        console.log(`📅 Date: ${classDoc.scheduledDate || 'N/A'}`);
-        console.log(`📚 Subject: ${classDoc.subject || 'N/A'}`);
-        console.log(`⏱️  Duration Change: ${prevDuration} min → ${currentDuration} min`);
-        console.log(`📊 Status: ${classDoc.status} (Countable)`);
-        console.log(`════════════════════════════════════════════════════════════════\n`);
-
-        const oldHours = prevDuration / 60;
-        const newHours = currentDuration / 60;
-        const hoursDiff = newHours - oldHours;
-        
-        console.log(`💡 Calculation:`);
-        console.log(`   📉 Old Hours: ${oldHours.toFixed(2)}h (${prevDuration} min ÷ 60)`);
-        console.log(`   📈 New Hours: ${newHours.toFixed(2)}h (${currentDuration} min ÷ 60)`);
-        console.log(`   🔄 Difference: ${hoursDiff > 0 ? '+' : ''}${hoursDiff.toFixed(2)}h\n`);
-
-        const User = require('../models/User');
-
-        // Adjust teacher hours
-        if (classDoc.teacher && hoursDiff !== 0) {
-          console.log(`👨‍🏫 UPDATING TEACHER HOURS...`);
-          console.log(`─────────────────────────────────────────────────────────────`);
-          try {
-            const teacher = await User.findById(classDoc.teacher);
-            if (teacher && teacher.role === 'teacher') {
-              const oldTeacherHours = Number(teacher.teacherInfo?.monthlyHours || 0);
-              console.log(`📌 Teacher: ${teacher.firstName} ${teacher.lastName} (${teacher._id})`);
-              console.log(`📉 Current Monthly Hours: ${oldTeacherHours.toFixed(2)}h`);
-              console.log(`${hoursDiff > 0 ? '➕' : '➖'} Adjustment: ${hoursDiff > 0 ? '+' : ''}${hoursDiff.toFixed(2)}h`);
-              
-              await teacher.addTeachingHours(hoursDiff);
-              const newTeacherHours = Number(teacher.teacherInfo?.monthlyHours || 0);
-              
-              console.log(`📈 New Monthly Hours: ${newTeacherHours.toFixed(2)}h`);
-              console.log(`✅ Teacher hours updated successfully!`);
-              console.log(`─────────────────────────────────────────────────────────────\n`);
-            } else {
-              console.log(`⚠️  Teacher not found or invalid role`);
-              console.log(`─────────────────────────────────────────────────────────────\n`);
-            }
-          } catch (err) {
-            console.error(`❌ [Teacher Hours] Failed to update:`, err.message);
-            console.error(`Stack:`, err.stack);
-            console.log(`─────────────────────────────────────────────────────────────\n`);
-          }
-        } else if (!classDoc.teacher) {
-          console.log(`⚠️  No teacher assigned - skipping teacher hours update`);
-          console.log(`─────────────────────────────────────────────────────────────\n`);
-        }
-
-        // Adjust guardian hours (opposite direction - if teacher gets more, guardian uses more)
-        if (guardianId && hoursDiff !== 0) {
-          console.log(`👨‍👩‍👧 UPDATING GUARDIAN HOURS...`);
-          console.log(`─────────────────────────────────────────────────────────────`);
-          try {
-            const guardian = await User.findById(guardianId);
-            if (guardian && guardian.role === 'guardian') {
-              const oldGuardianHours = Number(guardian.guardianInfo?.totalHours || 0);
-              console.log(`📌 Guardian: ${guardian.firstName} ${guardian.lastName} (${guardian._id})`);
-              console.log(`📉 Current Total Hours: ${oldGuardianHours.toFixed(2)}h`);
-              console.log(`${hoursDiff > 0 ? '➖' : '➕'} Adjustment: ${hoursDiff > 0 ? '-' : '+'}${Math.abs(hoursDiff).toFixed(2)}h`);
-              
-              // Find the student in guardian's students array
-              const studentId = classDoc.student?.studentId?._id || classDoc.student?.studentId;
-              if (studentId && Array.isArray(guardian.guardianInfo?.students)) {
-                const studentIndex = findGuardianStudentIndex(guardian, studentId);
-
-                if (studentIndex !== -1) {
-                  const student = guardian.guardianInfo.students[studentIndex];
-                  const oldStudentHours = Number(student.hoursRemaining || 0);
-                  
-                  // Opposite direction: if class duration increases, guardian loses hours
-                  guardian.guardianInfo.students[studentIndex].hoursRemaining = oldStudentHours - hoursDiff;
-                  // Increment cumulative consumed hours for the guardian when net hours are consumed
-                  try {
-                    if (typeof hoursDiff === 'number' && hoursDiff > 0) {
-                      guardian.guardianInfo.cumulativeConsumedHours = (guardian.guardianInfo.cumulativeConsumedHours || 0) + hoursDiff;
-                    }
-                  } catch (incErr) {
-                    console.warn('Failed to increment guardian cumulativeConsumedHours on duration change', incErr && incErr.message);
-                  }
-                  guardian.markModified('guardianInfo.students');
-                  
-                  console.log(`👦 Student: ${student.firstName} ${student.lastName}`);
-                  console.log(`   📉 Old Hours: ${oldStudentHours.toFixed(2)}h`);
-                  console.log(`   📈 New Hours: ${(oldStudentHours - hoursDiff).toFixed(2)}h`);
-                } else {
-                  console.log(`⚠️  Student not found in guardian's students array`);
-                }
-              }
-              
-              await guardian.save();
-              
-              const newGuardianHours = Number(guardian.guardianInfo?.totalHours || 0);
-              console.log(`📈 New Total Hours: ${newGuardianHours.toFixed(2)}h`);
-              console.log(`✅ Guardian hours updated successfully!`);
-              console.log(`─────────────────────────────────────────────────────────────\n`);
-            } else {
-              console.log(`⚠️  Guardian not found or invalid role`);
-              console.log(`─────────────────────────────────────────────────────────────\n`);
-            }
-          } catch (err) {
-            console.error(`❌ [Guardian Hours] Failed to update:`, err.message);
-            console.error(`Stack:`, err.stack);
-            console.log(`─────────────────────────────────────────────────────────────\n`);
-          }
-        } else if (!guardianId) {
-          console.log(`⚠️  No guardian assigned - skipping guardian hours update`);
-          console.log(`─────────────────────────────────────────────────────────────\n`);
-        }
       }
 
       // Now handle invoice updates
@@ -2086,6 +2030,19 @@ class InvoiceService {
               hoursDelta: hrsDiff, amountDelta: amtDiff, previousDuration: prevDuration, newDuration: currentDuration, actorId: null
             });
           } catch (adjErr) { console.error('[onClassStateChanged] adjustment error (duration):', adjErr.message); }
+
+          // Update the invoice item snapshot so the UI reflects the current duration
+          try {
+            const newAmount = Math.round(((currentDuration / 60) * adjRate) * 100) / 100;
+            await Invoice.updateOne(
+              { _id: inv._id, 'items.class': classDoc._id || classId },
+              { $set: { 'items.$.duration': currentDuration, 'items.$.amount': newAmount } }
+            );
+            console.log(`[onClassStateChanged] Updated paid invoice item snapshot: duration ${prevDuration}→${currentDuration}, amount→${newAmount}`);
+          } catch (snapErr) {
+            console.warn('[onClassStateChanged] Failed to update paid invoice item snapshot:', snapErr?.message);
+          }
+
           return { success: true, durationChange: true, adjustmentCreated: true, hoursUpdated: !skipHourAdjustment };
         }
 
@@ -2603,6 +2560,330 @@ class InvoiceService {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  //  REBALANCE GUARDIAN INVOICES — the "domino-shift" engine
+  //
+  //  Given a guardian, fetches ALL their invoices (sorted chronologically)
+  //  and ALL their classes (sorted by scheduledDate). Assigns classes to
+  //  invoices in order, respecting each invoice's hour capacity (paidHours
+  //  for paid invoices, coverage.maxHours for unpaid). Overflow classes
+  //  shift ("domino") to the next invoice in the chain.
+  //
+  //  This method is called whenever something changes: class status,
+  //  duration, creation, deletion, or manual refresh.
+  //
+  //  Returns a per-invoice map of assigned classes (for display) without
+  //  modifying stored invoice items on paid invoices — those remain as
+  //  historical snapshots. The returned data powers the dynamic class list.
+  // ─────────────────────────────────────────────────────────────────────────
+  static async rebalanceGuardianInvoices(guardianId, opts = {}) {
+    const result = { invoices: [], totalClasses: 0, unassignedClasses: [] };
+    try {
+      const gId = toObjectId(guardianId);
+      if (!gId) return result;
+
+      const guardianDoc = await User.findById(gId).lean();
+      if (!guardianDoc || guardianDoc.role !== 'guardian') return result;
+
+      // 1. Fetch all non-deleted, non-cancelled invoices for this guardian
+      const allInvoices = await Invoice.find({
+        guardian: gId,
+        type: 'guardian_invoice',
+        deleted: { $ne: true },
+        status: { $nin: ['cancelled', 'refunded'] }
+      })
+        .sort({ createdAt: 1 })
+        .lean();
+
+      if (!allInvoices.length) return result;
+
+      // 2. Fetch all student IDs for this guardian
+      const studentIds = await getGuardianStudentIds(guardianDoc, null);
+      if (!studentIds.length) return result;
+
+      // 3. Fetch ALL classes for this guardian's students (non-pattern, non-hidden)
+      const allClasses = await Class.find({
+        'student.guardianId': gId,
+        'student.studentId': { $in: studentIds },
+        hidden: { $ne: true },
+        status: { $ne: 'pattern' }
+      })
+        .sort({ scheduledDate: 1, createdAt: 1 })
+        .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId paidByGuardian')
+        .lean();
+
+      // 4. Classify each class and enrich with deadline info
+      const now = new Date();
+      const classifiedClasses = allClasses.map((cls) => {
+        const allowance = ensureDate(cls?.reportSubmission?.teacherDeadline);
+        const extendedUntil = ensureDate(cls?.reportSubmission?.adminExtension?.expiresAt);
+        const enriched = {
+          ...cls,
+          reportSubmissionAllowance: allowance,
+          reportSubmissionExtendedUntil: extendedUntil
+        };
+        return {
+          cls: enriched,
+          category: classifyClassStatus(enriched, now),
+          classId: cls._id.toString(),
+          date: ensureDate(cls.scheduledDate) || new Date(0),
+          duration: Number(cls.duration || 0) || 0
+        };
+      });
+
+      // 5. Filter to only eligible classes (confirmed + eligible), sorted chronologically
+      //    Confirmed first (they're immovable facts), then eligible, all by date
+      const eligibleClasses = classifiedClasses
+        .filter((c) => c.category !== 'not_eligible' && c.duration > 0)
+        .sort((a, b) => {
+          // Confirmed before eligible at same date; otherwise chronological
+          if (a.date.getTime() === b.date.getTime()) {
+            const aConf = a.category === 'confirmed' ? 0 : 1;
+            const bConf = b.category === 'confirmed' ? 0 : 1;
+            return aConf - bConf;
+          }
+          return a.date - b.date;
+        });
+
+      result.totalClasses = eligibleClasses.length;
+
+      // 6. Build teacher map for snapshots
+      const teacherIdSet = new Set();
+      for (const item of eligibleClasses) {
+        const tid = toObjectId(item.cls.teacher);
+        if (tid) teacherIdSet.add(tid.toString());
+      }
+      let teacherMap = {};
+      if (teacherIdSet.size) {
+        const teachers = await User.find({
+          _id: { $in: Array.from(teacherIdSet).map(id => new mongoose.Types.ObjectId(id)) }
+        }).select('firstName lastName').lean();
+        teacherMap = teachers.reduce((acc, doc) => {
+          if (doc?._id) acc[doc._id.toString()] = doc;
+          return acc;
+        }, {});
+      }
+
+      // 7. Walk through invoices in order, assigning classes
+      const assignedClassIds = new Set(); // track globally assigned classes
+      const remainderMap = new Map(); // track partial class remainders across invoices
+
+      for (const invoice of allInvoices) {
+        const isPaid = String(invoice.status).toLowerCase() === 'paid';
+
+        // Determine capacity for this invoice
+        let capacityMinutes = null;
+        if (isPaid) {
+          // Paid invoice capacity = paid hours (from payment logs or coverage cap)
+          const hourlyRate = resolveInvoiceHourlyRate(invoice);
+          const paidHours = calculatePaidHoursFromLogs(invoice, hourlyRate);
+          const coverageMax = Number(invoice.coverage?.maxHours);
+          if (Number.isFinite(coverageMax) && coverageMax > EPSILON_HOURS) {
+            capacityMinutes = Math.round(coverageMax * 60);
+          } else if (paidHours > EPSILON_HOURS) {
+            capacityMinutes = Math.round(paidHours * 60);
+          } else {
+            // Fallback: use stored item hours
+            capacityMinutes = Math.round(computeInvoiceItemHours(invoice) * 60);
+          }
+        } else {
+          // Unpaid: use coverage cap if set, otherwise no cap
+          const coverageMax = Number(invoice.coverage?.maxHours);
+          if (Number.isFinite(coverageMax) && coverageMax > EPSILON_HOURS) {
+            capacityMinutes = Math.round(coverageMax * 60);
+          }
+          // null = no cap (all eligible classes in the billing window)
+        }
+
+        // Fill this invoice with the next unassigned classes (pure chronological order)
+        const invoiceClasses = [];
+        let usedMinutes = 0;
+
+        for (const entry of eligibleClasses) {
+          if (assignedClassIds.has(entry.classId)) continue; // already assigned to earlier invoice
+
+          // Check if this is a remainder from a previously split class
+          const remainderKey = entry.classId;
+          const remainder = remainderMap.get(remainderKey);
+          const effectiveDuration = remainder ? remainder.remaining : entry.duration;
+          if (effectiveDuration <= 0) continue;
+
+          // Check capacity
+          if (capacityMinutes !== null && usedMinutes >= capacityMinutes - 0.5) {
+            // Invoice is full — stop assigning
+            break;
+          }
+
+          let assignedDuration = effectiveDuration;
+          let isPartial = !!remainder; // remainder from a prior split is always partial
+          let partialOf = entry.duration; // original full duration
+
+          if (capacityMinutes !== null && usedMinutes + effectiveDuration > capacityMinutes + 0.5) {
+            // Class doesn't fully fit — split it: assign what fits, carry remainder
+            assignedDuration = Math.round(capacityMinutes - usedMinutes);
+            if (assignedDuration <= 0) break;
+            isPartial = true;
+            // Store remainder for the next invoice(s) to pick up
+            remainderMap.set(remainderKey, {
+              remaining: effectiveDuration - assignedDuration,
+              originalDuration: entry.duration
+            });
+          } else {
+            // Fully assigned — clear any remainder and mark as fully consumed
+            remainderMap.delete(remainderKey);
+            assignedClassIds.add(entry.classId);
+          }
+
+          usedMinutes += assignedDuration;
+
+          const cls = entry.cls;
+          const teacherDoc = teacherMap[cls.teacher?.toString?.()] || null;
+          const hourlyRate = resolveInvoiceHourlyRate(invoice);
+          const amount = Math.round(((assignedDuration / 60) * hourlyRate) * 100) / 100;
+
+          invoiceClasses.push({
+            dynamicSource: 'rebalanced',
+            lessonId: entry.classId,
+            class: {
+              _id: cls._id,
+              status: cls.status,
+              scheduledDate: cls.scheduledDate,
+              duration: cls.duration,
+              subject: cls.subject,
+              timezone: cls.timezone,
+              anchoredTimezone: cls.anchoredTimezone,
+              reportSubmission: cls.reportSubmission || {},
+              classReport: { submittedAt: cls.classReport?.submittedAt || null },
+              dateTime: cls.scheduledDate,
+              reportSubmissionAllowance: cls.reportSubmissionAllowance,
+              reportSubmissionExtendedUntil: cls.reportSubmissionExtendedUntil
+            },
+            student: cls.student?.studentId || null,
+            studentSnapshot: resolveStudentSnapshotFromClass(cls),
+            teacher: teacherDoc
+              ? { _id: teacherDoc._id, firstName: teacherDoc.firstName, lastName: teacherDoc.lastName }
+              : (cls.teacher || null),
+            teacherSnapshot: teacherDoc
+              ? { firstName: teacherDoc.firstName || '', lastName: teacherDoc.lastName || '' }
+              : null,
+            description: cls.subject || 'Class session',
+            date: cls.scheduledDate,
+            duration: assignedDuration,
+            fullDuration: entry.duration,
+            rate: hourlyRate,
+            amount,
+            attended: cls.status === 'attended',
+            status: cls.status || 'scheduled',
+            category: entry.category,    // 'confirmed' or 'eligible'
+            reportSubmission: cls.reportSubmission || {},
+            reportSubmissionAllowance: cls.reportSubmissionAllowance,
+            reportSubmissionExtendedUntil: cls.reportSubmissionExtendedUntil,
+            paidByGuardian: Boolean(cls.paidByGuardian),
+            isPinned: false,
+            isPartial,
+            partialMinutes: assignedDuration,
+            partialOfMinutes: isPartial ? partialOf : null
+          });
+        }
+
+        result.invoices.push({
+          invoiceId: invoice._id,
+          invoiceNumber: invoice.invoiceNumber,
+          invoiceSlug: invoice.invoiceSlug,
+          invoiceName: invoice.invoiceName,
+          status: invoice.status,
+          billingPeriod: invoice.billingPeriod,
+          capacityMinutes,
+          usedMinutes,
+          items: invoiceClasses,
+          totalMinutes: usedMinutes,
+          totalHours: usedMinutes / 60,
+          isPaid
+        });
+      }
+
+      // 8. Collect unassigned eligible classes (overflow beyond all invoices)
+      result.unassignedClasses = eligibleClasses
+        .filter((c) => !assignedClassIds.has(c.classId) && !remainderMap.has(c.classId))
+        .map((c) => ({
+          classId: c.classId,
+          date: c.date,
+          duration: c.duration,
+          category: c.category,
+          status: c.cls.status,
+          subject: c.cls.subject,
+          studentName: c.cls.student?.studentName || ''
+        }));
+
+      return result;
+    } catch (err) {
+      console.error('[rebalanceGuardianInvoices] error:', err?.message || err);
+      return result;
+    }
+  }
+
+  /**
+   * Get the rebalanced dynamic class list for a SINGLE invoice.
+   * This calls rebalanceGuardianInvoices, then returns just the data for
+   * the requested invoice. This replaces the old buildDynamicClassList
+   * for chain-aware display.
+   */
+  static async buildDynamicClassListRebalanced(invoiceDoc) {
+    const fallback = { items: [], totalMinutes: 0, totalHours: 0, capMinutes: null, coverageHours: null, rebalanced: true };
+    try {
+      if (!invoiceDoc || invoiceDoc.type !== 'guardian_invoice') return fallback;
+
+      const guardianId = invoiceDoc.guardian?._id || invoiceDoc.guardian;
+      if (!guardianId) return fallback;
+
+      const chainResult = await InvoiceService.rebalanceGuardianInvoices(guardianId);
+      const invoiceIdStr = String(invoiceDoc._id);
+      const entry = chainResult.invoices.find((inv) => String(inv.invoiceId) === invoiceIdStr);
+
+      if (!entry) {
+        // Invoice not found in chain (cancelled, manual, etc.) — fallback to legacy
+        return await InvoiceService.buildDynamicClassList(invoiceDoc);
+      }
+      // Note: entry.items may be empty if all classes were assigned to earlier invoices.
+      // Do NOT fallback to legacy here — that would duplicate classes across invoices.
+
+      const coverageMax = Number(invoiceDoc.coverage?.maxHours);
+      const hasCoverageCap = Number.isFinite(coverageMax) && coverageMax > EPSILON_HOURS;
+
+      // Build chain context: which invoices came before, position in chain
+      const entryIndex = chainResult.invoices.indexOf(entry);
+      const priorInvoices = chainResult.invoices.slice(0, entryIndex).map((inv) => ({
+        invoiceId: inv.invoiceId,
+        invoiceName: inv.invoiceName || inv.invoiceNumber || 'Invoice',
+        status: inv.status,
+        capacityMinutes: inv.capacityMinutes,
+        usedMinutes: inv.usedMinutes,
+        totalHours: inv.totalHours,
+        isPaid: inv.isPaid,
+        classCount: inv.items.length,
+        firstDate: inv.items.length ? inv.items[0].date : null,
+        lastDate: inv.items.length ? inv.items[inv.items.length - 1].date : null
+      }));
+
+      return {
+        items: entry.items,
+        totalMinutes: entry.totalMinutes,
+        totalHours: entry.totalHours,
+        capMinutes: hasCoverageCap ? Math.round(coverageMax * 60) : null,
+        coverageHours: hasCoverageCap ? coverageMax : null,
+        rebalanced: true,
+        chainPosition: entryIndex + 1,
+        chainTotal: chainResult.invoices.length,
+        priorInvoices,
+        unassignedClasses: chainResult.unassignedClasses
+      };
+    } catch (err) {
+      console.error('[buildDynamicClassListRebalanced] error:', err?.message || err);
+      // Fallback to legacy
+      return await InvoiceService.buildDynamicClassList(invoiceDoc);
+    }
+  }
+
   static async buildDynamicClassList(invoiceDoc, options = {}) {
     const resultFallback = { items: [], totalMinutes: 0, totalHours: 0, capMinutes: null, coverageHours: null };
     try {
@@ -2860,14 +3141,16 @@ class InvoiceService {
         // are past-scheduled with an expired/missing report window.  This ensures
         // stale "scheduled" classes whose report deadline has long passed are removed
         // from the invoice view while reported/attended classes always remain.
-        const isPinned = pinnedClassIds.has(classId);
+        const wasAlreadyLinked = pinnedClassIds.has(classId);
+        let rescuedByPin = false;
         if (!isClassEligibleForDynamicInvoice(enrichedClass, now)) {
-          if (!isPinned) continue;
-          // Pinned but ineligible — only keep if report was already submitted
+          if (!wasAlreadyLinked) continue;
+          // Previously linked but ineligible — only keep if report was already submitted
           // or the class reached a final status (attended, completed, etc.)
           const hasFinalOutcome = ALWAYS_INCLUDED_CLASS_STATUSES.has(normalizedStatus);
           const hasReport = Boolean(cls?.classReport?.submittedAt);
           if (!hasFinalOutcome && !hasReport) continue;
+          rescuedByPin = true;
         }
 
         const minutes = Number(cls.duration || 0) || 0;
@@ -2919,7 +3202,7 @@ class InvoiceService {
           reportSubmissionAllowance: allowance,
           reportSubmissionExtendedUntil: extendedUntil,
           paidByGuardian: Boolean(existingItem?.paidByGuardian),
-          isPinned: isPinned || false
+          isPinned: rescuedByPin
         });
 
         usedMinutes += minutes;
@@ -3622,8 +3905,34 @@ class InvoiceService {
 
       console.log(`🗑️ [Class Deletion Handler] Processing deletion of class ${classId}`);
 
-      // Find if this class was in any paid/partially-paid invoice
-      const affectedInvoices = await Invoice.find({
+      // 1. Remove from all UNPAID invoices (domino: next eligible class takes its place)
+      const unpaidInvoices = await Invoice.find({
+        $or: [
+          { 'items.class': classId },
+          { 'items.lessonId': String(classId) }
+        ],
+        status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
+        deleted: { $ne: true }
+      });
+
+      for (const invoice of unpaidInvoices) {
+        const itemsToRemove = (invoice.items || [])
+          .filter(item => String(item.class || item.lessonId) === String(classId))
+          .map(item => String(item._id));
+        if (itemsToRemove.length) {
+          await InvoiceService.updateInvoiceItems(
+            String(invoice._id),
+            { removeItemIds: itemsToRemove, note: `Class ${classId} deleted — removed from invoice` },
+            adminUserId
+          );
+          console.log(`🗑️ [Class Deletion Handler] Removed class ${classId} from unpaid invoice ${invoice.invoiceNumber}`);
+        }
+      }
+
+      // 2. For PAID invoices: record note (items stay as historical record).
+      //    The rebalanced dynamic class list will automatically exclude deleted
+      //    classes and shift the next eligible class into the display.
+      const paidInvoices = await Invoice.find({
         $or: [
           { 'items.class': classId },
           { 'items.lessonId': String(classId) }
@@ -3632,29 +3941,16 @@ class InvoiceService {
         deleted: { $ne: true }
       });
 
-      if (affectedInvoices.length === 0) {
-        console.log(`🗑️ [Class Deletion Handler] Class ${classId} was not in any paid invoice, no action needed`);
-        return { success: true, noActionNeeded: true };
-      }
-
-      // PAID invoices are immutable historical records — do NOT remove items.
-      // The class may be deleted/rescheduled but the invoice should still reflect
-      // what was originally billed and paid for. Removing items from paid invoices
-      // causes the total to drop below paidAmount and orphaned classes get
-      // auto-attached to confusing new invoices.
-      console.log(`🗑️ [Class Deletion Handler] Class ${classId} is in ${affectedInvoices.length} paid invoice(s) — skipping removal (paid invoices are immutable)`);
-
       const results = [];
-      for (const invoice of affectedInvoices) {
-        // Only record a note — do not modify items or trigger recalculation
+      for (const invoice of paidInvoices) {
         try {
           if (!Array.isArray(invoice.changeHistory)) invoice.changeHistory = [];
           invoice.changeHistory.push({
             changedAt: new Date(),
             changedBy: adminUserId || null,
             action: 'info',
-            changes: `Class ${classId} was deleted but invoice items preserved (paid invoice is immutable).`,
-            note: 'Class deletion noted'
+            changes: `Class ${classId} was deleted. Dynamic class list will shift next eligible class into this slot.`,
+            note: 'Class deletion — domino shift via dynamic rebalance'
           });
           invoice.markModified('changeHistory');
           invoice._skipRecalculate = true;
@@ -3666,13 +3962,15 @@ class InvoiceService {
         results.push({
           invoiceId: invoice._id,
           invoiceNumber: invoice.invoiceNumber,
-          action: 'skipped_paid_immutable'
+          action: 'noted_for_dynamic_rebalance'
         });
       }
 
       return {
         success: true,
-        invoicesProcessed: affectedInvoices.length,
+        invoicesProcessed: unpaidInvoices.length + paidInvoices.length,
+        unpaidRemoved: unpaidInvoices.length,
+        paidNoted: paidInvoices.length,
         results
       };
 
@@ -4081,7 +4379,13 @@ class InvoiceService {
         });
       } catch (transactionErr) {
         // Check if error is due to unsupported transactions (standalone MongoDB)
-        if (transactionErr?.code === 20 || transactionErr?.codeName === 'IllegalOperation') {
+        const txCode = transactionErr?.code;
+        const txName = transactionErr?.codeName;
+        const txMsg = transactionErr?.message || '';
+        if (txCode === 20 || txName === 'IllegalOperation'
+            || txMsg.includes('Transaction numbers')
+            || txMsg.includes('replica set')
+            || txCode === 263 || txName === 'OperationNotSupportedInTransaction') {
           console.warn('⚠️ Transactions unsupported - falling back to non-transactional update');
           useFallback = true;
         } else {
@@ -4568,6 +4872,51 @@ class InvoiceService {
 
       // 2) Allow any payment amount - removed class boundary restriction
       // Admin can enter actual hours paid by guardian, which may not align to class boundaries
+
+      // Sync invoice items from the rebalance engine so partial classes (domino splits)
+      // are materialised before the cap/validation logic runs. The rebalance engine is the
+      // source of truth for which classes belong to this invoice (including partial allocations
+      // from the boundary of the billing period).
+      if (invoice.type === 'guardian_invoice' && invoice.guardian) {
+        try {
+          const rebalanceResult = await InvoiceService.buildDynamicClassListRebalanced(invoice);
+          if (rebalanceResult && rebalanceResult.rebalanced && Array.isArray(rebalanceResult.items) && rebalanceResult.items.length) {
+            // Convert rebalanced items to the format stored on invoice.items
+            const syncedItems = rebalanceResult.items.map((ri) => {
+              const classId = ri.lessonId || (ri.class && (ri.class._id || ri.class));
+              return {
+                lessonId: classId ? String(classId) : null,
+                class: classId || null,
+                student: ri.student || null,
+                studentSnapshot: ri.studentSnapshot || null,
+                teacher: ri.teacher || null,
+                teacherSnapshot: ri.teacherSnapshot || null,
+                description: ri.description || '',
+                date: ri.date || null,
+                duration: Number(ri.duration || 0) || 0,
+                fullDuration: ri.fullDuration || ri.duration || 0,
+                rate: Number(ri.rate || 0) || 0,
+                amount: Number(ri.amount || 0) || 0,
+                attended: Boolean(ri.attended),
+                status: ri.status || 'scheduled',
+                category: ri.category || null,
+                isPartial: Boolean(ri.isPartial),
+                partialMinutes: ri.partialMinutes || null,
+                partialOfMinutes: ri.partialOfMinutes || null,
+                paidByGuardian: Boolean(ri.paidByGuardian),
+                excludeFromStudentBalance: Boolean(ri.excludeFromStudentBalance),
+                exemptFromGuardian: Boolean(ri.exemptFromGuardian),
+                flags: ri.flags || {}
+              };
+            });
+            invoice.items = syncedItems;
+            invoice.markModified('items');
+          }
+        } catch (rebalErr) {
+          console.warn('[processInvoicePayment] rebalance sync failed, continuing with stored items', rebalErr?.message);
+        }
+      }
+
       const itemsAsc = Array.isArray(invoice.items) ? [...invoice.items].sort((a, b) => {
         const da = new Date(a?.date || 0).getTime();
         const db = new Date(b?.date || 0).getTime();
@@ -4582,11 +4931,27 @@ class InvoiceService {
           let running = 0;
           const cappedItems = [];
           const removedItems = [];
+          let hadSplit = false;
 
           for (const item of itemsAsc) {
             const minutes = Number(item?.duration || 0) || 0;
             if (running + minutes > capMinutes) {
-              removedItems.push(item);
+              const remaining = capMinutes - running;
+              if (remaining > 0) {
+                // Split: take only the portion that fits (domino-style partial coverage)
+                item.fullDuration = item.fullDuration || minutes;
+                item.isPartial = true;
+                item.partialMinutes = remaining;
+                item.partialOfMinutes = minutes;
+                item.duration = remaining;
+                item.amount = Math.round(((remaining / 60) * (Number(item?.rate || 0) || hourlyRate)) * 100) / 100;
+                cappedItems.push(item);
+                running += remaining;
+                hadSplit = true;
+              } else {
+                // No room at all — fully remove this item
+                removedItems.push(item);
+              }
               continue;
             }
             cappedItems.push(item);
@@ -4607,7 +4972,7 @@ class InvoiceService {
           invoice.coverage.updatedBy = adminUserId || invoice.coverage.updatedBy;
           invoice.markModified('coverage');
 
-          if (cappedItems.length !== itemsAsc.length) {
+          if (cappedItems.length !== itemsAsc.length || hadSplit) {
             invoice.items = cappedItems;
             invoice.markModified('items');
 
@@ -5613,6 +5978,87 @@ class InvoiceService {
         }
       });
 
+      // ─── After refund, rebalance invoice items to match new paid hours ───
+      // The net paid hours after refund determines which classes stay on this invoice.
+      // Classes beyond the new cap are unlinked so they can be picked up by future invoices.
+      const netPaidHours = calculatePaidHoursFromLogs(updatedInvoice, hourlyRate);
+      if (netPaidHours > 0) {
+        updatedInvoice.coverage = updatedInvoice.coverage && typeof updatedInvoice.coverage === 'object'
+          ? updatedInvoice.coverage
+          : {};
+        updatedInvoice.coverage.maxHours = netPaidHours;
+        updatedInvoice.coverage.strategy = 'cap_hours';
+        updatedInvoice.coverage.updatedAt = new Date();
+        updatedInvoice.coverage.updatedBy = adminUserId || updatedInvoice.coverage.updatedBy;
+        updatedInvoice.markModified('coverage');
+
+        // Trim items beyond the new paid-hours cap (same split logic as payment)
+        const capMinutes = Math.round(netPaidHours * 60);
+        const refundItemsAsc = Array.isArray(updatedInvoice.items)
+          ? [...updatedInvoice.items].sort((a, b) => {
+              const da = new Date(a?.date || 0).getTime();
+              const db = new Date(b?.date || 0).getTime();
+              return da - db;
+            })
+          : [];
+        let running = 0;
+        const keptItems = [];
+        const droppedItems = [];
+        for (const item of refundItemsAsc) {
+          const minutes = Number(item?.duration || 0) || 0;
+          if (running + minutes > capMinutes) {
+            const remaining = capMinutes - running;
+            if (remaining > 0) {
+              item.fullDuration = item.fullDuration || minutes;
+              item.isPartial = true;
+              item.partialMinutes = remaining;
+              item.partialOfMinutes = minutes;
+              item.duration = remaining;
+              item.amount = roundCurrency((remaining / 60) * (Number(item?.rate || 0) || hourlyRate));
+              keptItems.push(item);
+              running += remaining;
+            } else {
+              droppedItems.push(item);
+            }
+            continue;
+          }
+          keptItems.push(item);
+          running += minutes;
+        }
+
+        if (keptItems.length !== refundItemsAsc.length || droppedItems.length > 0) {
+          updatedInvoice.items = keptItems;
+          updatedInvoice.markModified('items');
+
+          // Unlink dropped classes so they're available for future invoices
+          const droppedClassIds = droppedItems
+            .map((it) => it?.class || it?.lessonId)
+            .filter(Boolean);
+          if (droppedClassIds.length) {
+            try {
+              const Class = require('../models/Class');
+              await Class.updateMany(
+                { _id: { $in: droppedClassIds } },
+                { $set: { billedInInvoiceId: null, billedAt: null, flaggedUninvoiced: true, paidByGuardian: false }, $unset: { paidByGuardianAt: 1 } }
+              ).exec();
+              console.log(`🔓 [Refund] Unlinked ${droppedClassIds.length} classes beyond new ${netPaidHours}h cap`);
+            } catch (unlinkErr) {
+              console.warn('Failed to unlink classes after refund cap', unlinkErr?.message);
+            }
+          }
+        }
+
+        // Update the last-kept item's date as coverage end
+        const lastKept = keptItems.length ? keptItems[keptItems.length - 1] : null;
+        const lastDate = lastKept?.date ? new Date(lastKept.date) : null;
+        if (lastDate && !Number.isNaN(lastDate.getTime())) {
+          updatedInvoice.coverage.endDate = lastDate;
+          updatedInvoice.markModified('coverage');
+        }
+
+        updatedInvoice.recalculateTotals();
+      }
+
       await updatedInvoice.save();
 
       await InvoiceService.syncInvoiceCoverageClasses(updatedInvoice);
@@ -5673,6 +6119,210 @@ class InvoiceService {
         return { success: false, error: 'conflict', message: 'Invoice was modified by another user. Please refresh and retry.' };
       }
       return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Undo the last refund on an invoice.
+   * Reverses: paidAmount, guardian hours, student hours, coverage, items, status.
+   */
+  static async undoLastRefund(invoiceId, adminUserId) {
+    try {
+      const invoice = await Invoice.findById(invoiceId).populate('guardian').exec();
+      if (!invoice) return { success: false, message: 'Invoice not found' };
+
+      const refunds = Array.isArray(invoice.refunds) ? invoice.refunds : [];
+      if (!refunds.length) {
+        return { success: false, message: 'No refunds to undo on this invoice' };
+      }
+
+      // Take the last refund entry
+      const lastRefund = refunds[refunds.length - 1];
+      const refundAmount = roundCurrency(Number(lastRefund.amount || 0));
+      const refundHours = roundHours(Number(lastRefund.refundHours || 0));
+      const transferFeeRefunded = roundCurrency(Number(lastRefund.transferFeeRefunded || 0));
+
+      if (refundAmount <= 0) {
+        return { success: false, message: 'Last refund has no amount to reverse' };
+      }
+
+      console.log('🔄 [undoLastRefund] START', {
+        invoiceId, refundAmount, refundHours, transferFeeRefunded
+      });
+
+      const statusBefore = invoice.status;
+
+      // 1) Restore paidAmount
+      invoice.paidAmount = roundCurrency((Number(invoice.paidAmount) || 0) + refundAmount);
+
+      // 2) Restore transfer fee if it was reduced
+      if (transferFeeRefunded > 0 && invoice.guardianFinancial?.transferFee) {
+        const currentFee = roundCurrency(Number(invoice.guardianFinancial.transferFee.amount || 0));
+        invoice.guardianFinancial.transferFee.amount = roundCurrency(currentFee + transferFeeRefunded);
+        invoice.markModified('guardianFinancial.transferFee');
+      }
+
+      // 3) Remove the last refund entry
+      invoice.refunds.pop();
+      invoice.markModified('refunds');
+
+      // 4) Remove the corresponding refund log from paymentLogs
+      const logs = Array.isArray(invoice.paymentLogs) ? invoice.paymentLogs : [];
+      for (let i = logs.length - 1; i >= 0; i--) {
+        const log = logs[i];
+        if (log && (log.method === 'refund' || log.paymentMethod === 'refund') && Number(log.amount) < 0) {
+          logs.splice(i, 1);
+          break;
+        }
+      }
+      invoice.markModified('paymentLogs');
+
+      // 5) Recalculate status
+      invoice.recalculateTotals();
+      const dueAmount = invoice.getDueAmount();
+      if (invoice.paidAmount > 0 && dueAmount <= 0.01) {
+        invoice.status = 'paid';
+      } else if (invoice.paidAmount > 0) {
+        invoice.status = 'paid'; // partially paid still shows as paid
+      } else {
+        invoice.status = statusBefore === 'refunded' ? 'pending' : statusBefore;
+      }
+
+      // 6) Restore guardian hours
+      const guardianRef = invoice.guardian;
+      const resolveId = (value) => {
+        if (!value) return null;
+        if (typeof value === 'object' && value._id) return value._id;
+        return value;
+      };
+      const guardianIdValue = resolveId(guardianRef);
+      let guardianBefore = null;
+      let guardianAfter = null;
+
+      if (guardianIdValue && refundHours > 0) {
+        const guardianUser = await User.findById(guardianIdValue);
+        if (guardianUser && guardianUser.guardianInfo) {
+          guardianBefore = roundHours(Number(guardianUser.guardianInfo.totalHours || 0));
+          guardianUser.guardianInfo.totalHours = roundHours(guardianBefore + refundHours);
+          guardianUser.guardianInfo.autoTotalHours = false;
+          guardianUser.markModified('guardianInfo');
+          guardianAfter = guardianUser.guardianInfo.totalHours;
+          await guardianUser.save();
+
+          // Also update the Guardian model
+          try {
+            const GuardianModel = require('../models/Guardian');
+            const guardianModel = await GuardianModel.findOne({ user: guardianUser._id });
+            if (guardianModel) {
+              guardianModel.totalRemainingMinutes = Math.max(0, Math.round(guardianAfter * 60));
+              await guardianModel.save();
+            }
+          } catch (e) {
+            console.warn('[undoLastRefund] Guardian model update failed', e?.message);
+          }
+
+          console.log('✅ [undoLastRefund] Guardian hours restored', {
+            before: guardianBefore, after: guardianAfter, delta: refundHours
+          });
+        }
+      }
+
+      // 7) Restore coverage.maxHours from net payment logs
+      const hourlyRate = resolveInvoiceHourlyRate(invoice);
+      const netPaidHours = calculatePaidHoursFromLogs(invoice, hourlyRate);
+      if (netPaidHours > 0) {
+        invoice.coverage = invoice.coverage && typeof invoice.coverage === 'object'
+          ? invoice.coverage : {};
+        invoice.coverage.maxHours = netPaidHours;
+        invoice.coverage.strategy = 'cap_hours';
+        invoice.coverage.updatedAt = new Date();
+        invoice.coverage.updatedBy = adminUserId;
+        invoice.markModified('coverage');
+      }
+
+      // 8) Re-sync items from rebalance engine (restores dropped classes)
+      if (invoice.type === 'guardian_invoice' && invoice.guardian) {
+        try {
+          const rebalanceResult = await InvoiceService.buildDynamicClassListRebalanced(invoice);
+          if (rebalanceResult && rebalanceResult.rebalanced && Array.isArray(rebalanceResult.items) && rebalanceResult.items.length) {
+            const syncedItems = rebalanceResult.items.map((ri) => {
+              const classId = ri.lessonId || (ri.class && (ri.class._id || ri.class));
+              return {
+                lessonId: classId ? String(classId) : null,
+                class: classId || null,
+                student: ri.student || null,
+                studentSnapshot: ri.studentSnapshot || null,
+                teacher: ri.teacher || null,
+                teacherSnapshot: ri.teacherSnapshot || null,
+                description: ri.description || '',
+                date: ri.date || null,
+                duration: Number(ri.duration || 0) || 0,
+                fullDuration: ri.fullDuration || ri.duration || 0,
+                rate: Number(ri.rate || 0) || 0,
+                amount: Number(ri.amount || 0) || 0,
+                attended: Boolean(ri.attended),
+                status: ri.status || 'scheduled',
+                category: ri.category || null,
+                isPartial: Boolean(ri.isPartial),
+                partialMinutes: ri.partialMinutes || null,
+                partialOfMinutes: ri.partialOfMinutes || null,
+                paidByGuardian: Boolean(ri.paidByGuardian),
+                excludeFromStudentBalance: Boolean(ri.excludeFromStudentBalance),
+                exemptFromGuardian: Boolean(ri.exemptFromGuardian),
+                flags: ri.flags || {}
+              };
+            });
+            invoice.items = syncedItems;
+            invoice.markModified('items');
+          }
+        } catch (rebalErr) {
+          console.warn('[undoLastRefund] rebalance sync failed', rebalErr?.message);
+        }
+      }
+
+      invoice.recalculateTotals();
+
+      // 9) Audit
+      await invoice.recordAuditEntry({
+        actor: adminUserId,
+        action: 'undo_refund',
+        diff: {
+          restoredAmount: refundAmount,
+          restoredHours: refundHours,
+          restoredTransferFee: transferFeeRefunded
+        },
+        meta: {
+          statusBefore,
+          statusAfter: invoice.status,
+          guardianHoursBefore: guardianBefore,
+          guardianHoursAfter: guardianAfter
+        }
+      });
+
+      await invoice.save();
+      await InvoiceService.syncInvoiceCoverageClasses(invoice);
+
+      await invoice.populate([
+        { path: 'guardian', select: 'firstName lastName email guardianInfo' },
+        { path: 'teacher', select: 'firstName lastName email' },
+        { path: 'items.student', select: 'firstName lastName email' }
+      ]);
+
+      const statusAfter = invoice.status;
+      console.log('✅ [undoLastRefund] COMPLETE', {
+        invoiceId, statusBefore, statusAfter,
+        paidAmount: invoice.paidAmount,
+        guardianBefore, guardianAfter
+      });
+
+      return {
+        success: true,
+        invoice,
+        message: `Undo refund: restored $${refundAmount.toFixed(2)} (${refundHours}h). Guardian hours: ${guardianBefore} → ${guardianAfter}. Status: ${statusBefore} → ${statusAfter}.`
+      };
+    } catch (err) {
+      console.error('[undoLastRefund] error:', err);
+      return { success: false, message: err.message || 'Failed to undo refund' };
     }
   }
 

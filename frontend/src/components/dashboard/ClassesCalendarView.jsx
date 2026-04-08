@@ -32,13 +32,16 @@ const DnDCalendar = withDragAndDrop(BigCalendar);
 const STATUS_STYLES = {
   scheduled: { bg: "bg-blue-100", text: "text-blue-800", border: "border-blue-200" },
   in_progress: { bg: "bg-yellow-100", text: "text-yellow-800", border: "border-yellow-200" },
-  completed: { bg: "bg-green-100", text: "text-green-800", border: "border-green-200" },
+  completed: { bg: "bg-emerald-100", text: "text-emerald-800", border: "border-emerald-200" },
   attended: { bg: "bg-green-100", text: "text-green-800", border: "border-green-200" },
   missed_by_student: { bg: "bg-orange-100", text: "text-orange-800", border: "border-orange-200" },
   cancelled_by_teacher: { bg: "bg-red-100", text: "text-red-700", border: "border-red-200" },
-  cancelled_by_student: { bg: "bg-red-100", text: "text-red-700", border: "border-red-200" },
-  cancelled_by_admin: { bg: "bg-red-100", text: "text-red-700", border: "border-red-200" },
-  no_show_both: { bg: "bg-gray-100", text: "text-gray-700", border: "border-gray-200" }
+  cancelled_by_student: { bg: "bg-pink-100", text: "text-pink-700", border: "border-pink-200" },
+  cancelled_by_admin: { bg: "bg-rose-100", text: "text-rose-700", border: "border-rose-200" },
+  no_show_both: { bg: "bg-slate-200", text: "text-slate-700", border: "border-slate-300" },
+  pending_report: { bg: "bg-amber-100", text: "text-amber-800", border: "border-amber-200" },
+  missed_report: { bg: "bg-purple-100", text: "text-purple-800", border: "border-purple-200" },
+  admin_extended: { bg: "bg-sky-100", text: "text-sky-700", border: "border-sky-200" },
 };
 
 const STATUS_LABEL = {

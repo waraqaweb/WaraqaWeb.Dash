@@ -7,7 +7,11 @@ import {
   Phone,
   Sparkles,
   Users,
-  AlertCircle
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  XCircle,
+  AlertTriangle
 } from 'lucide-react';
 import api from '../../api/axios';
 import LoadingSpinner from '../ui/LoadingSpinner';
@@ -29,11 +33,58 @@ const formatDate = (value) => {
   return date.toLocaleDateString();
 };
 
+const maskEmail = (email) => {
+  if (!email || typeof email !== 'string') return null;
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  const visible = local.length <= 2 ? local[0] : local.slice(0, 2);
+  return `${visible}${'*'.repeat(Math.max(1, local.length - 2))}@${domain}`;
+};
+
+const maskPhone = (phone) => {
+  if (!phone || typeof phone !== 'string') return null;
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length <= 4) return phone;
+  const visibleEnd = digits.slice(-3);
+  const visibleStart = digits.slice(0, Math.min(3, digits.length - 3));
+  const masked = visibleStart + '*'.repeat(Math.max(1, digits.length - visibleStart.length - 3)) + visibleEnd;
+  // Preserve leading + if present
+  return phone.startsWith('+') ? '+' + masked : masked;
+};
+
+const STATUS_CONFIG = {
+  completed:  { label: 'Completed', icon: CheckCircle2, bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-200' },
+  attended:   { label: 'Attended',  icon: CheckCircle2, bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-200' },
+  scheduled:  { label: 'Scheduled', icon: Clock,        bg: 'bg-sky-50',     text: 'text-sky-700',     ring: 'ring-sky-200' },
+  in_progress:{ label: 'In Progress', icon: Clock,      bg: 'bg-blue-50',    text: 'text-blue-700',    ring: 'ring-blue-200' },
+  missed_by_student:     { label: 'Missed by student', icon: AlertTriangle, bg: 'bg-amber-50', text: 'text-amber-700', ring: 'ring-amber-200' },
+  no_show_both:          { label: 'No Show',   icon: AlertTriangle, bg: 'bg-amber-50', text: 'text-amber-700', ring: 'ring-amber-200' },
+  absent:                { label: 'Absent',    icon: AlertTriangle, bg: 'bg-amber-50', text: 'text-amber-700', ring: 'ring-amber-200' },
+  cancelled:             { label: 'Cancelled', icon: XCircle,       bg: 'bg-red-50',   text: 'text-red-600',   ring: 'ring-red-200' },
+  cancelled_by_teacher:  { label: 'Cancelled', icon: XCircle,       bg: 'bg-red-50',   text: 'text-red-600',   ring: 'ring-red-200' },
+  cancelled_by_student:  { label: 'Cancelled', icon: XCircle,       bg: 'bg-red-50',   text: 'text-red-600',   ring: 'ring-red-200' },
+  cancelled_by_guardian: { label: 'Cancelled', icon: XCircle,       bg: 'bg-red-50',   text: 'text-red-600',   ring: 'ring-red-200' },
+  cancelled_by_admin:    { label: 'Cancelled', icon: XCircle,       bg: 'bg-red-50',   text: 'text-red-600',   ring: 'ring-red-200' },
+  unreported:            { label: 'Unreported',icon: AlertCircle,   bg: 'bg-slate-50',  text: 'text-slate-500', ring: 'ring-slate-200' },
+};
+
+const ClassStatusBadge = ({ status }) => {
+  const config = STATUS_CONFIG[status] || { label: status || '—', icon: Clock, bg: 'bg-slate-50', text: 'text-slate-500', ring: 'ring-slate-200' };
+  const Icon = config.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ${config.bg} ${config.text} ${config.ring}`}>
+      <Icon className="h-3 w-3" />
+      {config.label}
+    </span>
+  );
+};
+
 const InvoicePublicPage = () => {
   const { slug } = useParams();
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [branding, setBranding] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +113,18 @@ const InvoicePublicPage = () => {
     if (slug) fetchInvoice();
     return () => { cancelled = true; };
   }, [slug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchBranding = async () => {
+      try {
+        const { data } = await api.get('/settings/branding');
+        if (!cancelled && data?.success) setBranding(data.branding);
+      } catch (_) { /* branding is optional */ }
+    };
+    fetchBranding();
+    return () => { cancelled = true; };
+  }, []);
 
   const studentSummary = useMemo(() => {
     if (!invoice?.students) return [];
@@ -123,6 +186,9 @@ const InvoicePublicPage = () => {
     ? financials.paidAmount
     : financials.total;
   const primaryLabel = isPaidStatus ? 'Paid' : 'Total';
+  const maskedEmail = guardianEmail ? maskEmail(guardianEmail) : null;
+
+  const logoUrl = branding?.logo?.url || branding?.logo?.dataUri || null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 text-slate-900">
@@ -130,10 +196,15 @@ const InvoicePublicPage = () => {
         <header className="rounded-3xl bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="space-y-3">
-              <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-1 text-xs uppercase tracking-[0.3em] text-emerald-700">
-                <Sparkles className="h-3.5 w-3.5" />
-                Waraqa invoice
-              </span>
+              <div className="flex items-center gap-3">
+                {logoUrl ? (
+                  <img src={logoUrl} alt={branding?.title || 'Logo'} className="h-10 w-auto object-contain" />
+                ) : null}
+                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-1 text-xs uppercase tracking-[0.3em] text-emerald-700">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {branding?.title || 'Waraqa'} invoice
+                </span>
+              </div>
               <h1 className="text-3xl font-semibold sm:text-4xl">{invoiceName || invoiceNumber}</h1>
               <p className="text-sm text-slate-600">
                 Invoice number <span className="font-semibold text-slate-900">{invoiceNumber}</span>
@@ -165,16 +236,16 @@ const InvoicePublicPage = () => {
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Guardian</h2>
             <div className="mt-3 space-y-2 text-sm text-slate-700">
               <p className="text-base font-semibold text-slate-900">{guardianName}</p>
-              {guardianEmail && (
+              {maskedEmail && (
                 <p className="flex items-center gap-2">
                   <Mail className="h-4 w-4 text-slate-500" />
-                  <a href={`mailto:${guardianEmail}`} className="hover:text-emerald-600 text-slate-700">{guardianEmail}</a>
+                  <span className="text-slate-700">{maskedEmail}</span>
                 </p>
               )}
               {guardianPhone && (
                 <p className="flex items-center gap-2">
                   <Phone className="h-4 w-4 text-slate-500" />
-                  <a href={`tel:${guardianPhone}`} className="hover:text-emerald-600 text-slate-700">{guardianPhone}</a>
+                  <span className="text-slate-700">{maskPhone(guardianPhone)}</span>
                 </p>
               )}
               <div className="mt-4 rounded-2xl border border-slate-100 bg-white/50 px-4 py-3 text-xs text-slate-700">
@@ -242,8 +313,9 @@ const InvoicePublicPage = () => {
                     <th className="px-4 py-3">Date</th>
                     <th className="px-4 py-3">Student</th>
                     <th className="px-4 py-3">Teacher</th>
-                    <th className="px-4 py-3">Hours</th>
-                    <th className="px-4 py-3">Amount</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Hours</th>
+                    <th className="px-4 py-3 text-right">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -252,11 +324,29 @@ const InvoicePublicPage = () => {
                       <td className="px-4 py-3 text-slate-700">{item.date?.formatted || formatDate(item.date?.iso)}</td>
                       <td className="px-4 py-3 text-slate-900">{item.student?.name || '—'}</td>
                       <td className="px-4 py-3 text-slate-700">{item.teacher?.name || '—'}</td>
-                      <td className="px-4 py-3 text-slate-700">{Number(item.hours || 0).toFixed(2)}</td>
-                      <td className="px-4 py-3 text-slate-900">{formatCurrency(item.amount, currency)}</td>
+                      <td className="px-4 py-3"><ClassStatusBadge status={item.classStatus || item.attendanceStatus} /></td>
+                      <td className="px-4 py-3 text-right text-slate-700">{Number(item.hours || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-slate-900">{formatCurrency(item.amount, currency)}</td>
                     </tr>
                   ))}
                 </tbody>
+                <tfoot className="border-t-2 border-slate-200 bg-slate-50/80 text-sm font-semibold text-slate-900">
+                  <tr className="border-b border-slate-200">
+                    <td className="border-r border-slate-200 px-4 py-3" colSpan="4">Total ({items.length} classes)</td>
+                    <td className="border-r border-slate-200 px-4 py-3 text-right">{Number(totalHours).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right">{formatCurrency(financials.subtotal, currency)}</td>
+                  </tr>
+                  {Number(financials.transferFeeAmount || 0) > 0 && !financials.transferFee?.waived && (
+                    <tr className="border-b border-slate-200 text-xs font-medium text-slate-600">
+                      <td className="border-r border-slate-200 px-4 py-2" colSpan="5">Transfer fee</td>
+                      <td className="px-4 py-2 text-right">{formatCurrency(financials.transferFeeAmount, currency)}</td>
+                    </tr>
+                  )}
+                  <tr className="text-base bg-slate-100/80">
+                    <td className="border-r border-slate-200 px-4 py-3" colSpan="5">{primaryLabel}</td>
+                    <td className="px-4 py-3 text-right">{formatCurrency(primaryAmount, currency)}</td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}

@@ -312,6 +312,9 @@ const invoiceSchema = new mongoose.Schema({
 
   exchangeRate: { type: Number, default: 1 },
 
+  // Credit-pool: total prepaid hours this invoice covers (set at payment time, immutable after)
+  creditHours: { type: Number, default: 0 },
+
   // Financials
   subtotal: { type: Number, required: true, default: 0 },
   tax: { type: Number, default: 0 },
@@ -1197,6 +1200,7 @@ invoiceSchema.methods.getExportSnapshot = function(options = {}) {
         amount: amountValue,
         attended: typeof item.attended === 'boolean' ? item.attended : null,
         attendanceStatus: item.attendanceStatus || null,
+        classStatus: (entry.class && typeof entry.class === 'object' && entry.class.status) || item.status || null,
         excludeFromStudentBalance: Boolean(item.excludeFromStudentBalance),
         excludeFromTeacherPayment: Boolean(item.excludeFromTeacherPayment)
       });
@@ -1932,12 +1936,8 @@ invoiceSchema.methods.recordRefund = async function(amount, options = {}, adminU
     }
   });
 
-  await this.save();
-  await this.populate([
-    { path: 'guardian', select: 'firstName lastName email' },
-    { path: 'teacher', select: 'firstName lastName email' },
-    { path: 'items.student', select: 'firstName lastName email' }
-  ]);
+  // NOTE: Do NOT save here — the calling service method validates guardian balance
+  // and other constraints before committing. It will call save() after all checks pass.
 
   return { invoice: this, refundAmount };
 };

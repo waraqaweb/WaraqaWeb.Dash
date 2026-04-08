@@ -1,4 +1,4 @@
-// backend/routes/invoices.js
+﻿// backend/routes/invoices.js
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
@@ -791,7 +791,7 @@ router.get('/', authenticateToken, async (req, res) => {
       } else {
         const docs = await Invoice.find({ _id: { $in: ids } })
           .select(INVOICE_LIST_FIELDS)
-          .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
+          .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours')
           .populate('teacher', 'firstName lastName email')
           .lean();
 
@@ -801,7 +801,7 @@ router.get('/', authenticateToken, async (req, res) => {
     } else {
       invoices = await Invoice.find(filter)
         .select(INVOICE_LIST_FIELDS)
-        .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
+        .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours')
         .populate('teacher', 'firstName lastName email')
         .sort({ [sortBy]: sortOrder })
         .skip(skip)
@@ -1007,7 +1007,7 @@ router.post('/admin/legacy-balance/create', authenticateToken, requireAdmin, asy
       adjustedTotal: amount,
       status: 'sent',
       dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      notes: 'Legacy balance invoice (pre‑migration hours)',
+      notes: 'Legacy balance invoice (preâ€‘migration hours)',
       guardianFinancial: buildGuardianFinancialSnapshot(guardian),
       coverage: { strategy: 'full_period', endDate: end, waiveTransferFee: false }
     });
@@ -1043,16 +1043,16 @@ router.post("/teacherInvoices", authenticateToken, requireAdmin, async (req, res
       notes: notes || `Draft salary invoice for ${teacher.firstName} ${teacher.lastName}`,
       type: "teacher_payment",
       invoiceNumberManual: false,
-      status: "draft", // ✅ Start as draft
+      status: "draft", // âœ… Start as draft
       billingPeriod: {
         year,
         month,
         startDate: billingPeriod?.startDate,
         endDate: billingPeriod?.endDate,
       },
-      items: [],       // ✅ no classes yet
-      totalHours: 0,   // ✅ no hours
-      totalAmount: 0,  // ✅ no pay calculated
+      items: [],       // âœ… no classes yet
+      totalHours: 0,   // âœ… no hours
+      totalAmount: 0,  // âœ… no pay calculated
     });
 
     await invoice.ensureIdentifiers({ forceNameRefresh: false });
@@ -1317,14 +1317,14 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
   try {
     const { identifier } = req.params;
     let invoiceDoc = await Invoice.findOne({ invoiceSlug: identifier })
-      .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
+      .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours')
       .populate('teacher', 'firstName lastName email')
       .populate('items.student', 'firstName lastName')
       .populate('items.teacher', 'firstName lastName');
 
     if (!invoiceDoc && mongoose.Types.ObjectId.isValid(identifier)) {
       invoiceDoc = await Invoice.findById(identifier)
-        .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
+        .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours')
         .populate('teacher', 'firstName lastName email')
         .populate('items.student', 'firstName lastName')
         .populate('items.teacher', 'firstName lastName');
@@ -1343,13 +1343,38 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
     }
 
     const invoice = invoiceDoc.toObject();
-    const includeDynamic = ['1', 'true', 'yes'].includes(String(req.query.includeDynamic || '').toLowerCase());
+    // Always attach dynamicClasses for guardian invoices (chain-aware rebalance)
     const isManualInvoice = invoiceDoc?.billingType === 'manual' || invoiceDoc?.generationSource === 'manual';
-    const isPaidInvoice = ['paid', 'refunded'].includes(String(invoiceDoc.status || '').toLowerCase())
-      || (invoiceDoc.paidAmount > 0);
-    if (includeDynamic && !isManualInvoice && !isPaidInvoice) {
-      const dynamicClasses = await InvoiceService.buildDynamicClassList(invoiceDoc);
-      invoice.dynamicClasses = dynamicClasses;
+    if (invoiceDoc.type === 'guardian_invoice' && !isManualInvoice) {
+      try {
+        const dynamicClasses = await InvoiceService.buildDynamicClassListRebalanced(invoiceDoc);
+        invoice.dynamicClasses = dynamicClasses;
+
+        // Sync billing period start/end with actual rebalanced class dates
+        const dynItems = dynamicClasses?.items || [];
+        if (dynItems.length > 0) {
+          const dates = dynItems.map(it => new Date(it.date)).filter(d => !Number.isNaN(d.getTime()));
+          if (dates.length) {
+            const minDate = new Date(Math.min(...dates.map(d => d.getTime())));
+            const maxDate = new Date(Math.max(...dates.map(d => d.getTime())));
+            if (!invoice.billingPeriod) invoice.billingPeriod = {};
+            const storedStart = invoice.billingPeriod.startDate ? new Date(invoice.billingPeriod.startDate).getTime() : 0;
+            const storedEnd = invoice.billingPeriod.endDate ? new Date(invoice.billingPeriod.endDate).getTime() : 0;
+            if (Math.abs(storedStart - minDate.getTime()) > 60000 || Math.abs(storedEnd - maxDate.getTime()) > 60000) {
+              invoice.billingPeriod.startDate = minDate;
+              invoice.billingPeriod.endDate = maxDate;
+              // Persist updated billing period to DB (fire-and-forget)
+              invoiceDoc.billingPeriod = invoiceDoc.billingPeriod || {};
+              invoiceDoc.billingPeriod.startDate = minDate;
+              invoiceDoc.billingPeriod.endDate = maxDate;
+              invoiceDoc.markModified('billingPeriod');
+              invoiceDoc.save().catch(e => console.warn('[GET /invoices/:id] billing period sync failed', e?.message));
+            }
+          }
+        }
+      } catch (dynErr) {
+        console.warn('[GET /invoices/:id] dynamic class build failed', dynErr?.message || dynErr);
+      }
     }
 
     if (Array.isArray(invoice.items)) {
@@ -1614,7 +1639,7 @@ router.post('/manual/guardian', authenticateToken, requireAdmin, async (req, res
 
     await invoice.ensureIdentifiers({ forceNameRefresh: false });
     await invoice.save();
-    await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet');
+    await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours');
 
     if (result.classIds.length > 0) {
       await Class.updateMany(
@@ -1710,7 +1735,7 @@ router.post('/', authenticateToken, async (req, res) => {
 
     await invoice.ensureIdentifiers({ forceNameRefresh: false });
     await invoice.save();
-  await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet');
+  await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours');
 
     await invoice.recordAuditEntry({
       actor: req.user?._id,
@@ -1859,7 +1884,7 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
   invoice.coverage.updatedBy = req.user._id;
   invoice.markModified('coverage');
 
-    // ✅ CRITICAL: Refresh guardian data BEFORE recalculating to get latest rates
+    // âœ… CRITICAL: Refresh guardian data BEFORE recalculating to get latest rates
     const guardianDoc = invoice.guardian ? await User.findById(invoice.guardian) : null;
     if (guardianDoc) {
       invoice.guardianFinancial = buildGuardianFinancialSnapshot(guardianDoc);
@@ -1947,9 +1972,9 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
     // If using maxHours without an explicit endDate, derive the last covered
     // class date from the dynamic class list so the billing period can extend
     // to cover it.  IMPORTANT: do NOT persist this derived date back to
-    // coverage.endDate — that would create a circular restriction where the
-    // cap limits classes → last class date becomes endDate → endDate limits
-    // future queries → fewer classes even when the cap allows more.
+    // coverage.endDate â€” that would create a circular restriction where the
+    // cap limits classes â†’ last class date becomes endDate â†’ endDate limits
+    // future queries â†’ fewer classes even when the cap allows more.
     let derivedBillingEnd = null;
     const needsDerivedEndDate =
       invoice.type === 'guardian_invoice'
@@ -2012,7 +2037,7 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
     invoice.recalculateTotals();
   }
 
-    // ⚠️ DO NOT update billing window automatically - it should only be updated when explicitly requested
+    // âš ï¸ DO NOT update billing window automatically - it should only be updated when explicitly requested
     // The billing window is set during invoice creation and should remain stable
     // updateBillingWindowFromItems(invoice);
 
@@ -2028,7 +2053,7 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
     invoice.updatedBy = req.user._id;
     await invoice.ensureIdentifiers({ forceNameRefresh: !invoice.invoiceNameManual });
     await invoice.save();
-  await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet');
+  await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours');
     await invoice.populate('items.student', 'firstName lastName');
 
     // Attach dynamicClasses to the returned invoice object so the UI
@@ -2037,7 +2062,7 @@ router.put('/:id/coverage', authenticateToken, requireAdmin, async (req, res) =>
     try {
       const isManualInvoice = invoiceObj?.billingType === 'manual' || invoiceObj?.generationSource === 'manual';
       if (invoiceObj.type === 'guardian_invoice' && !isManualInvoice) {
-        const dynamicClasses = await InvoiceService.buildDynamicClassList(invoice);
+        const dynamicClasses = await InvoiceService.buildDynamicClassListRebalanced(invoice);
         invoiceObj.dynamicClasses = dynamicClasses;
       }
     } catch (dynErr) {
@@ -2095,7 +2120,7 @@ router.put('/:id/snapshot', authenticateToken, requireAdmin, async (req, res) =>
       paidAmount: invoice.paidAmount,
       guardianFinancial: invoice.guardianFinancial && invoice.guardianFinancial.transferFee ? invoice.guardianFinancial.transferFee : null
     });
-    await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet');
+    await invoice.populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours');
     await invoice.populate('items.student', 'firstName lastName');
 
     // Mirror GET behavior: attach dynamicClasses so UI receives consistent class list
@@ -2103,7 +2128,7 @@ router.put('/:id/snapshot', authenticateToken, requireAdmin, async (req, res) =>
     try {
       const isManualInvoice = invoiceObj?.billingType === 'manual' || invoiceObj?.generationSource === 'manual';
       if (invoiceObj.type === 'guardian_invoice' && !isManualInvoice) {
-        const dynamicClasses = await InvoiceService.buildDynamicClassList(invoice);
+        const dynamicClasses = await InvoiceService.buildDynamicClassListRebalanced(invoice);
         invoiceObj.dynamicClasses = dynamicClasses;
       }
     } catch (dynErr) {
@@ -2112,7 +2137,7 @@ router.put('/:id/snapshot', authenticateToken, requireAdmin, async (req, res) =>
 
     res.json({ success: true, invoice: invoiceObj });
 
-    // ⚠️ DO NOT update billing window - it should remain as set during invoice creation
+    // âš ï¸ DO NOT update billing window - it should remain as set during invoice creation
     // try { updateBillingWindowFromItems(invoice); } catch (_) {}
     
     // Realtime update: emit invoice updated after snapshot save
@@ -2327,7 +2352,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     try {
       await invoice.save();
     } catch (saveErr) {
-      // Handle duplicate invoiceSlug — retry with timestamp suffix
+      // Handle duplicate invoiceSlug â€” retry with timestamp suffix
       if (saveErr.code === 11000 && saveErr.keyPattern?.invoiceSlug) {
         invoice.invoiceSlug = `${invoice.invoiceSlug}-${Date.now()}`;
         await invoice.save();
@@ -2342,12 +2367,25 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     ]);
 
     console.log("=== [Invoices API] PUT /invoices/:id SUCCESS ===");
-    res.json({ success: true, invoice });
+
+    // Mirror GET/snapshot behavior: attach dynamicClasses so UI receives fresh class statuses
+    let invoiceObj = invoice.toObject({ virtuals: true });
+    try {
+      const isManualInvoice = invoiceObj?.billingType === 'manual' || invoiceObj?.generationSource === 'manual';
+      if (invoiceObj.type === 'guardian_invoice' && !isManualInvoice) {
+        const dynamicClasses = await InvoiceService.buildDynamicClassListRebalanced(invoice);
+        invoiceObj.dynamicClasses = dynamicClasses;
+      }
+    } catch (dynErr) {
+      console.warn('[PUT /invoices/:id] dynamic class build failed', id, dynErr?.message || dynErr);
+    }
+
+    res.json({ success: true, invoice: invoiceObj });
 
     // Realtime update: emit invoice updated after general update
     try {
       const io = req.app.get('io');
-      if (io) io.emit('invoice:updated', { invoice: invoice.toObject({ virtuals: true }) });
+      if (io) io.emit('invoice:updated', { invoice: invoiceObj });
     } catch (emitErr) {
       console.warn('Failed to emit invoice:updated (fields) socket event', emitErr.message);
     }
@@ -2385,7 +2423,7 @@ router.post('/:id/items', authenticateToken, async (req, res) => {
   }
 });
 
-// Refresh invoice classes – re-run eligibility and sync items (Admin)
+// Refresh invoice classes â€“ re-run eligibility and sync items (Admin)
 router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Only admins' });
@@ -2394,10 +2432,37 @@ router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
     const invoice = await Invoice.findById(req.params.id);
     if (!invoice) return res.status(404).json({ success: false, message: 'Invoice not found' });
 
-    // Paid/refunded invoices must not have their class list modified
     const invoiceStatus = String(invoice.status || '').toLowerCase();
+
+    // Paid/refunded invoices: stored items stay immutable, but we return fresh
+    // rebalanced dynamic classes so the UI shows the current state.
     if (['paid', 'refunded'].includes(invoiceStatus) || (invoice.paidAmount > 0)) {
-      return res.status(400).json({ success: false, message: 'Cannot refresh classes on a paid invoice' });
+      const freshInvoice = await Invoice.findById(req.params.id)
+        .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours')
+        .populate('items.class')
+        .populate('items.student', 'firstName lastName')
+        .populate('items.teacher', 'firstName lastName');
+
+      let invoiceObj = freshInvoice.toObject ? freshInvoice.toObject({ virtuals: true }) : freshInvoice;
+      try {
+        const isManualInvoice = invoiceObj?.billingType === 'manual' || invoiceObj?.generationSource === 'manual';
+        if (invoiceObj.type === 'guardian_invoice' && !isManualInvoice) {
+          const dynamicClasses = await InvoiceService.buildDynamicClassListRebalanced(freshInvoice);
+          invoiceObj.dynamicClasses = dynamicClasses;
+        }
+      } catch (dynErr) {
+        console.warn('[POST /invoices/:id/refresh-classes] paid invoice dynamic build failed', dynErr?.message || dynErr);
+      }
+
+      res.json({ success: true, invoice: invoiceObj, noChanges: false });
+
+      try {
+        const io = req.app.get('io');
+        if (io && invoiceObj) io.emit('invoice:updated', { invoice: invoiceObj });
+      } catch (emitErr) {
+        console.warn('Failed to emit invoice:updated (refresh-paid) socket event', emitErr.message);
+      }
+      return;
     }
 
     // Teacher salary invoices don't use the guardian class-sync logic;
@@ -2418,7 +2483,7 @@ router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
 
     const result = await InvoiceService.syncUnpaidInvoiceItems(req.params.id, {
       adminUserId: req.user._id,
-      note: 'Manual refresh – re-evaluated class eligibility',
+      note: 'Manual refresh â€“ re-evaluated class eligibility',
       cleanupDuplicates: true,
       transferOnDuplicate: true
     });
@@ -2427,7 +2492,7 @@ router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
 
     // Re-fetch the full invoice so the frontend gets the updated data
     const freshInvoice = await Invoice.findById(req.params.id)
-      .populate('guardian', 'firstName lastName email phone')
+      .populate('guardian', 'firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours')
       .populate('items.class')
       .populate('items.student', 'firstName lastName')
       .populate('items.teacher', 'firstName lastName');
@@ -2438,6 +2503,19 @@ router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
     }
 
     const invoiceObj = freshInvoice ? (freshInvoice.toObject ? freshInvoice.toObject({ virtuals: true }) : freshInvoice) : result.invoice;
+
+    // Attach dynamicClasses so frontend gets fresh class statuses
+    if (freshInvoice && invoiceObj) {
+      try {
+        const isManualInvoice = invoiceObj?.billingType === 'manual' || invoiceObj?.generationSource === 'manual';
+        if (invoiceObj.type === 'guardian_invoice' && !isManualInvoice) {
+          const dynamicClasses = await InvoiceService.buildDynamicClassListRebalanced(freshInvoice);
+          invoiceObj.dynamicClasses = dynamicClasses;
+        }
+      } catch (dynErr) {
+        console.warn('[POST /invoices/:id/refresh-classes] dynamic class build failed', dynErr?.message || dynErr);
+      }
+    }
 
     res.json({ success: true, invoice: invoiceObj, noChanges: !!result.noChanges });
 
@@ -2450,6 +2528,36 @@ router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('Refresh invoice classes error:', err);
     res.status(500).json({ success: false, message: 'Failed to refresh invoice classes', error: err.message });
+  }
+});
+
+// Rebalance all invoices for a guardian (domino-shift engine) - Admin
+router.post('/:id/rebalance', authenticateToken, async (req, res) => {
+  console.log('=== [Invoices API] POST /invoices/:id/rebalance START ===', { id: req.params.id });
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Only admins' });
+
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) return res.status(404).json({ success: false, message: 'Invoice not found' });
+
+    const guardianId = invoice.guardian?._id || invoice.guardian;
+    if (!guardianId) return res.status(400).json({ success: false, message: 'No guardian on invoice' });
+
+    const result = await InvoiceService.rebalanceGuardianInvoices(guardianId);
+
+    // Return the specific invoice's rebalanced data
+    const invoiceIdStr = String(invoice._id);
+    const entry = result.invoices.find((inv) => String(inv.invoiceId) === invoiceIdStr);
+
+    res.json({
+      success: true,
+      rebalance: result,
+      invoiceClasses: entry || null,
+      unassignedClasses: result.unassignedClasses
+    });
+  } catch (err) {
+    console.error('Rebalance error:', err);
+    res.status(500).json({ success: false, message: 'Failed to rebalance', error: err.message });
   }
 });
 
@@ -2573,7 +2681,7 @@ router.get('/:id/download-docx', authenticateToken, async (req, res) => {
   try {
     const invoiceId = req.params.id;
     const invoice = await Invoice.findById(invoiceId)
-      .populate('guardian','firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet')
+      .populate('guardian','firstName lastName email phone guardianInfo.hourlyRate guardianInfo.transferFee guardianInfo.epithet guardianInfo.totalHours')
       .populate('items.student','firstName lastName email');
     if (!invoice) return res.status(404).json({ success:false, message: 'Invoice not found' });
 
@@ -2834,6 +2942,152 @@ router.post('/admin/resequence-unpaid', authenticateToken, requireAdmin, async (
   }
 });
 
+/**
+ * Reverse guardian hours and unlink classes when deleting an invoice.
+ * Direct reversal — does NOT go through the refund validation pipeline.
+ */
+async function reverseInvoiceHoursAndClasses(invoice) {
+  const results = { hoursReversed: 0, classesUnlinked: 0, paymentsDeleted: 0, guardianBefore: null, guardianAfter: null };
+
+  const resolveId = (value) => {
+    if (!value) return null;
+    if (typeof value === 'object' && value._id) return value._id;
+    return value;
+  };
+
+  const guardianId = resolveId(invoice.guardian);
+
+  // 1. Reverse guardian hours if invoice has payments
+  const paidAmount = Number(invoice.paidAmount || 0);
+  if (guardianId && paidAmount > 0.009) {
+    try {
+      const guardianUser = await User.findById(guardianId);
+      if (guardianUser && guardianUser.guardianInfo) {
+        // Calculate net credited hours from payment logs (most accurate source)
+        const hourlyRate = (() => {
+          const doc = invoice || {};
+          const fromInvoice = Number(doc?.guardianFinancial?.hourlyRate || 0) || 0;
+          if (fromInvoice > 0) return fromInvoice;
+          const fromGuardian = Number(doc?.guardian?.guardianInfo?.hourlyRate || 0) || 0;
+          if (fromGuardian > 0) return fromGuardian;
+          const items = Array.isArray(doc?.items) ? doc.items : [];
+          const itemWithRate = items.find((it) => Number(it?.rate || 0) > 0);
+          if (itemWithRate) return Number(itemWithRate.rate);
+          const hours = items.reduce((sum, it) => sum + ((Number(it?.duration || 0) || 0) / 60), 0);
+          const amount = items.reduce((sum, it) => sum + (Number(it?.amount || 0) || 0), 0);
+          if (hours > 0 && amount > 0) return Math.round((amount / hours) * 100) / 100;
+          return 10;
+        })();
+
+        const logs = Array.isArray(invoice.paymentLogs) ? invoice.paymentLogs : [];
+        let netCreditedHours = 0;
+        for (const log of logs) {
+          if (!log || log.method === 'tip_distribution') continue;
+          const amount = Number(log.amount || 0) || 0;
+          const loggedHours = Number.isFinite(log.paidHours) ? Number(log.paidHours)
+            : (hourlyRate > 0 ? Math.abs(amount) / hourlyRate : 0);
+          if (!Number.isFinite(loggedHours) || loggedHours <= 0) continue;
+          if (amount < 0 || log.method === 'refund') {
+            netCreditedHours -= loggedHours;
+          } else {
+            netCreditedHours += loggedHours;
+          }
+        }
+        netCreditedHours = Math.max(0, roundHours(netCreditedHours));
+
+        // Fallback: if no payment logs, estimate from items + paidAmount proportion
+        if (netCreditedHours <= 0 && paidAmount > 0.009) {
+          const hoursFromItems = (Array.isArray(invoice.items) ? invoice.items : [])
+            .reduce((s, it) => s + ((Number(it?.duration || 0) || 0) / 60), 0);
+          const totalBase = Number(invoice.adjustedTotal || invoice.total || 0);
+          const proportion = totalBase > 0 ? Math.min(1, paidAmount / totalBase) : 0;
+          netCreditedHours = roundHours(hoursFromItems * proportion);
+        }
+
+        if (netCreditedHours > 0) {
+          const currentTotal = Number(guardianUser.guardianInfo.totalHours || 0) || 0;
+          results.guardianBefore = roundHours(currentTotal);
+          results.guardianAfter = roundHours(currentTotal - netCreditedHours);
+          results.hoursReversed = netCreditedHours;
+          guardianUser.guardianInfo.totalHours = results.guardianAfter;
+          guardianUser.guardianInfo.autoTotalHours = false;
+
+          // Proportionally reduce per-student hours
+          const studentsArray = Array.isArray(guardianUser.guardianInfo.students)
+            ? guardianUser.guardianInfo.students : [];
+          if (studentsArray.length) {
+            const items = (Array.isArray(invoice.items) ? invoice.items : [])
+              .filter(it => it && it.student && Number(it.duration || 0) > 0);
+            const totalItemHours = items.reduce((s, it) => s + (Number(it.duration || 0) / 60), 0);
+            if (totalItemHours > 0) {
+              const ratio = Math.min(1, netCreditedHours / totalItemHours);
+              const hoursByStudent = new Map();
+              for (const item of items) {
+                const studentId = String(item.student?._id || item.student);
+                const hours = (Number(item.duration || 0) / 60) * ratio;
+                hoursByStudent.set(studentId, (hoursByStudent.get(studentId) || 0) + hours);
+              }
+              for (const student of studentsArray) {
+                const key = String(student._id || student.studentId || '');
+                const hoursToRemove = hoursByStudent.get(key) || 0;
+                if (hoursToRemove > 0) {
+                  const current = Number(student.hoursRemaining || 0) || 0;
+                  student.hoursRemaining = roundHours(Math.max(0, current - hoursToRemove));
+                }
+              }
+              guardianUser.markModified('guardianInfo.students');
+            }
+          }
+
+          guardianUser.markModified('guardianInfo');
+          await guardianUser.save();
+
+          // Sync Guardian model
+          try {
+            const GuardianModel = require('../models/Guardian');
+            await GuardianModel.updateTotalRemainingMinutes(guardianUser._id);
+          } catch (e) {
+            console.warn('[reverseInvoiceHoursAndClasses] Guardian model sync failed', e?.message);
+          }
+
+          console.log(`✅ [reverseInvoiceHoursAndClasses] Guardian ${guardianId}: ${results.guardianBefore} → ${results.guardianAfter} (reversed ${netCreditedHours}h)`);
+        }
+      }
+    } catch (err) {
+      console.error('[reverseInvoiceHoursAndClasses] Failed to reverse guardian hours:', err?.message || err);
+    }
+  }
+
+  // 2. Unlink classes so they can be re-invoiced
+  try {
+    const classIds = (invoice.items || []).map(it => it.class || it.lessonId).filter(Boolean);
+    if (classIds.length > 0) {
+      const result = await Class.updateMany(
+        { _id: { $in: classIds }, billedInInvoiceId: invoice._id },
+        { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1, billedInInvoiceId: 1, billedAt: 1 } }
+      );
+      results.classesUnlinked = result.modifiedCount || 0;
+      console.log(`✅ [reverseInvoiceHoursAndClasses] Unlinked ${results.classesUnlinked} classes from invoice ${invoice._id}`);
+    }
+  } catch (err) {
+    console.error('[reverseInvoiceHoursAndClasses] Failed to unlink classes:', err?.message || err);
+  }
+
+  // 3. Delete associated Payment records (they would reference a non-existent invoice)
+  try {
+    const Payment = require('../models/Payment');
+    const paymentResult = await Payment.deleteMany({ invoice: invoice._id });
+    results.paymentsDeleted = paymentResult.deletedCount || 0;
+    if (results.paymentsDeleted > 0) {
+      console.log(`✅ [reverseInvoiceHoursAndClasses] Deleted ${results.paymentsDeleted} Payment record(s) for invoice ${invoice._id}`);
+    }
+  } catch (err) {
+    console.error('[reverseInvoiceHoursAndClasses] Failed to delete payments:', err?.message || err);
+  }
+
+  return results;
+}
+
 // Delete invoice (Admin) - permanently remove
 router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -2841,61 +3095,23 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
     if (!invoice) {
       return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
+
     const force = String(req.query.force || req.body?.force || '').toLowerCase() === 'true';
-    const preserveHours = (() => {
-      const raw = req.query.preserveHours ?? req.body?.preserveHours ?? req.headers['x-preserve-hours'];
-      if (raw === undefined || raw === null) {
-        return ['draft', 'pending', 'sent', 'overdue', 'cancelled'].includes(invoice.status) ? false : true;
-      }
-      const normalized = String(raw).trim().toLowerCase();
-      if (!normalized) return true; // treat ?preserveHours as truthy
-      if (['0', 'false', 'no', 'n'].includes(normalized)) return false;
-      return ['1', 'true', 'yes', 'y'].includes(normalized);
-    })();
-    // For safety, allow deleting unpaid invoices normally. For paid/partially paid/refunded, require force to reverse hours.
-    if (!preserveHours && !['draft', 'pending', 'sent', 'overdue', 'cancelled'].includes(invoice.status)) {
-      if (!force) {
-        return res.status(409).json({ success: false, message: 'Invoice is not an unpaid draft/pending/sent/overdue/cancelled. Use force=true to void and reverse hours.' });
-      }
-      // If force and invoice has payments, reverse proportionate hours by issuing a refund equal to paidAmount
-      try {
-        const paidTotal = Number(invoice.paidAmount || 0);
-        if (paidTotal > 0.009) {
-          // Compute credited hours proportion based on payments vs. total
-          const totalBase = Number(invoice.adjustedTotal || invoice.total || 0);
-          const proportion = totalBase > 0 ? Math.min(1, paidTotal / totalBase) : 0;
-          const hoursFromItems = (Array.isArray(invoice.items) ? invoice.items : []).reduce((s, it) => s + ((Number(it?.duration || 0) || 0) / 60), 0);
-          const refundHours = Math.round((hoursFromItems * proportion) * 1000) / 1000;
-          const { recordInvoiceRefund } = require('../services/invoiceService');
-          try {
-            await recordInvoiceRefund(String(invoice._id), { amount: paidTotal, refundHours, reason: 'void_invoice_refund' }, req.user._id);
-          } catch (refundErr) {
-            console.warn('Force delete refund failed:', refundErr && refundErr.message);
-          }
-        }
-      } catch (forceErr) {
-        console.warn('Force delete pre-processing failed:', forceErr && forceErr.message);
-      }
+    const hasPaidStatus = ['paid', 'partially_paid', 'refunded'].includes(invoice.status);
+    const hasPaidAmount = Number(invoice.paidAmount || 0) > 0.009;
+
+    // Paid/refunded invoices require force=true to confirm intent
+    if ((hasPaidStatus || hasPaidAmount) && !force) {
+      return res.status(409).json({
+        success: false,
+        message: 'Invoice has payments recorded. Use force=true to delete and reverse credited hours.'
+      });
     }
 
-    // ✅ Clear billedInInvoiceId from all classes in this invoice so they can be re-invoiced
-    if (!preserveHours) {
-      try {
-        const Class = require('../models/Class');
-        const classIds = (invoice.items || []).map(it => it.class || it.lessonId).filter(Boolean);
-        if (classIds.length > 0) {
-          await Class.updateMany(
-            { _id: { $in: classIds }, billedInInvoiceId: invoice._id },
-            { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1, billedInInvoiceId: 1, billedAt: 1 } }
-          );
-          console.log(`✅ Cleared billedInInvoiceId + paidByGuardian for ${classIds.length} classes from deleted invoice ${invoice._id}`);
-        }
-      } catch (clearErr) {
-        console.warn('Failed to clear billedInInvoiceId/paidByGuardian from classes:', clearErr.message);
-      }
-    }
+    // Reverse guardian hours, unlink classes, delete Payment records
+    const reversal = await reverseInvoiceHoursAndClasses(invoice);
 
-    // Audit entry (guarded with local try/catch so we can surface errors)
+    // Audit entry
     try {
       const InvoiceAudit = require('../models/InvoiceAudit');
       await InvoiceAudit.create({
@@ -2907,20 +3123,13 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
           guardian: invoice.guardian,
           total: invoice.total,
           status: invoice.status,
-          preserveHours
+          paidAmount: invoice.paidAmount,
+          reversal
         },
         meta: { route: 'DELETE /api/invoices/:id', warning: 'Invoice permanently removed from database' }
       });
     } catch (innerErr) {
-      // Log detailed info for debugging: include validation errors when present
-      console.error('Delete invoice - inner error while creating audit entry:', innerErr);
-      if (innerErr && innerErr.name === 'ValidationError' && innerErr.errors) {
-        console.error('Validation errors:', Object.keys(innerErr.errors).reduce((acc, k) => {
-          acc[k] = innerErr.errors[k].message;
-          return acc;
-        }, {}));
-      }
-      // Continue delete even if audit fails
+      console.error('Delete invoice - audit entry error:', innerErr?.message || innerErr);
     }
 
     // Save to trash before permanent delete
@@ -2933,6 +3142,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
         guardianName: invoice.guardianName || '',
         total: invoice.total,
         status: invoice.status,
+        reversal
       },
       userId: req.user._id,
     });
@@ -2940,7 +3150,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
     // Permanently delete the invoice from database
     await Invoice.deleteOne({ _id: invoice._id });
 
-    // Emit socket event for frontend listeners
+    // Emit socket event
     try {
       const io = req.app.get('io');
       if (io) io.emit('invoice:permanentlyDeleted', { id: invoice._id.toString(), invoiceNumber: invoice.invoiceNumber });
@@ -2948,16 +3158,13 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       console.warn('Failed to emit invoice:permanentlyDeleted socket event', emitErr.message);
     }
 
-    res.json({ success: true, message: 'Invoice permanently deleted', invoiceId: invoice._id });
+    res.json({ success: true, message: 'Invoice permanently deleted', invoiceId: invoice._id, reversal });
   } catch (err) {
     console.error('Delete invoice error:', err);
     const response = { success: false, message: 'Failed to delete invoice', error: err.message };
-    // In non-production environments include the stack to help debugging
     try {
       if (process.env.NODE_ENV !== 'production' && err && err.stack) response.errorStack = err.stack;
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) { /* ignore */ }
     res.status(500).json(response);
   }
 });
@@ -2970,7 +3177,7 @@ router.post('/:id/restore', authenticateToken, requireAdmin, async (req, res) =>
     if (!invoice) return res.status(404).json({ success: false, message: 'Invoice not found' });
     if (!invoice.deleted) return res.status(400).json({ success: false, message: 'Invoice is not deleted' });
 
-    // Only drafts should be restorable in this flow — if status changed, still allow admins to restore
+    // Only drafts should be restorable in this flow â€” if status changed, still allow admins to restore
     invoice.deleted = false;
     invoice.deletedAt = null;
     invoice.deletedBy = null;
@@ -3024,7 +3231,9 @@ router.delete('/:id/permanent', authenticateToken, requireAdmin, async (req, res
     // Store info for logging and response
     const invoiceId = invoice._id.toString();
     const invoiceNumber = invoice.invoiceNumber;
-    const guardianId = invoice.guardian;
+
+    // Safety net: reverse hours and unlink classes even for soft-deleted invoices
+    const reversal = await reverseInvoiceHoursAndClasses(invoice);
 
     // Log the permanent deletion in audit trail before deleting
     try {
@@ -3035,11 +3244,10 @@ router.delete('/:id/permanent', authenticateToken, requireAdmin, async (req, res
         action: 'permanent_delete',
         diff: {
           invoiceNumber: invoice.invoiceNumber,
-          guardian: guardianId,
+          guardian: invoice.guardian,
           total: invoice.total,
           status: invoice.status,
-          deletedBy: req.user._id,
-          deletedAt: new Date()
+          reversal
         },
         meta: { 
           route: 'DELETE /api/invoices/:id/permanent',
@@ -3048,7 +3256,6 @@ router.delete('/:id/permanent', authenticateToken, requireAdmin, async (req, res
       });
     } catch (auditErr) {
       console.error('Failed to create permanent deletion audit entry:', auditErr);
-      // Continue with deletion even if audit fails
     }
 
     // Permanently delete the invoice from database
@@ -3104,7 +3311,7 @@ router.post('/:id/cancel', authenticateToken, requireAdmin, async (req, res) => 
     invoice.updatedBy = req.user._id;
     await invoice.save();
 
-    // ✅ Unlink classes from this cancelled invoice so they can be re-invoiced.
+    // âœ… Unlink classes from this cancelled invoice so they can be re-invoiced.
     // This prevents stale billedInInvoiceId from causing persistent audit alerts.
     try {
       const classIds = (invoice.items || []).map((it) => it.class || it.lessonId).filter(Boolean);
@@ -3269,7 +3476,7 @@ router.post('/:id/refund', authenticateToken, requireAdmin, async (req, res) => 
     const responseMessage = result.summary?.message || 'Refund recorded';
     res.json({ success: true, message: responseMessage, invoice: result.invoice, summary: result.summary });
 
-    console.log('✅ [Invoices API] Refund processed', {
+    console.log('âœ… [Invoices API] Refund processed', {
       invoiceId: req.params.id,
       message: responseMessage,
       summary: result.summary
@@ -3288,6 +3495,29 @@ router.post('/:id/refund', authenticateToken, requireAdmin, async (req, res) => 
   } catch (err) {
     console.error('Refund invoice error:', err);
     res.status(500).json({ success: false, message: 'Failed to refund invoice', error: err.message });
+  }
+});
+
+// Undo last refund - Admin
+router.post('/:id/undo-refund', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await InvoiceService.undoLastRefund(req.params.id, req.user._id);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+
+    try {
+      const io = req.app.get('io');
+      if (io && result.invoice) {
+        io.emit('invoice:updated', { invoice: result.invoice });
+      }
+    } catch (emitErr) {
+      console.warn('Failed to emit undo-refund socket event', emitErr.message);
+    }
+  } catch (err) {
+    console.error('Undo refund error:', err);
+    res.status(500).json({ success: false, message: 'Failed to undo refund', error: err.message });
   }
 });
 
@@ -3322,7 +3552,7 @@ router.post('/:id/rollback', authenticateToken, requireAdmin, async (req, res) =
   }
 });
 
-// ── Bulk actions ────────────────────────────────────────────────────────────
+// â”€â”€ Bulk actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Bulk delete invoices (Admin)
 router.post('/bulk/delete', authenticateToken, requireAdmin, async (req, res) => {
@@ -3345,14 +3575,8 @@ router.post('/bulk/delete', authenticateToken, requireAdmin, async (req, res) =>
 
     for (const invoice of invoices) {
       try {
-        // Clear billedInInvoiceId from classes
-        const classIds = (invoice.items || []).map(it => it.class || it.lessonId).filter(Boolean);
-        if (classIds.length > 0) {
-          await Class.updateMany(
-            { _id: { $in: classIds }, billedInInvoiceId: invoice._id },
-            { $set: { paidByGuardian: false }, $unset: { paidByGuardianAt: 1, billedInInvoiceId: 1, billedAt: 1 } }
-          );
-        }
+        // Reverse guardian hours, unlink classes, delete payments
+        await reverseInvoiceHoursAndClasses(invoice);
         await Invoice.deleteOne({ _id: invoice._id });
         results.deleted++;
       } catch (e) {

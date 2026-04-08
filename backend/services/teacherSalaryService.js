@@ -121,6 +121,66 @@ class TeacherSalaryService {
   }
 
   /**
+   * Apply pending cross-month adjustments stored on the teacher's profile
+   * to a target invoice (as extras). Called automatically when a new teacher
+   * invoice is created.
+   */
+  static async applyPendingCrossMonthAdjustments(teacherId, invoiceId) {
+    const teacher = await User.findById(teacherId).select('_id teacherInfo firstName lastName');
+    if (!teacher) return { appliedCount: 0 };
+
+    const pending = Array.isArray(teacher?.teacherInfo?.pendingCrossMonthAdjustments)
+      ? teacher.teacherInfo.pendingCrossMonthAdjustments
+      : [];
+
+    const candidates = pending.filter((entry) => {
+      if (!entry) return false;
+      if (entry.appliedAt || entry.appliedInvoiceId) return false;
+      const delta = Number(entry.hoursDelta || 0);
+      if (!Number.isFinite(delta) || delta === 0) return false;
+      return true;
+    });
+
+    if (!candidates.length) return { appliedCount: 0 };
+
+    const targetInvoice = await TeacherInvoice.findById(invoiceId);
+    if (!targetInvoice || targetInvoice.status === 'paid') {
+      return { appliedCount: 0 };
+    }
+
+    let appliedCount = 0;
+    const now = new Date();
+
+    for (const entry of candidates) {
+      const rate = targetInvoice.rateSnapshot?.rate || 0;
+      const amountUSD = Math.round(entry.hoursDelta * rate * 100) / 100;
+      const cat = amountUSD < 0 ? 'penalty' : 'reimbursement';
+
+      let reason = entry.reason || `Cross-month adjustment: ${entry.hoursDelta > 0 ? '+' : ''}${entry.hoursDelta.toFixed(2)}h`;
+      if (reason.length < 5) reason = `Adj: ${reason}`;
+      if (reason.length > 200) reason = reason.slice(0, 200);
+
+      targetInvoice.addExtra({ category: cat, amountUSD, reason }, null);
+      appliedCount += 1;
+
+      entry.appliedAt = now;
+      entry.appliedInvoiceId = invoiceId;
+    }
+
+    if (appliedCount > 0) {
+      targetInvoice.calculateAmounts();
+      await targetInvoice.save();
+
+      teacher.markModified('teacherInfo.pendingCrossMonthAdjustments');
+      await teacher.save();
+
+      console.log(`[applyPendingCrossMonthAdjustments] Applied ${appliedCount} adjustment(s) to invoice ${targetInvoice.invoiceNumber}`);
+    }
+
+    return { appliedCount, invoiceId };
+  }
+
+  /**
    * Aggregate hours for a teacher in a given month
    * @param {ObjectId|String} teacherId - Teacher ID
    * @param {Number} month - Month (1-12)
@@ -457,6 +517,14 @@ class TeacherSalaryService {
           );
         } catch (pendingErr) {
           console.warn('[createTeacherInvoice] Failed to apply pending guardian payouts:', pendingErr?.message || pendingErr);
+        }
+
+        // Apply any cross-month adjustments that were stored while no draft
+        // invoice existed (e.g. duration edits on past-month classes).
+        try {
+          await this.applyPendingCrossMonthAdjustments(teacherId, invoice._id);
+        } catch (crossMonthErr) {
+          console.warn('[createTeacherInvoice] Failed to apply pending cross-month adjustments:', crossMonthErr?.message || crossMonthErr);
         }
       }
 

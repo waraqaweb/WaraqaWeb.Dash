@@ -193,6 +193,10 @@ export const AuthProvider = ({ children }) => {
           && (window.location.hostname === 'localhost'
             || window.location.hostname === '127.0.0.1'
             || window.location.hostname === '::1'));
+        // Detect private/LAN IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+        const isPrivateNetwork = (typeof window !== 'undefined'
+          && window.location
+          && /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(window.location.hostname));
 
         const explicitSocketUrl =
           (viteEnv && viteEnv.REACT_APP_SOCKET_URL) ||
@@ -210,8 +214,19 @@ export const AuthProvider = ({ children }) => {
           const origin = (typeof window !== 'undefined' && window.location && window.location.origin)
             ? window.location.origin
             : null;
-          if (origin && !isLocalHost) socketUrl = origin;
-          else socketUrl = 'http://127.0.0.1:5000';
+          if (isPrivateNetwork && origin) {
+            // LAN: same host, backend port
+            try {
+              const u = new URL(origin);
+              socketUrl = `${u.protocol}//${u.hostname}:5000`;
+            } catch (_) {
+              socketUrl = 'http://127.0.0.1:5000';
+            }
+          } else if (origin && !isLocalHost) {
+            socketUrl = origin;
+          } else {
+            socketUrl = 'http://127.0.0.1:5000';
+          }
         }
 
         if (isLocalHost && typeof socketUrl === 'string' && socketUrl.startsWith('http://localhost:')) {

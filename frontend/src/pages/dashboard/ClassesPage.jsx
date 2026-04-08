@@ -384,11 +384,14 @@ const ClassesPage = ({ isActive = true }) => {
   const [classesCorpus, setClassesCorpus] = useState([]);
   const loadedClassPagesRef = useRef(new Set());
   const classesRef = useRef([]);
+  // Per-tab snapshot: keep rendered classes when switching tabs so swap is instant
+  const tabClassesSnapshotRef = useRef({ upcoming: null, previous: null });
   const [meetings, setMeetings] = useState([]);
   const [meetingsLoading, setMeetingsLoading] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [reportMeeting, setReportMeeting] = useState(null);
   const [showAllMobileMeetings, setShowAllMobileMeetings] = useState(false);
+  const [meetingDrawerOpen, setMeetingDrawerOpen] = useState(false);
   const [isLargeScreen, setIsLargeScreen] = useState(() => {
     if (typeof window === 'undefined') return false;
     return window.matchMedia(`(min-width: ${DESKTOP_MEETING_SPLIT_MIN_WIDTH}px)`).matches;
@@ -428,6 +431,7 @@ const ClassesPage = ({ isActive = true }) => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editClass, setEditClass] = useState(null);
   const [editAvailabilityWarning, setEditAvailabilityWarning] = useState(null);
+  const [editUpdateResult, setEditUpdateResult] = useState(null);
   
   const [editStudents, setEditStudents] = useState([]);
   const [editUpdateScope, setEditUpdateScope] = useState("single");
@@ -1310,14 +1314,33 @@ const ClassesPage = ({ isActive = true }) => {
   const handleTabChange = (nextTab) => {
     if (!nextTab) return;
     if (nextTab === tabFilter) return;
+
+    // Snapshot current tab's classes before switching
+    tabClassesSnapshotRef.current[tabFilter] = {
+      classes: classesRef.current || [],
+      corpus: classesCorpus,
+      totalPages,
+    };
+
     const q = new URLSearchParams(location.search);
     q.set('tab', nextTab);
     q.set('view', 'classes');
     q.set('page', '1');
     navigate(`${location.pathname}?${q.toString()}`, { state: { background: location.state?.background }, replace: false });
-    setLoading(true);
-    setClasses([]);
-    setClassesCorpus([]);
+
+    // Restore snapshot for target tab if available (instant swap, no flash)
+    const snapshot = tabClassesSnapshotRef.current[nextTab];
+    if (snapshot && snapshot.classes.length) {
+      setClasses(snapshot.classes);
+      setClassesCorpus(snapshot.corpus || []);
+      setTotalPages(snapshot.totalPages || 1);
+      setLoading(false);
+    } else {
+      setLoading(true);
+      setClasses([]);
+      setClassesCorpus([]);
+    }
+
     loadedClassPagesRef.current = new Set();
     setCurrentPage(1);
     setTabFilter(nextTab);
@@ -2295,6 +2318,8 @@ fetchClassesRef.current = fetchClasses;
         description: fullClass.description || "",
         subject: fullClass.subject || "",
         teacher: fullClass.teacher?._id || fullClass.teacher,
+        _originalTeacher: fullClass.teacher?._id || fullClass.teacher,
+        _originalTeacherName: fullClass.teacher?.firstName || '',
         student: {
           guardianId: fullClass.student?.guardianId?._id || fullClass.student?.guardianId,
           studentId: fullClass.student?.studentId,
@@ -2576,13 +2601,78 @@ fetchClassesRef.current = fetchClasses;
 
       const res = await api.put(`/classes/${editClass._id}`, updateData);
       if (res.data.message) {
-        setShowEditModal(false);
-        setEditClass(null);
+        const teacherChanged = editClass._originalTeacher && editClass.teacher
+          && String(editClass._originalTeacher) !== String(editClass.teacher);
+
+        let teacherChangeMsg = '';
+        if (teacherChanged) {
+          // Build "resuming classes with new teacher" message
+          const newTeacher = teachers.find(t => String(t._id) === String(editClass.teacher));
+          const newTeacherFirstName = newTeacher?.firstName || newTeacher?.name?.split(' ')[0] || 'the new teacher';
+          const studentFirstName = (editClass.student?.studentName || '').split(' ')[0] || 'the student';
+          const tz = editClass.timezone || adminTimezone;
+          const tzLabel = tz.replace(/_/g, ' ');
+
+          const dayNamesList = DAY_NAMES;
+
+          const parts = [
+            'Assalamu Alaykum,',
+            '',
+            `This is to inform you that ${studentFirstName}'s classes will be resuming with a new teacher, ${newTeacherFirstName}, Inshaa Allah.`,
+            '',
+            'Class Schedule:',
+          ];
+
+          if (editClass.isRecurring && Array.isArray(editClass.recurrenceDetails) && editClass.recurrenceDetails.length) {
+            editClass.recurrenceDetails.forEach((slot) => {
+              const day = Number(slot.dayOfWeek);
+              const dayName = (day >= 0 && day <= 6) ? dayNamesList[day] : `Day ${day}`;
+              const time = slot.time || '';
+              const dur = slot.duration || editClass.duration || 60;
+              // Convert 24h to 12h
+              const [hh, mm] = (time || '00:00').split(':');
+              const hour = parseInt(hh, 10);
+              const period = hour >= 12 ? 'PM' : 'AM';
+              const hour12 = hour % 12 || 12;
+              const timeFormatted = `${hour12}:${(mm || '00').padStart(2, '0')} ${period}`;
+              parts.push(`${dayName} at ${timeFormatted} (${dur} min)`);
+            });
+          } else if (editClass.scheduledDate) {
+            const m = moment.tz(editClass.scheduledDate, tz);
+            parts.push(`${m.format('dddd D MMMM')} at ${m.format('hh:mm A')} (${editClass.duration || 60} min)`);
+          }
+
+          parts.push(`Timezone: ${tzLabel}`);
+          parts.push('');
+
+          if (editClass.meetingLink) {
+            parts.push(`Class Link: ${editClass.meetingLink}`);
+            parts.push('');
+          }
+
+          if (editClass.subject) {
+            parts.push(`Subject: ${editClass.subject}`);
+            parts.push('');
+          }
+
+          parts.push('Looking forward to the new start!');
+          parts.push('Thank you');
+
+          teacherChangeMsg = parts.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        }
+
+        setEditUpdateResult(teacherChangeMsg ? { message: 'Class updated — teacher changed.', teacherChangeMsg } : null);
+        if (!teacherChangeMsg) {
+          setShowEditModal(false);
+          setEditClass(null);
+        }
         setEditStudents([]);
         setEditUpdateScope("single");
         setEditAvailabilityWarning(null);
         await fetchClasses();
-        alert("Class updated successfully!");
+        if (!teacherChangeMsg) {
+          alert("Class updated successfully!");
+        }
       }
     } catch (err) {
       const data = err?.response?.data || {};
@@ -2917,6 +3007,15 @@ fetchClassesRef.current = fetchClasses;
     ? 'Meetings from the last 60 days will appear here.'
     : 'Book or confirm a meeting to see it here.';
   const shouldSplitColumns = isAdminUser && viewLayout === 'list' && isLargeScreen;
+  const hasFutureMeetings = meetingBuckets.upcoming.length > 0;
+  const showMeetingPanel = hasFutureMeetings || meetingDrawerOpen;
+
+  useEffect(() => {
+    // When new upcoming meetings appear, open the panel automatically once.
+    if (hasFutureMeetings) {
+      setMeetingDrawerOpen(true);
+    }
+  }, [hasFutureMeetings]);
 
   const pendingRescheduleCount = useMemo(() => {
     if (!isAdminUser) return 0;
@@ -3025,15 +3124,15 @@ fetchClassesRef.current = fetchClasses;
     const colors = {
       scheduled: "bg-blue-100 text-blue-800",
       in_progress: "bg-yellow-100 text-yellow-800",
-      completed: "bg-green-100 text-green-800",
+      completed: "bg-emerald-100 text-emerald-800",
       attended: "bg-green-100 text-green-800",
       missed_by_student: "bg-orange-100 text-orange-800",
       cancelled_by_teacher: "bg-red-100 text-red-800",
-      cancelled_by_student: "bg-red-100 text-red-800",
-      cancelled_by_admin: "bg-red-100 text-red-800",
-      no_show_both: "bg-gray-100 text-gray-800",
+      cancelled_by_student: "bg-pink-100 text-pink-800",
+      cancelled_by_admin: "bg-rose-100 text-rose-800",
+      no_show_both: "bg-slate-200 text-slate-700",
       pending_report: "bg-amber-100 text-amber-800",
-      missed_report: "bg-rose-100 text-rose-800",
+      missed_report: "bg-purple-100 text-purple-800",
       admin_extended: "bg-sky-100 text-sky-700",
     };
     return colors[status] || "bg-gray-100 text-gray-800";
@@ -4005,6 +4104,16 @@ fetchClassesRef.current = fetchClasses;
               Manage Meeting Availability
             </button>
           )}
+          {isAdminUser && viewLayout === 'list' && (
+            <button
+              type="button"
+              onClick={() => setMeetingDrawerOpen((prev) => !prev)}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-[#2C736C] hover:text-[#2C736C]"
+            >
+              <Calendar className="h-4 w-4" />
+              {showMeetingPanel ? 'Hide Meetings Overview' : 'Meetings Overview'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -4099,14 +4208,18 @@ fetchClassesRef.current = fetchClasses;
         />
       ) : (
         isAdminUser ? (
-          shouldSplitColumns ? (
+          shouldSplitColumns && showMeetingPanel ? (
             <div className="flex flex-col xl:flex-row gap-6">
               <div className="order-2 xl:order-1 xl:w-2/3">{renderClassesList()}</div>
               <div className="order-1 xl:order-2 xl:w-1/3">{renderMeetingPanel('sidebar')}</div>
             </div>
+          ) : shouldSplitColumns ? (
+            renderClassesList()
           ) : (
             <div className="flex flex-col gap-4">
-              <div className="order-1">{renderMeetingPanel('stacked')}</div>
+              {showMeetingPanel ? (
+                <div className="order-1">{renderMeetingPanel('stacked')}</div>
+              ) : null}
               <div className="order-2">{renderClassesList()}</div>
             </div>
           )
@@ -4555,6 +4668,7 @@ fetchClassesRef.current = fetchClasses;
           setEditClass(null);
           setEditStudents([]);
           setEditAvailabilityWarning(null);
+          setEditUpdateResult(null);
         }}
         editClass={editClass}
         setEditClass={setEditClass}
@@ -4569,6 +4683,12 @@ fetchClassesRef.current = fetchClasses;
         handleUpdateClass={handleUpdateClass}
         availabilityWarning={editAvailabilityWarning}
         onDismissAvailabilityWarning={() => setEditAvailabilityWarning(null)}
+        updateResult={editUpdateResult}
+        onDismissUpdateResult={() => {
+          setEditUpdateResult(null);
+          setShowEditModal(false);
+          setEditClass(null);
+        }}
       />
 
       <DuplicateClassModal

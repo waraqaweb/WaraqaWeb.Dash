@@ -513,6 +513,24 @@ const userSchema = new mongoose.Schema({
         appliedInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'TeacherInvoice', default: null }
       }
     ],
+
+    // Pending cross-month adjustments for teacher hours changed outside the
+    // original billing month (e.g. a February class duration edited in April).
+    // Applied automatically when the nearest upcoming teacher invoice is created.
+    pendingCrossMonthAdjustments: [
+      {
+        classId: { type: mongoose.Schema.Types.ObjectId, ref: 'Class' },
+        classDate: { type: Date },
+        classSubject: { type: String, trim: true, default: '' },
+        originalMonth: { type: Number, min: 1, max: 12 },
+        originalYear: { type: Number, min: 2020, max: 2100 },
+        hoursDelta: { type: Number, default: 0 },
+        reason: { type: String, trim: true, maxlength: 300 },
+        createdAt: { type: Date, default: Date.now },
+        appliedAt: { type: Date, default: null },
+        appliedInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'TeacherInvoice', default: null }
+      }
+    ],
     
     lastYTDReset: {
       type: Date,

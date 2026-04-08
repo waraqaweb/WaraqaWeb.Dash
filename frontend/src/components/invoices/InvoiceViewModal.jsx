@@ -192,6 +192,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
 
   const [invoice, setInvoice] = useState(initialInvoice || null);
   const [classes, setClasses] = useState([]);
+  const [priorInvoices, setPriorInvoices] = useState([]);
   const [loading, setLoading] = useState(!initialInvoice);
   const [, setClassPeriod] = useState({ start: '', end: '' });
   const [classesLoading, setClassesLoading] = useState(false);
@@ -204,7 +205,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyEntries, setHistoryEntries] = useState([]);
+  const [undoingRefund, setUndoingRefund] = useState(false);
   const [settlingAdj, setSettlingAdj] = useState(null); // adjustment _id being settled/unsettled
+  const [showAdjDetails, setShowAdjDetails] = useState(false);
   const [guardianUnsettled, setGuardianUnsettled] = useState([]); // unsettled adjustments from OTHER invoices
   // Cache teacher names by id to avoid losing labels if snapshots are missing in subsequent updates
   const teacherNameCacheRef = useRef({});
@@ -695,9 +698,11 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
         const normSt = normalizeStatusValue(actualStatus);
         const eligibleForCoverage = !CANCELLED_CLASS_STATUSES.has(normSt);
 
-        const durationMinutes = Number.isFinite(Number(liveClass?.duration))
-          ? Number(liveClass.duration)
-          : Number(item.duration || 0);
+        const durationMinutes = item.isPartial
+          ? Number(item.partialMinutes || item.duration || 0)
+          : (Number.isFinite(Number(liveClass?.duration))
+              ? Number(liveClass.duration)
+              : Number(item.duration || 0));
         const subject = liveClass?.subject || item.subject || item.description || '-';
         const rawId = resolveDocumentId(liveClass)
           || resolveDocumentId(item.class)
@@ -720,12 +725,18 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           reportSubmissionAllowance,
           reportSubmissionExtendedUntil,
           isEligible: eligibleForCoverage,
+          category: item.category || (CANCELLED_CLASS_STATUSES.has(normSt) ? 'not_eligible' : (['attended', 'missed_by_student'].includes(normSt) ? 'confirmed' : 'eligible')),
           paidByGuardian: Boolean(item.paidByGuardian),
           isPinned: Boolean(item.isPinned),
+          isPartial: Boolean(item.isPartial),
+          partialMinutes: item.partialMinutes || null,
+          partialOfMinutes: item.partialOfMinutes || null,
+          fullDuration: item.fullDuration || durationMinutes || 0,
         };
       });
 
     setClasses(classArray);
+    setPriorInvoices(Array.isArray(invoice?.dynamicClasses?.priorInvoices) ? invoice.dynamicClasses.priorInvoices : []);
     initialClassesFetchedRef.current = true;
     setClassesLoading(false);
   }, [invoice, isRefillOnlyInvoice]);
@@ -740,7 +751,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
 
   const isCoverageLocked = useMemo(() => {
     const status = String(invoice?.status || '').toLowerCase();
-    return ['paid', 'refunded'].includes(status);
+    // Only lock coverage for fully-paid invoices. Refunded invoices are effectively
+    // unpaid and should allow editing coverage again.
+    return status === 'paid';
   }, [invoice?.status]);
 
   const getEligibleSortedClasses = useCallback(() => {
@@ -1768,6 +1781,31 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     }
   }, [invoice, historyOpen]);
 
+  const handleUndoRefund = useCallback(async () => {
+    const targetId = invoice?._id;
+    if (!targetId || undoingRefund) return;
+    if (!window.confirm('Are you sure you want to undo the last refund? This will restore the payment, guardian hours, and invoice items.')) return;
+    setUndoingRefund(true);
+    try {
+      const { data } = await api.post(`/invoices/${targetId}/undo-refund`);
+      if (data?.success && data.invoice) {
+        if (onInvoiceUpdate) onInvoiceUpdate(data.invoice);
+        syncInvoiceState(data.invoice);
+        // Refresh history
+        try {
+          const historyRes = await api.get(`/invoices/${targetId}/history`);
+          setHistoryEntries(Array.isArray(historyRes.data?.entries) ? historyRes.data.entries : []);
+        } catch (_) {}
+      }
+      alert(data?.message || 'Refund undone successfully');
+    } catch (err) {
+      console.error('Failed to undo refund', err);
+      alert(err?.response?.data?.message || err?.message || 'Failed to undo refund');
+    } finally {
+      setUndoingRefund(false);
+    }
+  }, [invoice, undoingRefund, onInvoiceUpdate, syncInvoiceState]);
+
   // --- Adjustments memo & handlers ---
   const adjustmentsByClassId = useMemo(() => {
     const map = {};
@@ -2027,8 +2065,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           <div className="space-y-8">
           <div className="bg-white/95 px-4 py-5 sm:px-8 sm:py-6">
             <div className="flex flex-col gap-2 pr-12 sm:pr-14">
-              {/* Row 1: Invoice name + status badges */}
-              <div className="flex items-center gap-2 flex-wrap">
+              {/* Single row: Invoice name + status + actions */}
+              <div className="flex flex-wrap items-center gap-2">
                 <h2 className="flex min-w-0 items-center gap-1.5 text-xl font-semibold text-slate-900 sm:text-2xl">
                   <span>{`${invoiceNameParts.prefix || 'Waraqa'}-${invoiceNameParts.month || ''}-${invoiceNameParts.year || ''}-`}</span>
                   {seqEditing || !invoiceNameParts.seq ? (
@@ -2081,27 +2119,18 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                 {invoiceNameStatus && invoiceNameStatus.type === 'progress' && (
                   <span className="text-xs font-semibold text-slate-500">{invoiceNameStatus.message}</span>
                 )}
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusTone}`} title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>
-                      <Sparkles className="h-3.5 w-3.5" />
-                      {invoice.status}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs">
-                      <Calendar className="h-3.5 w-3.5 text-slate-500" />
-                      <span>{formatDateDisplay(invoice.createdAt)}</span>
-                  </span>
-                </div>
-              </div>
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusTone}`} title={getStatusTooltip(invoice.status)} aria-label={getStatusTooltip(invoice.status)}>
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {invoice.status}
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs">
+                    <Calendar className="h-3.5 w-3.5 text-slate-500" />
+                    <span>{formatDateDisplay(invoice.createdAt)}</span>
+                </span>
 
-              {/* Error message - shown on its own line so it's always visible */}
-              {invoiceNameStatus && invoiceNameStatus.type === 'error' && (
-                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
-                  {invoiceNameStatus.message}
-                </div>
-              )}
+                {/* Separator before actions */}
+                <span className="hidden sm:inline-block h-5 w-px bg-slate-200" />
 
-              {/* Row 2: Action buttons */}
-              <div className="flex items-center gap-1.5 flex-wrap">
                 {isAdmin && (
                   <button
                     type="button"
@@ -2112,13 +2141,13 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                     Record payment
                   </button>
                 )}
-                {isAdmin && invoice.status !== 'paid' && (
+                {isAdmin && (
                   <button
                     type="button"
                     onClick={handleRefreshClasses}
                     disabled={refreshingClasses}
-                    className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${refreshingClasses ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:border-indigo-300 hover:bg-indigo-100'}`}
-                    title="Refresh classes – re-check eligibility and sync"
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-full border transition ${refreshingClasses ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : 'border-indigo-200 bg-indigo-50 text-indigo-600 hover:border-indigo-300 hover:bg-indigo-100'}`}
+                    title="Refresh classes – re-check eligibility and rebalance chain"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${refreshingClasses ? 'animate-spin' : ''}`} />
                   </button>
@@ -2127,7 +2156,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                   <button
                     type="button"
                     onClick={handleToggleHistory}
-                    className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${historyOpen ? 'border-amber-300 bg-amber-100 text-amber-700' : 'border-amber-200 bg-amber-50 text-amber-600 hover:border-amber-300 hover:bg-amber-100'}`}
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-full border transition ${historyOpen ? 'border-amber-300 bg-amber-100 text-amber-700' : 'border-amber-200 bg-amber-50 text-amber-600 hover:border-amber-300 hover:bg-amber-100'}`}
                     title="Invoice change history"
                   >
                     <Clock className="h-3.5 w-3.5" />
@@ -2137,7 +2166,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                   <button
                     type="button"
                     onClick={handleCopyCoverageMessage}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-violet-200 bg-violet-50 text-violet-600 transition hover:border-violet-300 hover:bg-violet-100"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-violet-200 bg-violet-50 text-violet-600 transition hover:border-violet-300 hover:bg-violet-100"
                     title="Copy message"
                   >
                     <Copy className="h-3.5 w-3.5" />
@@ -2146,7 +2175,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                 {invoice?.invoiceSlug && (
                   <button
                     onClick={handleCopyShareLink}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-600 transition hover:border-sky-300 hover:bg-sky-100"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-600 transition hover:border-sky-300 hover:bg-sky-100"
                     type="button"
                     title="Copy share link"
                   >
@@ -2155,7 +2184,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                 )}
                 <button
                   onClick={downloadPDF}
-                  className="inline-flex h-8 items-center justify-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 text-rose-700 transition hover:border-rose-300 hover:bg-rose-100"
+                  className="inline-flex h-7 items-center justify-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 text-rose-700 transition hover:border-rose-300 hover:bg-rose-100"
                   type="button"
                   title="Download PDF"
                 >
@@ -2164,25 +2193,33 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                 </button>
                 <button
                   onClick={downloadExcel}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-amber-700 transition hover:border-amber-300 hover:bg-amber-100"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-amber-700 transition hover:border-amber-300 hover:bg-amber-100"
                   type="button"
                   title="Export Excel"
                 >
                   <FileDown className="h-3.5 w-3.5" />
                 </button>
+                {isAdmin && (invoice.status === 'paid' || Number(invoice?.paidAmount || 0) > 0) && (
+                  <button
+                    onClick={handleMarkInvoiceUnpaid}
+                    className={`inline-flex h-7 items-center gap-1 rounded-full border px-2 text-[10px] font-semibold uppercase tracking-wide transition ${revertingPayment ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : 'border-rose-200 bg-white text-rose-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700'}`}
+                    type="button"
+                    disabled={revertingPayment}
+                    title="Reverse payment and mark invoice as unpaid"
+                  >
+                    {revertingPayment ? 'Reverting…' : 'Mark unpaid'}
+                  </button>
+                )}
+              </div>
 
-                <div className="flex flex-col items-start gap-1 sm:items-end pl-1">
-                  {isAdmin && (invoice.status === 'paid' || Number(invoice?.paidAmount || 0) > 0) && (
-                    <button
-                      onClick={handleMarkInvoiceUnpaid}
-                      className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium shadow-sm transition ${revertingPayment ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : 'border-rose-200 bg-white text-rose-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700'}`}
-                      type="button"
-                      disabled={revertingPayment}
-                      title="Reverse payment and mark invoice as unpaid"
-                    >
-                      {revertingPayment ? 'Reverting…' : 'Mark unpaid'}
-                    </button>
-                  )}
+              {/* Status messages */}
+              {invoiceNameStatus && invoiceNameStatus.type === 'error' && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+                  {invoiceNameStatus.message}
+                </div>
+              )}
+              {(revertStatus || refreshStatus || shareStatus) && (
+                <div className="flex flex-wrap items-center gap-3">
                   {revertStatus && (
                     <span className={`text-xs font-medium ${revertStatus.type === 'success' ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {revertStatus.message}
@@ -2199,7 +2236,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                     </span>
                   )}
                 </div>
-              </div>
+              )}
             </div>
 
             {isAdmin && historyOpen && (
@@ -2223,6 +2260,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                         payment: 'Payment recorded',
                         refund: 'Refund applied',
                         refund_adjustment: 'Refund adjusted',
+                        undo_refund: 'Refund undone',
                         delivery: 'Invoice delivered',
                         note: 'Note added',
                         delete: 'Invoice deleted',
@@ -2267,6 +2305,17 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                         if (meta.note) details.push(meta.note);
                       }
 
+                      // Determine if this is the most recent refund entry (for undo button)
+                      const isRefundAction = entry.action === 'refund' || entry.action === 'refund_adjustment';
+                      const lastRefundIdx = (() => {
+                        for (let ri = historyEntries.length - 1; ri >= 0; ri--) {
+                          const a = historyEntries[ri]?.action;
+                          if (a === 'refund' || a === 'refund_adjustment') return ri;
+                        }
+                        return -1;
+                      })();
+                      const isLastRefund = isRefundAction && idx === lastRefundIdx;
+
                       return (
                         <div key={entry._id || idx} className="rounded-lg border border-amber-100 bg-white px-3 py-2">
                           <div className="flex items-center justify-between gap-2">
@@ -2282,6 +2331,17 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                                 <span key={i} className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">{d}</span>
                               ))}
                             </div>
+                          )}
+                          {isLastRefund && (
+                            <button
+                              type="button"
+                              onClick={handleUndoRefund}
+                              disabled={undoingRefund}
+                              className="mt-1.5 inline-flex items-center gap-1 rounded bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
+                            >
+                              <RefreshCw className="h-3 w-3" />
+                              {undoingRefund ? 'Undoing…' : 'Undo this refund'}
+                            </button>
                           )}
                         </div>
                       );
@@ -2711,6 +2771,31 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                   <Mail className="h-3.5 w-3.5 text-slate-500" />
                   {invoice.guardian?.email || '—'}
                 </button>
+                {/* Guardian hours — live state (paid invoices only) */}
+                {invoice?.status === 'paid' && (() => {
+                  const totalHrs = Number(invoice?.guardian?.guardianInfo?.totalHours ?? 0);
+                  const invoiceMins = filteredClasses.reduce((s, c) => s + (c.duration || 0), 0);
+                  const remaining = Number.isFinite(totalHrs) ? totalHrs : 0;
+                  const isNegative = remaining < 0;
+                  const isBalanced = Math.abs(remaining) < 0.01;
+                  return (
+                    <div className="mt-3 flex flex-col gap-1 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500">Covered:</span>
+                        <span className="font-semibold text-slate-700">{(invoiceMins / 60).toFixed(1)}h</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500">Balance:</span>
+                        {isBalanced
+                          ? <span className="font-medium text-slate-400">0.00h consumed</span>
+                          : isNegative
+                            ? <span className="font-semibold text-orange-700">−{Math.abs(remaining).toFixed(2)}h owes</span>
+                            : <span className="font-semibold text-emerald-700">{remaining.toFixed(2)}h left</span>
+                        }
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="mt-4">
                   <div className="flex items-center justify-between gap-3 text-xs font-semibold uppercase tracking-wide">
                     <span className="inline-flex items-center rounded-full bg-violet-50 px-2.5 py-1 text-violet-700">
@@ -2822,6 +2907,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                             <th className="sticky top-0 z-10 w-[20%] bg-slate-50/95 px-4 py-3 backdrop-blur">Teacher</th>
                             <th className="sticky top-0 z-10 w-[26%] bg-slate-50/95 px-4 py-3 backdrop-blur">Subject</th>
                             <th className="sticky top-0 z-10 w-20 bg-slate-50/95 px-4 py-3 text-center backdrop-blur">Mins</th>
+                            <th className="sticky top-0 z-10 w-20 bg-slate-50/95 px-4 py-3 text-right backdrop-blur">Fee</th>
                             <th className="sticky top-0 z-10 w-28 bg-slate-50/95 px-4 py-3 backdrop-blur">State</th>
                           </tr>
                         </thead>
@@ -2859,7 +2945,29 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                               <td className="px-4 py-3">
                                 <span className="block max-w-[320px] truncate whitespace-nowrap" title={c.subject}>{c.subject}</span>
                               </td>
-                              <td className="px-4 py-3 text-center whitespace-nowrap">{c.duration}</td>
+                              <td className="px-4 py-3 text-center whitespace-nowrap">
+                                {(() => {
+                                  const durAdjs = classAdjs.filter(a => a.reason === 'duration_changed');
+                                  const durColor = durAdjs.length > 0 ? (durAdjs[durAdjs.length - 1].type === 'debit' ? 'text-emerald-600' : 'text-orange-600') : '';
+                                  if (c.isPartial) {
+                                    return (
+                                      <span title={durAdjs.length ? durAdjs.map(a => a.description).join('; ') : `${c.duration}min of ${c.fullDuration}min covered here`}>
+                                        <span className="text-violet-700 font-medium">{c.duration}</span>
+                                        <span className="text-slate-400">/</span>
+                                        <span className={durColor || 'text-slate-500'}>{c.fullDuration}</span>
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span className={durColor} title={durAdjs.length ? durAdjs.map(a => a.description).join('; ') : undefined}>
+                                      {c.fullDuration}
+                                    </span>
+                                  );
+                                })()}
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap text-xs font-medium text-slate-600">
+                                {guardianRate > 0 ? `$${((c.duration / 60) * guardianRate).toFixed(2)}` : ''}
+                              </td>
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <span className="inline-flex items-center gap-2">
                                   <span
@@ -2881,15 +2989,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                                         : 'Report submission extended by admin'}
                                     >Extended</span>
                                   )}
-                                  {isAdmin && c.isPinned && (
-                                    <span
-                                      className="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 cursor-default"
-                                      title="This class was pinned to the invoice — it was already linked before the latest class-list rebuild and will persist across refreshes"
-                                    >Pinned</span>
-                                  )}
-                                  {c.paidByGuardian && (
-                                    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Paid</span>
-                                  )}
                                   {hasDeleteAdj && (
                                     <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-600 cursor-default" title="This class was deleted after invoicing — a credit adjustment was created">Deleted</span>
                                   )}
@@ -2909,72 +3008,56 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                             </tr>
                           );})}
                         </tbody>
+                        <tfoot>
+                          {(() => {
+                            const confirmed = filteredClasses.filter(c => c.category === 'confirmed');
+                            const eligible = filteredClasses.filter(c => c.category === 'eligible');
+                            const confirmedMins = confirmed.reduce((s, c) => s + (c.duration || 0), 0);
+                            const eligibleMins = eligible.reduce((s, c) => s + (c.duration || 0), 0);
+                            const totalMins = filteredClasses.reduce((s, c) => s + (c.duration || 0), 0);
+                            const totalFee = guardianRate > 0 ? ((totalMins / 60) * guardianRate) : 0;
+                            return (
+                              <tr className="border-t-2 border-slate-300 bg-slate-50/80 text-xs font-semibold text-slate-700">
+                                <td className="border-r border-slate-200 px-4 py-3 text-center text-emerald-700">{confirmed.length}</td>
+                                <td className="border-r border-slate-200 px-4 py-3 text-emerald-700" colSpan={2}>{(confirmedMins / 60).toFixed(1)}h confirmed</td>
+                                <td className="border-r border-slate-200 px-4 py-3 text-blue-700" colSpan={2}>{eligible.length > 0 ? `${(eligibleMins / 60).toFixed(1)}h eligible` : ''}</td>
+                                <td className="border-r border-slate-200 px-4 py-3 text-center font-bold">{(totalMins / 60).toFixed(1)}h</td>
+                                <td className="border-r border-slate-200 px-4 py-3 text-right font-bold">{totalFee > 0 ? `$${totalFee.toFixed(2)}` : ''}</td>
+                                <td className="px-4 py-3" />
+                              </tr>
+                            );
+                          })()}
+                        </tfoot>
                       </table>
                     </div>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
 
-          {/* Adjustments section */}
-          {invoiceAdjustments.length > 0 && (
-            <div className="px-4 pb-6 sm:px-8 sm:pb-8">
-              <div className="flex h-full w-full flex-col rounded-3xl border border-amber-200 bg-amber-50/30 shadow-sm">
-                <div className="px-5 py-4">
-                  <h3 className="text-sm font-semibold text-amber-800">Adjustments ({invoiceAdjustments.length})</h3>
-                  <p className="mt-1 text-xs text-amber-600">Classes changed after this invoice was paid</p>
-                </div>
-                <div className="divide-y divide-amber-100">
-                  {invoiceAdjustments.map((adj) => {
-                    const isCredit = adj.type === 'credit';
-                    const reasonLabel = { class_deleted: 'Deleted', class_cancelled: 'Cancelled', duration_changed: 'Duration changed', manual: 'Manual' }[adj.reason] || adj.reason;
-                    return (
-                      <div key={adj._id} className={`flex items-start gap-3 px-5 py-3 ${adj.settled ? 'bg-emerald-50/40' : ''}`}>
-                        <span className={`mt-0.5 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${isCredit ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                          {isCredit ? 'Credit' : 'Debit'}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-slate-700">{adj.description || reasonLabel}</span>
-                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{reasonLabel}</span>
-                          </div>
-                          <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-500">
-                            {adj.hoursDelta != null && <span>{adj.hoursDelta > 0 ? '+' : ''}{Number(adj.hoursDelta).toFixed(2)}h</span>}
-                            {adj.amountDelta != null && <span>{adj.amountDelta > 0 ? '+' : ''}${Number(adj.amountDelta).toFixed(2)}</span>}
-                            {adj.createdAt && <span>{new Date(adj.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
-                            {adj.settled && <span className="text-emerald-600 font-medium">Settled</span>}
-                          </div>
+                {/* Prior invoices in chain — shows what earlier invoices covered */}
+                {priorInvoices.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-3">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      Prior coverage ({priorInvoices.length} {priorInvoices.length === 1 ? 'invoice' : 'invoices'} before this one)
+                    </p>
+                    <div className="space-y-1.5">
+                      {priorInvoices.map((pi, idx) => (
+                        <div key={pi.invoiceId || idx} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                          <span className="font-medium text-slate-600">{pi.invoiceName || `Invoice ${idx + 1}`}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${pi.isPaid ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pi.status}</span>
+                          <span>{(pi.usedMinutes / 60).toFixed(1)}h covered</span>
+                          <span className="text-slate-400">{pi.classCount} classes</span>
+                          {pi.firstDate && pi.lastDate && (
+                            <span className="text-slate-400">
+                              {new Date(pi.firstDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                              {' – '}
+                              {new Date(pi.lastDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                            </span>
+                          )}
                         </div>
-                        {isAdmin && (
-                          <button
-                            type="button"
-                            disabled={settlingAdj === adj._id}
-                            onClick={() => handleSettleAdjustment(adj._id, !adj.settled)}
-                            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                              adj.settled
-                                ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                            } disabled:opacity-50`}
-                          >
-                            {settlingAdj === adj._id ? '...' : adj.settled ? 'Undo' : 'Confirm'}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                {(() => {
-                  const totalCredit = invoiceAdjustments.filter(a => a.type === 'credit' && !a.settled).reduce((s, a) => s + Math.abs(a.amountDelta || 0), 0);
-                  const totalDebit = invoiceAdjustments.filter(a => a.type === 'debit' && !a.settled).reduce((s, a) => s + Math.abs(a.amountDelta || 0), 0);
-                  const net = totalCredit - totalDebit;
-                  if (net <= 0) return null;
-                  return (
-                    <div className="border-t border-amber-200 px-5 py-3 text-xs font-semibold text-amber-800">
-                      Unsettled credit balance: ${net.toFixed(2)}
+                      ))}
                     </div>
-                  );
-                })()}
+                  </div>
+                )}
               </div>
             </div>
           )}

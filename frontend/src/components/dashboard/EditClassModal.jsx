@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { XCircle, Trash2, Plus, Clock } from "lucide-react";
+import { XCircle, Trash2, Plus, Clock, Copy, Check } from "lucide-react";
 import moment from "moment-timezone";
 import { formatTzToUtc } from "../../utils/time";
 import { subjects as fallbackSubjects } from "../../constants/reportTopicsConfig";
@@ -44,6 +44,8 @@ export default function EditClassModal({
   handleUpdateClass,
   availabilityWarning,
   onDismissAvailabilityWarning,
+  updateResult,
+  onDismissUpdateResult,
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -68,6 +70,7 @@ export default function EditClassModal({
     };
   }, []);
   const [dstWarning, setDstWarning] = useState(null);
+  const [msgCopied, setMsgCopied] = useState(false);
   const fetchTeacherOptions = useCallback((term = '') => searchTeachers(term), []);
   const fetchTeacherById = useCallback((id) => getTeacherById(id), []);
   const fetchGuardianOptions = useCallback((term = '') => searchGuardians(term), []);
@@ -228,6 +231,40 @@ export default function EditClassModal({
               <XCircle className="h-6 w-6" />
             </button>
           </div>
+
+          {/* Teacher change result banner */}
+          {updateResult?.teacherChangeMsg && (
+            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-md">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-emerald-800">{updateResult.message}</p>
+                  <pre className="mt-2 text-xs text-emerald-700 whitespace-pre-wrap font-sans leading-relaxed">{updateResult.teacherChangeMsg}</pre>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(updateResult.teacherChangeMsg);
+                    setMsgCopied(true);
+                    setTimeout(() => setMsgCopied(false), 2000);
+                  }}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                  title="Copy message"
+                >
+                  {msgCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  {msgCopied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => onDismissUpdateResult?.()}
+                  className="text-xs text-emerald-600 hover:text-emerald-800 underline"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* DST Warning Banner */}
           {dstWarning && (

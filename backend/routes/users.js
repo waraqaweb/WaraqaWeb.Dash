@@ -2503,7 +2503,7 @@ router.get('/admin/all-students', authenticateToken, requireAdmin, async (req, r
     }
 
     const limitProvided = typeof limit !== 'undefined';
-    const safeLimit = limitProvided ? Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200) : 0;
+    const safeLimit = limitProvided ? Math.min(Math.max(parseInt(limit, 10) || 20, 1), 500) : 0;
     const shouldUseFilteredFlow = Boolean(trimmedSearch || guardianObjectId || studentObjectId || limitProvided);
 
     if (shouldUseFilteredFlow) {

@@ -2031,6 +2031,8 @@ class InvoiceService {
               hoursDelta: -hrs, amountDelta: -amt, previousDuration: dur, actorId: null
             });
           } catch (adjErr) { console.error('[onClassStateChanged] adjustment error (cancel):', adjErr.message); }
+          // Sync item snapshot
+          try { await Invoice.updateOne({ _id: inv._id, 'items.class': classDoc._id || classId }, { $set: { 'items.$.status': classDoc.status, 'items.$.attended': false, 'items.$.attendanceStatus': 'cancelled' } }); } catch (_e) {}
           await InvoiceService.removeClassFromUnpaidInvoices(classId, invoiceId);
           return { success: true, statusChange: 'countable_to_cancelled', adjustmentCreated: true, hoursUpdated: statusChanged && !skipHourAdjustment };
         }
@@ -2048,6 +2050,11 @@ class InvoiceService {
               hoursDelta: hrs, amountDelta: amt, previousDuration: 0, newDuration: dur, actorId: null
             });
           } catch (adjErr) { console.error('[onClassStateChanged] adjustment error (reactivate):', adjErr.message); }
+          // Sync item snapshot
+          try {
+            const att2 = classDoc.status === 'attended' ? { attended: true, attendanceStatus: 'attended' } : { attended: false, attendanceStatus: classDoc.status === 'missed_by_student' ? 'student_absent' : null };
+            await Invoice.updateOne({ _id: inv._id, 'items.class': classDoc._id || classId }, { $set: { 'items.$.status': classDoc.status, 'items.$.attended': att2.attended, 'items.$.attendanceStatus': att2.attendanceStatus } });
+          } catch (_e) {}
           return { success: true, statusChange: 'cancelled_to_countable', adjustmentCreated: true, hoursUpdated: statusChanged && !skipHourAdjustment };
         }
 
@@ -2081,7 +2088,25 @@ class InvoiceService {
           return { success: true, durationChange: true, adjustmentCreated: true, hoursUpdated: !skipHourAdjustment };
         }
 
-        // No changes requiring adjustment
+        // No financial adjustment needed, but sync item snapshot status
+        if (statusChanged) {
+          const toAtt = (s) => {
+            if (s === 'attended') return { attended: true, attendanceStatus: 'attended' };
+            if (String(s || '').startsWith('cancelled')) return { attended: false, attendanceStatus: 'cancelled' };
+            if (s === 'missed_by_student') return { attended: false, attendanceStatus: 'student_absent' };
+            return { attended: false, attendanceStatus: null };
+          };
+          const att = toAtt(classDoc.status);
+          try {
+            await Invoice.updateOne(
+              { _id: inv._id, 'items.class': classDoc._id || classId },
+              { $set: { 'items.$.status': classDoc.status, 'items.$.attended': att.attended, 'items.$.attendanceStatus': att.attendanceStatus } }
+            );
+            console.log(`[onClassStateChanged] Synced paid invoice item status: ${prev.status}→${classDoc.status}`);
+          } catch (snapErr) {
+            console.warn('[onClassStateChanged] Failed to sync paid invoice item status:', snapErr?.message);
+          }
+        }
         await InvoiceService.removeClassFromUnpaidInvoices(classId, invoiceId);
         return { success: true, reason: 'paid_invoice_no_change', hoursUpdated: statusChanged && !skipHourAdjustment };
       }

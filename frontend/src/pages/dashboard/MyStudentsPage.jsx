@@ -748,7 +748,7 @@ const fetchGuardiansList = async () => {
           signal: controller.signal
         });
         const classesArr = res.data.classes || [];
-        const countableStatuses = ['attended', 'missed_by_student', 'absent', 'completed', 'no_show_both'];
+        const countableStatuses = ['attended', 'missed_by_student', 'absent'];
         const map = {};
         classesArr.forEach((c) => {
           if (!countableStatuses.includes(c.status)) return;
@@ -1109,9 +1109,15 @@ const fetchGuardiansList = async () => {
                           ) : null;
                         })()
                       ) : null}
-                        {/* Show real hours (computed from past classes durations) in My Students page */}
-                        <span className="font-medium text-foreground">
-                          {formatHours2(classesHoursMap[String(student._id)] ?? 0)} hours
+                        {/* Remaining hours balance (computed from paid invoices minus consumed) */}
+                        {(student.hoursRemaining != null || student.studentInfo?.hoursRemaining != null) && (
+                          <span className={`font-medium ${(Number(student.hoursRemaining ?? student.studentInfo?.hoursRemaining ?? 0)) < 0 ? 'text-red-600' : 'text-foreground'}`}>
+                            {formatHours2(student.hoursRemaining ?? student.studentInfo?.hoursRemaining ?? 0)}h remaining
+                          </span>
+                        )}
+                        {/* Consumed class hours (attended / missed / absent) */}
+                        <span className="text-muted-foreground">
+                          {formatHours2(classesHoursMap[String(student._id)] ?? 0)}h consumed
                         </span>
                         <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(isStudentActive(student), student.activityState)}`}>
                           {student.activityState === 'loading' ? 'Loading' : (isStudentActive(student) ? 'Active' : 'Inactive')}

@@ -5233,6 +5233,15 @@ class InvoiceService {
           console.warn('Failed to update Payment status to applied', markErr && markErr.message);
         }
 
+        // Sync transactionId → invoiceReferenceLink so a single "Reference" field is shown
+        try {
+          const tx = String(paymentData.transactionId || '').trim();
+          if (tx && !updatedInvoice.invoiceReferenceLink) {
+            updatedInvoice.invoiceReferenceLink = tx;
+            await Invoice.updateOne({ _id: updatedInvoice._id }, { $set: { invoiceReferenceLink: tx } });
+          }
+        } catch (_syncErr) { /* best-effort */ }
+
         // Enforce strict DB rule: once settled, coverage cap metadata should not persist.
         // Keep coverage caps as-is after payment so invoices reflect paid-hours decisions.
       } catch (procErr) {

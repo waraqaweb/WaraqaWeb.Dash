@@ -1939,6 +1939,16 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     return { value: reference, isLink };
   }, [invoice?.paymentLogs, invoice?.transactionId, invoice?.paymentReference]);
 
+  // Unified reference: invoiceReferenceLink takes priority, then payment reference
+  const unifiedReference = useMemo(() => {
+    const invRef = String(noteEdits.invoiceReferenceLink || '').trim();
+    const payRef = latestPaymentReference?.value || '';
+    const value = invRef || payRef;
+    if (!value) return null;
+    const isLink = /^https?:\/\//i.test(value);
+    return { value, isLink };
+  }, [noteEdits.invoiceReferenceLink, latestPaymentReference]);
+
   const handleCopyPaymentReference = useCallback(async () => {
     const referenceValue = latestPaymentReference?.value;
     if (!referenceValue) return;
@@ -1962,26 +1972,26 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   }, [latestPaymentReference]);
 
   const handleCopyInvoiceReference = useCallback(async () => {
-    const referenceValue = String(noteEdits.invoiceReferenceLink || '').trim();
+    const referenceValue = String(noteEdits.invoiceReferenceLink || unifiedReference?.value || '').trim();
     if (!referenceValue) return;
 
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(referenceValue);
       } else {
-        const copied = window.prompt('Copy invoice reference:', referenceValue);
+        const copied = window.prompt('Copy reference:', referenceValue);
         if (copied === null) {
           throw new Error('Copy cancelled');
         }
       }
-      setNotesStatus({ type: 'success', message: 'Invoice reference copied' });
+      setNotesStatus({ type: 'success', message: 'Reference copied' });
     } catch (err) {
       console.error('Failed to copy invoice reference', err);
       setNotesStatus({ type: 'error', message: 'Copy failed' });
     }
 
     setTimeout(() => setNotesStatus(null), 2000);
-  }, [noteEdits.invoiceReferenceLink]);
+  }, [noteEdits.invoiceReferenceLink, unifiedReference]);
 
   const handleCopyGuardianName = useCallback(async () => {
     const fullName = `${invoice?.guardian?.firstName || ''} ${invoice?.guardian?.lastName || ''}`.trim();
@@ -2452,69 +2462,53 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                               type="url"
                               value={noteEdits.invoiceReferenceLink}
                               onChange={(e) => handleNoteChange('invoiceReferenceLink', e.target.value)}
-                              placeholder="Invoice reference"
+                              placeholder="Reference (PayPal link, transaction ID, etc.)"
                               className="w-full border-b border-slate-200 bg-transparent px-0 py-1 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
                             />
                           </div>
                         )}
-                        {isAdmin && isPaidStatus && noteEdits.invoiceReferenceLink?.trim() && (
+                        {isAdmin && isPaidStatus && (
                           <div className="space-y-1.5 pt-2">
                             <div className="flex items-start justify-between gap-2">
-                              <span className="text-slate-600">Invoice reference</span>
+                              <span className="text-slate-600">Reference</span>
                               <div className="flex items-center gap-1.5">
-                                <a
-                                  href={noteEdits.invoiceReferenceLink}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
-                                  title="Open invoice reference"
-                                >
-                                  <Link2 className="h-3 w-3" />
-                                  Open
-                                </a>
-                                <button
-                                  type="button"
-                                  onClick={handleCopyInvoiceReference}
-                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
-                                  title="Copy invoice reference"
-                                >
-                                  <FileText className="h-3 w-3" />
-                                  Copy
-                                </button>
-                              </div>
-                            </div>
-                            <p className="break-all text-xs text-slate-500">{noteEdits.invoiceReferenceLink}</p>
-                          </div>
-                        )}
-                        {latestPaymentReference && (
-                          <div className="space-y-1.5 pt-2">
-                            <div className="flex items-start justify-between gap-2">
-                              <span className="text-slate-600">Payment reference</span>
-                              <div className="flex items-center gap-1.5">
-                                {latestPaymentReference.isLink && (
+                                {unifiedReference?.isLink && (
                                   <a
-                                    href={latestPaymentReference.value}
+                                    href={unifiedReference.value}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
-                                    title="Open payment link"
+                                    title="Open reference"
                                   >
                                     <Link2 className="h-3 w-3" />
                                     Open
                                   </a>
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={handleCopyPaymentReference}
-                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
-                                  title="Copy payment reference"
-                                >
-                                  <FileText className="h-3 w-3" />
-                                  Copy
-                                </button>
+                                {unifiedReference && (
+                                  <button
+                                    type="button"
+                                    onClick={handleCopyInvoiceReference}
+                                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                                    title="Copy reference"
+                                  >
+                                    <FileText className="h-3 w-3" />
+                                    Copy
+                                  </button>
+                                )}
                               </div>
                             </div>
-                            <p className="break-all text-xs text-slate-500">{latestPaymentReference.value}</p>
+                            <input
+                              type="url"
+                              value={noteEdits.invoiceReferenceLink || unifiedReference?.value || ''}
+                              onChange={(e) => handleNoteChange('invoiceReferenceLink', e.target.value)}
+                              onFocus={() => {
+                                if (!noteEdits.invoiceReferenceLink && unifiedReference?.value) {
+                                  handleNoteChange('invoiceReferenceLink', unifiedReference.value);
+                                }
+                              }}
+                              placeholder="Reference (PayPal link, transaction ID, etc.)"
+                              className="w-full break-all border-b border-slate-200 bg-transparent px-0 py-1 text-xs text-slate-500 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
+                            />
                           </div>
                         )}
                       </div>

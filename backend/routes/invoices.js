@@ -89,6 +89,7 @@ const CLASS_FIELDS_FOR_INVOICE = [
 
 const INVOICE_LIST_FIELDS = [
   'invoiceNumber',
+  'invoiceSequence',
   'invoiceName',
   'invoiceSlug',
   'paypalInvoiceNumber',
@@ -769,13 +770,19 @@ router.get('/', authenticateToken, async (req, res) => {
                 },
               ],
             },
+            __seqKey: {
+              $ifNull: [
+                '$invoiceSequence',
+                { $divide: [{ $toLong: { $ifNull: [{ $arrayElemAt: ['$items.date', 0] }, { $ifNull: ['$billingPeriod.startDate', '$createdAt'] }] } }, 10000000000000] }
+              ],
+            },
           },
         },
         {
           $sort: {
             __unpaidRank: 1,
+            __seqKey: -1,
             __effectiveSortDate: -1,
-            createdAt: -1,
             _id: -1,
           },
         },

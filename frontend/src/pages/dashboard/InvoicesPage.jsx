@@ -56,6 +56,16 @@ const getInvoicePaymentTimestamp = (invoice) => {
   return new Date(paidSource || fallback).getTime();
 };
 
+// Sort key: invoiceSequence (higher = more recent) then first item/billing date
+const getInvoiceRecencyKey = (invoice) => {
+  if (!invoice) return 0;
+  if (invoice.invoiceSequence != null) return invoice.invoiceSequence;
+  // Fallback: first item date or billingPeriod.startDate or createdAt
+  const firstItemDate = invoice.items?.[0]?.date;
+  const billStart = invoice.billingPeriod?.startDate;
+  return new Date(firstItemDate || billStart || invoice.createdAt || 0).getTime() / 1e13;
+};
+
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 const InvoicesPage = ({ isActive = true }) => {
@@ -1353,39 +1363,28 @@ const InvoicesPage = ({ isActive = true }) => {
     const list = (filteredInvoices || []).slice();
     const searchMode = Boolean(normalizedSearchTerm);
 
-    if (searchMode) {
+    // Universal sort: most recent invoice first (by sequence number, then first date)
+    const recentFirst = (a, b) => getInvoiceRecencyKey(b) - getInvoiceRecencyKey(a);
+
+    if (searchMode || resolvedActiveTab === 'all') {
       const isPaid = (invoice) => ['paid', 'refunded'].includes(String(invoice?.status || '').toLowerCase());
       list.sort((a, b) => {
         const aPaid = isPaid(a);
         const bPaid = isPaid(b);
         if (aPaid !== bPaid) return aPaid ? 1 : -1;
-        if (!aPaid) {
-          return new Date(a?.createdAt || 0) - new Date(b?.createdAt || 0);
-        }
-        return getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a);
+        return recentFirst(a, b);
       });
       return list;
     }
 
-    if (resolvedActiveTab === 'all') {
-      const isPaid = (invoice) => ['paid', 'refunded'].includes(String(invoice?.status || '').toLowerCase());
-      list.sort((a, b) => {
-        const aPaid = isPaid(a);
-        const bPaid = isPaid(b);
-        if (aPaid !== bPaid) return aPaid ? 1 : -1;
-        if (!aPaid) {
-          return new Date(a?.createdAt || 0) - new Date(b?.createdAt || 0);
-        }
-        return getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a);
-      });
-    } else if (resolvedActiveTab === 'unpaid') {
+    if (resolvedActiveTab === 'unpaid') {
       list.sort((a, b) => {
         const weightDiff = getUnpaidSortWeight(a) - getUnpaidSortWeight(b);
         if (weightDiff !== 0) return weightDiff;
-        return new Date(a.createdAt) - new Date(b.createdAt);
+        return recentFirst(a, b);
       });
     } else {
-      list.sort((a, b) => getInvoicePaymentTimestamp(b) - getInvoicePaymentTimestamp(a));
+      list.sort(recentFirst);
     }
     return list;
   }, [filteredInvoices, resolvedActiveTab]);

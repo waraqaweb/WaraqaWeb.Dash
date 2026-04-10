@@ -32,9 +32,7 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
   const [invoiceNameParts, setInvoiceNameParts] = useState({ prefix: 'Waraqa', month: 'Mar', year: '2026', seq: '' });
   const [seqEditing, setSeqEditing] = useState(false);
   const [seqDraft, setSeqDraft] = useState('');
-  const [editingPaypal, setEditingPaypal] = useState(false);
   const seqInputRef = useRef(null);
-  const paypalInputRef = useRef(null);
   const lastInvoiceIdRef = useRef(null);
   const isDirtyRef = useRef(false);
   const coverageDirtyRef = useRef(false);
@@ -252,19 +250,6 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
     }, 0);
   }, [seqEditing]);
 
-  useEffect(() => {
-    if (!editingPaypal || !paypalInputRef.current) return;
-    const target = paypalInputRef.current;
-    target.focus();
-    target.select();
-    setTimeout(() => {
-      try {
-        target.focus();
-        target.select();
-      } catch (_) {}
-    }, 0);
-  }, [editingPaypal]);
-
   const handleSaveSeq = async (nextSeqValue) => {
     const targetInvoiceId = localInvoice?._id || invoiceId;
     if (!targetInvoiceId) return;
@@ -382,31 +367,6 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
     () => String(localInvoice?.status || invoice?.status || '').toLowerCase(),
     [localInvoice?.status, invoice?.status]
   );
-
-  const handlePersistPaypalNumber = React.useCallback(async () => {
-    const targetInvoiceId = localInvoice?._id || invoiceId;
-    if (!targetInvoiceId) return;
-
-    const normalized = String(form.paypalInvoiceNumber || '').trim();
-    const existing = String(localInvoice?.paypalInvoiceNumber || '').trim();
-    if (normalized === existing) return;
-
-    try {
-      const { data } = await api.put(`/invoices/${targetInvoiceId}`, {
-        paypalInvoiceNumber: normalized || null
-      });
-      const updated = data?.invoice || data;
-      if (updated && typeof updated === 'object') {
-        setLocalInvoice((prev) => mergeInvoiceUpdate(prev, updated));
-        setForm((prev) => ({
-          ...prev,
-          paypalInvoiceNumber: String(updated.paypalInvoiceNumber || normalized || '')
-        }));
-      }
-    } catch (err) {
-      console.error('Failed to persist PayPal invoice number', err);
-    }
-  }, [localInvoice?._id, localInvoice?.paypalInvoiceNumber, invoiceId, form.paypalInvoiceNumber, mergeInvoiceUpdate]);
 
   useEffect(() => {
     if (loading) return;
@@ -870,35 +830,9 @@ const RecordPaymentModal = ({ invoice, invoiceId, onClose, onUpdated, onOpenInvo
                   </div>
                 )}
 
-                {/* PayPal invoice & total paid moved into this card for clarity */}
+                {/* Total paid moved into this card for clarity */}
                 <div className="mt-3 text-sm text-slate-700">
                   <div className="flex items-center justify-between">
-                    <div className="text-xs text-slate-500">PayPal invoice #</div>
-                    <div>
-                      {!editingPaypal ? (
-                        <button type="button" onClick={() => setEditingPaypal(true)} className="text-sm text-slate-700 underline">
-                          {form.paypalInvoiceNumber || (localInvoice?.paypalInvoiceNumber || '—')}
-                        </button>
-                      ) : (
-                        <input
-                          ref={paypalInputRef}
-                          type="text"
-                          name="paypalInvoiceNumber"
-                          value={form.paypalInvoiceNumber}
-                          onChange={handleChange}
-                          onFocus={(e) => e.target.select()}
-                          onClick={(e) => e.currentTarget.select()}
-                          onBlur={async () => {
-                            setEditingPaypal(false);
-                            await handlePersistPaypalNumber();
-                          }}
-                          className="rounded-md border border-slate-200 px-2 py-1 text-sm text-slate-800"
-                        />
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between">
                     <div className="text-xs uppercase text-slate-400">Total paid so far</div>
                     <div className="text-sm font-semibold text-slate-700">${Number(localInvoice?.paidAmount || 0).toFixed(2)}</div>
                   </div>

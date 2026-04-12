@@ -19,7 +19,9 @@ import {
   Sparkles,
   Link2,
   RefreshCw,
-  Clock
+  Clock,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 // Helper function to render text with **bold** markdown and bullet points
@@ -209,6 +211,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [settlingAdj, setSettlingAdj] = useState(null); // adjustment _id being settled/unsettled
   const [showAdjDetails, setShowAdjDetails] = useState(false);
   const [guardianUnsettled, setGuardianUnsettled] = useState([]); // unsettled adjustments from OTHER invoices
+  const [siblings, setSiblings] = useState({ prev: null, next: null }); // prev/next invoice for same guardian
   // Cache teacher names by id to avoid losing labels if snapshots are missing in subsequent updates
   const teacherNameCacheRef = useRef({});
 
@@ -1855,6 +1858,51 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     return () => { cancelled = true; };
   }, [isAdmin, invoice?.guardian, invoice?.status, invoice?._id]);
 
+  // Fetch prev/next sibling invoices for same guardian (admin only)
+  useEffect(() => {
+    if (!isAdmin) return;
+    const guardianId = invoice?.guardian?._id || invoice?.guardian;
+    const invId = invoice?._id;
+    if (!guardianId || !invId) { setSiblings({ prev: null, next: null }); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/invoices/guardian/${guardianId}/siblings/${invId}`);
+        if (!cancelled) setSiblings({ prev: data.prev || null, next: data.next || null });
+      } catch { if (!cancelled) setSiblings({ prev: null, next: null }); }
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin, invoice?.guardian, invoice?._id]);
+
+  const navigateToSibling = useCallback((sibling) => {
+    if (!sibling) return;
+    // Reset state for new invoice
+    setInvoice(null);
+    setClasses([]);
+    setPriorInvoices([]);
+    setLoading(true);
+    setSiblings({ prev: null, next: null });
+    setGuardianUnsettled([]);
+    setHistoryOpen(false);
+    setHistoryEntries([]);
+    setResolvedInvoiceId(sibling._id);
+    // Fetch the new invoice
+    (async () => {
+      try {
+        const identifier = sibling.invoiceSlug || sibling._id;
+        const { data } = await api.get(`/invoices/${identifier}?includeDynamic=1`);
+        if (data?.invoice) {
+          setInvoice(data.invoice);
+          setResolvedInvoiceId(data.invoice._id);
+        }
+      } catch (err) {
+        console.error('Failed to navigate to sibling invoice:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
   const handleCopyShareLink = useCallback(async () => {
     if (!invoice?.invoiceSlug) return;
     const shareUrl = `${window.location.origin}/public/invoices/${invoice.invoiceSlug}`;
@@ -2062,6 +2110,26 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 px-4 py-8 backdrop-blur-sm">
+      {/* Prev invoice button */}
+      {isAdmin && siblings.prev && (
+        <button
+          onClick={() => navigateToSibling(siblings.prev)}
+          className="absolute left-1 z-50 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow-lg transition hover:bg-white hover:text-slate-900 sm:left-3"
+          title={siblings.prev.invoiceNumber || 'Previous invoice'}
+        >
+          <ChevronLeft className="h-5 w-5" />
+        </button>
+      )}
+      {/* Next invoice button */}
+      {isAdmin && siblings.next && (
+        <button
+          onClick={() => navigateToSibling(siblings.next)}
+          className="absolute right-1 z-50 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow-lg transition hover:bg-white hover:text-slate-900 sm:right-3"
+          title={siblings.next.invoiceNumber || 'Next invoice'}
+        >
+          <ChevronRight className="h-5 w-5" />
+        </button>
+      )}
       <div className="relative flex w-full max-w-6xl max-h-[90vh] flex-col overflow-hidden rounded-[32px] bg-white shadow-2xl">
         <button
           onClick={handleClose}
@@ -2072,7 +2140,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
         </button>
 
         <div className="flex-1 overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
-          <div className="space-y-8">
+          <div className="space-y-3">
           <div className="bg-white/95 px-4 py-5 sm:px-8 sm:py-6">
             <div className="flex flex-col gap-2 pr-12 sm:pr-14">
               {/* Single row: Invoice name + status + actions */}

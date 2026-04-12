@@ -1570,6 +1570,37 @@ router.post('/:id/adjustments/:adjId/unsettle', authenticateToken, requireAdmin,
 });
 
 // -----------------------------------------------
+// Get prev/next invoice siblings for a guardian
+// -----------------------------------------------
+router.get('/guardian/:guardianId/siblings/:invoiceId', authenticateToken, async (req, res) => {
+  try {
+    const { guardianId, invoiceId } = req.params;
+    // Fetch all invoices for this guardian, ordered by sequence desc then earliest item date desc
+    const all = await Invoice.find({ guardian: guardianId, deleted: { $ne: true } })
+      .select('invoiceSequence invoiceSlug invoiceNumber items.scheduledDate items.dateTime')
+      .sort({ invoiceSequence: -1 })
+      .lean();
+
+    // Build a sort key: invoiceSequence (desc), fallback to first item date (desc)
+    const sortKey = (inv) => {
+      if (inv.invoiceSequence) return inv.invoiceSequence;
+      const dates = (inv.items || []).map(i => new Date(i.scheduledDate || i.dateTime || 0).getTime()).filter(d => d > 0);
+      return dates.length ? Math.min(...dates) / 1e13 : 0; // normalize to small number so sequence wins
+    };
+    all.sort((a, b) => sortKey(b) - sortKey(a));
+
+    const idx = all.findIndex(inv => String(inv._id) === String(invoiceId));
+    const prev = idx > 0 ? { _id: all[idx - 1]._id, invoiceSlug: all[idx - 1].invoiceSlug, invoiceNumber: all[idx - 1].invoiceNumber } : null;
+    const next = idx >= 0 && idx < all.length - 1 ? { _id: all[idx + 1]._id, invoiceSlug: all[idx + 1].invoiceSlug, invoiceNumber: all[idx + 1].invoiceNumber } : null;
+
+    res.json({ success: true, prev, next, total: all.length, currentIndex: idx });
+  } catch (err) {
+    console.error('Get invoice siblings error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch invoice siblings' });
+  }
+});
+
+// -----------------------------------------------
 // Get all unsettled adjustments for a guardian
 // -----------------------------------------------
 router.get('/guardian/:guardianId/unsettled-adjustments', authenticateToken, requireAdmin, async (req, res) => {

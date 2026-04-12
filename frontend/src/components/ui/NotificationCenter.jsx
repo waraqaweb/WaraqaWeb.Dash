@@ -129,8 +129,8 @@ const NotificationCenter = () => {
 
   useEffect(() => {
     if (!isOpen || user?.role !== 'admin') return;
-    const hasUninvoicedAlert = notifications.some(isUninvoicedLessonsNotification);
-    if (hasUninvoicedAlert) fetchUninvoicedLessons();
+    const hasUninvoicedWarningAlert = notifications.some(isUninvoicedWarning);
+    if (hasUninvoicedWarningAlert) fetchUninvoicedLessons();
   }, [isOpen, user?.role, notifications]);
 
   const fetchNotifications = async ({ showLoading = true } = {}) => {
@@ -316,19 +316,32 @@ const NotificationCenter = () => {
     const title = notification?.title || '';
     return (
       kind === 'uninvoiced_lessons' ||
+      kind === 'uninvoiced_lessons_resolved' ||
       relatedId === 'uninvoiced-lessons' ||
+      relatedId === 'uninvoiced-lessons-resolved' ||
       title.toLowerCase().includes('uninvoiced lessons')
     );
   };
 
-  const getUninvoicedReasonLabel = (lesson) => {
-    const code = lesson?.reasonCode;
-    if (code === 'linked_invoice_missing_or_voided') return 'Linked invoice is missing/voided.';
-    if (code === 'missing_invoice_link') return 'No invoice item/link found.';
-    if (code === 'missing_guardian') return 'Guardian missing on class.';
-    if (code === 'missing_student') return 'Student missing on class.';
-    if (code === 'paid_flag_without_invoice') return 'Paid flag set without invoice item.';
-    return lesson?.reason || 'No invoice item/link found.';
+  const isUninvoicedWarning = (notification) => {
+    const kind = notification?.metadata?.kind;
+    return kind === 'uninvoiced_lessons' || (
+      isUninvoicedLessonsNotification(notification) &&
+      kind !== 'uninvoiced_lessons_resolved' &&
+      notification?.type !== 'success'
+    );
+  };
+
+  const isUninvoicedResolved = (notification) => {
+    const kind = notification?.metadata?.kind;
+    return kind === 'uninvoiced_lessons_resolved' || (
+      isUninvoicedLessonsNotification(notification) &&
+      notification?.type === 'success'
+    );
+  };
+
+  const getUninvoicedReasonLabel = (_lesson) => {
+    return ''; // reason labels removed; the resolve action handles it
   };
 
   const fetchUninvoicedLessons = async () => {
@@ -384,9 +397,11 @@ const NotificationCenter = () => {
       });
 
       const summary = res.data?.summary;
-      const message = summary
-        ? `Attached ${summary.attached || 0} lesson(s), created ${summary.created || 0} invoice(s).`
-        : 'Uninvoiced lessons were handled.';
+      const parts = [];
+      if (summary?.attached > 0) parts.push(`${summary.attached} attached`);
+      if (summary?.created > 0) parts.push(`${summary.created} new invoice(s)`);
+      if (summary?.skipped > 0) parts.push(`${summary.skipped} already resolved`);
+      const message = parts.length ? parts.join(', ') + '.' : 'All lessons resolved.';
 
       if (notification?._id && !notification.isRead) {
         await markAsRead([notification._id]);
@@ -634,53 +649,32 @@ const NotificationCenter = () => {
                           </p>
                         )}
 
-                        {user?.role === 'admin' && isUninvoicedLessonsNotification(notification) && (
-                          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                        {user?.role === 'admin' && isUninvoicedWarning(notification) && (
+                          <div className="mt-2 text-xs text-gray-600">
                             {uninvoicedLessonsState.loading ? (
-                              <p>Loading lesson details...</p>
+                              <p className="text-gray-400">Loading details...</p>
                             ) : uninvoicedLessonsState.error ? (
-                              <p>{uninvoicedLessonsState.error}</p>
+                              <p className="text-red-600">{uninvoicedLessonsState.error}</p>
                             ) : uninvoicedLessonsState.total === 0 ? (
-                              <p>No uninvoiced lessons found.</p>
+                              <p className="text-green-600">All lessons are now invoiced.</p>
                             ) : (
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between text-amber-900">
-                                  <span>
-                                    {uninvoicedLessonsState.total} lesson(s)
-                                    {uninvoicedLessonsState.sinceDays
-                                      ? ` in the last ${uninvoicedLessonsState.sinceDays} days`
-                                      : ''}
-                                  </span>
-                                  {uninvoicedLessonsState.total > 5 && (
-                                    <span className="text-amber-800">Showing 5</span>
-                                  )}
-                                </div>
-                                <ul className="space-y-1">
-                                  {uninvoicedLessonsState.lessons.slice(0, 5).map((lesson) => {
-                                    const teacherName = lesson?.teacher?.name || 'Unknown teacher';
-                                    const studentName = lesson?.student?.name || 'Unknown student';
-                                    const guardianName = lesson?.guardian?.name || 'Unknown guardian';
-                                    return (
-                                      <li key={lesson.classId} className="space-y-0.5">
-                                        <div className="font-medium text-amber-900">
-                                          {formatDateTimeDDMMMYYYYhhmmA(lesson.scheduledDate, { timeZone: userTimezone })}
-                                          {' • '}
-                                          {teacherName} {' • '} {studentName} {' • '} {guardianName}
-                                        </div>
-                                        <div className="text-amber-800">
-                                          {getUninvoicedReasonLabel(lesson)}
-                                        </div>
-                                        {lesson?.suggestedFix && (
-                                          <div className="text-[11px] text-amber-700">Fix: {lesson.suggestedFix}</div>
-                                        )}
-                                      </li>
-                                    );
-                                  })}
+                              <>
+                                <ul className="mt-1 space-y-0.5">
+                                  {uninvoicedLessonsState.lessons.slice(0, 5).map((lesson) => (
+                                    <li key={lesson.classId} className="text-gray-600">
+                                      {formatDateTimeDDMMMYYYYhhmmA(lesson.scheduledDate, { timeZone: userTimezone })}
+                                      {' · '}{lesson?.teacher?.name || '?'}
+                                      {' · '}{lesson?.student?.name || '?'}
+                                      {' · '}{lesson?.guardian?.name || '?'}
+                                    </li>
+                                  ))}
                                 </ul>
-                              </div>
+                                {uninvoicedLessonsState.total > 5 && (
+                                  <p className="mt-1 text-gray-400">+{uninvoicedLessonsState.total - 5} more</p>
+                                )}
+                              </>
                             )}
-
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -690,15 +684,40 @@ const NotificationCenter = () => {
                                 disabled={resolveUninvoicedState.loading}
                                 className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground disabled:opacity-60"
                               >
-                                {resolveUninvoicedState.loading ? 'Fixing…' : 'Fix now'}
+                                {resolveUninvoicedState.loading ? 'Resolving…' : 'Resolve'}
                               </button>
                               {resolveUninvoicedState.message && (
-                                <span className="text-amber-900">{resolveUninvoicedState.message}</span>
+                                <span className="text-green-700">{resolveUninvoicedState.message}</span>
                               )}
                               {resolveUninvoicedState.error && (
                                 <span className="text-red-700">{resolveUninvoicedState.error}</span>
                               )}
                             </div>
+                          </div>
+                        )}
+
+                        {user?.role === 'admin' && isUninvoicedResolved(notification) && (
+                          <div className="mt-2 text-xs text-gray-600">
+                            {(() => {
+                              const details = notification?.metadata?.details || [];
+                              if (!details.length) return null;
+                              return (
+                                <ul className="mt-1 space-y-0.5">
+                                  {details.slice(0, 8).map((d, i) => (
+                                    <li key={d.classId || i} className="text-gray-600">
+                                      <span className="text-green-600">✓</span>
+                                      {' '}{d.studentName || '?'}
+                                      {d.guardianName ? ` → ${d.guardianName}` : ''}
+                                      {d.action === 'attached' && d.target ? ` (${d.target})` : ''}
+                                      {d.action === 'created' ? ' (new invoice)' : ''}
+                                    </li>
+                                  ))}
+                                  {details.length > 8 && (
+                                    <li className="text-gray-400">+{details.length - 8} more</li>
+                                  )}
+                                </ul>
+                              );
+                            })()}
                           </div>
                         )}
 
@@ -746,7 +765,7 @@ const NotificationCenter = () => {
                             )}
                           </div>
                         )}
-                        {!isActionableReschedule(notification) && notification?.actionLink && (
+                        {!isActionableReschedule(notification) && !isUninvoicedResolved(notification) && notification?.actionLink && (
                           <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                             <button
                               type="button"

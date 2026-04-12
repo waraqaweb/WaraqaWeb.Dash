@@ -31,6 +31,13 @@ async function runUninvoicedLessonsAudit(options = {}) {
       }
     }
     if (total === 0) {
+      // Mark any stale warning notifications as read since everything is resolved
+      try {
+        await Notification.updateMany(
+          { relatedTo: 'system', relatedId: 'uninvoiced-lessons', isRead: false, 'metadata.kind': 'uninvoiced_lessons' },
+          { $set: { isRead: true } }
+        );
+      } catch (_) { /* best effort */ }
       console.log(`[UninvoicedLessonsAudit] No uninvoiced lessons found in the last ${sinceDays} days.`);
       return { success: true, total, details: [] };
     }

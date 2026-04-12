@@ -1161,19 +1161,45 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
       errors: []
     };
 
-    if (summary.attached + summary.created > 0) {
-      try {
-        await notificationService.createNotification({
-          userId: req.user._id,
-          title: 'Uninvoiced lessons handled',
-          message: `Attached ${summary.attached} lesson(s) and created ${summary.created} invoice(s).`,
-          type: 'success',
-          relatedTo: 'system',
-          relatedId: 'uninvoiced-lessons'
-        });
-      } catch (notifyErr) {
-        console.warn('Failed to notify admin after uninvoiced resolve:', notifyErr?.message || notifyErr);
-      }
+    // Create a success notification with resolution details
+    try {
+      const detailItems = (summary.details || [])
+        .filter(d => d.action === 'attached' || d.action === 'created')
+        .slice(0, 20)
+        .map(d => ({
+          classId: d.classId,
+          action: d.action,
+          target: d.target || null,
+          invoiceNumber: d.invoiceNumber || null,
+          studentName: d.studentName || null,
+          guardianName: d.guardianName || null
+        }));
+
+      const parts = [];
+      if (summary.attached > 0) parts.push(`Attached ${summary.attached} lesson(s) to existing invoices`);
+      if (summary.created > 0) parts.push(`Created ${summary.created} new invoice(s)`);
+      if (summary.skipped > 0) parts.push(`${summary.skipped} already resolved`);
+      const message = parts.join('. ') + '.';
+
+      await notificationService.createNotification({
+        userId: req.user._id,
+        title: 'Uninvoiced lessons resolved',
+        message,
+        type: 'success',
+        relatedTo: 'system',
+        relatedId: 'uninvoiced-lessons-resolved',
+        metadata: {
+          kind: 'uninvoiced_lessons_resolved',
+          category: 'audit',
+          total: summary.total,
+          attached: summary.attached,
+          created: summary.created,
+          skipped: summary.skipped,
+          details: detailItems
+        }
+      });
+    } catch (notifyErr) {
+      console.warn('Failed to notify admin after uninvoiced resolve:', notifyErr?.message || notifyErr);
     }
 
     res.json({ success: true, summary });

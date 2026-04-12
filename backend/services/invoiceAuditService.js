@@ -210,7 +210,8 @@ async function resolveUninvoicedLessons(options = {}) {
     attached: 0,
     created: 0,
     skipped: 0,
-    errors: []
+    errors: [],
+    details: []
   };
 
   if (!capped.length) return { success: true, summary };
@@ -218,18 +219,34 @@ async function resolveUninvoicedLessons(options = {}) {
   const InvoiceService = require('./invoiceService');
   const User = require('../models/User');
 
+  const linkClassToInvoice = async (classDoc, invoiceId) => {
+    try {
+      await Class.updateOne(
+        { _id: classDoc._id },
+        { $set: { billedInInvoiceId: invoiceId, billedAt: new Date(), flaggedUninvoiced: false } }
+      );
+    } catch (e) {
+      // best effort
+    }
+  };
+
   for (const lesson of capped) {
     summary.processed += 1;
     const classId = lesson?.classId || lesson?._id;
     if (!classId) {
       summary.skipped += 1;
+      summary.details.push({ classId: String(classId || ''), action: 'skipped', reason: 'No class ID' });
       continue;
     }
+
+    const studentName = lesson?.student?.name || 'Unknown student';
+    const guardianName = lesson?.guardian?.name || 'Unknown guardian';
 
     try {
       const classDoc = await Class.findById(classId);
       if (!classDoc) {
         summary.skipped += 1;
+        summary.details.push({ classId: String(classId), action: 'skipped', reason: 'Class not found', studentName, guardianName });
         continue;
       }
 
@@ -238,6 +255,7 @@ async function resolveUninvoicedLessons(options = {}) {
         const isValid = linked && !linked.deleted && String(linked.status || '').toLowerCase() !== 'cancelled';
         if (isValid) {
           summary.skipped += 1;
+          summary.details.push({ classId: String(classId), action: 'skipped', reason: 'Already linked to valid invoice', invoiceId: String(classDoc.billedInInvoiceId), studentName, guardianName });
           continue;
         }
         await Class.updateOne(
@@ -258,19 +276,25 @@ async function resolveUninvoicedLessons(options = {}) {
       });
 
       if (alreadyInInvoice) {
+        await linkClassToInvoice(classDoc, alreadyInInvoice._id);
         summary.skipped += 1;
+        summary.details.push({ classId: String(classId), action: 'skipped', reason: 'Already in invoice', invoiceId: String(alreadyInInvoice._id), invoiceNumber: alreadyInInvoice.invoiceNumber, studentName, guardianName });
         continue;
       }
 
       const guardianId = classDoc.student?.guardianId;
       if (!guardianId) {
         summary.skipped += 1;
+        summary.details.push({ classId: String(classId), action: 'skipped', reason: 'No guardian', studentName, guardianName });
         continue;
       }
 
       const paidInsert = await InvoiceService.insertClassIntoPaidInvoiceChain(classDoc);
       if (paidInsert?.handled) {
+        const paidInvoiceId = paidInsert?.invoiceId || classDoc.billedInInvoiceId;
+        if (paidInvoiceId) await linkClassToInvoice(classDoc, paidInvoiceId);
         summary.attached += 1;
+        summary.details.push({ classId: String(classId), action: 'attached', target: 'paid invoice', invoiceId: paidInvoiceId ? String(paidInvoiceId) : null, studentName, guardianName });
         continue;
       }
 
@@ -302,8 +326,8 @@ async function resolveUninvoicedLessons(options = {}) {
           const hours = duration / 60;
           const amount = Math.round(hours * rate * 100) / 100;
 
-          const studentName = classDoc.student?.studentName || '';
-          const [firstName, ...rest] = String(studentName).trim().split(' ').filter(Boolean);
+          const studentDisplayName = classDoc.student?.studentName || '';
+          const [firstName, ...rest] = String(studentDisplayName).trim().split(' ').filter(Boolean);
           const lastName = rest.join(' ');
 
           const attachResult = await InvoiceService.updateInvoiceItems(
@@ -313,7 +337,7 @@ async function resolveUninvoicedLessons(options = {}) {
                 lessonId: String(classDoc._id),
                 class: classDoc._id,
                 student: classDoc.student?.studentId || null,
-                studentSnapshot: { firstName: firstName || studentName, lastName: lastName || '', email: '' },
+                studentSnapshot: { firstName: firstName || studentDisplayName, lastName: lastName || '', email: '' },
                 teacher: classDoc.teacher || null,
                 description: `${classDoc.subject || 'Class'}`,
                 date: classDoc.scheduledDate || new Date(),
@@ -331,26 +355,33 @@ async function resolveUninvoicedLessons(options = {}) {
 
           if (!attachResult?.success) {
             summary.errors.push({ classId: String(classDoc._id), error: attachResult?.error || 'Failed to attach' });
+            summary.details.push({ classId: String(classId), action: 'error', reason: attachResult?.error || 'Failed to attach', studentName, guardianName });
             continue;
           }
         }
 
+        await linkClassToInvoice(classDoc, openInvoice._id);
         summary.attached += 1;
+        summary.details.push({ classId: String(classId), action: 'attached', target: 'unpaid invoice', invoiceId: String(openInvoice._id), invoiceNumber: openInvoice.invoiceNumber, studentName, guardianName });
         continue;
       }
 
       const guardian = await User.findById(guardianId);
       if (!guardian) {
         summary.skipped += 1;
+        summary.details.push({ classId: String(classId), action: 'skipped', reason: 'Guardian not found', studentName, guardianName });
         continue;
       }
 
-      await InvoiceService.createInvoiceForFirstLesson(guardian, classDoc, {
+      const newInvoice = await InvoiceService.createInvoiceForFirstLesson(guardian, classDoc, {
         createdBy: adminUserId || null
       });
+      if (newInvoice?._id) await linkClassToInvoice(classDoc, newInvoice._id);
       summary.created += 1;
+      summary.details.push({ classId: String(classId), action: 'created', invoiceId: newInvoice?._id ? String(newInvoice._id) : null, invoiceNumber: newInvoice?.invoiceNumber, studentName, guardianName });
     } catch (innerErr) {
       summary.errors.push({ classId: String(classId), error: innerErr?.message || 'Failed to attach' });
+      summary.details.push({ classId: String(classId), action: 'error', reason: innerErr?.message || 'Failed', studentName, guardianName });
     }
   }
 

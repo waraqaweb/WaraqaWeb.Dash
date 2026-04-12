@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.6
 FROM node:20-alpine
 
+# Chromium for whatsapp-web.js (puppeteer)
+RUN apk add --no-cache chromium
+
 WORKDIR /app
 
 ARG APP_VERSION
@@ -24,5 +27,8 @@ EXPOSE 5000
 
 # Cap the V8 heap so Node triggers GC earlier and avoids OOM on small VPS.
 ENV NODE_OPTIONS="--max-old-space-size=384"
+# Tell puppeteer where Chromium lives (Alpine package)
+ENV CHROMIUM_PATH="/usr/bin/chromium-browser"
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD="true"
 
 CMD ["npm", "start"]

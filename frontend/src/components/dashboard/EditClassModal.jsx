@@ -10,6 +10,7 @@ import TimezoneSelector from "../ui/TimezoneSelector";
 import DSTWarningBanner from "../ui/DSTWarningBanner";
 import { checkDSTWarning, convertClassTimeForUser, DEFAULT_TIMEZONE } from "../../utils/timezoneUtils";
 import SearchSelect from '../ui/SearchSelect';
+import WhatsAppGroupButton from './WhatsAppGroupButton';
 import {
   searchTeachers,
   getTeacherById,
@@ -660,7 +661,11 @@ export default function EditClassModal({
 
 
             {/* Actions */}
-            <div className="flex items-center justify-end space-x-3 py-2">
+            <div className="flex items-center justify-between py-2">
+              {editClass._id && (
+                <WhatsAppGroupButton classId={editClass._id} />
+              )}
+              <div className="flex items-center space-x-3 ml-auto">
               <button
                 type="button"
                 onClick={handleClose}
@@ -674,6 +679,7 @@ export default function EditClassModal({
               >
                 {editClass.isRecurring ? "Update Recurring Classes" : "Update Class"}
               </button>
+              </div>
             </div>
           </form>
         </div>

@@ -75,12 +75,13 @@ services:
     volumes:
       - library-assets:/data/library-assets
       - library-uploads:/data/library-uploads
+      - whatsapp-auth:/app/tmp/wwebjs-auth
     depends_on:
       - mongo
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 768M
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:5000/api/health >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -128,3 +129,4 @@ volumes:
   mongo-data:
   library-assets:
   library-uploads:
+  whatsapp-auth:

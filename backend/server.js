@@ -348,6 +348,7 @@ app.use('/api/meetings', meetingRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/teacher-contract', teacherContractRoutes);
 app.use('/api/trash', trashRoutes);
+app.use('/api/whatsapp', require('./routes/whatsapp'));
 
 const vacationManagementRoutes = require('./routes/vacationManagement');
 app.use('/api/vacation-management', vacationManagementRoutes);

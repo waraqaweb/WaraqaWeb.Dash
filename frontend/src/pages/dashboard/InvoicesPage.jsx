@@ -1371,6 +1371,9 @@ const InvoicesPage = ({ isActive = true }) => {
 
     // Universal sort: most recent invoice first (by sequence number, then first date)
     const recentFirst = (a, b) => getInvoiceRecencyKey(b) - getInvoiceRecencyKey(a);
+    // Invoices with a reference link (WA-ready) sort after those without
+    const hasLink = (inv) => String(inv?.invoiceReferenceLink || '').trim().length > 0 ? 1 : 0;
+    const linkTiebreak = (a, b) => hasLink(a) - hasLink(b);
 
     if (searchMode || resolvedActiveTab === 'all') {
       const isPaid = (invoice) => ['paid', 'refunded'].includes(String(invoice?.status || '').toLowerCase());
@@ -1378,6 +1381,8 @@ const InvoicesPage = ({ isActive = true }) => {
         const aPaid = isPaid(a);
         const bPaid = isPaid(b);
         if (aPaid !== bPaid) return aPaid ? 1 : -1;
+        const ld = linkTiebreak(a, b);
+        if (ld !== 0) return ld;
         return recentFirst(a, b);
       });
       return list;
@@ -1387,10 +1392,16 @@ const InvoicesPage = ({ isActive = true }) => {
       list.sort((a, b) => {
         const weightDiff = getUnpaidSortWeight(a) - getUnpaidSortWeight(b);
         if (weightDiff !== 0) return weightDiff;
+        const ld = linkTiebreak(a, b);
+        if (ld !== 0) return ld;
         return recentFirst(a, b);
       });
     } else {
-      list.sort(recentFirst);
+      list.sort((a, b) => {
+        const ld = linkTiebreak(a, b);
+        if (ld !== 0) return ld;
+        return recentFirst(a, b);
+      });
     }
     return list;
   }, [filteredInvoices, resolvedActiveTab]);

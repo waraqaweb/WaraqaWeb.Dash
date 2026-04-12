@@ -369,34 +369,34 @@ export default function EditClassModal({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <SearchSelect
                 label="Teacher *"
-                placeholder="Search teachers by name or email"
+                placeholder="Search teachers..."
                 value={editClass.teacher || ''}
                 onChange={handleTeacherSelect}
                 fetchOptions={fetchTeacherOptions}
                 fetchById={fetchTeacherById}
-                helperText="Type to search the full teacher roster"
+                helperText=""
                 required
               />
 
               <SearchSelect
                 label="Guardian *"
-                placeholder="Search guardians by name or email"
+                placeholder="Search guardians..."
                 value={editClass.student?.guardianId || ''}
                 onChange={handleGuardianSelect}
                 fetchOptions={fetchGuardianOptions}
                 fetchById={fetchGuardianById}
-                helperText="You can also pick a student first to auto-fill guardian"
+                helperText=""
                 required
               />
 
               <SearchSelect
                 label="Student *"
-                placeholder="Search students by name or email"
+                placeholder="Search students..."
                 value={editClass.student?.studentId || ''}
                 onChange={handleStudentSelect}
                 fetchOptions={fetchStudentOptions}
                 fetchById={fetchStudentById}
-                helperText={editClass.student?.guardianId ? 'Showing students for the selected guardian' : 'Search across all students'}
+                helperText={editClass.student?.guardianId ? 'Filtered by guardian' : ''}
                 required
               />
             </div>
@@ -408,7 +408,7 @@ export default function EditClassModal({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Scheduled Date & Time *
+                    Date & Time *
                   </label>
                   <input
                     type="datetime-local"
@@ -438,7 +438,7 @@ export default function EditClassModal({
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Duration (minutes) *
+                    Duration (min) *
                   </label>
                   <input
                     type="number"
@@ -465,7 +465,7 @@ export default function EditClassModal({
                     }}
                     inputMode="numeric"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                    placeholder="Duration (minutes)"
+                    placeholder="Minutes"
                   />
                 </div>
               </div>
@@ -548,7 +548,7 @@ export default function EditClassModal({
                           }}
                           inputMode="numeric"
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
-                          placeholder="Duration (minutes)"
+                          placeholder="Minutes"
                         />
                       </div>
 
@@ -611,7 +611,7 @@ export default function EditClassModal({
                       .map((s) => ({ id: s, label: s }));
                   }}
                   fetchById={async (id) => (id ? { id, label: id } : null)}
-                  placeholder="Select or type a subject"
+                  placeholder="Type or select..."
                   required
                   allowCustom
                 />
@@ -627,7 +627,7 @@ export default function EditClassModal({
                 <TimezoneSelector
                   value={editClass.timezone || user?.timezone || DEFAULT_TIMEZONE}
                   onChange={(timezone) => setEditClass((prev) => ({ ...prev, timezone }))}
-                  placeholder="Search and select timezone..."
+                  placeholder="Search timezone..."
                   className="w-full"
                   showCurrentTime={true}
                   required={true}
@@ -635,13 +635,13 @@ export default function EditClassModal({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Google Meet Link</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Meeting Link</label>
                 <input
                   type="url"
                   value={editClass.meetingLink || ""}
                   onChange={(e) => setEditClass((prev) => ({ ...prev, meetingLink: e.target.value }))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                  placeholder="https://meet.google.com/..."
+                  placeholder="Paste link..."
                 />
               </div>
             </div>
@@ -654,7 +654,7 @@ export default function EditClassModal({
                 onChange={(e) => setEditClass((prev) => ({ ...prev, description: e.target.value }))}
                 rows={1}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                placeholder="Enter class description"
+                placeholder="Optional notes..."
               />
             </div>
 

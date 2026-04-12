@@ -827,7 +827,7 @@ export default function CreateClassModal({
           return {
             dayOfWeek: nextDay,
             time: lastSlot.time || '18:00',
-            duration: 30,
+            duration: lastSlot.duration || 30,
             timezone: lastSlot.timezone || prev.timezone || DEFAULT_TIMEZONE
           };
         })()
@@ -1038,7 +1038,7 @@ export default function CreateClassModal({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <SearchSelect
                 label="Teacher *"
-                placeholder="Search teachers by name or email"
+                placeholder="Search teachers..."
                 value={currentNewClass.teacher || ''}
                 onChange={handleTeacherSelect}
                 fetchOptions={fetchTeacherOptions}
@@ -1048,7 +1048,7 @@ export default function CreateClassModal({
 
               <SearchSelect
                 label="Guardian *"
-                placeholder="Search guardians by name or email"
+                placeholder="Search guardians..."
                 value={currentNewClass.student?.guardianId || ''}
                 onChange={handleGuardianSelect}
                 fetchOptions={fetchGuardianOptions}
@@ -1058,7 +1058,7 @@ export default function CreateClassModal({
 
               <SearchSelect
                 label="Student *"
-                placeholder="Search students by name or email"
+                placeholder="Search students..."
                 value={currentNewClass.student?.studentId || ''}
                 onChange={handleStudentSelect}
                 fetchOptions={fetchStudentOptions}
@@ -1074,7 +1074,7 @@ export default function CreateClassModal({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Scheduled Date & Time *
+                    Date & Time *
                   </label>
                   <input
                     type="datetime-local"
@@ -1092,7 +1092,7 @@ export default function CreateClassModal({
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Duration (minutes) *
+                    Duration (min) *
                   </label>
                   <input
                     type="number"
@@ -1119,7 +1119,7 @@ export default function CreateClassModal({
                     }}
                     inputMode="numeric"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                    placeholder="Duration (minutes)"
+                    placeholder="Minutes"
                   />
                 </div>
               </div>
@@ -1230,7 +1230,7 @@ export default function CreateClassModal({
                           }}
                           inputMode="numeric"
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
-                          placeholder="Duration (minutes)"
+                          placeholder="Minutes"
                         />
                       </div>
 
@@ -1298,7 +1298,7 @@ export default function CreateClassModal({
                       .map((s) => ({ id: s, label: s }));
                   }}
                   fetchById={async (id) => (id ? { id, label: id } : null)}
-                  placeholder="Select or type a subject"
+                  placeholder="Type or select..."
                   required
                   allowCustom
                 />
@@ -1316,7 +1316,7 @@ export default function CreateClassModal({
                   onChange={(timezone) =>
                     currentSetNewClass((prev) => ({ ...prev, timezone }))
                   }
-                  placeholder="Select class timezone..."
+                  placeholder="Select timezone..."
                   className="w-full"
                 />
               </div>
@@ -1332,7 +1332,7 @@ export default function CreateClassModal({
                     currentSetNewClass((prev) => ({ ...prev, meetingLink: e.target.value }))
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                  placeholder="https://meet.google.com/..."
+                  placeholder="Paste link..."
                 />
               </div>
             </div>
@@ -1349,7 +1349,7 @@ export default function CreateClassModal({
                 }
                 rows={1}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
-                placeholder="Enter class description"
+                placeholder="Optional notes..."
               />
             </div>
 

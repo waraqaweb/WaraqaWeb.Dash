@@ -21,7 +21,8 @@ import {
   RefreshCw,
   Clock,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ChevronDown
 } from 'lucide-react';
 
 // Helper function to render text with **bold** markdown and bullet points
@@ -195,6 +196,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [invoice, setInvoice] = useState(initialInvoice || null);
   const [classes, setClasses] = useState([]);
   const [priorInvoices, setPriorInvoices] = useState([]);
+  const [priorExpanded, setPriorExpanded] = useState(false);
   const [loading, setLoading] = useState(!initialInvoice);
   const [, setClassPeriod] = useState({ start: '', end: '' });
   const [classesLoading, setClassesLoading] = useState(false);
@@ -1880,6 +1882,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     setInvoice(null);
     setClasses([]);
     setPriorInvoices([]);
+    setPriorExpanded(false);
     setLoading(true);
     setSiblings({ prev: null, next: null });
     setGuardianUnsettled([]);
@@ -3096,30 +3099,47 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                 )}
 
                 {/* Prior invoices in chain — shows what earlier invoices covered */}
-                {priorInvoices.length > 0 && (
-                  <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-3">
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                      Prior coverage ({priorInvoices.length} {priorInvoices.length === 1 ? 'invoice' : 'invoices'} before this one)
-                    </p>
-                    <div className="space-y-1.5">
-                      {priorInvoices.map((pi, idx) => (
-                        <div key={pi.invoiceId || idx} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                          <span className="font-medium text-slate-600">{pi.invoiceName || `Invoice ${idx + 1}`}</span>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${pi.isPaid ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pi.status}</span>
-                          <span>{(pi.usedMinutes / 60).toFixed(1)}h covered</span>
-                          <span className="text-slate-400">{pi.classCount} classes</span>
-                          {pi.firstDate && pi.lastDate && (
-                            <span className="text-slate-400">
-                              {new Date(pi.firstDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                              {' – '}
-                              {new Date(pi.lastDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                            </span>
-                          )}
-                        </div>
-                      ))}
+                {priorInvoices.length > 0 && (() => {
+                  const lastPrior = priorInvoices[priorInvoices.length - 1];
+                  const restPrior = priorInvoices.slice(0, -1);
+                  const renderRow = (pi, idx) => (
+                    <div key={pi.invoiceId || idx} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                      <span className="font-medium text-slate-600">{pi.invoiceName || `Invoice ${idx + 1}`}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${pi.isPaid ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{pi.status}</span>
+                      <span>{(pi.usedMinutes / 60).toFixed(1)}h covered</span>
+                      <span className="text-slate-400">{pi.classCount} classes</span>
+                      {pi.firstDate && pi.lastDate && (
+                        <span className="text-slate-400">
+                          {new Date(pi.firstDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                          {' – '}
+                          {new Date(pi.lastDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        </span>
+                      )}
                     </div>
-                  </div>
-                )}
+                  );
+                  return (
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                          Prior coverage ({priorInvoices.length} {priorInvoices.length === 1 ? 'invoice' : 'invoices'} before this one)
+                        </p>
+                        {restPrior.length > 0 && (
+                          <button
+                            onClick={() => setPriorExpanded(v => !v)}
+                            className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+                          >
+                            <span>{priorExpanded ? 'Less' : `+${restPrior.length} more`}</span>
+                            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${priorExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+                        )}
+                      </div>
+                      <div className="mt-2 space-y-1.5">
+                        {priorExpanded && restPrior.map((pi, idx) => renderRow(pi, idx))}
+                        {renderRow(lastPrior, priorInvoices.length - 1)}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}

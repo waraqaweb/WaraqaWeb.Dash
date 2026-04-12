@@ -463,7 +463,10 @@ invoiceSchema.index({ deleted: 1 });
    Pre-validate Hooks
 ------------------------- */
 invoiceSchema.pre('validate', async function(next) {
-  if (!this || (this.isNew !== true && !this.isModified('items'))) {
+  // Skip cross-invoice conflict check when recording a payment — items haven't
+  // truly changed, but recalculateTotals() normalizes sub-fields which marks
+  // the array as modified.
+  if (!this || this._skipConflictCheck || (this.isNew !== true && !this.isModified('items'))) {
     return next();
   }
 
@@ -549,7 +552,7 @@ invoiceSchema.pre('validate', async function(next) {
     const conflict = await conflictQuery.lean();
 
     if (conflict) {
-      return next(new Error(`Invoice conflict detected: classes or lessons already invoiced in ${conflict.invoiceNumber}.`));
+      return next(new Error(`Invoice conflict detected: classes or lessons already invoiced in ${conflict.invoiceNumber || conflict._id}.`));
     }
 
     return next();
@@ -1597,6 +1600,8 @@ invoiceSchema.methods.processPayment = async function(amount, paymentMethod = 'm
 
   this.status = 'paid';
 
+  // Skip cross-invoice conflict check — items haven't changed, only payment fields
+  this._skipConflictCheck = true;
   await this.save();
   // After saving payment, distribute tip among teachers (exclude items marked excludeFromTeacherPayment)
   try {

@@ -613,6 +613,7 @@ router.get('/stats', authenticateToken, async (req, res) => {
 
       const pendingReports = await Class.find({
         teacher: teacherId,
+        status: { $in: ['scheduled', 'attended', 'absent'] },
         scheduledDate: { $lt: now, $gte: pastWindow },
         ...reportNotSubmittedFilter,
         ...windowOpenFilter,
@@ -626,6 +627,7 @@ router.get('/stats', authenticateToken, async (req, res) => {
       // Older reports (past the recent window) that are still submit-able (admin extension or still open).
       const overdueReports = await Class.find({
         teacher: teacherId,
+        status: { $in: ['scheduled', 'attended', 'absent'] },
         scheduledDate: { $lt: pastWindow },
         ...reportNotSubmittedFilter,
         ...windowOpenFilter,

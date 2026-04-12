@@ -45,8 +45,7 @@ userActivitySchema.statics.recordVisit = async function (userId, options = {}) {
     const utcMidnight = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
     const deviceId = options?.deviceId || null;
     const auth = options?.auth || null;
-    const doc = { user: userId, date: utcMidnight, deviceId: deviceId || null };
-    const update = { $setOnInsert: doc };
+    const update = { $setOnInsert: { user: userId, date: utcMidnight } };
     const setPatch = {};
     if (deviceId) setPatch.deviceId = deviceId;
     if (auth && typeof auth === 'object') {

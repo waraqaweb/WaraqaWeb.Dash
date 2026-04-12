@@ -1366,6 +1366,18 @@ const DashboardHome = ({ isActive = true }) => {
                           <div className="text-sm font-semibold">{Number(data.cancelledHoursThisMonth ?? 0).toFixed(2)} hrs</div>
                         </div>
 
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs text-muted-foreground">Scheduled hrs remaining</div>
+                          <div className="text-sm font-semibold">{Number(data.scheduledHoursUntilMonthEnd ?? 0).toFixed(1)} hrs</div>
+                        </div>
+
+                        {(data.classesWithoutReportsCount ?? 0) > 0 && (
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs text-amber-700">Unreported classes</div>
+                            <div className="text-sm font-semibold text-amber-700">{data.classesWithoutReportsCount}</div>
+                          </div>
+                        )}
+
                       </div>
                     </div>
                   </div>
@@ -1397,17 +1409,27 @@ const DashboardHome = ({ isActive = true }) => {
                         </div>
 
                         <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-muted-foreground">Active teachers (30d)</div>
+                            {teachersDelta && (
+                              <div className={`text-[11px] font-medium ${teachersDelta.isUp ? 'text-emerald-600' : 'text-rose-600'}`}>{teachersDelta.label}</div>
+                            )}
+                          </div>
+                          <div className="text-sm font-semibold">{activeTeachersLast30} <span className="text-xs text-muted-foreground">/ {totalTeachers}</span></div>
+                        </div>
+
+                        <div className="flex items-center justify-between">
                           <div className="text-xs text-muted-foreground">New users (this month)</div>
                           <div className="text-sm font-semibold">{newUsersThisMonth ?? 0}</div>
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Unique devices (today / 30d)</div>
+                          <div className="text-xs text-muted-foreground">Logins (today / 30d)</div>
                           <div className="text-sm font-semibold">{dailyUniqueDashboardUsers ?? 0} <span className="text-xs text-muted-foreground">/ {uniqueUsersLast30Days ?? 0}</span></div>
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground">Online now (dashboard)</div>
+                          <div className="text-xs text-muted-foreground">Online now</div>
                           <div className="text-sm font-semibold">{currentActiveDashboardUsers ?? 0}</div>
                         </div>
                       </div>

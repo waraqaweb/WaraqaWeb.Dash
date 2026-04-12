@@ -4033,7 +4033,7 @@ fetchClassesRef.current = fetchClasses;
                    Calendar
                  </button>
 
-                {isAdminUser && (
+                {isAdminUser && pendingRescheduleCount > 0 && (
                   <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-1.5 text-sm font-semibold text-amber-800">
                     <AlertCircle className="h-4 w-4" />
                     Pending reschedules: {pendingRescheduleCount}
@@ -4091,31 +4091,7 @@ fetchClassesRef.current = fetchClasses;
              </div>
       )}
       
-      <div className="flex items-center justify-between gap-3 mb-3 lg:flex-row lg:items-center lg:justify-between">
-        <div />
-        <div className="flex flex-wrap items-center gap-3">
-          {isAdminUser && (
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard/availability?source=classes')}
-              className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:border-[#2C736C] hover:text-[#2C736C]"
-            >
-              <Clock className="h-4 w-4" />
-              Manage Meeting Availability
-            </button>
-          )}
-          {isAdminUser && viewLayout === 'list' && (
-            <button
-              type="button"
-              onClick={() => setMeetingDrawerOpen((prev) => !prev)}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-[#2C736C] hover:text-[#2C736C]"
-            >
-              <Calendar className="h-4 w-4" />
-              {showMeetingPanel ? 'Hide Meetings Overview' : 'Meetings Overview'}
-            </button>
-          )}
-        </div>
-      </div>
+
 
       {classBulk.selectionMode && (
         <div className="mb-3">

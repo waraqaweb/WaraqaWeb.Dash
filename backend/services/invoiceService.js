@@ -444,6 +444,10 @@ class InvoiceService {
       || [classDoc?.student?.firstName, classDoc?.student?.lastName].filter(Boolean).join(' ')
       || '';
 
+    // Cancelled-class credits are auto-settled: the class was never delivered,
+    // so there is nothing to carry forward to future invoices.
+    const autoSettle = reason === 'class_cancelled' && type === 'credit';
+
     const adjustment = {
       type,
       reason,
@@ -459,7 +463,7 @@ class InvoiceService {
       amountDelta,
       previousDuration: previousDuration || undefined,
       newDuration: newDuration || undefined,
-      settled: false,
+      settled: autoSettle,
       createdAt: new Date(),
       createdBy: actorId || null
     };
@@ -2027,7 +2031,7 @@ class InvoiceService {
           try {
             await InvoiceService.createPaidInvoiceAdjustment({
               invoiceId: inv._id, type: 'credit', reason: 'class_cancelled', classDoc,
-              description: `Class on ${dateStr} (${classDoc.subject || 'Class'}) cancelled — ${hrs.toFixed(2)}h credit`,
+              description: `Cancelled class on ${dateStr} removed — not delivered`,
               hoursDelta: -hrs, amountDelta: -amt, previousDuration: dur, actorId: null
             });
           } catch (adjErr) { console.error('[onClassStateChanged] adjustment error (cancel):', adjErr.message); }
@@ -2046,7 +2050,7 @@ class InvoiceService {
           try {
             await InvoiceService.createPaidInvoiceAdjustment({
               invoiceId: inv._id, type: 'debit', reason: 'class_cancelled', classDoc,
-              description: `Class on ${dateStr} (${classDoc.subject || 'Class'}) re-activated — ${hrs.toFixed(2)}h debit`,
+              description: `Class on ${dateStr} re-activated — ${hrs.toFixed(2)}h added back`,
               hoursDelta: hrs, amountDelta: amt, previousDuration: 0, newDuration: dur, actorId: null
             });
           } catch (adjErr) { console.error('[onClassStateChanged] adjustment error (reactivate):', adjErr.message); }

@@ -91,7 +91,7 @@ const INELIGIBLE = new Set([
               subject: cls.subject || '',
               studentName: cls.student?.studentName || ''
             },
-            description: `Removed ${cls.status} class (${date}) from paid invoice`,
+            description: `Cancelled class on ${date} removed — not delivered`,
             hoursDelta: -hours,
             amountDelta: -amount,
             settled: false,

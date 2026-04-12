@@ -2135,7 +2135,7 @@ router.post(
                   type: 'credit',
                   reason: 'class_cancelled',
                   classDoc: saved,
-                  description: `Class cancelled (${saved.status}) — removed from paid invoice`,
+                  description: `Cancelled class on ${new Date(saved.scheduledDate || saved.dateTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} removed — not delivered`,
                   hoursDelta: -hours,
                   amountDelta: -amount,
                   actorId: req.user._id

@@ -287,6 +287,12 @@ const InvoicesPage = ({ isActive = true }) => {
   useEffect(() => {
     if (!isActive) return;
     setCurrentPage(1);
+    // When the user starts searching, switch to the "All" tab and clear
+    // delivery filter so results are not restricted by any pre-set filters.
+    if (normalizedSearchTerm) {
+      setActiveTab('all');
+      setDeliveryFilter('');
+    }
   }, [isActive, normalizedSearchTerm]);
 
   useEffect(() => {

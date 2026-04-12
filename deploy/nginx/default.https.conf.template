@@ -7,11 +7,13 @@ resolver 127.0.0.11 ipv6=off valid=10s;
 upstream backend_upstream {
   zone backend_upstream 64k;
   server backend:5000 resolve;
+  keepalive 16;
 }
 
 upstream frontend_upstream {
   zone frontend_upstream 64k;
   server frontend:80 resolve;
+  keepalive 4;
 }
 
 upstream mongo_express_upstream {
@@ -84,6 +86,8 @@ server {
   # Auth endpoints are intentionally NOT rate-limited at nginx.
   # The backend has its own dedicated auth/login rate limiters.
   location ^~ /api/auth/ {
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
     proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header Authorization $http_authorization;
@@ -95,6 +99,8 @@ server {
   # Library streaming endpoints (PDF previews/downloads) can be large and slow.
   # Increase proxy timeouts and disable buffering to avoid 504s and partial loads.
   location ^~ /api/library/ {
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
     proxy_buffering off;
@@ -129,6 +135,20 @@ server {
     # Per-key throttling: anonymous users by IP, authenticated users by token.
     # Burst allows dashboard to load normally without tripping 429.
     limit_req zone=api_per_key burst=80 nodelay;
+
+    # Keep-alive to backend (reuse connections instead of opening new ones per request)
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+
+    # Larger proxy buffers so responses aren't spilled to temp files
+    proxy_buffer_size 16k;
+    proxy_buffers 8 32k;
+    proxy_busy_buffers_size 64k;
+
+    proxy_connect_timeout 10s;
+    proxy_read_timeout 60s;
+    proxy_send_timeout 30s;
+
     proxy_pass http://backend_upstream;
     proxy_set_header Host $host;
     proxy_set_header Authorization $http_authorization;

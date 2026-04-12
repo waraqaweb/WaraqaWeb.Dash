@@ -559,7 +559,6 @@ router.get('/public/:slug', async (req, res) => {
 // List invoices with filters, pagination, sorting
 // -----------------------------
 router.get('/', authenticateToken, async (req, res) => {
-  console.log('=== [Invoices API] GET /invoices START ===', { query: req.query, user: req.user?._id });
   try {
     const {
       page = 1,
@@ -833,7 +832,6 @@ router.get('/', authenticateToken, async (req, res) => {
         limit: parseInt(limit)
       }
     });
-    console.log('=== [Invoices API] GET /invoices SUCCESS ===', { returned: normalizedInvoices.length, page: parseInt(page) });
   } catch (err) {
     console.error('Get invoices error:', err);
     res.status(500).json({
@@ -1346,7 +1344,6 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
 // GET invoice by ID (catch-all)
 // -----------------------------
 router.get('/:identifier', authenticateToken, async (req, res) => {
-  console.log('=== [Invoices API] GET /invoices/:id START ===', { identifier: req.params.identifier, user: req.user?._id });
   try {
     const { identifier } = req.params;
     let invoiceDoc = await Invoice.findOne({ invoiceSlug: identifier })
@@ -1456,16 +1453,6 @@ router.get('/:identifier', authenticateToken, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    console.log('=== [Invoices API] GET /invoices/:id SUCCESS ===', { id: invoice._id });
-    console.log('=== [Invoices API] GET /invoices/:id - invoice totals ===', {
-      id: invoice._id,
-      subtotal: invoice.subtotal,
-      total: invoice.total,
-      adjustedTotal: invoice.adjustedTotal,
-      paidAmount: invoice.paidAmount,
-      remaining: invoice.remainingBalance !== undefined ? invoice.remainingBalance : (invoice.total ? roundCurrency(invoice.total - (invoice.paidAmount || 0)) : undefined),
-      guardianTransferFee: invoice.guardianFinancial && invoice.guardianFinancial.transferFee ? invoice.guardianFinancial.transferFee : null
-    });
     res.json({ success: true, invoice });
   } catch (err) {
     console.error('Get invoice error:', err);

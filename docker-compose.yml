@@ -77,6 +77,10 @@ services:
       - library-uploads:/data/library-uploads
     depends_on:
       - mongo
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:5000/api/health >/dev/null 2>&1 || exit 1"]
       interval: 10s

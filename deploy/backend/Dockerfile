@@ -22,4 +22,7 @@ ENV BUILD_TIME=${BUILD_TIME}
 
 EXPOSE 5000
 
+# Cap the V8 heap so Node triggers GC earlier and avoids OOM on small VPS.
+ENV NODE_OPTIONS="--max-old-space-size=384"
+
 CMD ["npm", "start"]

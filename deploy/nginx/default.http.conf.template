@@ -7,11 +7,13 @@ resolver 127.0.0.11 ipv6=off valid=10s;
 upstream backend_upstream {
   zone backend_upstream 64k;
   server backend:5000 resolve;
+  keepalive 16;
 }
 
 upstream frontend_upstream {
   zone frontend_upstream 64k;
   server frontend:80 resolve;
+  keepalive 4;
 }
 
 upstream mongo_express_upstream {

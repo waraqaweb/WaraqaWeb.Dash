@@ -560,6 +560,26 @@ app.use('*', (req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
 
+// ─── Graceful shutdown & crash safety ──────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION — keeping process alive:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
+
+const gracefulShutdown = (signal) => {
+  console.log(`Received ${signal}, shutting down gracefully…`);
+  server.close(() => {
+    console.log('HTTP server closed.');
+    process.exit(0);
+  });
+  // Force exit after 10 s if connections linger
+  setTimeout(() => process.exit(1), 10_000).unref();
+};
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 // Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {

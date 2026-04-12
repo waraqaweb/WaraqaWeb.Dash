@@ -1602,68 +1602,8 @@ const InvoicesPage = ({ isActive = true }) => {
   }, [displayedInvoices, itemsPerPage, formatDate, cardOverrides, user?._id]);
 
   useEffect(() => {
-    if (!isActive) return;
-    if (!displayedInvoices.length) return;
-    if (showLoading) return;
-
-    const now = Date.now();
-    const viewportMargin = 160;
-    const candidates = [];
-
-    for (const inv of displayedInvoices) {
-      if (candidates.length >= 3) break;
-      const id = inv?._id;
-      if (!id) continue;
-
-      const node = invoiceCardRefsRef.current.get(String(id));
-      if (!node || typeof node.getBoundingClientRect !== 'function') continue;
-
-      const rect = node.getBoundingClientRect();
-      const inViewport = rect.bottom >= -viewportMargin && rect.top <= (window.innerHeight + viewportMargin);
-      if (!inViewport) continue;
-
-      const cooldownKey = String(id);
-      const last = Number(invoicePrefetchCooldownRef.current.get(cooldownKey) || 0);
-      if (now - last < 20_000) continue;
-
-      const cacheKey = makeCacheKey('invoices:detail', user?._id, { id });
-      const cached = readCache(cacheKey, { deps: ['invoices'] });
-      if (cached.hit && cached.ageMs < 60_000 && cached.value?.invoice) continue;
-
-      candidates.push(inv);
-    }
-
-    if (!candidates.length) return;
-
-    let cancelled = false;
-    let idleId = null;
-    let timeoutId = null;
-
-    const runPrefetch = () => {
-      if (cancelled) return;
-      for (const inv of candidates) {
-        const id = inv?._id || inv?.invoiceSlug;
-        if (!id) continue;
-        invoicePrefetchCooldownRef.current.set(String(id), Date.now());
-        prefetchInvoiceDetail(inv, 'idle-visible');
-      }
-    };
-
-    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-      idleId = window.requestIdleCallback(() => runPrefetch(), { timeout: 800 });
-    } else {
-      timeoutId = window.setTimeout(runPrefetch, 250);
-    }
-
-    return () => {
-      cancelled = true;
-      if (idleId && typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
-        window.cancelIdleCallback(idleId);
-      }
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
+    // Idle-viewport prefetching intentionally disabled to reduce backend load.
+    // Invoices are still prefetched on hover and on open.
   }, [isActive, displayedInvoices, showLoading, user?._id, prefetchInvoiceDetail]);
 
 

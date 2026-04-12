@@ -4384,17 +4384,21 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
         }
       }
 
-      if (isFirstSubmission && attendanceValue === 'attended' && Number.isFinite(Number(classScore)) && Number(classScore) > 0) {
+      // Low-score follow-up: only trigger when the CURRENT report score is low
+      const LOW_SCORE_THRESHOLD = 2;
+      if (isFirstSubmission && attendanceValue === 'attended' && Number.isFinite(Number(classScore)) && Number(classScore) >= 1 && Number(classScore) <= LOW_SCORE_THRESHOLD) {
         try {
-          const LOW_SCORE_THRESHOLD = 2;
           const LOW_SCORE_WINDOW = 3;
           const LOW_SCORE_MIN_OCCURRENCES = 2;
           const studentIdValue = classDoc.student?.studentId;
           if (studentIdValue) {
+            // Only look at scores within the last 60 days to avoid stale data
+            const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 3600 * 1000);
             const recentLowScores = await Class.find({
               'student.studentId': studentIdValue,
               'classReport.attendance': 'attended',
-              'classReport.classScore': { $lte: LOW_SCORE_THRESHOLD }
+              'classReport.classScore': { $lte: LOW_SCORE_THRESHOLD },
+              scheduledDate: { $gte: sixtyDaysAgo }
             })
               .sort({ scheduledDate: -1 })
               .limit(LOW_SCORE_WINDOW)
@@ -4403,43 +4407,29 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
 
             if ((recentLowScores || []).length >= LOW_SCORE_MIN_OCCURRENCES) {
               const notificationService = require("../services/notificationService");
-              const { formatTimeInTimezone, DEFAULT_TIMEZONE } = require("../utils/timezoneUtils");
               const admins = await User.find({ role: "admin", isActive: true }).select("_id");
-              const guardianUser = guardianId ? await User.findById(guardianId).select('firstName lastName email') : null;
-              const teacherUser = teacherId ? await User.findById(teacherId).select('firstName lastName email') : null;
               const studentName = classDoc.student?.studentName || 'student';
-              const guardianName = guardianUser
-                ? `${guardianUser.firstName || ''} ${guardianUser.lastName || ''}`.trim() || guardianUser.email
-                : '';
-              const teacherName = teacherUser
-                ? `${teacherUser.firstName || ''} ${teacherUser.lastName || ''}`.trim() || teacherUser.email
-                : '';
               const subjectLabel = classDoc.subject ? ` (${classDoc.subject})` : '';
-              const scoresLabel = recentLowScores
-                .map((row) => {
-                  const when = row.scheduledDate
-                    ? formatTimeInTimezone(row.scheduledDate, DEFAULT_TIMEZONE, 'DD MMM YYYY')
-                    : '';
-                  const score = row?.classReport?.classScore ?? '-';
-                  return when ? `${score} on ${when}` : String(score);
-                })
-                .join(', ');
+              // Link to the class that was just reported (the actual low-score class)
               const actionLink = `/dashboard/classes?tab=previous&open=${classDoc._id}`;
 
               await Promise.allSettled((admins || []).map((admin) => (
                 (async () => {
+                  // Dedup: skip if a notification was already sent for this student in the last 30 days
+                  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000);
                   const existing = await Notification.findOne({
                     user: admin._id,
                     "metadata.kind": "low_score_followup",
-                    "metadata.studentId": String(studentIdValue)
+                    "metadata.studentId": String(studentIdValue),
+                    createdAt: { $gte: thirtyDaysAgo }
                   }).select("_id");
 
                   if (existing) return null;
 
                   return notificationService.createNotification({
                     userId: admin._id,
-                    title: 'Low performance follow-up needed',
-                    message: `${studentName}${subjectLabel} has repeated low scores (${scoresLabel}). ${guardianName ? `Guardian: ${guardianName}. ` : ''}${teacherName ? `Teacher: ${teacherName}. ` : ''}Consider scheduling a follow-up meeting or intensive support.`,
+                    title: 'Low performance follow-up',
+                    message: `${studentName}${subjectLabel} scored ${classScore}/5. ${recentLowScores.length} low scores in recent classes.`,
                     type: 'warning',
                     relatedTo: 'class',
                     relatedId: classDoc._id,
@@ -4451,12 +4441,6 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
                       studentId: String(studentIdValue),
                       guardianId: guardianId ? String(guardianId) : undefined,
                       teacherId: teacherId ? String(teacherId) : undefined,
-                      scores: recentLowScores.map((row) => ({
-                        score: row?.classReport?.classScore ?? null,
-                        date: row?.scheduledDate || null,
-                        subject: row?.subject || null,
-                        classId: String(row?._id || '')
-                      }))
                     }
                   });
                 })()

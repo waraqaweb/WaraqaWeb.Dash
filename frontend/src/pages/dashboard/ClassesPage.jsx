@@ -415,6 +415,7 @@ const ClassesPage = ({ isActive = true }) => {
   const [expandedClass, setExpandedClass] = useState(null);
   const [currentPage, setCurrentPage] = useState(getInitialPage);
   const [totalPages, setTotalPages] = useState(1);
+  const [dateWindow, setDateWindow] = useState('month'); // 'month' (default 1-month window) | 'all'
   const [whiteboardPreviewUrls, setWhiteboardPreviewUrls] = useState({});
   const [whiteboardPreviewLoading, setWhiteboardPreviewLoading] = useState(false);
   const [whiteboardPreviewError, setWhiteboardPreviewError] = useState('');
@@ -948,6 +949,7 @@ const ClassesPage = ({ isActive = true }) => {
   useEffect(() => {
     if (!isActive) return;
     setCurrentPage(1);
+    setDateWindow('month');
     loadedClassPagesRef.current = new Set();
     setClassesCorpus([]);
   }, [isActive, globalFilter, statusFilter, teacherFilter, guardianFilter, tabFilter, normalizedSearchTerm]);
@@ -974,6 +976,7 @@ const ClassesPage = ({ isActive = true }) => {
     guardianFilter,
     tabFilter,
     currentPage,
+    dateWindow,
     isAdminUser,
   ]);
 
@@ -1343,6 +1346,7 @@ const ClassesPage = ({ isActive = true }) => {
 
     loadedClassPagesRef.current = new Set();
     setCurrentPage(1);
+    setDateWindow('month');
     setTabFilter(nextTab);
     classBulk.clearSelection();
   };
@@ -1417,6 +1421,7 @@ const fetchClasses = useCallback(async () => {
         page: fetchPage,
         limit: fetchLimit,
         filter: tabFilter,
+        dateWindow: fetchAllMode ? undefined : dateWindow,
         status: statusFilter !== 'all' ? statusFilter : undefined,
         teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
         guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
@@ -1430,6 +1435,7 @@ const fetchClasses = useCallback(async () => {
       page: fetchPage,
       limit: fetchLimit,
       filter: tabFilter,
+      dateWindow: fetchAllMode ? undefined : dateWindow,
       status: statusFilter !== 'all' ? statusFilter : undefined,
       teacher: teacherFilter !== 'all' ? teacherFilter : undefined,
       guardian: guardianFilter !== 'all' ? guardianFilter : undefined,
@@ -1503,6 +1509,19 @@ const fetchClasses = useCallback(async () => {
     if (normalizedSearchTerm) {
       params.search = normalizedSearchTerm;
       params.searchAll = true;
+    }
+
+    // Default 1-month date window to reduce DB load (skip in search/fetchAll modes)
+    if (!fetchAllMode && dateWindow === 'month') {
+      if (tabFilter === 'previous') {
+        const oneMonthAgo = new Date();
+        oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+        params.dateFrom = oneMonthAgo.toISOString();
+      } else if (tabFilter === 'upcoming') {
+        const oneMonthAhead = new Date();
+        oneMonthAhead.setMonth(oneMonthAhead.getMonth() + 1);
+        params.dateTo = oneMonthAhead.toISOString();
+      }
     }
 
     const mergeClasses = (items) => {
@@ -1594,6 +1613,7 @@ const fetchClasses = useCallback(async () => {
   }
 }, [
   currentPage,
+  dateWindow,
   globalFilter,
   guardianFilter,
   statusFilter,
@@ -4224,6 +4244,18 @@ fetchClassesRef.current = fetchClasses;
             className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Next
+          </button>
+        </div>
+      )}
+
+      {/* Show all classes beyond 1-month window */}
+      {dateWindow === 'month' && !normalizedSearchTerm && (
+        <div className="flex justify-center mt-4">
+          <button
+            onClick={() => { setDateWindow('all'); setCurrentPage(1); }}
+            className="px-4 py-2 text-sm font-medium text-primary bg-primary/5 border border-primary/20 rounded-lg hover:bg-primary/10 transition-colors"
+          >
+            {tabFilter === 'previous' ? 'Show older classes' : 'Show more upcoming classes'}
           </button>
         </div>
       )}

@@ -5,7 +5,7 @@
  * Default: 696360fd5e85608fd2216371 (Yeota)
  */
 const mongoose = require('mongoose');
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongo:27017/waraqa';
+const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://mongo:27017/waraqadb';
 
 async function run() {
   await mongoose.connect(MONGO_URI);

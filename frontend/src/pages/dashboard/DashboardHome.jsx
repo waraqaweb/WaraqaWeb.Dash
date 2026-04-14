@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   CheckCircle,
   RefreshCcw,
+  TrendingUp,
 } from "lucide-react";
 
 import StatCard from '../../components/dashboard/widgets/StatCard';
@@ -40,6 +41,7 @@ import {
 } from 'recharts';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { getHomepageAnnouncementContainerClass, getHomepageAnnouncementTextClass } from '../../utils/homepageAnnouncement';
+import BusinessIntelligenceModal from '../../components/admin/BusinessIntelligenceModal';
 
 const formatClassDate = (d) => {
   if (!d) return 'â€”';
@@ -435,6 +437,7 @@ const HijriDateCard = ({ variant = 'card', timeZone, locale, hijriOffset, userId
 const DashboardHome = ({ isActive = true }) => {
   const { user, isAdmin, isTeacher, isGuardian, isStudent } = useAuth();
   const [compactAdmin, setCompactAdmin] = React.useState(false);
+  const [biModalOpen, setBiModalOpen] = React.useState(false);
   const [requestsTab, setRequestsTab] = React.useState('teachers');
   const [hijriOffset, setHijriOffset] = React.useState({ default: 0, byRegion: {} });
   const [decorationConfig, setDecorationConfig] = useState({
@@ -1301,6 +1304,15 @@ const DashboardHome = ({ isActive = true }) => {
                         return <span>Updated {date} â€¢ {time}</span>;
                       })()}
                     </div>
+                    <button
+                      aria-label="Business Intelligence"
+                      title="Business Intelligence"
+                      className="ml-1 inline-flex items-center gap-1 rounded-full text-white bg-gradient-to-r from-indigo-500 to-purple-600 shadow-sm hover:opacity-95 h-7 px-2.5 text-[11px] font-medium"
+                      onClick={() => setBiModalOpen(true)}
+                    >
+                      <TrendingUp className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">BI</span>
+                    </button>
                     <button
                       aria-label="Refresh"
                       title="Refresh"
@@ -2228,6 +2240,7 @@ const DashboardHome = ({ isActive = true }) => {
       )}
 
       {isAdmin() && renderAdminDashboard()}
+      {isAdmin() && <BusinessIntelligenceModal open={biModalOpen} onClose={() => setBiModalOpen(false)} />}
       {isTeacher() && renderTeacherDashboard()}
       {isGuardian() && renderGuardianDashboard()}
       {isStudent() && renderStudentDashboard()}

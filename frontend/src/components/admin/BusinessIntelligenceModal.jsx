@@ -674,10 +674,20 @@ export default function BusinessIntelligenceModal({ open, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  // Flex controls
+  const [timezone, setTimezone] = useState('EST');
+  const [hourRate, setHourRate] = useState(null); // null = use data default
+  const [budget, setBudget] = useState(100);
 
   useEffect(() => {
     if (open && !data) loadData();
   }, [open]);
+
+  useEffect(() => {
+    if (data && hourRate == null && data.financial?.chargeRatePerHour) {
+      setHourRate(Number(data.financial.chargeRatePerHour));
+    }
+  }, [data]);
 
   const loadData = async () => {
     setLoading(true);
@@ -694,6 +704,13 @@ export default function BusinessIntelligenceModal({ open, onClose }) {
   };
 
   if (!open) return null;
+
+  // Settings bar UI
+  const tzOptions = [
+    { value: 'EST', label: 'EST (UTC-5)' },
+    { value: 'UTC', label: 'UTC' },
+    { value: 'local', label: 'Local' },
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm">
@@ -716,6 +733,49 @@ export default function BusinessIntelligenceModal({ open, onClose }) {
             <button onClick={onClose} className="inline-flex items-center justify-center rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground">
               <X className="h-5 w-5" />
             </button>
+          </div>
+        </div>
+
+        {/* Settings Bar */}
+        <div className="flex flex-wrap gap-3 items-center px-5 pt-2 pb-2 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium">Timezone:</span>
+            <select
+              className="rounded border border-border bg-background px-2 py-1 text-xs"
+              value={timezone}
+              onChange={e => setTimezone(e.target.value)}
+            >
+              {tzOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium">Hour Rate:</span>
+            <input
+              type="number"
+              min="1"
+              step="0.01"
+              className="rounded border border-border bg-background px-2 py-1 text-xs w-20"
+              value={hourRate ?? ''}
+              onChange={e => setHourRate(e.target.value ? Number(e.target.value) : null)}
+            />
+            <span className="text-[11px] text-muted-foreground">USD/hr</span>
+            {data?.financial?.chargeRatePerHour && hourRate !== Number(data.financial.chargeRatePerHour) && (
+              <button className="text-xs text-blue-600 underline ml-1" onClick={() => setHourRate(Number(data.financial.chargeRatePerHour))}>Reset</button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium">Campaign Budget:</span>
+            <input
+              type="number"
+              min="10"
+              step="1"
+              className="rounded border border-border bg-background px-2 py-1 text-xs w-20"
+              value={budget}
+              onChange={e => setBudget(Number(e.target.value) || 0)}
+            />
+            <span className="text-[11px] text-muted-foreground">USD/mo</span>
           </div>
         </div>
 
@@ -763,10 +823,10 @@ export default function BusinessIntelligenceModal({ open, onClose }) {
           )}
           {data && (
             <>
-              {tab === 'operations' && <OperationsTab data={data} />}
-              {tab === 'capacity' && <CapacityTab data={data} />}
-              {tab === 'financial' && <FinancialTab data={data} />}
-              {tab === 'campaign' && <CampaignTab data={data} />}
+              {tab === 'operations' && <OperationsTab data={data} timezone={timezone} hourRate={hourRate} />}
+              {tab === 'capacity' && <CapacityTab data={data} timezone={timezone} />}
+              {tab === 'financial' && <FinancialTab data={data} hourRate={hourRate} />}
+              {tab === 'campaign' && <CampaignTab data={data} hourRate={hourRate} budget={budget} />}
             </>
           )}
         </div>

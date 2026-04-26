@@ -2400,7 +2400,8 @@ class InvoiceService {
         if (!cls || !cls._id) return null;
         const minutes = Number(cls.duration || 0) || 0;
         if (minutes <= 0) return null;
-        const rate = resolveInvoiceHourlyRate(invoiceDoc);
+        const invoiceDefaultRate = resolveInvoiceHourlyRate(invoiceDoc);
+        const rate = (Number.isFinite(cls.guardianRate) && cls.guardianRate > 0) ? cls.guardianRate : invoiceDefaultRate;
         const amount = Math.round(((minutes / 60) * rate) * 100) / 100;
         return {
           lessonId: String(cls._id),
@@ -2802,7 +2803,8 @@ class InvoiceService {
 
           const cls = entry.cls;
           const teacherDoc = teacherMap[cls.teacher?.toString?.()] || null;
-          const hourlyRate = resolveInvoiceHourlyRate(invoice);
+          const invoiceDefaultRate = resolveInvoiceHourlyRate(invoice);
+          const hourlyRate = (Number.isFinite(cls.guardianRate) && cls.guardianRate > 0) ? cls.guardianRate : invoiceDefaultRate;
           const amount = Math.round(((assignedDuration / 60) * hourlyRate) * 100) / 100;
 
           invoiceClasses.push({
@@ -3178,7 +3180,7 @@ class InvoiceService {
       }
 
       const now = new Date();
-      const hourlyRate = resolveInvoiceHourlyRate(invoiceDoc);
+      const guardianDefaultRate = resolveInvoiceHourlyRate(invoiceDoc);
       const dynamicItems = [];
       const seenClassIds = new Set();
       let usedMinutes = 0;
@@ -3231,6 +3233,7 @@ class InvoiceService {
           ? { firstName: teacherDoc.firstName || '', lastName: teacherDoc.lastName || '' }
           : null);
 
+        const hourlyRate = (Number.isFinite(cls.guardianRate) && cls.guardianRate > 0) ? cls.guardianRate : guardianDefaultRate;
         const amount = Math.round(((minutes / 60) * hourlyRate) * 100) / 100;
         dynamicItems.push({
           dynamicSource: 'live_class',
@@ -3554,7 +3557,7 @@ class InvoiceService {
         ]
       })
         .sort({ scheduledDate: 1 })
-        .select('scheduledDate duration subject status teacher student reportSubmission')
+        .select('scheduledDate duration subject status teacher student reportSubmission guardianRate')
         .lean();
 
       // Post-filter: catch expired admin extensions / submission windows
@@ -3572,7 +3575,7 @@ class InvoiceService {
         return { added: 0 };
       }
 
-      const resolvedRate = (() => {
+      const resolvedDefaultRate = (() => {
         const fromInvoice = Number(invoiceDoc.guardianFinancial?.hourlyRate);
         if (Number.isFinite(fromInvoice) && fromInvoice > 0) return fromInvoice;
         const fromGuardian = Number(guardianDoc?.guardianInfo?.hourlyRate);
@@ -3586,6 +3589,7 @@ class InvoiceService {
         const lastName = rest.join(' ');
         const duration = Number(cls.duration || 0) || 0;
         const hours = duration / 60;
+        const resolvedRate = (Number.isFinite(cls.guardianRate) && cls.guardianRate > 0) ? cls.guardianRate : resolvedDefaultRate;
         const amount = Math.round(hours * resolvedRate * 100) / 100;
         return {
           lessonId: cls._id?.toString(),

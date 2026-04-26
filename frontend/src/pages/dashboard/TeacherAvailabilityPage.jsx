@@ -8,7 +8,8 @@ import {
   Trash2, 
   AlertCircle,
   CheckCircle,
-  User
+  User,
+  Copy
 } from 'lucide-react';
 
 const TeacherAvailabilityPage = () => {
@@ -31,8 +32,15 @@ const TeacherAvailabilityPage = () => {
     endTime: '10:00',
     timezone: user?.timezone || 'Africa/Cairo'
   });
+  const [selectedDays, setSelectedDays] = useState(() => [new Date().getDay()]);
+  const [showDuplicateDay, setShowDuplicateDay] = useState(false);
+  const [duplicateSourceDay, setDuplicateSourceDay] = useState(0);
+  const [duplicateTargets, setDuplicateTargets] = useState(() => new Set());
+  const [duplicateStatus, setDuplicateStatus] = useState('');
+  const [duplicating, setDuplicating] = useState(false);
 
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const shortDayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   const fetchAvailability = useCallback(async () => {
     if (!user?._id) return;
@@ -129,6 +137,95 @@ const TeacherAvailabilityPage = () => {
     } catch (error) {
       console.error('Error deleting availability slot:', error);
       alert(error.response?.data?.message || 'Failed to delete availability slot');
+    }
+  };
+
+  const toggleVisibleDay = (dayIndex) => {
+    setSelectedDays((prev) => {
+      const current = new Set(prev?.length ? prev : [new Date().getDay()]);
+      if (current.has(dayIndex)) {
+        if (current.size === 1) return Array.from(current);
+        current.delete(dayIndex);
+      } else {
+        current.add(dayIndex);
+      }
+      return Array.from(current).sort((a, b) => a - b);
+    });
+  };
+
+  const openDuplicateDayModal = (sourceDay) => {
+    setDuplicateSourceDay(sourceDay);
+    setDuplicateTargets(new Set());
+    setDuplicateStatus('');
+    setShowDuplicateDay(true);
+  };
+
+  const toggleDuplicateTarget = (dayIndex) => {
+    setDuplicateTargets((prev) => {
+      const next = new Set(prev);
+      if (next.has(dayIndex)) {
+        next.delete(dayIndex);
+      } else {
+        next.add(dayIndex);
+      }
+      return next;
+    });
+  };
+
+  const handleDuplicateDay = async () => {
+    const sourceSlots = (availability.slotsByDay?.[duplicateSourceDay] || []).slice();
+    if (!sourceSlots.length) {
+      setDuplicateStatus('No slots to copy.');
+      return;
+    }
+
+    const targets = Array.from(duplicateTargets).filter((d) => d !== duplicateSourceDay);
+    if (!targets.length) {
+      setDuplicateStatus('Select target days.');
+      return;
+    }
+
+    setDuplicating(true);
+    setDuplicateStatus('');
+
+    let createdCount = 0;
+    let skippedCount = 0;
+
+    try {
+      for (const dayIndex of targets) {
+        for (const slot of sourceSlots) {
+          try {
+            await api.post('/availability/slots', {
+              teacherId: user._id,
+              dayOfWeek: dayIndex,
+              startTime: slot.startTime,
+              endTime: slot.endTime,
+              timezone: slot.timezone || availability.timezone || user?.timezone || 'Africa/Cairo'
+            });
+            createdCount += 1;
+          } catch (err) {
+            skippedCount += 1;
+            console.warn('Duplicate slot skipped', err?.response?.data?.message || err?.message || err);
+          }
+        }
+      }
+
+      await fetchAvailability();
+
+      if (createdCount > 0) {
+        setDuplicateStatus(skippedCount > 0
+          ? `Copied ${createdCount}. Skipped ${skippedCount}.`
+          : `Copied ${createdCount}.`
+        );
+        setTimeout(() => {
+          setShowDuplicateDay(false);
+          setDuplicateStatus('');
+        }, 900);
+      } else {
+        setDuplicateStatus('No slots copied.');
+      }
+    } finally {
+      setDuplicating(false);
     }
   };
 
@@ -242,9 +339,48 @@ const TeacherAvailabilityPage = () => {
         </div>
       )}
 
-  {/* Day cards grid (max 3 columns) */}
-  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-3 mb-6">
-        {dayNames.map((dayName, dayIndex) => {
+      <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Visible days</label>
+          <button
+            type="button"
+            onClick={() => setSelectedDays([new Date().getDay()])}
+            className="mr-1 text-xs font-semibold text-[#2C736C] hover:underline"
+          >
+            Today only
+          </button>
+          {dayNames.map((day, index) => {
+            const active = selectedDays.includes(index);
+            return (
+              <button
+                key={day}
+                type="button"
+                onClick={() => toggleVisibleDay(index)}
+                className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition ${active ? 'bg-[#2C736C] text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-[#2C736C]'}`}
+                title={day}
+              >
+                {shortDayNames[index]}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => {
+              const firstVisible = selectedDays[0] ?? new Date().getDay();
+              setShowAddModal(true);
+              setNewSlot((prev) => ({ ...prev, dayOfWeek: firstVisible }));
+            }}
+            className="ml-1 inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110"
+          >
+            <Plus className="w-4 h-4" /> Add slot
+          </button>
+        </div>
+      </div>
+
+      {/* Day cards grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-3 mb-6">
+        {selectedDays.map((dayIndex) => {
+          const dayName = dayNames[dayIndex];
           const daySlots = availability.slotsByDay[dayIndex] || [];
           const totalHours = daySlots.reduce((sum, slot) => sum + (slot.durationMinutes / 60), 0).toFixed(1);
           const hasSlots = daySlots.length > 0;
@@ -257,9 +393,18 @@ const TeacherAvailabilityPage = () => {
                   <div className="text-xs text-gray-500 mt-1 whitespace-nowrap truncate">{hasSlots ? `${daySlots.length} slot${daySlots.length !== 1 ? 's' : ''} • ${totalHours}h` : (availability.isDefaultAvailability ? 'All day (default)' : 'No slots')}</div>
                 </div>
                 <div className="flex items-center gap-2">
+                  {hasSlots && (
+                    <button
+                      title={`Copy ${dayName} to other days`}
+                      onClick={() => openDuplicateDayModal(dayIndex)}
+                      className="icon-button icon-button--muted"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     title={`Add slot for ${dayName}`}
-                    onClick={() => { setShowAddModal(true); setNewSlot({ ...newSlot, dayOfWeek: dayIndex }); }}
+                    onClick={() => { setShowAddModal(true); setNewSlot((prev) => ({ ...prev, dayOfWeek: dayIndex })); }}
                     className="icon-button icon-button--muted"
                   >
                     <Plus className="w-4 h-4" />
@@ -384,6 +529,97 @@ const TeacherAvailabilityPage = () => {
             <div className="mt-6 flex items-center gap-3 justify-end">
               <button onClick={() => setEditingSlot(null)} className="px-4 py-2 border border-gray-200 rounded-md text-sm text-gray-700 hover:bg-gray-50">Cancel</button>
               <button onClick={() => handleUpdateSlot(editingSlot._id, editingSlot)} className="px-4 py-2 bg-gradient-to-b from-custom-teal to-custom-teal-dark text-white rounded-md text-sm shadow">Update</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Copy day modal */}
+      {showDuplicateDay && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-xl shadow-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Apply day to others</h3>
+              <button
+                onClick={() => {
+                  setShowDuplicateDay(false);
+                  setDuplicateStatus('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              Copy all slots from <span className="font-semibold">{dayNames[duplicateSourceDay]}</span>.
+            </p>
+
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Target days</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = new Set();
+                  dayNames.forEach((_, idx) => {
+                    if (idx !== duplicateSourceDay) next.add(idx);
+                  });
+                  setDuplicateTargets(next);
+                }}
+                className="text-xs font-semibold text-[#2C736C] hover:underline"
+              >
+                Select all
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+              {dayNames.map((day, index) => {
+                if (index === duplicateSourceDay) {
+                  return (
+                    <div key={day} className="rounded-full border border-gray-200 bg-gray-100 px-3 py-2 text-center text-xs font-semibold text-gray-500">
+                      {day}
+                    </div>
+                  );
+                }
+                const checked = duplicateTargets.has(index);
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => toggleDuplicateTarget(index)}
+                    className={`rounded-full border px-3 py-2 text-xs font-semibold transition ${checked ? 'border-[#2C736C] bg-[#2C736C] text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-[#2C736C] hover:text-[#2C736C]'}`}
+                  >
+                    {day}
+                  </button>
+                );
+              })}
+            </div>
+
+            {duplicateStatus && (
+              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                {duplicateStatus}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDuplicateDay(false);
+                  setDuplicateStatus('');
+                }}
+                className="px-4 py-2 border border-gray-200 rounded-md text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDuplicateDay}
+                disabled={duplicating}
+                className={`px-4 py-2 rounded-md text-sm text-white shadow ${duplicating ? 'bg-slate-400 cursor-not-allowed' : 'bg-gradient-to-b from-custom-teal to-custom-teal-dark'}`}
+              >
+                {duplicating ? 'Applying…' : 'Apply'}
+              </button>
             </div>
           </div>
         </div>

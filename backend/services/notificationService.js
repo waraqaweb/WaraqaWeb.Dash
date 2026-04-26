@@ -197,6 +197,37 @@ async function notifyClassEvent({
       }
     });
   }
+
+  // ── Email hooks for class events ──────────────────────────────────────────
+  try {
+    const { enqueueEmail, buildClassCreatedEmail, buildClassCancelledEmail, buildClassRescheduledEmail } = require('./emailService');
+    const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
+    const eventEmailType = eventType === 'added' ? 'classCreated' : eventType === 'cancelled' ? 'classCancelled' : eventType === 'rescheduled' ? 'classRescheduled' : null;
+    if (!eventEmailType) return; // time_changed: no dedicated email
+    const buildFn = eventType === 'added' ? buildClassCreatedEmail : eventType === 'cancelled' ? buildClassCancelledEmail : buildClassRescheduledEmail;
+
+    const teacherUserFull = teacherId ? await User.findById(teacherId).select('email firstName lastName timezone').lean() : null;
+    const guardianUserFull = guardianId ? await User.findById(guardianId).select('email firstName timezone').lean() : null;
+
+    const classData = {
+      subject: classObj.subject,
+      scheduledDate: classObj.scheduledDate,
+      duration: classObj.duration,
+      studentName: classObj?.student?.studentName || classObj?.studentSnapshot?.studentName || classObj?.studentSnapshot?.firstName || '',
+      meetingLink: classObj.meetingLink,
+    };
+
+    if (teacherUserFull?.email && await shouldSendEmail(teacherId, eventEmailType)) {
+      const tpl = await buildFn({ recipient: teacherUserFull, classData, role: 'teacher' });
+      await enqueueEmail({ to: teacherUserFull.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: eventEmailType, userId: teacherId, relatedId: _id, priority: 2 });
+    }
+    if (guardianUserFull?.email && await shouldSendEmail(guardianId, eventEmailType)) {
+      const tpl = await buildFn({ recipient: guardianUserFull, classData, role: 'guardian' });
+      await enqueueEmail({ to: guardianUserFull.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: eventEmailType, userId: guardianId, relatedId: _id, priority: 2 });
+    }
+  } catch (e) {
+    console.warn('[Email] class event email failed:', e.message);
+  }
 }
 
 // --- INVOICE EVENTS ---

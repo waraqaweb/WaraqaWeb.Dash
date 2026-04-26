@@ -143,6 +143,9 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
             materials: pattern.materials || [],
             createdBy: pattern.createdBy || null,
             status: 'scheduled',
+            // Inherit per-series billing overrides from pattern
+            guardianRate: pattern.guardianRate != null ? pattern.guardianRate : null,
+            teacherPremium: pattern.teacherPremium != null ? pattern.teacherPremium : null,
           });
 
           if (

@@ -793,6 +793,34 @@ const userSchema = new mongoose.Schema({
       default: null,
     },
   },
+
+  // Per-user email notification preferences (all roles).
+  // globalEnabled acts as a master kill-switch for this user.
+  // Admin can also override this per-user from the profile edit modal.
+  emailPreferences: {
+    globalEnabled:           { type: Boolean, default: true },
+    classCreated:            { type: Boolean, default: true },
+    classCancelled:          { type: Boolean, default: true },
+    classRescheduled:        { type: Boolean, default: true },
+    poorPerformance:         { type: Boolean, default: true },
+    monthlyReport:           { type: Boolean, default: true },
+    invoiceCreated:          { type: Boolean, default: true },
+    invoiceSend:             { type: Boolean, default: true },
+    consecutiveAbsent:       { type: Boolean, default: true },
+    vacationApproved:        { type: Boolean, default: true },
+    vacationGuardianNotice:  { type: Boolean, default: true },
+    vacationResumed:         { type: Boolean, default: true },
+    teacherReassigned:       { type: Boolean, default: true },
+    seriesCancelled:         { type: Boolean, default: true },
+    meetingScheduled:        { type: Boolean, default: true },
+    studentCreated:          { type: Boolean, default: true },
+    studentDeleted:          { type: Boolean, default: true },
+    registration:            { type: Boolean, default: true },
+    teacherInvoice:          { type: Boolean, default: true },
+    monthlyAdminReport:      { type: Boolean, default: true },
+    systemAlert:             { type: Boolean, default: true },
+    availabilityChanged:     { type: Boolean, default: true },
+  },
 }, {
   timestamps: true, // Automatically adds createdAt and updatedAt
   toJSON: { virtuals: true },

@@ -7,6 +7,31 @@ import InputField from './ProfileInputField';
 // If ProfilePage's InputField isn't exported, we provide a small local one
 // But we'll try to import from same folder; fallback defined above
 
+const EMAIL_PREF_LABELS = {
+  globalEnabled: 'Receive all emails',
+  classCreated: 'New class scheduled',
+  classCancelled: 'Class cancelled',
+  classRescheduled: 'Class rescheduled',
+  poorPerformance: 'Poor performance alert',
+  monthlyReport: 'Monthly class report',
+  consecutiveAbsent: 'Consecutive absences',
+  vacationApproved: 'Vacation approved',
+  vacationResumed: 'Vacation resumed',
+  teacherReassigned: 'Teacher reassigned',
+  seriesCancelled: 'Series cancelled',
+  availabilityChanged: 'Availability changed',
+  teacherInvoice: 'Teacher invoice',
+  invoiceCreated: 'Invoice created',
+  invoiceSend: 'Invoice sent',
+  studentCreated: 'Student added',
+  studentDeleted: 'Student removed',
+  vacationGuardianNotice: 'Vacation notice',
+  meetingScheduled: 'Meeting scheduled',
+  monthlyAdminReport: 'Monthly admin report',
+  systemAlert: 'System alerts',
+  registration: 'New registrations',
+};
+
 const ProfileModal = ({ isOpen, onClose }) => {
   const { user: authUser, updateProfile, isAdmin } = useAuth();
   const [selectedUser, setSelectedUser] = useState(null);
@@ -14,6 +39,12 @@ const ProfileModal = ({ isOpen, onClose }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [editing, setEditing] = useState(false);
   const [formData, setFormData] = useState(null);
+
+  // Email preferences
+  const [emailPrefs, setEmailPrefs] = useState(null);
+  const [emailPrefsExpanded, setEmailPrefsExpanded] = useState(false);
+  const [emailPrefsSaving, setEmailPrefsSaving] = useState(false);
+  const [emailPrefsMsg, setEmailPrefsMsg] = useState(null);
 
   const fetchAllUsers = useCallback(async () => {
     try {
@@ -40,6 +71,21 @@ const ProfileModal = ({ isOpen, onClose }) => {
     setSelectedUser(u);
     setFormData({ ...u });
     setEditing(false);
+    setEmailPrefs(null);
+    setEmailPrefsExpanded(false);
+    setEmailPrefsMsg(null);
+  };
+
+  const loadEmailPrefs = async (userId) => {
+    try {
+      const isOwn = userId === authUser?._id;
+      const res = isOwn
+        ? await api.get('/users/me/email-preferences')
+        : await api.get(`/users/${userId}/email-preferences`);
+      setEmailPrefs(res.data);
+    } catch (err) {
+      console.error('Failed to load email preferences', err);
+    }
   };
 
   const handleChange = (key, value) => {
@@ -156,6 +202,65 @@ const ProfileModal = ({ isOpen, onClose }) => {
                   <button onClick={() => { setEditing(false); setFormData(selectedUser ? { ...selectedUser } : { ...authUser }); }} className="px-3 py-2 bg-gray-300 rounded">Cancel</button>
                   <button onClick={handleSave} className="px-3 py-2 bg-green-600 text-white rounded">Save</button>
                 </>
+              )}
+            </div>
+
+            {/* Email preferences */}
+            <div className="mt-4 border-t pt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!emailPrefsExpanded && !emailPrefs && selectedUser?._id) {
+                    loadEmailPrefs(selectedUser._id);
+                  }
+                  setEmailPrefsExpanded(v => !v);
+                }}
+                className="text-sm font-medium text-gray-700 flex items-center gap-1"
+              >
+                Email Notifications {emailPrefsExpanded ? '▲' : '▼'}
+              </button>
+              {emailPrefsExpanded && (
+                <div className="mt-2 space-y-1.5">
+                  {emailPrefs === null ? (
+                    <div className="text-xs text-gray-500">Loading…</div>
+                  ) : (
+                    <>
+                      {Object.entries(EMAIL_PREF_LABELS).map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={emailPrefs[key] !== false}
+                            onChange={e => setEmailPrefs(p => ({ ...p, [key]: e.target.checked }))}
+                            className="w-3.5 h-3.5 accent-[#2C736C]"
+                          />
+                          {label}
+                        </label>
+                      ))}
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          disabled={emailPrefsSaving}
+                          onClick={async () => {
+                            setEmailPrefsSaving(true);
+                            setEmailPrefsMsg(null);
+                            try {
+                              const isOwn = selectedUser?._id === authUser?._id;
+                              const url = isOwn ? '/users/me/email-preferences' : `/users/${selectedUser._id}/email-preferences`;
+                              const res = await api.put(url, emailPrefs);
+                              setEmailPrefs(res.data);
+                              setEmailPrefsMsg('Saved');
+                            } catch (err) {
+                              setEmailPrefsMsg(err?.response?.data?.message || 'Save failed');
+                            } finally { setEmailPrefsSaving(false); }
+                          }}
+                          className="px-3 py-1 text-xs bg-[#2C736C] text-white rounded disabled:opacity-50"
+                        >
+                          {emailPrefsSaving ? 'Saving…' : 'Save'}
+                        </button>
+                        {emailPrefsMsg && <span className="text-xs text-gray-600">{emailPrefsMsg}</span>}
+                      </div>
+                    </>
+                  )}
+                </div>
               )}
             </div>
           </div>

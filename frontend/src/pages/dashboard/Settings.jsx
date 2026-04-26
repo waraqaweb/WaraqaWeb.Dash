@@ -160,6 +160,73 @@ const interpolateWhatsappTemplate = (template, recipient) => {
   return String(template || '').replace(/\{\{\s*(firstName|lastName|fullName|epithet|timezone|country)\s*\}\}/g, (_, key) => values[key] || '');
 };
 
+const EMAIL_PREF_ROLE_EVENTS = {
+  teacher: ['classCreated','classCancelled','classRescheduled','poorPerformance','monthlyReport','consecutiveAbsent','vacationApproved','vacationResumed','teacherReassigned','seriesCancelled','availabilityChanged','teacherInvoice'],
+  guardian: ['classCreated','classCancelled','classRescheduled','invoiceCreated','invoiceSend','studentCreated','studentDeleted','vacationGuardianNotice','meetingScheduled'],
+  admin: ['invoiceCreated','monthlyAdminReport','systemAlert','registration','meetingScheduled'],
+};
+
+const EMAIL_PREF_LABELS = {
+  classCreated: 'New class scheduled',
+  classCancelled: 'Class cancelled',
+  classRescheduled: 'Class rescheduled',
+  poorPerformance: 'Poor performance alert',
+  monthlyReport: 'Monthly class report',
+  consecutiveAbsent: 'Consecutive absences',
+  vacationApproved: 'Vacation approved',
+  vacationResumed: 'Vacation resumed',
+  teacherReassigned: 'Teacher reassigned',
+  seriesCancelled: 'Series cancelled',
+  availabilityChanged: 'Availability changed',
+  teacherInvoice: 'Teacher invoice',
+  invoiceCreated: 'Invoice created',
+  invoiceSend: 'Invoice sent to guardian',
+  studentCreated: 'New student added',
+  studentDeleted: 'Student removed',
+  vacationGuardianNotice: 'Vacation guardian notice',
+  meetingScheduled: 'Meeting scheduled',
+  monthlyAdminReport: 'Monthly admin report',
+  systemAlert: 'System alerts',
+  registration: 'New user registration',
+};
+
+const EmailPrefsPanel = ({ role, prefs, setPrefs, saving, onSave }) => {
+  const events = EMAIL_PREF_ROLE_EVENTS[role] || [];
+  return (
+    <div className="mt-3 space-y-2">
+      <label className="flex items-center gap-2 font-medium text-sm">
+        <input
+          type="checkbox"
+          checked={!!prefs.globalEnabled}
+          onChange={e => setPrefs(p => ({ ...p, globalEnabled: e.target.checked }))}
+          className="w-4 h-4 accent-primary"
+        />
+        Receive all emails
+      </label>
+      <div className={`space-y-1 pl-6 ${!prefs.globalEnabled ? 'opacity-40 pointer-events-none' : ''}`}>
+        {events.map(key => (
+          <label key={key} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={prefs[key] !== false}
+              onChange={e => setPrefs(p => ({ ...p, [key]: e.target.checked }))}
+              className="w-3.5 h-3.5 accent-primary"
+            />
+            {EMAIL_PREF_LABELS[key] || key}
+          </label>
+        ))}
+      </div>
+      <button
+        disabled={saving}
+        onClick={onSave}
+        className="mt-2 px-3 py-1.5 text-xs rounded border border-primary bg-primary text-primary-foreground disabled:opacity-50"
+      >
+        {saving ? 'Saving…' : 'Save'}
+      </button>
+    </div>
+  );
+};
+
 const Settings = () => {
   const { user, socket } = useAuth();
 
@@ -609,6 +676,29 @@ const Settings = () => {
   const [waUploadingImage, setWaUploadingImage] = useState(false);
   const [toast, setToast] = useState(null);
 
+  // Email notifications — admin SMTP + global switches + log
+  const [emailSmtp, setEmailSmtp] = useState({ fromName: '', fromAddress: '', smtpHost: '', smtpPort: '587', smtpUser: '', smtpPass: '', smtpPassSet: false });
+  const [emailSmtpSaving, setEmailSmtpSaving] = useState(false);
+  const [emailTestSending, setEmailTestSending] = useState(false);
+  const [emailShowPass, setEmailShowPass] = useState(false);
+  const [emailSwitches, setEmailSwitches] = useState({ masterEnabled: true, enableTeachers: true, enableGuardians: true, enableAdmins: true });
+  const [emailSwitchesSaving, setEmailSwitchesSaving] = useState(false);
+  const [emailLogs, setEmailLogs] = useState([]);
+  const [emailLogsTotal, setEmailLogsTotal] = useState(0);
+  const [emailLogsPage, setEmailLogsPage] = useState(1);
+  const [emailLogsFilter, setEmailLogsFilter] = useState({ type: '', status: '' });
+  const [emailLogsLoading, setEmailLogsLoading] = useState(false);
+  const [emailLogsExpanded, setEmailLogsExpanded] = useState(false);
+  // Test panel
+  const [emailTestTo, setEmailTestTo] = useState('');
+  const [emailTestTypes, setEmailTestTypes] = useState(['classCreated']);
+  const [emailTestResults, setEmailTestResults] = useState(null);
+
+  // User email preferences (all roles)
+  const [myEmailPrefs, setMyEmailPrefs] = useState(null);
+  const [myEmailPrefsSaving, setMyEmailPrefsSaving] = useState(false);
+  const [myEmailPrefsExpanded, setMyEmailPrefsExpanded] = useState(false);
+
   // Maintenance (admin)
   const [generatingRecurring, setGeneratingRecurring] = useState(false);
 
@@ -821,6 +911,59 @@ const Settings = () => {
     fetchWhatsappRecipients();
   }, [user?.role, activeSection, brandingTab, fetchWhatsappRecipients]);
 
+  useEffect(() => {
+    if (!user?._id || activeSection !== 'general') return;
+    let cancelled = false;
+    api.get('/users/me/email-preferences').then(res => {
+      if (!cancelled) setMyEmailPrefs(res.data);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [user?._id, activeSection]);
+
+  // Email section data loading
+  useEffect(() => {
+    if (user?.role !== 'admin' || activeSection !== 'email') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [cfgRes, swRes] = await Promise.all([
+          api.get('/settings/email/config'),
+          api.get('/settings/email/global-switches'),
+        ]);
+        if (!cancelled) {
+          setEmailSmtp(s => ({ ...s, ...cfgRes.data }));
+          setEmailSwitches(swRes.data);
+        }
+      } catch (err) {
+        if (!cancelled) setToast({ type: 'error', message: err?.response?.data?.message || 'Failed to load email config' });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.role, activeSection]);
+
+  const loadEmailLogs = React.useCallback(async (page = 1, filter = emailLogsFilter) => {
+    if (user?.role !== 'admin') return;
+    setEmailLogsLoading(true);
+    try {
+      const params = new URLSearchParams({ page, limit: 20 });
+      if (filter.type) params.set('type', filter.type);
+      if (filter.status) params.set('status', filter.status);
+      const res = await api.get(`/settings/email/logs?${params}`);
+      setEmailLogs(res.data.logs || []);
+      setEmailLogsTotal(res.data.total || 0);
+      setEmailLogsPage(page);
+    } catch (err) {
+      setToast({ type: 'error', message: err?.response?.data?.message || 'Failed to load email logs' });
+    } finally {
+      setEmailLogsLoading(false);
+    }
+  }, [user?.role, emailLogsFilter]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin' || activeSection !== 'email' || !emailLogsExpanded) return;
+    loadEmailLogs(1);
+  }, [user?.role, activeSection, emailLogsExpanded, loadEmailLogs]);
+
   const adminSections = useMemo(() => {
     if (user?.role !== 'admin') return [{ key: 'general', label: 'General' }];
     return [
@@ -833,6 +976,7 @@ const Settings = () => {
       { key: 'appearance', label: 'Appearance' },
       { key: 'cleanup', label: 'Cleanup' },
       { key: 'branding', label: 'Branding' },
+      { key: 'email', label: 'Email Notifications' },
       { key: 'library', label: 'Library' },
       { key: 'subjectsCatalog', label: 'Subjects Catalog' },
       { key: 'trash', label: 'Trash' },
@@ -1468,6 +1612,7 @@ const Settings = () => {
         {/* Floating widget component will be rendered separately (fixed position). */}
         
         {activeSection === 'general' && (
+          <>
           <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
             <div className="font-medium mb-2">Notifications & Sounds</div>
             <div className="space-y-3">
@@ -1533,6 +1678,40 @@ const Settings = () => {
               </div>
             </div>
           </div>
+
+          {/* User email preferences */}
+          <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
+            <div className="flex items-center justify-between">
+              <div className="font-medium">Email Notifications</div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!myEmailPrefsExpanded && !myEmailPrefs) {
+                    api.get('/users/me/email-preferences').then(res => setMyEmailPrefs(res.data)).catch(() => {});
+                  }
+                  setMyEmailPrefsExpanded(v => !v);
+                }}
+                className="text-xs px-2 py-1 border border-border rounded bg-muted"
+              >{myEmailPrefsExpanded ? 'Collapse' : 'Expand'}</button>
+            </div>
+            {myEmailPrefsExpanded && myEmailPrefs && <EmailPrefsPanel
+              role={user?.role}
+              prefs={myEmailPrefs}
+              setPrefs={setMyEmailPrefs}
+              saving={myEmailPrefsSaving}
+              onSave={async () => {
+                setMyEmailPrefsSaving(true);
+                try {
+                  const res = await api.put('/users/me/email-preferences', myEmailPrefs);
+                  setMyEmailPrefs(res.data);
+                  setToast({ type: 'success', message: 'Email preferences saved' });
+                } catch (err) {
+                  setToast({ type: 'error', message: err?.response?.data?.message || 'Save failed' });
+                } finally { setMyEmailPrefsSaving(false); }
+              }}
+            />}
+          </div>
+          </>
         )}
 
         {user?.role === 'admin' && activeSection === 'feedback' && (
@@ -3148,6 +3327,364 @@ const Settings = () => {
         {/* Trash section */}
         {user?.role === 'admin' && activeSection === 'trash' && (
           <TrashPage />
+        )}
+
+        {/* Email Notifications section */}
+        {user?.role === 'admin' && activeSection === 'email' && (
+          <div className="space-y-4">
+            {/* SMTP Config */}
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
+              <div className="font-medium mb-3">SMTP Configuration</div>
+              <p className="text-xs text-muted-foreground mb-3">
+                For Gmail: enable 2-Step Verification → Google Account → Security → App Passwords → Mail → copy the 16-char code.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { label: 'From Name', key: 'fromName', type: 'text', placeholder: 'Waraqa' },
+                  { label: 'From Address', key: 'fromAddress', type: 'email', placeholder: 'no-reply@example.com' },
+                  { label: 'SMTP Host', key: 'smtpHost', type: 'text', placeholder: 'smtp.gmail.com' },
+                  { label: 'Port', key: 'smtpPort', type: 'number', placeholder: '587' },
+                  { label: 'Username', key: 'smtpUser', type: 'text', placeholder: 'you@gmail.com' },
+                ].map(({ label, key, type, placeholder }) => (
+                  <div key={key}>
+                    <label className="block text-xs text-muted-foreground mb-1">{label}</label>
+                    <input
+                      type={type}
+                      value={emailSmtp[key] || ''}
+                      onChange={e => setEmailSmtp(s => ({ ...s, [key]: e.target.value }))}
+                      placeholder={placeholder}
+                      className="w-full px-2 py-1.5 text-sm border border-border rounded bg-background"
+                    />
+                  </div>
+                ))}
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">
+                    Password {emailSmtp.smtpPassSet && <span className="text-green-600">(set)</span>}
+                  </label>
+                  <div className="flex gap-1">
+                    <input
+                      type={emailShowPass ? 'text' : 'password'}
+                      value={emailSmtp.smtpPass || ''}
+                      onChange={e => setEmailSmtp(s => ({ ...s, smtpPass: e.target.value }))}
+                      placeholder={emailSmtp.smtpPassSet ? '••••••••••••••••' : 'App password'}
+                      className="flex-1 px-2 py-1.5 text-sm border border-border rounded bg-background"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setEmailShowPass(v => !v)}
+                      className="px-2 py-1.5 text-xs border border-border rounded bg-muted"
+                    >{emailShowPass ? 'Hide' : 'Show'}</button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-4 flex-wrap items-center">
+                <button
+                  disabled={emailSmtpSaving}
+                  onClick={async () => {
+                    setEmailSmtpSaving(true);
+                    try {
+                      await api.put('/settings/email/config', emailSmtp);
+                      setEmailSmtp(s => ({ ...s, smtpPass: '', smtpPassSet: true }));
+                      setToast({ type: 'success', message: 'SMTP config saved' });
+                    } catch (err) {
+                      setToast({ type: 'error', message: err?.response?.data?.message || 'Save failed' });
+                    } finally { setEmailSmtpSaving(false); }
+                  }}
+                  className="px-3 py-1.5 text-xs rounded border border-primary bg-primary text-primary-foreground disabled:opacity-50"
+                >
+                  {emailSmtpSaving ? 'Saving…' : 'Save Config'}
+                </button>
+              </div>
+            </div>
+
+            {/* Test Email Panel */}
+            {(() => {
+              const ALL_EMAIL_TYPES = [
+                { value: 'classCreated',          label: 'Class Created' },
+                { value: 'classCancelled',         label: 'Class Cancelled' },
+                { value: 'classRescheduled',       label: 'Class Rescheduled' },
+                { value: 'registration',           label: 'Welcome / Registration' },
+                { value: 'newStudent',             label: 'New Student Added' },
+                { value: 'studentDeleted',         label: 'Student Removed' },
+                { value: 'adminNewUser',           label: 'Admin: New User' },
+                { value: 'poorPerformance',        label: 'Poor Performance Alert' },
+                { value: 'consecutiveAbsent',      label: 'Consecutive Absences' },
+                { value: 'monthlyStudentReport',   label: 'Monthly Student Report' },
+                { value: 'invoiceCreated',         label: 'Invoice Created (Guardian)' },
+                { value: 'adminNewInvoice',        label: 'Admin: New Invoice' },
+                { value: 'meetingScheduled',       label: 'Meeting Scheduled' },
+                { value: 'vacationApproved',       label: 'Vacation Approved' },
+                { value: 'vacationGuardianNotice', label: 'Vacation Notice (Guardian)' },
+                { value: 'teacherReassigned',      label: 'Teacher Reassigned' },
+                { value: 'seriesCancelled',        label: 'Series Cancelled' },
+                { value: 'availabilityChanged',    label: 'Availability Changed' },
+                { value: 'teacherInvoice',         label: 'Teacher Invoice Ready' },
+                { value: 'adminMonthlyReport',     label: 'Admin Monthly Report' },
+                { value: 'systemAlert',            label: 'System Alert' },
+              ];
+              const isAllSelected = emailTestTypes[0] === 'all';
+              const toggleType = v => {
+                setEmailTestTypes(prev => {
+                  if (prev[0] === 'all') return [v];
+                  return prev.includes(v) ? (prev.filter(x => x !== v).length ? prev.filter(x => x !== v) : [v]) : [...prev, v];
+                });
+              };
+              const handleTest = async () => {
+                setEmailTestSending(true);
+                setEmailTestResults(null);
+                try {
+                  const payload = { types: isAllSelected ? ['all'] : emailTestTypes };
+                  if (emailTestTo.trim()) payload.to = emailTestTo.trim();
+                  const res = await api.post('/settings/email/test', payload);
+                  setEmailTestResults(res.data);
+                  setToast({ type: 'success', message: res.data.message || 'Test complete' });
+                } catch (err) {
+                  setToast({ type: 'error', message: err?.response?.data?.message || 'Test failed' });
+                } finally { setEmailTestSending(false); }
+              };
+              return (
+                <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
+                  <div className="font-medium mb-1">Test Emails</div>
+                  <p className="text-xs text-muted-foreground mb-3">Send real test emails using actual branded templates to verify your SMTP config and preview each type.</p>
+
+                  {/* Recipient */}
+                  <div className="mb-3">
+                    <label className="block text-xs text-muted-foreground mb-1">Send to (leave blank for your admin email)</label>
+                    <input
+                      type="email"
+                      value={emailTestTo}
+                      onChange={e => setEmailTestTo(e.target.value)}
+                      placeholder="recipient@example.com"
+                      className="w-full sm:w-72 px-2 py-1.5 text-sm border border-border rounded bg-background"
+                    />
+                  </div>
+
+                  {/* Type Picker */}
+                  <div className="mb-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xs text-muted-foreground">Types to test:</span>
+                      <button
+                        type="button"
+                        onClick={() => setEmailTestTypes(['all'])}
+                        className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${isAllSelected ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border hover:bg-muted'}`}
+                      >All ({ALL_EMAIL_TYPES.length})</button>
+                      <button
+                        type="button"
+                        onClick={() => setEmailTestTypes(['classCreated'])}
+                        className="px-2 py-0.5 rounded text-xs text-muted-foreground border border-border hover:bg-muted"
+                      >Reset</button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {ALL_EMAIL_TYPES.map(({ value, label }) => {
+                        const active = isAllSelected || emailTestTypes.includes(value);
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => { setEmailTestTypes(p => p[0] === 'all' ? [value] : (p.includes(value) ? (p.filter(x=>x!==value).length ? p.filter(x=>x!==value) : [value]) : [...p, value])); }}
+                            className={`px-2 py-0.5 rounded-full text-[11px] border transition-colors ${active ? 'bg-primary/10 text-primary border-primary/30' : 'bg-card border-border text-muted-foreground hover:bg-muted'}`}
+                          >{label}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Send button */}
+                  <button
+                    disabled={emailTestSending}
+                    onClick={handleTest}
+                    className="px-4 py-1.5 text-sm rounded border border-primary bg-primary text-primary-foreground disabled:opacity-50"
+                  >
+                    {emailTestSending ? 'Sending…' : isAllSelected ? `Send All ${ALL_EMAIL_TYPES.length} Tests` : `Send ${emailTestTypes.length} Test${emailTestTypes.length !== 1 ? 's' : ''}`}
+                  </button>
+
+                  {/* Results */}
+                  {emailTestResults && (
+                    <div className="mt-4 border border-border rounded bg-background overflow-hidden">
+                      <div className="px-3 py-2 bg-muted/50 flex items-center justify-between">
+                        <span className="text-xs font-medium">{emailTestResults.message}</span>
+                        <span className="text-xs text-muted-foreground">Total: {emailTestResults.totalDurationMs}ms</span>
+                      </div>
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-border text-muted-foreground">
+                            <th className="text-left px-3 py-1.5">Type</th>
+                            <th className="text-left px-3 py-1.5">Subject</th>
+                            <th className="text-center px-3 py-1.5">Status</th>
+                            <th className="text-right px-3 py-1.5">Duration</th>
+                            <th className="text-right px-3 py-1.5">Throttle</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {emailTestResults.results?.map((r, i) => (
+                            <tr key={i} className="border-b border-border/40">
+                              <td className="px-3 py-1.5 font-mono text-[10px] text-muted-foreground">{r.type}</td>
+                              <td className="px-3 py-1.5 max-w-[160px] truncate text-[11px]">{r.subject || '—'}</td>
+                              <td className="px-3 py-1.5 text-center">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${r.status === 'sent' ? 'bg-green-100 text-green-700' : r.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-muted text-muted-foreground'}`}>
+                                  {r.status}
+                                </span>
+                              </td>
+                              <td className="px-3 py-1.5 text-right text-[11px]">{r.durationMs != null ? `${r.durationMs}ms` : '—'}</td>
+                              <td className="px-3 py-1.5 text-right text-[11px] text-muted-foreground">{r.throttleMs != null ? `${r.throttleMs}ms` : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Global Switches */}
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
+              <div className="font-medium mb-3">Global Switches</div>
+              <div className="space-y-3">
+                {[
+                  { key: 'masterEnabled', label: 'Master switch', description: 'All outgoing emails' },
+                  { key: 'enableTeachers', label: 'Email teachers', description: 'Emails to teachers' },
+                  { key: 'enableGuardians', label: 'Email guardians', description: 'Emails to guardians' },
+                  { key: 'enableAdmins', label: 'Email admins', description: 'Emails to admins' },
+                ].map(({ key, label, description }) => {
+                  const on = !!emailSwitches[key];
+                  return (
+                    <div key={key} className="flex items-center justify-between gap-3">
+                      <div>
+                        <span className="text-sm font-medium">{label}</span>
+                        <span className="text-xs text-muted-foreground ml-2">{description}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setEmailSwitches(s => ({ ...s, [key]: !s[key] }))}
+                        className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${on ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                        role="switch"
+                        aria-checked={on}
+                      >
+                        <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 ${on ? 'translate-x-4' : 'translate-x-0'}`} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <button
+                disabled={emailSwitchesSaving}
+                onClick={async () => {
+                  setEmailSwitchesSaving(true);
+                  try {
+                    await api.put('/settings/email/global-switches', emailSwitches);
+                    setToast({ type: 'success', message: 'Switches saved' });
+                  } catch (err) {
+                    setToast({ type: 'error', message: err?.response?.data?.message || 'Save failed' });
+                  } finally { setEmailSwitchesSaving(false); }
+                }}
+                className="mt-3 px-3 py-1.5 text-xs rounded border border-primary bg-primary text-primary-foreground disabled:opacity-50"
+              >
+                {emailSwitchesSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+
+            {/* Email Log */}
+            <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="font-medium">Sent Emails Log</div>
+                {!emailLogsExpanded && (
+                  <button
+                    onClick={() => setEmailLogsExpanded(true)}
+                    className="text-xs px-2 py-1 border border-border rounded bg-muted"
+                  >Load log</button>
+                )}
+              </div>
+              {emailLogsExpanded && (
+                <>
+                  <div className="flex gap-2 mb-3">
+                    <select
+                      value={emailLogsFilter.type}
+                      onChange={e => { const f = { ...emailLogsFilter, type: e.target.value }; setEmailLogsFilter(f); loadEmailLogs(1, f); }}
+                      className="text-xs px-2 py-1 border border-border rounded bg-background"
+                    >
+                      <option value="">All types</option>
+                      {['classCreated','classCancelled','classRescheduled','invoiceCreated','invoiceSend','paymentReceived','bonusAdded','invoiceGenerationSummary','poorPerformance','consecutiveAbsent','monthlyStudentReport','meetingScheduled','vacationApproved','vacationGuardianNotice','teacherReassigned','seriesCancelled','availabilityChanged','teacherInvoice','adminMonthlyReport','registration','systemAlert'].map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={emailLogsFilter.status}
+                      onChange={e => { const f = { ...emailLogsFilter, status: e.target.value }; setEmailLogsFilter(f); loadEmailLogs(1, f); }}
+                      className="text-xs px-2 py-1 border border-border rounded bg-background"
+                    >
+                      <option value="">All statuses</option>
+                      {['sent','failed','skipped','queued'].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <button onClick={() => loadEmailLogs(emailLogsPage)} className="text-xs px-2 py-1 border border-border rounded bg-muted ml-auto">
+                      Refresh
+                    </button>
+                  </div>
+                  {emailLogsLoading ? (
+                    <div className="text-sm text-muted-foreground py-4 text-center">Loading…</div>
+                  ) : emailLogs.length === 0 ? (
+                    <div className="text-sm text-muted-foreground py-4 text-center">No logs</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-border text-muted-foreground">
+                            <th className="text-left py-1 pr-2">Date</th>
+                            <th className="text-left py-1 pr-2">To</th>
+                            <th className="text-left py-1 pr-2">Subject</th>
+                            <th className="text-left py-1 pr-2">Type</th>
+                            <th className="text-left py-1 pr-2">Status</th>
+                            <th className="text-left py-1"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {emailLogs.map(log => (
+                            <tr key={log._id} className="border-b border-border/50">
+                              <td className="py-1 pr-2 whitespace-nowrap">{new Date(log.createdAt).toLocaleString()}</td>
+                              <td className="py-1 pr-2">{log.to}</td>
+                              <td className="py-1 pr-2 max-w-[180px] truncate">{log.subject}</td>
+                              <td className="py-1 pr-2">{log.type}</td>
+                              <td className="py-1 pr-2">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                  log.status === 'sent' ? 'bg-green-100 text-green-700' :
+                                  log.status === 'failed' ? 'bg-red-100 text-red-700' :
+                                  log.status === 'skipped' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-muted text-muted-foreground'
+                                }`}>{log.status}</span>
+                              </td>
+                              <td className="py-1">
+                                {log.status === 'failed' && (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        await api.post(`/settings/email/resend/${log._id}`);
+                                        setToast({ type: 'success', message: 'Re-queued' });
+                                        loadEmailLogs(emailLogsPage);
+                                      } catch (err) {
+                                        setToast({ type: 'error', message: err?.response?.data?.message || 'Failed' });
+                                      }
+                                    }}
+                                    className="text-primary text-[10px] underline"
+                                  >Retry</button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {emailLogsTotal > 20 && (
+                    <div className="flex gap-2 items-center mt-2 text-xs">
+                      <button disabled={emailLogsPage <= 1} onClick={() => loadEmailLogs(emailLogsPage - 1)} className="px-2 py-1 border border-border rounded bg-muted disabled:opacity-40">Prev</button>
+                      <span>Page {emailLogsPage} / {Math.ceil(emailLogsTotal / 20)}</span>
+                      <button disabled={emailLogsPage >= Math.ceil(emailLogsTotal / 20)} onClick={() => loadEmailLogs(emailLogsPage + 1)} className="px-2 py-1 border border-border rounded bg-muted disabled:opacity-40">Next</button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
         )}
 
           {/* Maintenance card */}

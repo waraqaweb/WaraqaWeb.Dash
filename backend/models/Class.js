@@ -706,7 +706,14 @@ const classSchema = new mongoose.Schema({
   paidByGuardianAt: { type: Date, default: null },
   
   // Flag used by audits/UI to highlight lessons that should be invoiced
-  flaggedUninvoiced: { type: Boolean, default: false }
+  flaggedUninvoiced: { type: Boolean, default: false },
+
+  // Per-class/series billing overrides (set by admin)
+  // null = use guardian rate or system default
+  guardianRate: { type: Number, default: null, min: 0 },
+  // Extra $/hr the teacher earns on top of normal salary for this class
+  // null = no premium
+  teacherPremium: { type: Number, default: null, min: 0 }
   
 }, {
   timestamps: true,

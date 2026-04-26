@@ -261,6 +261,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [seqEditing, setSeqEditing] = useState(false);
   const [seqDraft, setSeqDraft] = useState('');
   const [editingInlineNote, setEditingInlineNote] = useState(null);
+  const NOTES_SAVE_DEBOUNCE_MS = 1200;
   const seqInputRef = useRef(null);
   const maxHoursInputRef = useRef(null);
   const endDateInputRef = useRef(null);
@@ -391,8 +392,16 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
       internalNotes: nextInvoice?.internalNotes || '',
       invoiceReferenceLink: nextInvoice?.invoiceReferenceLink || ''
     };
-    skipNextNotesSave.current = true;
-    setNoteEdits(nextNotes);
+    const shouldPreserveInlineDraft = editingInlineNote === 'guardian' || editingInlineNote === 'internal';
+    skipNextNotesSave.current = !shouldPreserveInlineDraft;
+    setNoteEdits((prev) => {
+      if (!shouldPreserveInlineDraft) return nextNotes;
+      return {
+        ...nextNotes,
+        notes: editingInlineNote === 'guardian' ? prev.notes : nextNotes.notes,
+        internalNotes: editingInlineNote === 'internal' ? prev.internalNotes : nextNotes.internalNotes,
+      };
+    });
     notesLastSavedRef.current = nextNotes;
     const coverage = nextInvoice.coverage || {};
     const coverageLocked = ['paid', 'refunded'].includes(String(nextInvoice?.status || '').toLowerCase());
@@ -431,7 +440,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
       setInvoiceNameParts(parts);
       setSeqDraft(parts.seq || '');
     }
-  }, [seqEditing, parseInvoiceNameParts, formatDateInput, buildCoverageDraftInvoice]);
+  }, [seqEditing, parseInvoiceNameParts, formatDateInput, buildCoverageDraftInvoice, editingInlineNote]);
 
   const toNumberOr = (value, fallback = 0) => {
     const numeric = Number(value);
@@ -447,6 +456,33 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   }, []);
 
   const identifier = invoiceSlug || invoiceId;
+
+  const fetchInvoiceByBestIdentifier = useCallback(async ({ includeDynamic = true, extraIdentifiers = [] } = {}) => {
+    const params = includeDynamic ? { includeDynamic: 1 } : undefined;
+    const identifiers = [
+      ...extraIdentifiers,
+      resolvedInvoiceId,
+      invoiceId,
+      identifier
+    ];
+    const candidates = [...new Set(identifiers.filter(Boolean).map((value) => String(value)))];
+
+    let last404Error = null;
+    for (const currentIdentifier of candidates) {
+      try {
+        const response = await api.get(`/invoices/${currentIdentifier}`, { params });
+        return response.data;
+      } catch (fetchErr) {
+        if (fetchErr?.response?.status === 404) {
+          last404Error = fetchErr;
+          continue;
+        }
+        throw fetchErr;
+      }
+    }
+
+    throw last404Error || new Error('Invoice not found');
+  }, [resolvedInvoiceId, invoiceId, identifier]);
 
   useEffect(() => {
     if (!initialInvoice) return;
@@ -492,7 +528,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           setLoading(false);
         }
 
-        const { data: invRes } = await api.get(`/invoices/${identifier}`, { params: { includeDynamic: 1 } });
+        const invRes = await fetchInvoiceByBestIdentifier({ includeDynamic: true });
         if (cancelled) return;
         const inv = invRes.invoice || invRes;
         
@@ -515,7 +551,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     return () => {
       cancelled = true;
     };
-  }, [identifier, invoiceId, syncInvoiceState, user?._id, initialInvoice]);
+  }, [identifier, invoiceId, syncInvoiceState, user?._id, initialInvoice, fetchInvoiceByBestIdentifier]);
 
   // Listen for real-time invoice updates via socket
   useEffect(() => {
@@ -526,7 +562,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
       // Only re-fetch if this is the invoice we're viewing
       if (updatedInvoice && updatedInvoice._id === resolvedInvoiceId) {
         try {
-          const { data: invRes } = await api.get(`/invoices/${identifier}`, { params: { includeDynamic: 1 } });
+          const invRes = await fetchInvoiceByBestIdentifier({ includeDynamic: true });
+
           const inv = invRes.invoice || invRes;
           syncInvoiceState(inv);
         } catch (err) {
@@ -542,7 +579,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
       socket.off('invoice:updated', handleInvoiceUpdate);
       socket.off('invoice:paid', handleInvoiceUpdate);
     };
-  }, [socket, resolvedInvoiceId, identifier, syncInvoiceState]);
+  }, [socket, resolvedInvoiceId, identifier, invoiceId, syncInvoiceState, fetchInvoiceByBestIdentifier]);
 
   useEffect(() => {
     if (!socket || !resolvedInvoiceId || !invoice) return;
@@ -581,7 +618,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
         if (!cancelled) {
           setClassesLoading(true);
         }
-        const { data: invRes } = await api.get(`/invoices/${identifier}`, { params: { includeDynamic: 1 } });
+        const invRes = await fetchInvoiceByBestIdentifier({ includeDynamic: true });
         const inv = invRes.invoice || invRes;
         if (!cancelled) {
           syncInvoiceState(inv);
@@ -601,7 +638,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
       cancelled = true;
       socket.off('class:updated', handleClassUpdated);
     };
-  }, [socket, resolvedInvoiceId, invoice, identifier, syncInvoiceState]);
+  }, [socket, resolvedInvoiceId, invoice, identifier, syncInvoiceState, fetchInvoiceByBestIdentifier]);
 
   useEffect(() => {
     if (!isAdmin || typeof onOpenRecordPayment !== 'function') return;
@@ -737,6 +774,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           partialMinutes: item.partialMinutes || null,
           partialOfMinutes: item.partialOfMinutes || null,
           fullDuration: item.fullDuration || durationMinutes || 0,
+          rate: Number.isFinite(Number(item.rate)) ? Number(item.rate) : null,
+          amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : null,
         };
       });
 
@@ -919,7 +958,13 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     .filter((value) => Number.isFinite(value));
   const guardianRate = guardianRateCandidates.length > 0 ? guardianRateCandidates[0] : 0;
   
-  const derivedSubtotal = Number.isFinite(totalHours) && totalHours > 0 ? roundCurrency(totalHours * guardianRate) : 0;
+  // Prefer per-item amounts (supports per-class rates), fall back to flat guardian rate
+  const perItemSubtotal = isRefillOnlyInvoice ? 0 : filteredClasses.reduce((sum, c) => {
+    if (c.amount != null) return sum + c.amount;
+    const itemRate = (c.rate != null) ? c.rate : guardianRate;
+    return sum + roundCurrency((c.duration / 60) * itemRate);
+  }, 0);
+  const derivedSubtotal = perItemSubtotal > 0 ? roundCurrency(perItemSubtotal) : (Number.isFinite(totalHours) && totalHours > 0 ? roundCurrency(totalHours * guardianRate) : 0);
   const invoiceSubtotalRaw = toNumberOr(invoice?.subtotal, Number.NaN);
   const fallbackSubtotal = Number.isFinite(invoiceSubtotalRaw) ? roundCurrency(invoiceSubtotalRaw) : 0;
   const subtotal = derivedSubtotal > 0 ? derivedSubtotal : fallbackSubtotal;
@@ -1404,14 +1449,6 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
       const updatedInvoice = data.invoice || data;
       
       syncInvoiceState(updatedInvoice);
-      // Re-fetch authoritative invoice after saving notes
-      try {
-        const { data: refetchRes } = await api.get(`/invoices/${targetInvoiceId}`);
-        const refetched = refetchRes.invoice || refetchRes;
-        if (refetched) syncInvoiceState(refetched);
-      } catch (refetchErr) {
-        console.error('Refetch after notes save failed:', refetchErr);
-      }
       const savedNotes = {
         notes: (updatedInvoice?.notes ?? noteEdits.notes) || '',
         internalNotes: (updatedInvoice?.internalNotes ?? noteEdits.internalNotes) || '',
@@ -1492,6 +1529,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
 
   useEffect(() => {
     if (!invoice) return;
+    if (editingInlineNote === 'guardian' || editingInlineNote === 'internal') return;
     if (skipNextNotesSave.current) {
       skipNextNotesSave.current = false;
       return;
@@ -1509,10 +1547,10 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     setNotesStatus({ type: 'progress', message: 'Saving…' });
     const timer = setTimeout(() => {
       handleSaveNotes();
-    }, 600);
+    }, NOTES_SAVE_DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
-  }, [noteEdits.notes, noteEdits.internalNotes, noteEdits.invoiceReferenceLink, invoice, handleSaveNotes, savingNotes]);
+  }, [noteEdits.notes, noteEdits.internalNotes, noteEdits.invoiceReferenceLink, invoice, handleSaveNotes, savingNotes, editingInlineNote]);
 
   // ⚠️ DISABLED: Auto-sync useEffect was causing invoice totals to be recalculated
   // whenever the modal opened. This defeats the purpose of storing fixed invoice totals.
@@ -1892,8 +1930,10 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     // Fetch the new invoice
     (async () => {
       try {
-        const identifier = sibling.invoiceSlug || sibling._id;
-        const { data } = await api.get(`/invoices/${identifier}?includeDynamic=1`);
+        const data = await fetchInvoiceByBestIdentifier({
+          includeDynamic: true,
+          extraIdentifiers: [sibling?._id, sibling?.invoiceSlug]
+        });
         if (data?.invoice) {
           setInvoice(data.invoice);
           setResolvedInvoiceId(data.invoice._id);
@@ -1904,7 +1944,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
         setLoading(false);
       }
     })();
-  }, []);
+  }, [fetchInvoiceByBestIdentifier]);
 
   const handleCopyShareLink = useCallback(async () => {
     if (!invoice?.invoiceSlug) return;
@@ -2150,17 +2190,18 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="flex min-w-0 items-center gap-1.5 text-xl font-semibold text-slate-900 sm:text-2xl">
                   <span>{`${invoiceNameParts.prefix || 'Waraqa'}-${invoiceNameParts.month || ''}-${invoiceNameParts.year || ''}-`}</span>
-                  {seqEditing || !invoiceNameParts.seq ? (
+                  {seqEditing ? (
                     <input
                       ref={seqInputRef}
                       value={seqDraft}
                       onChange={(e) => setSeqDraft(e.target.value)}
-                      autoFocus={seqEditing || !invoiceNameParts.seq}
+                      autoFocus
                       onFocus={(e) => e.target.select()}
                       onClick={(e) => e.currentTarget.select()}
-                      onBlur={() => {
+                      onBlur={(e) => {
+                        const typedValue = e.currentTarget.value;
                         setSeqEditing(false);
-                        handleSaveSeq(seqInputRef.current?.value ?? seqDraft);
+                        handleSaveSeq(typedValue);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
@@ -2187,10 +2228,10 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                         setSeqDraft(invoiceNameParts.seq || '');
                         setSeqEditing(true);
                       }}
-                      className={`px-0.5 ${isAdmin ? 'hover:text-slate-700' : ''}`}
+                      className={`px-0.5 ${isAdmin ? 'hover:text-slate-700' : ''} ${invoiceNameParts.seq ? '' : 'text-slate-400'}`}
                       title={isAdmin ? 'Click to edit invoice number' : undefined}
                     >
-                      {invoiceNameParts.seq || ''}
+                      {invoiceNameParts.seq || (isAdmin ? 'set' : '-')}
                     </button>
                   )}
                 </h2>
@@ -2447,12 +2488,20 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                           {totalHours.toFixed(2)}h
                         </span>
                         <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                          ${guardianRate.toFixed(2)} / hr
+                          {(() => {
+                            const rates = [...new Set(filteredClasses.map(c => (c.rate != null) ? c.rate : guardianRate))];
+                            if (rates.length > 1) return 'Mixed rates';
+                            return `$${(rates[0] ?? guardianRate).toFixed(2)} / hr`;
+                          })()}
                         </span>
                       </div>
                       <div className="space-y-1 text-sm text-slate-600">
                         <div className="flex justify-between">
-                          <span>Subtotal ({subtotalHoursDisplay}h × ${guardianRate.toFixed(2)})</span>
+                          {(() => {
+                            const rates = [...new Set(filteredClasses.map(c => (c.rate != null) ? c.rate : guardianRate))];
+                            if (rates.length > 1) return <span>Subtotal ({subtotalHoursDisplay}h, mixed rates)</span>;
+                            return <span>Subtotal ({subtotalHoursDisplay}h × ${(rates[0] ?? guardianRate).toFixed(2)})</span>;
+                          })()}
                           <span className="font-medium text-slate-900">${subtotal.toFixed(2)}</span>
                         </div>
                         
@@ -3031,7 +3080,11 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                                 })()}
                               </td>
                               <td className="px-4 py-3 text-right whitespace-nowrap text-xs font-medium text-slate-600">
-                                {guardianRate > 0 ? `$${((c.duration / 60) * guardianRate).toFixed(2)}` : ''}
+                                {(() => {
+                                  const itemRate = (c.rate != null) ? c.rate : guardianRate;
+                                  if (itemRate > 0) return `$${((c.duration / 60) * itemRate).toFixed(2)}`;
+                                  return '';
+                                })()}
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <span className="inline-flex items-center gap-2">

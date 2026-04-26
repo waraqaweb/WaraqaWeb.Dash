@@ -207,7 +207,7 @@ class TeacherSalaryService {
         status: { $in: ['attended', 'missed_by_student', 'completed', 'absent'] }, // Countable statuses
         deleted: { $ne: true }
       })
-        .select('_id scheduledDate duration subject status student billedInTeacherInvoiceId')
+        .select('_id scheduledDate duration subject status student billedInTeacherInvoiceId teacherPremium')
         .lean();
 
       console.log(`[aggregateTeacherHours] Found ${classes.length} countable classes`);
@@ -497,6 +497,40 @@ class TeacherSalaryService {
       }
 
       const invoice = new TeacherInvoice(invoiceData);
+
+      // Add teacher premium extras for classes with teacherPremium set
+      try {
+        const premiumClasses = classes.filter(cls => cls.teacherPremium != null && cls.teacherPremium > 0);
+        if (premiumClasses.length > 0) {
+          // Group by premium rate for cleaner line items
+          const premiumGroups = {};
+          for (const cls of premiumClasses) {
+            const premium = Number(cls.teacherPremium);
+            const key = premium.toFixed(2);
+            if (!premiumGroups[key]) {
+              premiumGroups[key] = { premium, totalHours: 0, subjects: new Set() };
+            }
+            premiumGroups[key].totalHours += (Number(cls.duration || 0) / 60);
+            if (cls.subject) premiumGroups[key].subjects.add(cls.subject);
+          }
+
+          for (const [, group] of Object.entries(premiumGroups)) {
+            const extraAmount = Math.round(group.totalHours * group.premium * 100) / 100;
+            if (extraAmount > 0) {
+              const subjectList = Array.from(group.subjects).join(', ') || 'Premium classes';
+              invoice.extras.push({
+                category: 'premium',
+                amountUSD: extraAmount,
+                reason: `Premium: ${subjectList} — ${group.totalHours.toFixed(1)} hrs × $${group.premium}/hr`,
+                addedAt: new Date(),
+                addedBy: userId || invoice.teacher
+              });
+            }
+          }
+        }
+      } catch (premiumErr) {
+        console.warn('[createTeacherInvoice] Failed to calculate teacher premiums:', premiumErr?.message || premiumErr);
+      }
 
       // Calculate amounts
       invoice.calculateAmounts();

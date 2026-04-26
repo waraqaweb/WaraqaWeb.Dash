@@ -428,9 +428,16 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit, endDate 
     return { error: 'No unpaid classes found for the selected period' };
   }
 
-  const rate = guardian.guardianInfo?.hourlyRate || 10;
+  // Resolve system default guardian rate
+  const SalarySettings = require('../models/SalarySettings');
+  const salarySettings = await SalarySettings.getGlobalSettings();
+  const systemDefaultRate = salarySettings?.defaultGuardianHourlyRate ?? 10;
+  const guardianDefaultRate = guardian.guardianInfo?.hourlyRate || systemDefaultRate;
+
   const items = selectedClasses.map((cls) => {
     const duration = Number(cls.duration || 60);
+    // Rate resolution: class-level > guardian-level > system default
+    const rate = (cls.guardianRate != null) ? cls.guardianRate : guardianDefaultRate;
     const amount = (duration / 60) * rate;
     const studentName = cls.student?.studentName || '';
     const [studentFirstName, ...studentLastBits] = studentName.split(' ').filter(Boolean);
@@ -479,7 +486,7 @@ const buildManualGuardianInvoiceData = async ({ guardianId, hoursLimit, endDate 
     startDate,
     endDate: coverageEndDate,
     totalHours,
-    rate,
+    rate: guardianDefaultRate,
     classIds: items.map((it) => it.class || it.lessonId).filter(Boolean),
     coverage,
     guardianFinancial,
@@ -1725,6 +1732,17 @@ router.post('/manual/guardian', authenticateToken, requireAdmin, async (req, res
       console.warn('Notification trigger failed', e.message);
     }
 
+    // ── Email: guardian invoice created ────────────────────────────────────
+    try {
+      const { enqueueEmail, buildGuardianInvoiceCreatedEmail } = require('../services/emailService');
+      const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
+      const guardianUser = invoice.guardian ? await require('../models/User').findById(invoice.guardian).select('email firstName timezone').lean() : null;
+      if (guardianUser?.email && await shouldSendEmail(invoice.guardian, 'invoiceCreated')) {
+        const tpl = await buildGuardianInvoiceCreatedEmail({ guardian: guardianUser, invoice });
+        await enqueueEmail({ to: guardianUser.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: 'invoiceCreated', userId: invoice.guardian, relatedId: invoice._id, priority: 2 });
+      }
+    } catch (e) { console.warn('[Email] guardian invoice created email failed:', e.message); }
+
     try {
       const io = req.app.get('io');
       if (io) io.emit('invoice:created', { invoice: invoice.toObject({ virtuals: true }) });
@@ -2494,6 +2512,10 @@ router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
         .populate('items.student', 'firstName lastName')
         .populate('items.teacher', 'firstName lastName');
 
+      if (!freshInvoice) {
+        return res.status(404).json({ success: false, message: 'Invoice not found' });
+      }
+
       let invoiceObj = freshInvoice.toObject ? freshInvoice.toObject({ virtuals: true }) : freshInvoice;
       try {
         const isManualInvoice = invoiceObj?.billingType === 'manual' || invoiceObj?.generationSource === 'manual';
@@ -2549,11 +2571,18 @@ router.post('/:id/refresh-classes', authenticateToken, async (req, res) => {
       .populate('items.teacher', 'firstName lastName');
 
     if (freshInvoice) {
-      freshInvoice.recalculateTotals();
-      await freshInvoice.save();
+      try {
+        freshInvoice.recalculateTotals();
+        await freshInvoice.save();
+      } catch (recalcErr) {
+        // Do not fail the whole refresh if totals persistence fails; return refreshed invoice payload.
+        console.warn('[POST /invoices/:id/refresh-classes] recalc/save failed', recalcErr?.message || recalcErr);
+      }
     }
 
-    const invoiceObj = freshInvoice ? (freshInvoice.toObject ? freshInvoice.toObject({ virtuals: true }) : freshInvoice) : result.invoice;
+    const invoiceObj = freshInvoice
+      ? (freshInvoice.toObject ? freshInvoice.toObject({ virtuals: true }) : freshInvoice)
+      : (result.invoice && result.invoice.toObject ? result.invoice.toObject({ virtuals: true }) : result.invoice);
 
     // Attach dynamicClasses so frontend gets fresh class statuses
     if (freshInvoice && invoiceObj) {

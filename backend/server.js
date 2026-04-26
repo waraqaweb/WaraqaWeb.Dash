@@ -333,6 +333,7 @@ const classReportsRouter = require('./routes/classReports');
 app.use('/api/class-reports', classReportsRouter);
 const settingsRouter = require('./routes/settings');
 app.use('/api/settings', settingsRouter);
+app.use('/api/settings/email', require('./routes/emailSettings'));
 app.use('/api/feedbacks', feedbackRoutes);
 app.use('/api/availability', availabilityRoutes);
 app.use('/api/teacher-salary', teacherSalaryRoutes);
@@ -476,6 +477,14 @@ const startDatabaseDependentJobs = () => {
     startInvoiceGenerationJob();
   } catch (e) {
     console.warn('Failed to start teacher invoice generation job:', e && e.message);
+  }
+
+  // Start email queue processor
+  try {
+    const { initEmailQueueProcessor } = require('./services/emailService');
+    initEmailQueueProcessor();
+  } catch (e) {
+    console.warn('Failed to start email queue processor:', e && e.message);
   }
 };
 

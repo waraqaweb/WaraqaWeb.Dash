@@ -38,7 +38,7 @@ const SalarySettings = () => {
   }, [isAdmin, navigate]);
 
   // State
-  const [activeTab, setActiveTab] = useState('exchange-rates'); // exchange-rates | partitions | transfer-fees
+  const [activeTab, setActiveTab] = useState('exchange-rates'); // exchange-rates | partitions | transfer-fees | guardian-rate
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -59,6 +59,11 @@ const SalarySettings = () => {
   const [settings, setSettings] = useState(null);
   const [editingPartition, setEditingPartition] = useState(null);
   const [editingTransferFee, setEditingTransferFee] = useState(null);
+
+  // Default Guardian Rate State
+  const [guardianRateValue, setGuardianRateValue] = useState('');
+  const [applyToAllGuardians, setApplyToAllGuardians] = useState(false);
+  const [editingGuardianRate, setEditingGuardianRate] = useState(false);
 
   // Fetch exchange rates for a year
   const fetchExchangeRates = useCallback(async () => {
@@ -198,6 +203,42 @@ const SalarySettings = () => {
     }
   };
 
+  // Update default guardian hourly rate
+  const handleUpdateGuardianRate = async () => {
+    const numRate = parseFloat(guardianRateValue);
+    if (isNaN(numRate) || numRate < 0) {
+      setError('Enter a valid rate (>= 0)');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError(null);
+
+      const response = await api.put('/teacher-salary/admin/settings/default-guardian-rate', {
+        rate: numRate,
+        applyToAllGuardians
+      });
+
+      const { updatedGuardianCount = 0, updatedInvoiceCount = 0 } = response.data;
+      let msg = 'Default guardian rate updated';
+      if (updatedGuardianCount > 0) msg += ` — ${updatedGuardianCount} guardian(s) updated`;
+      if (updatedInvoiceCount > 0) msg += `, ${updatedInvoiceCount} unpaid invoice(s) recalculated`;
+
+      setSuccessMessage(msg);
+      setEditingGuardianRate(false);
+      setApplyToAllGuardians(false);
+      fetchSettings();
+
+      setTimeout(() => setSuccessMessage(null), 5000);
+    } catch (err) {
+      console.error('Error updating guardian rate:', err);
+      setError(err.response?.data?.error || 'Failed to update guardian rate');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Generate year options (current year ± 2 years)
   const yearOptions = [];
   const currentYear = new Date().getFullYear();
@@ -307,6 +348,19 @@ const SalarySettings = () => {
               <div className="flex items-center gap-2">
                 <Settings className={`h-4 w-4 ${activeTab === 'transfer-fees' ? 'text-white' : 'text-gray-500'}`} />
                 <span>Transfer Fees</span>
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('guardian-rate')}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition ${
+                activeTab === 'guardian-rate'
+                  ? 'bg-[#2C736C] text-white shadow'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <DollarSign className={`h-4 w-4 ${activeTab === 'guardian-rate' ? 'text-white' : 'text-gray-500'}`} />
+                <span>Guardian Rate</span>
               </div>
             </button>
           </div>
@@ -743,6 +797,95 @@ const SalarySettings = () => {
                     <div className="text-sm text-blue-800">
                       <p className="font-medium mb-1">About Transfer Fees</p>
                       <p>Transfer fees are deducted when paying teachers. Defaults apply to new invoices but can be overridden.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Guardian Rate Tab */}
+            {activeTab === 'guardian-rate' && settings && (
+              <div className="space-y-6">
+                <div className="bg-white rounded-2xl shadow-sm">
+                  <div className="p-4">
+                    <h2 className="text-lg font-semibold text-gray-900">Default Guardian Hourly Rate</h2>
+                    <p className="text-sm text-gray-600 mt-1">System-wide default rate charged to guardians per hour.</p>
+                  </div>
+
+                  <div className="p-6 space-y-6">
+                    {editingGuardianRate ? (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Rate ($/hr)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={guardianRateValue}
+                            onChange={(e) => setGuardianRateValue(e.target.value)}
+                            className="w-full max-w-xs px-3 py-2 rounded-lg bg-gray-50 border border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                          />
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={applyToAllGuardians}
+                            onChange={(e) => setApplyToAllGuardians(e.target.checked)}
+                            className="rounded border-gray-300 text-[#2C736C] focus:ring-[#2C736C]"
+                          />
+                          Apply to all existing guardians (overwrite their individual rates)
+                        </label>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleUpdateGuardianRate}
+                            disabled={saving}
+                            className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56] disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingGuardianRate(false);
+                              setGuardianRateValue(settings?.defaultGuardianHourlyRate ?? 10);
+                              setApplyToAllGuardians(false);
+                            }}
+                            className="inline-flex items-center justify-center rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-4">
+                        <div className="text-xl font-bold text-gray-900">${settings?.defaultGuardianHourlyRate?.toFixed(2) ?? '10.00'}/hr</div>
+                        <button
+                          onClick={() => {
+                            setGuardianRateValue(settings?.defaultGuardianHourlyRate ?? 10);
+                            setEditingGuardianRate(true);
+                          }}
+                          className="text-sm font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Info Box */}
+                <div className="bg-blue-50 rounded-xl p-4">
+                  <div className="flex items-start gap-3">
+                    <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-blue-800">
+                      <p className="font-medium mb-1">How rates are resolved</p>
+                      <ul className="list-disc list-inside space-y-1">
+                        <li>A class-level rate (set on each class series) takes highest priority.</li>
+                        <li>If no class-level rate, the guardian's individual rate is used.</li>
+                        <li>If neither is set, this system default applies.</li>
+                      </ul>
+                      <p className="mt-2">Changing this rate also recalculates all <strong>unpaid</strong> invoices that rely on the default. Paid invoices are never changed.</p>
                     </div>
                   </div>
                 </div>

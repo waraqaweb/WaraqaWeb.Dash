@@ -2352,7 +2352,9 @@ fetchClassesRef.current = fetchClasses;
         meetingLink: fullClass.meetingLink || "",
         generationPeriodMonths: fullClass.recurrence?.generationPeriodMonths || 2,
         recurrenceDetails,
-        recurrence: fullClass.recurrence
+        recurrence: fullClass.recurrence,
+        guardianRate: fullClass.guardianRate ?? null,
+        teacherPremium: fullClass.teacherPremium ?? null
       });
       
       setShowEditModal(true);
@@ -2447,7 +2449,9 @@ fetchClassesRef.current = fetchClasses;
         meetingLink: editClass.meetingLink,
         timezone: editClass.timezone,
         isRecurring: editClass.isRecurring,
-        generationPeriodMonths: editClass.generationPeriodMonths
+        generationPeriodMonths: editClass.generationPeriodMonths,
+        guardianRate: editClass.guardianRate,
+        teacherPremium: editClass.teacherPremium
       };
 
       if (editUpdateScope === 'all' && editClass.isRecurring) {

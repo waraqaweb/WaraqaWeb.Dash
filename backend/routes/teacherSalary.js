@@ -988,6 +988,98 @@ router.put('/admin/settings/transfer-fee', authenticateToken, requireAdmin, asyn
   }
 });
 
+/**
+ * Update default guardian hourly rate
+ * PUT /api/teacher-salary/admin/settings/default-guardian-rate
+ */
+router.put('/admin/settings/default-guardian-rate', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { rate, applyToAllGuardians = false } = req.body;
+    const numRate = Number(rate);
+    if (!Number.isFinite(numRate) || numRate < 0) {
+      return res.status(400).json({ error: 'Valid rate is required (>= 0)' });
+    }
+
+    const settings = await SalarySettings.getGlobalSettings();
+    const oldRate = settings.defaultGuardianHourlyRate || 10;
+    settings.defaultGuardianHourlyRate = numRate;
+    settings.lastModifiedBy = req.user._id;
+    settings.lastModifiedAt = new Date();
+    settings.changeHistory.push({
+      changedAt: new Date(),
+      changedBy: req.user._id,
+      field: 'defaultGuardianHourlyRate',
+      oldValue: oldRate,
+      newValue: numRate,
+      note: applyToAllGuardians ? 'Applied to all guardians' : 'Future classes only'
+    });
+    await settings.save();
+
+    let updatedGuardianCount = 0;
+    if (applyToAllGuardians) {
+      const User = require('../models/User');
+      const result = await User.updateMany(
+        { role: 'guardian' },
+        { $set: { 'guardianInfo.hourlyRate': numRate } }
+      );
+      updatedGuardianCount = result.modifiedCount || 0;
+    }
+
+    // Update all unpaid guardian invoices to reflect the new default rate.
+    // Only update invoice items that don't have a class-level guardianRate override
+    // (i.e. items that were using the system default).
+    const Invoice = require('../models/Invoice');
+    const Class = require('../models/Class');
+    const unpaidInvoices = await Invoice.find({
+      status: { $nin: ['paid', 'cancelled', 'refunded'] },
+      deleted: { $ne: true },
+      type: { $ne: 'teacher' }
+    });
+
+    let updatedInvoiceCount = 0;
+    for (const invoice of unpaidInvoices) {
+      let changed = false;
+      for (const item of invoice.items) {
+        // Check if this class has its own guardianRate override
+        const classDoc = item.class
+          ? await Class.findById(item.class).select('guardianRate').lean()
+          : null;
+        if (classDoc?.guardianRate != null) continue; // class-level override, skip
+
+        // Check if guardian has a personal override different from old default
+        // Only update items that were using the system/guardian default
+        const itemRate = Number(item.rate || 0);
+        if (itemRate === oldRate || itemRate === 0) {
+          item.rate = numRate;
+          item.amount = Math.round(((Number(item.duration || 0) / 60) * numRate) * 100) / 100;
+          changed = true;
+        }
+      }
+      if (changed) {
+        invoice.subtotal = invoice.items.reduce((sum, it) => sum + (Number(it.amount || 0) || 0), 0);
+        if (invoice.guardianFinancial) {
+          invoice.guardianFinancial.hourlyRate = numRate;
+          invoice.markModified('guardianFinancial');
+        }
+        invoice.markModified('items');
+        await invoice.save();
+        updatedInvoiceCount++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Default guardian hourly rate updated',
+      defaultGuardianHourlyRate: numRate,
+      updatedGuardianCount,
+      updatedInvoiceCount
+    });
+  } catch (error) {
+    console.error('[PUT /admin/settings/default-guardian-rate] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ==================== EXCHANGE RATE ROUTES ====================
 
 /**

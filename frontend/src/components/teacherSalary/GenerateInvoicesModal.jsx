@@ -11,8 +11,8 @@ import {
   Calendar,
   Users,
   Search,
+  ChevronDown,
   CheckSquare,
-  Square,
   AlertCircle,
   FileText,
   Loader
@@ -31,15 +31,20 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
   const [generationType, setGenerationType] = useState('all'); // 'all' or 'specific'
   const [selectedTeachers, setSelectedTeachers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [teacherDropdownOpen, setTeacherDropdownOpen] = useState(false);
   const [releaseLoadingId, setReleaseLoadingId] = useState(null);
   const [releaseMessage, setReleaseMessage] = useState(null);
+
+  const setMonthYearFromDate = (date) => {
+    setSelectedMonth(String(date.getMonth() + 1));
+    setSelectedYear(String(date.getFullYear()));
+  };
 
   // Initialize with previous month
   useEffect(() => {
     const now = new Date();
     const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    setSelectedMonth(String(previousMonth.getMonth() + 1));
-    setSelectedYear(String(previousMonth.getFullYear()));
+    setMonthYearFromDate(previousMonth);
   }, []);
 
   // Fetch teachers
@@ -88,30 +93,15 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
     setSelectedTeachers([]);
   };
 
-  // Generate month options (last 12 months)
-  const monthOptions = useMemo(() => {
-    const months = [];
-    const now = new Date();
-    for (let i = 0; i < 12; i++) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      months.push({
-        value: String(date.getMonth() + 1),
-        year: String(date.getFullYear()),
-        label: date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-      });
-    }
-    return months;
-  }, []);
-
   // Handle form submission
   const handleGenerate = async () => {
     if (!selectedMonth || !selectedYear) {
-      setError('Please select a month and year');
+      setError('Select a month');
       return;
     }
 
     if (generationType === 'specific' && selectedTeachers.length === 0) {
-      setError('Please select at least one teacher');
+      setError('Select at least one teacher');
       return;
     }
 
@@ -187,6 +177,23 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
     }
   };
 
+  const selectedCount = generationType === 'all' ? teachers.length : selectedTeachers.length;
+  const selectedMonthLabel = (selectedYear && selectedMonth)
+    ? new Date(Number(selectedYear), Number(selectedMonth) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    : 'Selected month';
+  const selectedMonthInputValue = (selectedYear && selectedMonth)
+    ? `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`
+    : '';
+  const now = new Date();
+  const quickMonthOptions = [
+    { key: 'previous', label: 'Last', date: new Date(now.getFullYear(), now.getMonth() - 1, 1) },
+    { key: 'current', label: 'Current', date: new Date(now.getFullYear(), now.getMonth(), 1) }
+  ];
+  const selectedTeacherObjects = useMemo(
+    () => teachers.filter((t) => selectedTeachers.includes(t._id)),
+    [teachers, selectedTeachers]
+  );
+
   const handleReleaseLinkedClasses = async (teacherId) => {
     if (!teacherId || !selectedMonth || !selectedYear) return;
     const month = parseInt(selectedMonth);
@@ -213,16 +220,16 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col border border-slate-200">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-slate-200">
+        <div className="flex items-center justify-between p-6 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+            <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
               <FileText className="w-5 h-5 text-blue-600" />
             </div>
             <div>
               <h2 className="text-xl font-semibold text-slate-900">Generate Teacher Invoices</h2>
-              <p className="text-sm text-slate-500">Creates or updates unpaid invoices for the selected month</p>
+              <p className="text-sm text-slate-500">Monthly invoice run</p>
             </div>
           </div>
           <button
@@ -313,165 +320,173 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
           )}
 
           {/* Month Selection */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              <Calendar className="w-4 h-4 inline mr-1" />
-              Select Month
-            </label>
-            <select
-              value={`${selectedYear}-${selectedMonth}`}
-              onChange={(e) => {
-                const [year, month] = e.target.value.split('-');
-                setSelectedYear(year);
-                setSelectedMonth(month);
-              }}
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-              disabled={loading}
-            >
-              {monthOptions.map(opt => (
-                <option key={`${opt.year}-${opt.value}`} value={`${opt.year}-${opt.value}`}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <label className="block text-sm font-medium text-slate-700">
+                <Calendar className="w-4 h-4 inline mr-1" />
+                Month
+              </label>
+              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                {selectedMonthLabel}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-center">
+              <input
+                type="month"
+                value={selectedMonthInputValue}
+                onChange={(e) => {
+                  const [year, month] = e.target.value.split('-');
+                  setSelectedYear(year || '');
+                  setSelectedMonth(month ? String(Number(month)) : '');
+                }}
+                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                disabled={loading}
+              />
+
+              <div className="flex flex-wrap gap-2">
+                {quickMonthOptions.map((quick) => (
+                  <button
+                    key={quick.key}
+                    type="button"
+                    onClick={() => setMonthYearFromDate(quick.date)}
+                    disabled={loading}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                  >
+                    {quick.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           {/* Generation Type */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-3">
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-slate-700">
               <Users className="w-4 h-4 inline mr-1" />
-              Generate For
+              Scope
             </label>
-            <div className="space-y-2">
-              <label className="flex items-center space-x-3 p-3 border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer">
-                <input
-                  type="radio"
-                  name="generationType"
-                  value="all"
-                  checked={generationType === 'all'}
-                  onChange={(e) => setGenerationType(e.target.value)}
-                  className="w-4 h-4 text-blue-600"
-                  disabled={loading}
-                />
-                <div className="flex-1">
-                  <div className="font-medium text-slate-900">All Teachers</div>
-                  <div className="text-sm text-slate-500">
-                    Generate invoices for all {teachers.length} active teachers
-                  </div>
-                </div>
-              </label>
+            <div className="grid gap-2 md:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setGenerationType('all')}
+                disabled={loading}
+                className={`rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                  generationType === 'all'
+                    ? 'border-blue-300 bg-blue-50 text-blue-700'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                All teachers
+              </button>
 
-              <label className="flex items-center space-x-3 p-3 border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer">
-                <input
-                  type="radio"
-                  name="generationType"
-                  value="specific"
-                  checked={generationType === 'specific'}
-                  onChange={(e) => setGenerationType(e.target.value)}
-                  className="w-4 h-4 text-blue-600"
-                  disabled={loading}
-                />
-                <div className="flex-1">
-                  <div className="font-medium text-slate-900">Specific Teachers</div>
-                  <div className="text-sm text-slate-500">
-                    Choose which teachers to generate invoices for
-                  </div>
-                </div>
-              </label>
+              <button
+                type="button"
+                onClick={() => setGenerationType('specific')}
+                disabled={loading}
+                className={`rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                  generationType === 'specific'
+                    ? 'border-blue-300 bg-blue-50 text-blue-700'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                Selected teachers
+              </button>
             </div>
           </div>
 
           {/* Teacher Selection (shown when generationType is 'specific') */}
           {generationType === 'specific' && (
-            <div className="border border-slate-200 rounded-lg overflow-hidden">
-              <div className="bg-slate-50 p-4 border-b border-slate-200 space-y-3">
-                {/* Search */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Search teachers by name or email..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                    disabled={loading}
-                  />
-                </div>
-
-                {/* Select all/none */}
-                <div className="flex items-center justify-between">
-                  <div className="text-sm text-slate-600">
-                    {selectedTeachers.length} of {filteredTeachers.length} selected
-                  </div>
-                  <div className="flex space-x-2">
+            <div className="space-y-3">
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Selected</div>
+                {selectedTeacherObjects.length === 0 ? (
+                  <div className="text-sm text-slate-500">No teachers selected</div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedTeacherObjects.map((teacher) => (
+                      <span key={teacher._id} className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                        {teacher.firstName} {teacher.lastName}
                         <button
-                          onClick={selectAll}
-                          className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                          disabled={loading}
-                          aria-label="Select all teachers"
+                          type="button"
+                          onClick={() => toggleTeacher(teacher._id)}
+                          className="text-blue-500 hover:text-blue-700"
+                          aria-label={`Remove ${teacher.firstName} ${teacher.lastName}`}
                         >
-                          Select All
+                          <X className="h-3.5 w-3.5" />
                         </button>
-                    <span className="text-slate-300">|</span>
-                    <button
-                      onClick={deselectAll}
-                      className="text-sm text-slate-600 hover:text-slate-700 font-medium"
-                      disabled={loading}
-                      aria-label="Clear teacher selection"
-                    >
-                      Clear
-                    </button>
+                      </span>
+                    ))}
                   </div>
-                </div>
+                )}
               </div>
 
-              {/* Teacher list */}
-              <div className="max-h-64 overflow-y-auto">
-                {loadingTeachers ? (
-                  <div className="flex items-center justify-center py-8">
-                    <LoadingSpinner size="sm" />
-                    <span className="ml-2 text-sm text-slate-500">Loading teachers...</span>
-                  </div>
-                ) : filteredTeachers.length === 0 ? (
-                  <div className="text-center py-8 text-slate-500">
-                    <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">
-                      {searchTerm ? 'No teachers found matching your search' : 'No active teachers found'}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-slate-100">
-                    {filteredTeachers.map(teacher => (
-                      <label
-                        key={teacher._id}
-                        className="flex items-center space-x-3 p-4 hover:bg-slate-50 cursor-pointer"
-                      >
-                        <div className="flex-shrink-0">
-                          {selectedTeachers.includes(teacher._id) ? (
-                            <CheckSquare className="w-5 h-5 text-blue-600" />
-                          ) : (
-                            <Square className="w-5 h-5 text-slate-400" />
-                          )}
-                        </div>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setTeacherDropdownOpen((prev) => !prev)}
+                  disabled={loading || loadingTeachers}
+                  className="flex w-full items-center justify-between rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  <span>{selectedTeachers.length > 0 ? `${selectedTeachers.length} selected` : 'Choose teachers'}</span>
+                  <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${teacherDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {teacherDropdownOpen && (
+                  <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                    <div className="border-b border-slate-100 p-3 space-y-2">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                         <input
-                          type="checkbox"
-                          checked={selectedTeachers.includes(teacher._id)}
-                          onChange={() => toggleTeacher(teacher._id)}
-                          className="sr-only"
+                          type="text"
+                          placeholder="Search teachers..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                           disabled={loading}
                         />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-slate-900">
-                            {teacher.firstName} {teacher.lastName}
-                          </div>
-                          {teacher.email && (
-                            <div className="text-sm text-slate-500 truncate">
-                              {teacher.email}
-                            </div>
-                          )}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-slate-500">{selectedTeachers.length}/{teachers.length}</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={selectAll}
+                            className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                          >
+                            All
+                          </button>
+                          <button
+                            type="button"
+                            onClick={deselectAll}
+                            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                          >
+                            Clear
+                          </button>
                         </div>
-                      </label>
-                    ))}
+                      </div>
+                    </div>
+
+                    <div className="max-h-56 overflow-y-auto p-1.5">
+                      {filteredTeachers.length === 0 ? (
+                        <div className="px-3 py-6 text-center text-sm text-slate-500">No matches</div>
+                      ) : (
+                        filteredTeachers.map((teacher) => {
+                          const checked = selectedTeachers.includes(teacher._id);
+                          return (
+                            <button
+                              key={teacher._id}
+                              type="button"
+                              onClick={() => toggleTeacher(teacher._id)}
+                              className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${checked ? 'bg-blue-50 text-blue-700' : 'hover:bg-slate-50 text-slate-700'}`}
+                            >
+                              <span className="truncate">{teacher.firstName} {teacher.lastName}</span>
+                              {checked && <CheckSquare className="h-4 w-4" />}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -479,40 +494,23 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
           )}
 
           {/* Info box */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
             <div className="flex items-start space-x-3">
               <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
               <div className="text-sm text-blue-800 space-y-1">
-                <p className="font-medium">How it works:</p>
-                <ul className="list-disc list-inside space-y-1 ml-2">
-                  <li>If a teacher already has an invoice for this month and no new unbilled classes, it will be skipped</li>
-                  <li>If there's no invoice yet and there are unbilled classes, a new invoice will be created</li>
-                  <li>If there's an unpaid invoice with new unbilled classes, it will be adjusted to include them</li>
-                  <li>If the month's main invoice is already paid and new unbilled classes appear (late reports), an adjustment invoice will be created</li>
-                  <li>Teachers with zero hours will be skipped</li>
-                </ul>
-                <p className="pt-2 text-blue-900">
-                  Fields affected: creates/updates <span className="font-mono">TeacherInvoice</span> records and links classes by setting <span className="font-mono">Class.billedInTeacherInvoiceId</span>.
-                </p>
+                <p className="font-medium">What happens</p>
+                <p>Creates or updates unpaid invoices and skips zero hours.</p>
               </div>
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end space-x-3 p-6 border-t border-slate-200 bg-slate-50">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-slate-700 hover:text-slate-900 font-medium transition-colors"
-            disabled={loading}
-            aria-label="Cancel invoice generation"
-          >
-            Cancel
-          </button>
+        <div className="flex items-center justify-end gap-3 p-6 border-t border-slate-200 bg-slate-50">
           <button
             onClick={handleGenerate}
             disabled={loading || loadingTeachers}
-            className="px-6 py-2 bg-[var(--primary)] text-white rounded-lg hover:brightness-90 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors flex items-center space-x-2"
+            className="px-6 py-2.5 bg-[var(--primary)] text-white rounded-lg hover:brightness-90 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors flex items-center space-x-2"
             aria-label="Generate invoices"
           >
             {loading ? (
@@ -523,9 +521,17 @@ const GenerateInvoicesModal = ({ onClose, onSuccess }) => {
             ) : (
               <>
                 <FileText className="w-4 h-4" />
-                <span>Generate Invoices</span>
+                <span>Generate {selectedCount > 0 ? `(${selectedCount})` : ''}</span>
               </>
             )}
+          </button>
+          <button
+            onClick={onClose}
+            className="px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 font-medium transition-colors"
+            disabled={loading}
+            aria-label="Cancel invoice generation"
+          >
+            Cancel
           </button>
         </div>
       </div>

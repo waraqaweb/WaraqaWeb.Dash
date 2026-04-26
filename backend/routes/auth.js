@@ -178,6 +178,18 @@ router.post(
       if (!user.phone || !user.timezone || !user.gender || !user.dateOfBirth) {
         notificationService.notifyProfileIncomplete(user).catch(console.error);
       }
+
+      // --- Email: registration welcome ---
+      try {
+        const { enqueueEmail, buildRegistrationWelcomeEmail } = require('../services/emailService');
+        const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
+        const canSend = await shouldSendEmail(user._id, 'registration');
+        if (canSend && user.email) {
+          const tpl = await buildRegistrationWelcomeEmail({ name: user.firstName, email: user.email, role: user.role });
+          await enqueueEmail({ to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: 'registration', userId: user._id, priority: 2 });
+        }
+      } catch (e) { console.warn('[Email] registration welcome failed:', e.message); }
+
       // Update lastLogin timestamp
       try {
         user.lastLogin = new Date();

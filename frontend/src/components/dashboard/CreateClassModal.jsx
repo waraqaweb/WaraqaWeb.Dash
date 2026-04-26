@@ -1305,6 +1305,55 @@ export default function CreateClassModal({
               </div>
             </div>
 
+            {/* Rate Overrides (optional) */}
+            <details className="border border-gray-200 rounded-md">
+              <summary className="px-3 py-2 text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 select-none">
+                Rate Overrides (optional)
+              </summary>
+              <div className="px-3 pb-3 pt-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Guardian Rate ($/hr)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.25"
+                    value={currentNewClass.guardianRate ?? ''}
+                    onChange={(e) =>
+                      currentSetNewClass((prev) => ({
+                        ...prev,
+                        guardianRate: e.target.value === '' ? null : Number(e.target.value),
+                      }))
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    placeholder="Default"
+                  />
+                  <p className="mt-0.5 text-[11px] text-gray-400">Leave empty for default</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Teacher Premium ($/hr)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.25"
+                    value={currentNewClass.teacherPremium ?? ''}
+                    onChange={(e) =>
+                      currentSetNewClass((prev) => ({
+                        ...prev,
+                        teacherPremium: e.target.value === '' ? null : Number(e.target.value),
+                      }))
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    placeholder="No premium"
+                  />
+                  <p className="mt-0.5 text-[11px] text-gray-400">Extra $/hr for teacher</p>
+                </div>
+              </div>
+            </details>
+
             {/* Additional Fields */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>

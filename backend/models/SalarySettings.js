@@ -71,6 +71,9 @@ const salarySettingsSchema = new Schema({
     default: 'bank_transfer'
   },
 
+  // Default guardian hourly rate (USD) — used when no class-level or guardian-level override exists
+  defaultGuardianHourlyRate: { type: Number, default: 10, min: 0 },
+
   // Invoice Generation Settings
   autoGenerateInvoices: { type: Boolean, default: true },
   generationDay: { type: Number, default: 1, min: 1, max: 28 }, // Day of month

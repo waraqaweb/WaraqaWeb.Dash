@@ -3847,4 +3847,52 @@ router.delete('/:id/profile-picture', authenticateToken, async (req, res) => {
   }
 });
 
+// ── Email preferences ─────────────────────────────────────────────────────────
+
+router.get('/me/email-preferences', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('emailPreferences').lean();
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user.emailPreferences || {});
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.put('/me/email-preferences', authenticateToken, async (req, res) => {
+  try {
+    const allowed = ['globalEnabled','classCreated','classCancelled','classRescheduled','poorPerformance',
+      'monthlyReport','invoiceCreated','invoiceSend','consecutiveAbsent','vacationApproved',
+      'vacationGuardianNotice','vacationResumed','teacherReassigned','seriesCancelled',
+      'meetingScheduled','studentCreated','studentDeleted','registration','teacherInvoice',
+      'monthlyAdminReport','systemAlert','availabilityChanged'];
+    const update = {};
+    allowed.forEach(k => { if (req.body[k] !== undefined) update[`emailPreferences.${k}`] = !!req.body[k]; });
+    if (!Object.keys(update).length) return res.status(400).json({ message: 'No valid fields' });
+    const user = await User.findByIdAndUpdate(req.user.id, { $set: update }, { new: true }).select('emailPreferences');
+    res.json(user.emailPreferences);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Admin: update any user's email preferences
+router.put('/:id/email-preferences', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const allowed = ['globalEnabled','classCreated','classCancelled','classRescheduled','poorPerformance',
+      'monthlyReport','invoiceCreated','invoiceSend','consecutiveAbsent','vacationApproved',
+      'vacationGuardianNotice','vacationResumed','teacherReassigned','seriesCancelled',
+      'meetingScheduled','studentCreated','studentDeleted','registration','teacherInvoice',
+      'monthlyAdminReport','systemAlert','availabilityChanged'];
+    const update = {};
+    allowed.forEach(k => { if (req.body[k] !== undefined) update[`emailPreferences.${k}`] = !!req.body[k]; });
+    if (!Object.keys(update).length) return res.status(400).json({ message: 'No valid fields' });
+    const user = await User.findByIdAndUpdate(req.params.id, { $set: update }, { new: true }).select('emailPreferences');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user.emailPreferences);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

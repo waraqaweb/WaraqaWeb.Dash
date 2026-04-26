@@ -755,22 +755,24 @@ function App() {
   }, []);
 
   const resolvedBasename = React.useMemo(() => {
-    const publicUrl = process.env.PUBLIC_URL || '/';
+    // Dev: Vite serves from root, no /dashboard/ prefix
+    const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
+    if (isDev) return '/';
 
-    // In local dev we want routes to work from the root (e.g. /public/...).
-    if (process.env.NODE_ENV === 'development') return '/';
-
-    // In production we support both:
-    // - dashboard hosted under PUBLIC_URL (typically /dashboard)
-    // - public pages hosted at the root (/public/...) via nginx rewrite to the same SPA
     if (typeof window !== 'undefined') {
       const path = window.location.pathname || '/';
-      if (path.startsWith('/public')) return '/';
-      if (path.startsWith('/interactive-learning')) return '/';
-      if (publicUrl !== '/' && path.startsWith(publicUrl)) return publicUrl;
+
+      // These public paths are served by nginx rewriting directly to index.html
+      // without the /dashboard/ prefix — basename must be '/'
+      if (path.startsWith('/public/') || path.startsWith('/interactive-learning')) return '/';
+
+      // Use Vite's injected BASE_URL (= '/dashboard/' in production builds, '/' in dev)
+      const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) || '/';
+      const normalizedBase = baseUrl === '/' ? '/' : baseUrl.replace(/\/$/, ''); // '/dashboard'
+      if (normalizedBase !== '/' && path.startsWith(normalizedBase)) return normalizedBase;
     }
 
-    return publicUrl || '/';
+    return '/';
   }, []);
 
   return (

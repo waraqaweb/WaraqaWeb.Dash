@@ -2313,9 +2313,12 @@ router.post(
       const {
         title, description, subject, teacher, student,
         scheduledDate, duration, timezone, isRecurring,
-          anchoredTimezone, recurrence, meetingLink, materials, recurrenceDetails = []
+          anchoredTimezone, recurrence, meetingLink, materials, recurrenceDetails = [],
+          guardianRate: rawGuardianRate, teacherPremium: rawTeacherPremium
       } = req.body;
         const overrideDuplicateSeries = toBool(req.body.overrideDuplicateSeries);
+      const guardianRate = rawGuardianRate != null && rawGuardianRate !== '' ? Number(rawGuardianRate) : null;
+      const teacherPremium = rawTeacherPremium != null && rawTeacherPremium !== '' ? Number(rawTeacherPremium) : null;
 
       // Validate references
       console.log("Validating teacher:", teacher);
@@ -2406,6 +2409,8 @@ router.post(
           materials: Array.isArray(materials) ? materials : (materials ? [materials] : []),
           createdBy: req.user._id,
           status: "scheduled",
+          guardianRate: Number.isFinite(guardianRate) ? guardianRate : null,
+          teacherPremium: Number.isFinite(teacherPremium) ? teacherPremium : null,
           ...(reportSubmission ? { reportSubmission } : {}),
         });
 
@@ -2623,6 +2628,8 @@ router.post(
           materials: Array.isArray(materials) ? materials : (materials ? [materials] : []),
           createdBy: req.user._id,
           status: "pattern",
+          guardianRate: Number.isFinite(guardianRate) ? guardianRate : null,
+          teacherPremium: Number.isFinite(teacherPremium) ? teacherPremium : null,
         });
 
         await pattern.save();
@@ -2980,6 +2987,14 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
         lastModifiedAt: new Date(),
       };
 
+      // Apply rate overrides if provided
+      if (updates.guardianRate !== undefined) {
+        updatePayload.guardianRate = (updates.guardianRate != null && updates.guardianRate !== '') ? Number(updates.guardianRate) : null;
+      }
+      if (updates.teacherPremium !== undefined) {
+        updatePayload.teacherPremium = (updates.teacherPremium != null && updates.teacherPremium !== '') ? Number(updates.teacherPremium) : null;
+      }
+
       const shouldReopenReportWindow = updates.scheduledDate
         && !classDoc.classReport?.submittedAt
         && resolvedScheduledDate instanceof Date
@@ -3243,6 +3258,14 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
     pattern.lastModifiedBy = req.user._id;
     pattern.lastModifiedAt = new Date();
 
+    // Apply rate overrides if provided
+    if (updates.guardianRate !== undefined) {
+      pattern.guardianRate = (updates.guardianRate != null && updates.guardianRate !== '') ? Number(updates.guardianRate) : null;
+    }
+    if (updates.teacherPremium !== undefined) {
+      pattern.teacherPremium = (updates.teacherPremium != null && updates.teacherPremium !== '') ? Number(updates.teacherPremium) : null;
+    }
+
     await pattern.save();
 
     // Replace future instances.
@@ -3382,18 +3405,25 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
               scheduledDate: { $gte: billingStart, $lte: billingEnd },
               status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'] }
             })
-              .select('_id subject scheduledDate duration student teacher status')
+              .select('_id subject scheduledDate duration student teacher status guardianRate')
               .lean();
             
             console.log(`[Recurring Update] Found ${currentClasses.length} classes within billing period (${billingStart.toISOString().slice(0,10)} to ${billingEnd.toISOString().slice(0,10)})`);
             
-            // Rebuild items array
-            const rate = invoice.hourlyRate || 10;
+            // Resolve system default rate
+            const SalarySettings = require('../models/SalarySettings');
+            const salarySettings = await SalarySettings.getGlobalSettings();
+            const systemDefaultRate = salarySettings?.defaultGuardianHourlyRate ?? 10;
+            const guardianDoc = await User.findById(guardianId).select('guardianInfo.hourlyRate').lean();
+            const guardianDefaultRate = guardianDoc?.guardianInfo?.hourlyRate || systemDefaultRate;
+
+            // Rebuild items array — per-class rate resolution
             const newItems = currentClasses.map(cls => {
               const studentFullName = (cls.student && cls.student.studentName) || '';
               const [fn, ...rest] = String(studentFullName).trim().split(' ').filter(Boolean);
               const ln = rest.join(' ');
               const itemHours = (Number(cls.duration || 0) || 0) / 60;
+              const rate = (cls.guardianRate != null) ? cls.guardianRate : guardianDefaultRate;
               
               return {
                 lessonId: String(cls._id),
@@ -3412,7 +3442,7 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
             
             // Update invoice
             const totalHours = newItems.reduce((sum, item) => sum + (item.duration / 60), 0);
-            const subtotal = Math.round(totalHours * rate * 100) / 100;
+            const subtotal = newItems.reduce((sum, item) => sum + (Number(item.amount || 0) || 0), 0);
             
             invoice.items = newItems;
             invoice.totalHours = totalHours;

@@ -1091,7 +1091,7 @@ class InvoiceService {
       // Build initial item from the reported class
       const duration = Number(classDoc.duration || 60);
       const hours = Number(duration) / 60;
-      const rate = defaultRate;
+      const rate = (Number.isFinite(classDoc.guardianRate) && classDoc.guardianRate > 0) ? classDoc.guardianRate : defaultRate;
       const amount = Math.round((hours * rate) * 100) / 100;
 
       const studentId = classDoc.student?.studentId || (classDoc.student && classDoc.student.studentId) || null;
@@ -1142,7 +1142,7 @@ class InvoiceService {
             _id: { $nin: billedIds },
             status: { $nin: [...NOT_ELIGIBLE_STATUSES] }
           })
-            .select('_id subject scheduledDate duration student teacher status billedInInvoiceId classReport reportSubmission')
+            .select('_id subject scheduledDate duration student teacher status billedInInvoiceId classReport reportSubmission guardianRate')
             .lean();
 
           // Post-filter: catch expired admin extensions / submission windows
@@ -1175,6 +1175,7 @@ class InvoiceService {
             // Use the actual class status from database - don't force or derive anything
             const classStatus = cls.status || 'scheduled';
             const attended = cls.status === 'attended';
+            const clsRate = (Number.isFinite(cls.guardianRate) && cls.guardianRate > 0) ? cls.guardianRate : defaultRate;
             
             items.push({
               lessonId: String(cls._id),
@@ -1185,8 +1186,8 @@ class InvoiceService {
               description: `${cls.subject || 'Class'}`,
               date: cls.scheduledDate || firstDate,
               duration: Number(cls.duration || 0) || 0,
-              rate: defaultRate,
-              amount: Math.round((itemHours * defaultRate) * 100) / 100,
+              rate: clsRate,
+              amount: Math.round((itemHours * clsRate) * 100) / 100,
               attended: attended,
               status: classStatus
             });
@@ -1483,7 +1484,7 @@ class InvoiceService {
           }
 
           let upcoming = await Class.find(upcomingQuery)
-            .select('_id subject scheduledDate duration student teacher status reportSubmission')
+            .select('_id subject scheduledDate duration student teacher status reportSubmission guardianRate')
             .lean();
 
           if (!upcoming.length && trackedStudentIds.length > 0) {
@@ -1498,7 +1499,7 @@ class InvoiceService {
               status: upcomingQuery.status
             };
             upcoming = await Class.find(fallbackUpcomingQuery)
-              .select('_id subject scheduledDate duration student teacher status reportSubmission')
+              .select('_id subject scheduledDate duration student teacher status reportSubmission guardianRate')
               .lean();
           }
 
@@ -1516,7 +1517,7 @@ class InvoiceService {
           console.log(`🔍 [Zero-Hour PAYG Invoice] Found ${upcoming.length} eligible classes in billing period`);
 
           if (Array.isArray(upcoming) && upcoming.length > 0) {
-            const rate = guardian.guardianInfo?.hourlyRate || defaultRate;
+            const guardianDefaultRate = guardian.guardianInfo?.hourlyRate || defaultRate;
             items = upcoming.map((cls) => {
               const fullName = (cls.student && cls.student.studentName) || '';
               const [firstName, ...rest] = String(fullName).trim().split(' ').filter(Boolean);
@@ -1525,6 +1526,7 @@ class InvoiceService {
               // Use the actual class status from database - don't force or derive anything
               const classStatus = cls.status || 'scheduled';
               const attended = cls.status === 'attended';
+              const rate = (Number.isFinite(cls.guardianRate) && cls.guardianRate > 0) ? cls.guardianRate : guardianDefaultRate;
               
               return {
                 lessonId: cls._id ? String(cls._id) : null,

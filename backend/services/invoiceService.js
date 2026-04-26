@@ -856,7 +856,7 @@ class InvoiceService {
         let unpaidClasses = await Class.find(unpaidQuery)
           .populate("student.guardianId", "firstName lastName email")
           .populate("teacher")
-          .select('scheduledDate duration subject status teacher student reportSubmission date')
+          .select('scheduledDate duration subject status teacher student reportSubmission date guardianRate')
           .lean();
 
         console.log(`🔍 [Zero-Hour Invoice] Processing guardian: ${guardian.firstName} ${guardian.lastName}`);
@@ -2475,7 +2475,7 @@ class InvoiceService {
 
         const classDocs = candidateObjectIds.length
           ? await Class.find({ _id: { $in: candidateObjectIds } })
-              .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId')
+              .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId guardianRate')
               .lean()
           : [];
 
@@ -2676,7 +2676,7 @@ class InvoiceService {
         status: { $ne: 'pattern' }
       })
         .sort({ scheduledDate: 1, createdAt: 1 })
-        .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId paidByGuardian')
+        .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId paidByGuardian guardianRate')
         .lean();
 
       // 4. Classify each class and enrich with deadline info
@@ -3087,7 +3087,7 @@ class InvoiceService {
       let classDocs = await Class.find(classQuery)
         .sort({ scheduledDate: 1, createdAt: 1 })
         .limit(MAX_DYNAMIC_CLASS_RESULTS)
-        .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId')
+        .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId guardianRate')
         .lean();
 
       if (!classDocs.length && studentIds.length > 0) {
@@ -3112,7 +3112,7 @@ class InvoiceService {
         classDocs = await Class.find(fallbackQuery)
           .sort({ scheduledDate: 1, createdAt: 1 })
           .limit(MAX_DYNAMIC_CLASS_RESULTS)
-          .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId')
+          .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId guardianRate')
           .lean();
       }
 
@@ -3125,7 +3125,7 @@ class InvoiceService {
 
       if (pinnedObjectIds.length) {
         const pinnedDocs = await Class.find({ _id: { $in: pinnedObjectIds } })
-          .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId')
+          .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId guardianRate')
           .lean();
 
         if (Array.isArray(pinnedDocs) && pinnedDocs.length) {

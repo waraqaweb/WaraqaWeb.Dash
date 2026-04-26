@@ -3363,6 +3363,40 @@ class InvoiceService {
         }
       });
 
+      // Re-price existing items whose rate has changed (e.g. cls.guardianRate set after invoice creation)
+      const rateUpdateItemIds = [];
+      const rateUpdateItems = [];
+      desiredByClass.forEach((desired, key) => {
+        const current = currentByClass.get(key);
+        if (!current) return; // will be added below
+        const desiredRate = Number(desired.rate || 0);
+        const currentRate = Number(current.rate || 0);
+        if (desiredRate > 0 && Math.abs(desiredRate - currentRate) > 0.001) {
+          // Remove old, re-add with corrected rate
+          if (current._id) rateUpdateItemIds.push(String(current._id));
+          const cls = desired.class || {};
+          const classId = normalizeClassId(cls?._id || desired.class || desired.lessonId || key);
+          const classObjectId = toObjectId(classId) || classId;
+          const minutes = Number(desired.duration || cls?.duration || 0) || 0;
+          const amount = Math.round(((minutes / 60) * desiredRate) * 100) / 100;
+          rateUpdateItems.push({
+            lessonId: String(classId || ''),
+            class: classObjectId,
+            student: desired.student || cls?.student?.studentId || current.student || null,
+            studentSnapshot: desired.studentSnapshot || current.studentSnapshot || resolveStudentSnapshotFromClass(cls),
+            teacher: desired.teacher?._id || desired.teacher || current.teacher || null,
+            teacherSnapshot: desired.teacherSnapshot || current.teacherSnapshot || null,
+            description: desired.description || current.description || cls?.subject || 'Class session',
+            date: desired.date || current.date || cls?.scheduledDate || null,
+            duration: minutes,
+            rate: desiredRate,
+            amount,
+            attended: Boolean(desired.attended || current.attended),
+            status: desired.status || current.status || 'scheduled'
+          });
+        }
+      });
+
       const addItems = [];
       const hourlyRate = resolveInvoiceHourlyRate(invoice);
       desiredByClass.forEach((item, key) => {
@@ -3394,17 +3428,20 @@ class InvoiceService {
         });
       });
 
-      if (!addItems.length && !removeItemIds.length) {
+      const allRemoveIds = [...removeItemIds, ...rateUpdateItemIds];
+      const allAddItems = [...addItems, ...rateUpdateItems];
+
+      if (!allAddItems.length && !allRemoveIds.length) {
         if (!cleanupDuplicates) {
           return { success: true, noChanges: true, invoice };
         }
       }
 
-      const updateResult = (!addItems.length && !removeItemIds.length)
+      const updateResult = (!allAddItems.length && !allRemoveIds.length)
         ? { success: true, noChanges: true, invoice }
         : await InvoiceService.updateInvoiceItems(
             String(invoice._id),
-        { addItems, removeItemIds, note, transferOnDuplicate },
+        { addItems: allAddItems, removeItemIds: allRemoveIds, note, transferOnDuplicate },
             adminUserId
           );
 

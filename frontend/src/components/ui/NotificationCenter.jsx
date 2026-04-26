@@ -721,11 +721,20 @@ const NotificationCenter = () => {
                           </div>
                         )}
 
-                        {notification?.metadata?.scheduledDate && (
+                        {notification?.metadata?.kind === 'class_event' &&
+                          ['rescheduled', 'time_changed'].includes(notification.metadata?.eventType) &&
+                          notification.metadata?.oldDate ? (
+                          <div className="mt-2 grid grid-cols-[28px_1fr] gap-x-1.5 gap-y-0.5 text-xs">
+                            <span className="text-gray-400 font-medium pt-px">Was</span>
+                            <span className="text-gray-400 line-through">{formatDateTimeDDMMMYYYYhhmmA(notification.metadata.oldDate, { timeZone: userTimezone })}</span>
+                            <span className="text-gray-700 font-medium pt-px">Now</span>
+                            <span className="text-gray-800 font-semibold">{formatDateTimeDDMMMYYYYhhmmA(notification.metadata.scheduledDate, { timeZone: userTimezone })}</span>
+                          </div>
+                        ) : notification?.metadata?.scheduledDate ? (
                           <p className="text-xs text-gray-500 mt-2">
                             Lesson time: {formatDateTimeDDMMMYYYYhhmmA(notification.metadata.scheduledDate, { timeZone: userTimezone })}
                           </p>
-                        )}
+                        ) : null}
 
                         {notification?.metadata?.kind === 'class_reschedule_request' && notification?.metadata?.proposedDate && (
                           <p className="text-xs text-gray-500 mt-2">

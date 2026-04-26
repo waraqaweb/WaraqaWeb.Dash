@@ -16,20 +16,8 @@ async function runUninvoicedLessonsAudit(options = {}) {
   const notifyAdmins = String(process.env.AUDIT_NOTIFY_ADMINS || options.notifyAdmins || 'true').toLowerCase() === 'true';
 
   try {
-    let uninvoiced = await findUninvoicedLessons({ sinceDays, includeCancelled });
-    let total = uninvoiced.length;
-    if (total > 0) {
-      try {
-        const audit = require('../services/invoiceAuditService');
-        const resolveResult = await audit.resolveUninvoicedLessons({ sinceDays, includeCancelled, adminUserId: null });
-        if (resolveResult?.summary && (resolveResult.summary.attached + resolveResult.summary.created > 0)) {
-          uninvoiced = await findUninvoicedLessons({ sinceDays, includeCancelled });
-          total = uninvoiced.length;
-        }
-      } catch (resolveErr) {
-        console.warn('[UninvoicedLessonsAudit] Auto-resolve failed:', resolveErr && resolveErr.message);
-      }
-    }
+    const uninvoiced = await findUninvoicedLessons({ sinceDays, includeCancelled });
+    const total = uninvoiced.length;
     if (total === 0) {
       // Mark any stale warning notifications as read since everything is resolved
       try {

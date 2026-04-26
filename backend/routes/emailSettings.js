@@ -165,7 +165,8 @@ router.post('/test', async (req, res) => {
         const throttleMs = PRIORITY_GAP_MS[priority];
 
         await sendMail({ to, subject: `[TEST] ${tpl.subject}`, html: tpl.html, text: tpl.text });
-        await EmailLog.create({ to, subject: `[TEST] ${tpl.subject}`, type, status: 'sent', userId: admin._id, sentAt: new Date() });
+        // EmailLog.create is best-effort — test type keys don't always match enum values
+        EmailLog.create({ to, subject: `[TEST] ${tpl.subject}`, type: 'other', status: 'sent', userId: admin._id, sentAt: new Date() }).catch(() => {});
 
         const durationMs = Date.now() - t0;
         results.push({ type, status: 'sent', durationMs, throttleMs, subject: tpl.subject });

@@ -1987,6 +1987,7 @@ router.post(
             eventType: "rescheduled",
             actor: req.user,
             extraMsg: decisionNote ? `Note: ${decisionNote}` : "",
+            oldDate: requestSnapshot.originalDate,
           }).catch(console.error);
 
           if (requestSnapshot?.requestedBy) {
@@ -3014,6 +3015,7 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
       // Use .save() instead of findByIdAndUpdate so that pre/post save hooks fire.
       // This ensures onClassStateChanged is called for duration/status changes,
       // which updates guardian hours and invoice item snapshots.
+      const prevScheduledDate = classDoc.scheduledDate;
       Object.assign(classDoc, updatePayload);
       await classDoc.save();
       const updated = classDoc.toObject();
@@ -3021,14 +3023,12 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
       // Notification trigger: class rescheduled or time changed
       try {
         const notificationService = require('../services/notificationService');
-        let eventType = 'rescheduled';
-        if (updates.scheduledDate && new Date(updates.scheduledDate).getTime() !== new Date(classDoc.scheduledDate).getTime()) {
-          eventType = 'time_changed';
-        }
+        const eventType = 'rescheduled';
         notificationService.notifyClassEvent({
           classObj: { ...classDoc.toObject(), ...updatePayload },
           eventType,
-          actor: req.user
+          actor: req.user,
+          oldDate: prevScheduledDate
         }).catch(console.error);
       } catch (e) { console.warn("Notification trigger failed", e.message); }
 
@@ -3561,6 +3561,7 @@ router.put(
         classDoc.meetingLink = req.body.meetingLink || null;
       }
 
+      const prevDate = classDoc.scheduledDate;
       const savedClass = await classDoc.reschedule(newDate, req.body.reason.trim(), req.user._id);
 
       const populated = await Class.findById(savedClass._id)
@@ -3572,7 +3573,8 @@ router.put(
         notificationService.notifyClassEvent({
           classObj: populated,
           eventType: 'rescheduled',
-          actor: req.user
+          actor: req.user,
+          oldDate: prevDate
         }).catch(console.error);
       } catch (e) {
         console.warn("Notification trigger failed", e.message);

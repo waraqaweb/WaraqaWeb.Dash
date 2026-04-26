@@ -1203,6 +1203,13 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
           details: detailItems
         }
       });
+
+      // Mark any open "uninvoiced lessons detected" warning as read now that we've resolved
+      const Notification = require('../models/Notification');
+      await Notification.updateMany(
+        { user: req.user._id, relatedTo: 'system', relatedId: 'uninvoiced-lessons', isRead: false, 'metadata.kind': 'uninvoiced_lessons' },
+        { $set: { isRead: true } }
+      ).catch(() => { /* best effort */ });
     } catch (notifyErr) {
       console.warn('Failed to notify admin after uninvoiced resolve:', notifyErr?.message || notifyErr);
     }

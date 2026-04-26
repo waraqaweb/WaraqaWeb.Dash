@@ -105,7 +105,7 @@ async function notifyProfileIncomplete(user) {
 
 // --- CLASS EVENTS ---
 async function notifyClassEvent({
-  classObj, eventType, actor, extraMsg = ''
+  classObj, eventType, actor, extraMsg = '', oldDate = null
 }) {
   // eventType: 'added', 'cancelled', 'rescheduled', 'time_changed'
   const { teacher, student, _id, scheduledDate } = classObj;
@@ -141,12 +141,12 @@ async function notifyClassEvent({
       case 'rescheduled':
         return {
           title: 'Class rescheduled',
-          message: `${baseLine} has been moved to ${timeLabel}.${note}`
+          message: `${baseLine}${note ? `. ${note.trim()}` : '.'}`
         };
       case 'time_changed':
         return {
           title: 'Class time updated',
-          message: `${baseLine} time is now ${timeLabel}.${note}`
+          message: `${baseLine}${note ? `. ${note.trim()}` : '.'}`
         };
       default:
         return {
@@ -173,6 +173,7 @@ async function notifyClassEvent({
         eventType,
         classId: String(_id),
         scheduledDate: new Date(scheduledDate).toISOString(),
+        ...(oldDate ? { oldDate: new Date(oldDate).toISOString() } : {}),
         recipientTimezone: tz
       }
     });
@@ -193,6 +194,7 @@ async function notifyClassEvent({
         eventType,
         classId: String(_id),
         scheduledDate: new Date(scheduledDate).toISOString(),
+        ...(oldDate ? { oldDate: new Date(oldDate).toISOString() } : {}),
         recipientTimezone: tz
       }
     });

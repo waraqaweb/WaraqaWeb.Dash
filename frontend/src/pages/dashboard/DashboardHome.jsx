@@ -41,7 +41,7 @@ import {
 } from 'recharts';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { getHomepageAnnouncementContainerClass, getHomepageAnnouncementTextClass } from '../../utils/homepageAnnouncement';
-import BusinessIntelligenceModal from '../../components/admin/BusinessIntelligenceModal';
+const BusinessIntelligenceModal = React.lazy(() => import('../../components/admin/BusinessIntelligenceModal'));
 
 const formatClassDate = (d) => {
   if (!d) return 'â€”';
@@ -2240,7 +2240,11 @@ const DashboardHome = ({ isActive = true }) => {
       )}
 
       {isAdmin() && renderAdminDashboard()}
-      {isAdmin() && <BusinessIntelligenceModal open={biModalOpen} onClose={() => setBiModalOpen(false)} />}
+      {isAdmin() && (
+        <React.Suspense fallback={null}>
+          <BusinessIntelligenceModal open={biModalOpen} onClose={() => setBiModalOpen(false)} />
+        </React.Suspense>
+      )}
       {isTeacher() && renderTeacherDashboard()}
       {isGuardian() && renderGuardianDashboard()}
       {isStudent() && renderStudentDashboard()}

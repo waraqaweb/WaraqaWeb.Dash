@@ -298,9 +298,10 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
         const withClassSet = new Set(activeWithClasses.map(id => String(id)));
         return activeStudentIds.filter(s => !withClassSet.has(String(s._id))).length;
       })(),
-      // Stopped students — all inactive (class-date filtering done in post-processing)
-      Student.find({ isActive: false })
+      // Stopped students — inactive, limited to those created in the last 2 years
+      Student.find({ isActive: false, createdAt: { $gte: new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000) } })
         .select('_id firstName lastName createdAt')
+        .limit(500)
         .lean(),
       // Student growth by month (last 12 months): new students created per month
       Student.aggregate([
@@ -408,7 +409,7 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
       ]),
       // Per-student class stats: first/last class date and total hours (for accurate stopped-date calculation)
       Class.aggregate([
-        { $match: { status: { $in: BILLABLE_STATUSES } } },
+        { $match: { status: { $in: BILLABLE_STATUSES }, scheduledDate: { $gte: new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000) } } },
         { $group: {
           _id: '$student.studentId',
           firstClass: { $min: '$scheduledDate' },

@@ -235,6 +235,8 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
       avgChargeRate,
       guardianRates,
       teacherRateWeighted,
+      studentClassStats,
+      perTeacherRates,
     ] = await Promise.all([
       // Current month completed hours
       Class.aggregate([
@@ -296,11 +298,9 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
         const withClassSet = new Set(activeWithClasses.map(id => String(id)));
         return activeStudentIds.filter(s => !withClassSet.has(String(s._id))).length;
       })(),
-      // Stopped students (inactive, updated in last 6 months = recently paused/stopped)
-      Student.find({ isActive: false, updatedAt: { $gte: sixMonthsAgo } })
-        .select('firstName lastName updatedAt createdAt')
-        .sort({ updatedAt: -1 })
-        .limit(50)
+      // Stopped students — all inactive (class-date filtering done in post-processing)
+      Student.find({ isActive: false })
+        .select('_id firstName lastName createdAt')
         .lean(),
       // Student growth by month (last 12 months): new students created per month
       Student.aggregate([
@@ -406,6 +406,29 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
           count: { $sum: 1 }
         }}
       ]),
+      // Per-student class stats: first/last class date and total hours (for accurate stopped-date calculation)
+      Class.aggregate([
+        { $match: { status: { $in: BILLABLE_STATUSES } } },
+        { $group: {
+          _id: '$student.studentId',
+          firstClass: { $min: '$scheduledDate' },
+          lastClass: { $max: '$scheduledDate' },
+          totalClasses: { $sum: 1 },
+          totalMinutes: { $sum: '$duration' }
+        }}
+      ]),
+      // Per-teacher rates from most recent invoice (any status including draft)
+      TeacherInvoice.aggregate([
+        { $sort: { year: -1, month: -1 } },
+        { $group: {
+          _id: '$teacher',
+          latestRate: { $first: '$rateSnapshot.rate' },
+          latestPartition: { $first: '$rateSnapshot.partition' },
+          latestMonth: { $first: '$month' },
+          latestYear: { $first: '$year' },
+          totalHoursAllTime: { $sum: '$totalHours' }
+        }}
+      ]),
     ]);
 
     // Process results
@@ -417,6 +440,18 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
     const cancelledClasses = cancelledHoursAgg[0]?.count || 0;
     const scheduledClasses = scheduledHoursAgg[0]?.count || 0;
     const hoursChangeVsPrev = prevMonthHours > 0 ? ((completedHours + scheduledHours - prevMonthHours) / prevMonthHours * 100) : null;
+
+    // Build a map of per-teacher rates from invoices
+    const teacherRateMap = {};
+    perTeacherRates.forEach(r => {
+      teacherRateMap[String(r._id)] = {
+        rate: r.latestRate,
+        partition: r.latestPartition,
+        month: r.latestMonth,
+        year: r.latestYear,
+        totalHoursAllTime: r.totalHoursAllTime
+      };
+    });
 
     // Teacher capacity summary
     const activeTeacherCount = teacherCapacity.length;
@@ -465,16 +500,47 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
     const currentEstimatedProfit = currentEstimatedHours * currentProfitPerHour;
     const hoursNeededAt4USD = profitPerHourAtTarget > 0 ? currentEstimatedProfit / profitPerHourAtTarget : null;
 
-    // Student growth/stoppage analysis
-    const stoppedCount = stoppedStudents.length;
-    const stoppedLast30 = stoppedStudents.filter(s => s.updatedAt >= thirtyDaysAgo).length;
-    const stoppedLast90 = stoppedStudents.filter(s => s.updatedAt >= ninetyDaysAgo).length;
+    // Student growth/stoppage analysis — using last completed class date (not updatedAt)
+    const classStatsMap = {};
+    studentClassStats.forEach(s => { classStatsMap[String(s._id)] = s; });
 
-    // Net growth: new students - stopped students per month
+    // Only include inactive students who had at least one completed class
+    const stoppedWithClassData = stoppedStudents
+      .map(s => {
+        const stats = classStatsMap[String(s._id)];
+        if (!stats) return null;
+        return {
+          ...s,
+          lastClassDate: stats.lastClass,
+          firstClassDate: stats.firstClass,
+          totalClasses: stats.totalClasses,
+          totalHours: stats.totalMinutes / 60
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.lastClassDate) - new Date(a.lastClassDate));
+
+    const stoppedCount = stoppedWithClassData.length;
+    const stoppedLast30 = stoppedWithClassData.filter(s => new Date(s.lastClassDate) >= thirtyDaysAgo).length;
+    const stoppedLast90 = stoppedWithClassData.filter(s => new Date(s.lastClassDate) >= ninetyDaysAgo).length;
+    const stoppedHoursLast90 = stoppedWithClassData
+      .filter(s => new Date(s.lastClassDate) >= ninetyDaysAgo)
+      .reduce((sum, s) => sum + s.totalHours, 0);
+
+    // Net growth by completed-class basis (3-month window)
+    const newByClass3Mo = studentClassStats.filter(s =>
+      s.firstClass && new Date(s.firstClass) >= threeMonthsAgo
+    ).length;
+    const stoppedByClass3Mo = stoppedWithClassData.filter(s =>
+      new Date(s.lastClassDate) >= threeMonthsAgo
+    ).length;
+    const netGrowth3Months = newByClass3Mo - stoppedByClass3Mo;
+
+    // Monthly growth chart: stopped by last-class date
     const growthByMonth = studentGrowthByMonth.map(g => {
       const key = `${g._id.year}-${String(g._id.month).padStart(2, '0')}`;
-      const stoppedInMonth = stoppedStudents.filter(s => {
-        const d = new Date(s.updatedAt);
+      const stoppedInMonth = stoppedWithClassData.filter(s => {
+        const d = new Date(s.lastClassDate);
         return d.getFullYear() === g._id.year && d.getMonth() + 1 === g._id.month;
       }).length;
       return {
@@ -587,19 +653,30 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
         teacherCapacity: {
           activeTeachers: activeTeacherCount,
           totalHoursThisMonth: +totalTeacherHours.toFixed(2),
+          monthStartDate: monthStart.toISOString(),
           avgHoursPerTeacher: +avgHoursPerTeacher.toFixed(2),
           avgHoursPerTeacherWeekly: +(avgHoursPerTeacher / 4.33).toFixed(2),
           maxTeacherHours: +maxTeacherHours.toFixed(2),
-          teachers: teacherCapacity.map(t => ({
-            name: t.name?.trim() || 'Unknown',
-            hoursThisMonth: +t.totalHours.toFixed(2),
-            hoursPerWeek: +(t.totalHours / 4.33).toFixed(2),
-            classCount: t.classCount,
-            daysActive: t.daysActive,
-            studentCount: t.studentCount,
-            hasCustomRate: !!(t.customRate?.enabled),
-            customRateUSD: t.customRate?.enabled ? t.customRate.rateUSD : null
-          }))
+          teachers: teacherCapacity.map(t => {
+            const rateInfo = teacherRateMap[String(t.teacherId)] || null;
+            const effectiveRate = t.customRate?.enabled
+              ? t.customRate.rateUSD
+              : rateInfo?.rate ?? null;
+            return {
+              name: t.name?.trim() || 'Unknown',
+              hoursThisMonth: +t.totalHours.toFixed(2),
+              hoursPerWeek: +(t.totalHours / 4.33).toFixed(2),
+              classCount: t.classCount,
+              daysActive: t.daysActive,
+              studentCount: t.studentCount,
+              hasCustomRate: !!(t.customRate?.enabled),
+              customRateUSD: t.customRate?.enabled ? t.customRate.rateUSD : null,
+              rateUSD: effectiveRate !== null ? +Number(effectiveRate).toFixed(2) : null,
+              ratePartition: t.customRate?.enabled ? 'custom' : (rateInfo?.partition ?? null),
+              rateMonth: rateInfo?.month ?? null,
+              rateYear: rateInfo?.year ?? null,
+            };
+          })
         },
 
         students: {
@@ -611,15 +688,21 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
           atRiskStudents,
           avgHoursPerStudent: activeStudentsCount > 0
             ? +((completedHours + scheduledHours) / activeStudentsCount).toFixed(2) : 0,
-          // Growth tracking
+          // Growth tracking (class-date based)
           stoppedLast30Days: stoppedLast30,
           stoppedLast90Days: stoppedLast90,
+          stoppedHoursLast90Days: +stoppedHoursLast90.toFixed(1),
           totalStoppedRecent: stoppedCount,
           netGrowth30Days: newStudents30 - stoppedLast30,
-          recentlyStoppedStudents: stoppedStudents.slice(0, 10).map(s => ({
+          netGrowth3Months,
+          newByClass3Mo,
+          stoppedByClass3Mo,
+          recentlyStoppedStudents: stoppedWithClassData.slice(0, 10).map(s => ({
             name: `${s.firstName || ''} ${s.lastName || ''}`.trim(),
-            stoppedAt: s.updatedAt,
-            enrolledAt: s.createdAt
+            stoppedAt: s.lastClassDate,
+            enrolledAt: s.createdAt,
+            totalHours: +s.totalHours.toFixed(1),
+            totalClasses: s.totalClasses
           })),
           growthByMonth
         },
@@ -633,12 +716,20 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
         })),
 
         financial: {
+          // Collected = paid invoices this month (may be $0 mid-month if invoices unpaid)
           revenueThisMonth: +revenueUSD.toFixed(2),
           prevMonthRevenue: +prevRevenueUSD.toFixed(2),
           revenueChangeVsPrev: revenueChangeVsPrev !== null ? +revenueChangeVsPrev.toFixed(1) : null,
+          // Earned = completed class hours × charge rate (accrual basis, more useful mid-month)
+          earnedRevenueThisMonth: +(completedHours * dynamicChargeRate).toFixed(2),
+          scheduledRevenueThisMonth: +(scheduledHours * dynamicChargeRate).toFixed(2),
+          completedHoursThisMonth: +completedHours.toFixed(2),
+          scheduledHoursThisMonth: +scheduledHours.toFixed(2),
           teacherCostsThisMonth: +teacherCostsUSD.toFixed(2),
           monthlyOverhead: +avgOverhead.toFixed(2),
-          estimatedProfitThisMonth: +(revenueUSD - teacherCostsUSD - avgOverhead).toFixed(2),
+          // Profit on earned basis (accrual) — much more representative than cash basis
+          estimatedProfitThisMonth: +((completedHours * dynamicChargeRate) - teacherCostsUSD - avgOverhead).toFixed(2),
+          estimatedProfitCashBasis: +(revenueUSD - teacherCostsUSD - avgOverhead).toFixed(2),
           // DYNAMIC rates
           chargeRatePerHour: +dynamicChargeRate.toFixed(2),
           chargeRateSource: chargeRateFromInvoices ? 'invoices (3mo avg)' : (guardianRateStats ? 'guardian settings' : 'historical'),
@@ -682,9 +773,17 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
         historicalSummary: {
           totalMonths: historicalFinancials.length,
           avgMonthlyHours: +(allHours.reduce((a, b) => a + b, 0) / allHours.length).toFixed(2),
+          avgMonthlyHours3Mo: recentHistorical.length > 0
+            ? +(recentHistorical.reduce((sum, h) => sum + h.teachingHours, 0) / recentHistorical.length).toFixed(2)
+            : null,
           peakHours: Math.max(...allHours),
+          peakHoursMonth: historicalFinancials.find(h => h.teachingHours === Math.max(...allHours))?.month ?? null,
+          peakHoursYear: historicalFinancials.find(h => h.teachingHours === Math.max(...allHours))?.year ?? null,
           minHours: Math.min(...allHours),
           avgMonthlyProfit: +(allProfits.reduce((a, b) => a + b, 0) / allProfits.length).toFixed(2),
+          avgMonthlyProfit3Mo: recentHistorical.length > 0
+            ? +(recentHistorical.reduce((sum, h) => sum + h.netProfitUSD, 0) / recentHistorical.length).toFixed(2)
+            : null,
           peakProfit: Math.max(...allProfits),
           avgProfitPercent: +(allProfitPcts.reduce((a, b) => a + b, 0) / allProfitPcts.length).toFixed(1)
         },

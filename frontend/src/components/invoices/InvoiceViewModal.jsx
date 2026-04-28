@@ -265,6 +265,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const seqInputRef = useRef(null);
   const maxHoursInputRef = useRef(null);
   const endDateInputRef = useRef(null);
+  const invoiceRefLinkRef = useRef(null);
 
   const notesLastSavedRef = useRef({ notes: '', internalNotes: '', invoiceReferenceLink: '' });
   const skipNextNotesSave = useRef(false);
@@ -1527,6 +1528,13 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     }, 0);
   }, [seqEditing]);
 
+  // Sync the uncontrolled reference-link input when invoice loads or is updated externally
+  useEffect(() => {
+    if (!invoiceRefLinkRef.current) return;
+    if (document.activeElement === invoiceRefLinkRef.current) return;
+    invoiceRefLinkRef.current.value = noteEdits.invoiceReferenceLink || '';
+  }, [noteEdits.invoiceReferenceLink]);
+
   useEffect(() => {
     if (!invoice) return;
     if (editingInlineNote === 'guardian' || editingInlineNote === 'internal') return;
@@ -2579,9 +2587,10 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                         {isAdmin && !isPaidStatus && (
                           <div className="pt-2">
                             <input
+                              ref={invoiceRefLinkRef}
                               type="url"
-                              value={noteEdits.invoiceReferenceLink}
-                              onChange={(e) => handleNoteChange('invoiceReferenceLink', e.target.value)}
+                              defaultValue={noteEdits.invoiceReferenceLink}
+                              onBlur={(e) => handleNoteChange('invoiceReferenceLink', e.target.value)}
                               placeholder="Reference (PayPal link, transaction ID, etc.)"
                               className="w-full border-b border-slate-200 bg-transparent px-0 py-1 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
                             />
@@ -2618,14 +2627,15 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                               </div>
                             </div>
                             <input
+                              ref={invoiceRefLinkRef}
                               type="url"
-                              value={noteEdits.invoiceReferenceLink || unifiedReference?.value || ''}
-                              onChange={(e) => handleNoteChange('invoiceReferenceLink', e.target.value)}
-                              onFocus={() => {
-                                if (!noteEdits.invoiceReferenceLink && unifiedReference?.value) {
-                                  handleNoteChange('invoiceReferenceLink', unifiedReference.value);
+                              defaultValue={noteEdits.invoiceReferenceLink || unifiedReference?.value || ''}
+                              onFocus={(e) => {
+                                if (!e.currentTarget.value && unifiedReference?.value) {
+                                  e.currentTarget.value = unifiedReference.value;
                                 }
                               }}
+                              onBlur={(e) => handleNoteChange('invoiceReferenceLink', e.target.value)}
                               placeholder="Reference (PayPal link, transaction ID, etc.)"
                               className="w-full break-all border-b border-slate-200 bg-transparent px-0 py-1 text-xs text-slate-500 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
                             />

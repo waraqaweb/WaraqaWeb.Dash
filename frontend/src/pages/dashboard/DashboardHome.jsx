@@ -44,9 +44,9 @@ import { getHomepageAnnouncementContainerClass, getHomepageAnnouncementTextClass
 const BusinessIntelligenceModal = React.lazy(() => import('../../components/admin/BusinessIntelligenceModal'));
 
 const formatClassDate = (d) => {
-  if (!d) return 'â€”';
+  if (!d) return '—';
   const date = typeof d === 'string' || typeof d === 'number' ? new Date(d) : d;
-  if (isNaN(date.getTime())) return 'â€”';
+  if (isNaN(date.getTime())) return '—';
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const weekday = days[date.getDay()];
@@ -77,9 +77,9 @@ const formatCountdown = (hoursUntil) => {
 };
 
 const formatDateDMMM = (value) => {
-  if (!value) return 'â€”';
+  if (!value) return '—';
   const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return 'â€”';
+  if (Number.isNaN(d.getTime())) return '—';
   const day = d.getUTCDate();
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${day} ${months[d.getUTCMonth()]}`;
@@ -259,7 +259,7 @@ const getLunarPhaseInfo = (date = new Date()) => {
   const illumination = 0.5 * (1 - Math.cos(2 * Math.PI * phase)); // 0..1
   const waxing = phase < 0.5;
 
-  let label = 'â€”';
+  let label = '—';
   if (age < 1.2 || age > synodicMonthDays - 1.2) label = 'New moon';
   else if (age < 7.4) label = 'Waxing crescent';
   else if (age < 8.8) label = 'First quarter';
@@ -690,25 +690,25 @@ const DashboardHome = ({ isActive = true }) => {
   if (!lastLoginGlobal) {
     // First-time or missing lastLogin: friendly onboarding message
     greetingTitle = `Assalamu Alaykum${user?.firstName ? `, ${user.firstName}` : ''}!`;
-    greetingSubtitle = `Welcome â€” we're glad you're here. Start by adding a student or scheduling a class.`;
+    greetingSubtitle = `Welcome — we're glad you're here. Start by adding a student or scheduling a class.`;
   } else {
     const diffMsG = nowForGreeting - lastLoginGlobal;
     const diffDaysG = Math.floor(diffMsG / (1000 * 60 * 60 * 24));
     if (diffDaysG === 0) {
       greetingTitle = `Assalamu Alaykum${user?.firstName ? `, ${user.firstName}` : ''}!`;
-      greetingSubtitle = `Great to see you today â€” here's a quick summary since your last visit.`;
+      greetingSubtitle = `Great to see you today — here's a quick summary since your last visit.`;
     } else if (diffDaysG <= 3) {
       greetingTitle = `Welcome back${user?.firstName ? `, ${user.firstName}` : ''}!`;
-      greetingSubtitle = `Nice to have you back â€” we've kept things ready for you.`;
+      greetingSubtitle = `Nice to have you back — we've kept things ready for you.`;
     } else if (diffDaysG <= 14) {
       greetingTitle = `We missed you, ${user?.firstName || 'there'}!`;
-      greetingSubtitle = `Welcome back â€” here's what happened while you were away.`;
+      greetingSubtitle = `Welcome back — here's what happened while you were away.`;
     } else if (diffDaysG <= 60) {
-      greetingTitle = `Assalamu Alaykum â€” it's been a while`;
-      greetingSubtitle = `It's been ${diffDaysG} days â€” let's catch you up and get back on track.`;
+      greetingTitle = `Assalamu Alaykum — it's been a while`;
+      greetingSubtitle = `It's been ${diffDaysG} days — let's catch you up and get back on track.`;
     } else {
-      greetingTitle = `Assalamu Alaykum â€” welcome back!`;
-      greetingSubtitle = `Long time no see â€” we've missed you. Let's get you set up.`;
+      greetingTitle = `Assalamu Alaykum — welcome back!`;
+      greetingSubtitle = `Long time no see — we've missed you. Let's get you set up.`;
     }
   }
 
@@ -1282,17 +1282,10 @@ const DashboardHome = ({ isActive = true }) => {
                         {greetingSubtitle ? (
                           <p className="text-xs text-muted-foreground mt-0.5">{greetingSubtitle}</p>
                         ) : (
-                          <p className="text-xs text-muted-foreground mt-0.5">Overview â€” a concise snapshot of system health and activity.</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">Overview — a concise snapshot of system health and activity.</p>
                         )}
                       </div>
                   <div className="flex items-center space-x-3">
-                    <HijriDateCard
-                      variant="inline"
-                      timeZone={user?.timezone}
-                      hijriOffset={hijriOffset}
-                      userId={user?._id}
-                      initialUserOffset={user?.uiPreferences?.hijriOffsetDays}
-                    />
                     <div className="text-xs text-muted-foreground">
                       {stats.data && stats.data.timestamps && stats.data.timestamps.computedAt && (() => {
                         const d = new Date(stats.data.timestamps.computedAt);
@@ -1301,7 +1294,7 @@ const DashboardHome = ({ isActive = true }) => {
                         const hours = d.getHours() % 12 || 12;
                         const minutes = String(d.getMinutes()).padStart(2, '0');
                         const time = `${hours}:${minutes}`;
-                        return <span>Updated {date} â€¢ {time}</span>;
+                        return <span>Updated {date} • {time}</span>;
                       })()}
                     </div>
                     <button
@@ -1554,7 +1547,7 @@ const DashboardHome = ({ isActive = true }) => {
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div>
                               <p className="text-sm font-semibold text-slate-900">
-                                {alert.country || 'Unknown country'} â€¢ {alert.timezone || 'Unknown timezone'}
+                                {alert.country || 'Unknown country'} • {alert.timezone || 'Unknown timezone'}
                               </p>
                               <p className="mt-1 text-xs text-slate-700">
                                 {alert.transition?.date ? formatClassDate(alert.transition.date) : 'Upcoming change'}
@@ -1565,7 +1558,7 @@ const DashboardHome = ({ isActive = true }) => {
                             </span>
                           </div>
                           <p className="mt-2 text-xs text-slate-600">
-                            {alert.impactedClassCount} class{alert.impactedClassCount === 1 ? '' : 'es'} â€¢ {alert.impactedTeacherCount} teacher{alert.impactedTeacherCount === 1 ? '' : 's'}
+                            {alert.impactedClassCount} class{alert.impactedClassCount === 1 ? '' : 'es'} • {alert.impactedTeacherCount} teacher{alert.impactedTeacherCount === 1 ? '' : 's'}
                           </p>
                           {Array.isArray(alert.teacherNames) && alert.teacherNames.length > 0 && (
                             <p className="mt-1 text-xs text-slate-600">
@@ -1622,8 +1615,8 @@ const DashboardHome = ({ isActive = true }) => {
 
                         return (
                           <div key={`${s.studentId || s.studentName}-${s.teacherId || s.teacherName}`} className="flex items-center justify-between">
-                            <div className="min-w-0 truncate whitespace-nowrap">{s.studentName || 'Student'}{s.teacherName ? ` â€¢ ${s.teacherName}` : ''}</div>
-                            <div className={`text-xs shrink-0 ml-3 ${dateColor}`}>{dateToShow ? formatDateDMMM(dateToShow) : 'â€”'}</div>
+                            <div className="min-w-0 truncate whitespace-nowrap">{s.studentName || 'Student'}{s.teacherName ? ` • ${s.teacherName}` : ''}</div>
+                            <div className={`text-xs shrink-0 ml-3 ${dateColor}`}>{dateToShow ? formatDateDMMM(dateToShow) : '—'}</div>
                           </div>
                         );
                       })}
@@ -1639,7 +1632,7 @@ const DashboardHome = ({ isActive = true }) => {
                       {(inactiveStudentsAfterActivity || []).slice(0, 6).map((s) => (
                         <div key={s.studentId || s._id} className="flex items-center justify-between">
                           <div className="truncate">{s.studentName || 'Student'}</div>
-                          <div className="text-xs">{s.inactiveAt ? formatDateDDMMMYYYY(s.inactiveAt) : (s.lastClassAt ? formatDateDDMMMYYYY(s.lastClassAt) : 'â€”')}</div>
+                          <div className="text-xs">{s.inactiveAt ? formatDateDDMMMYYYY(s.inactiveAt) : (s.lastClassAt ? formatDateDDMMMYYYY(s.lastClassAt) : '—')}</div>
                         </div>
                       ))}
                       {(!inactiveStudentsAfterActivity || inactiveStudentsAfterActivity.length === 0) && (
@@ -1700,18 +1693,10 @@ const DashboardHome = ({ isActive = true }) => {
               <p className="text-sm text-muted-foreground">You have <strong className="text-foreground">{upcomingCount}</strong> classes scheduled for today. Keep up the great work!</p>
             )}
             <div className="mt-3 flex flex-wrap gap-2">
-              <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Timezone: {user?.timezone || 'â€”'}</span>
+              <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Timezone: {user?.timezone || '—'}</span>
               <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-xs font-medium text-foreground">Upcoming: {upcomingCount}</span>
               <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-xs font-medium text-muted-foreground">Pending reports: {pendingTotal}</span>
             </div>
-          </div>
-          <div className="lg:col-span-1">
-            <HijriDateCard
-              timeZone={user?.timezone}
-              hijriOffset={hijriOffset}
-              userId={user?._id}
-              initialUserOffset={user?.uiPreferences?.hijriOffsetDays}
-            />
           </div>
         </div>
 
@@ -1755,7 +1740,7 @@ const DashboardHome = ({ isActive = true }) => {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <p className="text-sm font-semibold text-slate-900">
-                        {alert.studentName || 'Student'} â€¢ {alert.subject || alert.title || 'Class'}
+                        {alert.studentName || 'Student'} • {alert.subject || alert.title || 'Class'}
                       </p>
                       <p className="mt-1 text-xs text-slate-700">
                         {alert.teacherTimeBefore} â†’ {alert.teacherTimeAfter}
@@ -1766,11 +1751,11 @@ const DashboardHome = ({ isActive = true }) => {
                     </span>
                   </div>
                   <p className="mt-2 text-xs text-slate-600">
-                    Student timezone: {alert.studentTimezone || 'â€”'}
+                    Student timezone: {alert.studentTimezone || '—'}
                   </p>
                   {alert.conflict && (
                     <p className="mt-2 text-xs font-medium text-rose-800">
-                      Conflict with {alert.conflict.conflictingStudentName || 'another student'} â€¢ {alert.conflict.conflictingClassTitle || 'another class'}
+                      Conflict with {alert.conflict.conflictingStudentName || 'another student'} • {alert.conflict.conflictingClassTitle || 'another class'}
                     </p>
                   )}
                 </div>
@@ -1892,11 +1877,11 @@ const DashboardHome = ({ isActive = true }) => {
             {greetingSubtitle ? (
               <p className="text-sm text-muted-foreground">{greetingSubtitle}</p>
             ) : (
-              <p className="text-sm text-muted-foreground">{lastLoginGlobal ? `Last visit: ${lastLoginGlobal ? formatClassDate(lastLoginGlobal) : 'â€”'}` : `Welcomeâ€”this looks like your first visit.`}</p>
+              <p className="text-sm text-muted-foreground">{lastLoginGlobal ? `Last visit: ${lastLoginGlobal ? formatClassDate(lastLoginGlobal) : '—'}` : `Welcome—this looks like your first visit.`}</p>
             )}
 
             <div className="mt-3 flex flex-wrap gap-2">
-              <span className="rounded-full border border-primary/20 bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Timezone: {user?.timezone || 'â€”'}</span>
+              <span className="rounded-full border border-primary/20 bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Timezone: {user?.timezone || '—'}</span>
               <span className="rounded-full border border-border bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Students: {myChildrenCount}</span>
               <span className="rounded-full border border-border bg-background/70 px-2 py-0.5 text-xs font-medium text-foreground">Remaining: {formatHours2(remainingHours)} hrs</span>
               {upcomingClass?.scheduledDate && (
@@ -1905,15 +1890,7 @@ const DashboardHome = ({ isActive = true }) => {
             </div>
           </div>
 
-          {/* Force placement: start at col 3 / row 1 so it can span both rows */}
-          <div className="lg:col-start-3 lg:row-start-1 lg:row-span-2 h-full">
-            <HijriDateCard
-              timeZone={user?.timezone}
-              hijriOffset={hijriOffset}
-              userId={user?._id}
-              initialUserOffset={user?.uiPreferences?.hijriOffsetDays}
-            />
-          </div>
+
 
           <div className="lg:col-span-2 lg:row-span-1 rounded-2xl border border-yellow-300/70 bg-yellow-50 p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between shadow-sm">
             <div className="min-w-0">
@@ -2028,7 +2005,7 @@ const DashboardHome = ({ isActive = true }) => {
             {lastPaid && (lastPaid.hours != null) ? (
               <div className="mt-2">
                 <div className="text-lg sm:text-xl font-semibold text-foreground">{formatHours2(lastPaid.hours)} hrs</div>
-                <div className="text-xs text-muted-foreground mt-1">from {lastPaid.fromDate ? formatClassDate(lastPaid.fromDate) : (lastPaid.from ? formatClassDate(lastPaid.from) : 'â€”')}</div>
+                <div className="text-xs text-muted-foreground mt-1">from {lastPaid.fromDate ? formatClassDate(lastPaid.fromDate) : (lastPaid.from ? formatClassDate(lastPaid.from) : '—')}</div>
               </div>
             ) : (
               <div className="mt-2 text-xs text-muted-foreground">No paid hours yet</div>
@@ -2044,7 +2021,7 @@ const DashboardHome = ({ isActive = true }) => {
                 <div className="flex-1">
                   <div className="text-sm font-medium">{upcomingClass.student?.studentName || `${upcomingClass.student?.firstName || ''} ${upcomingClass.student?.lastName || ''}`.trim()}</div>
                   <div className="text-xs text-muted-foreground">{formatClassDate(upcomingClass.scheduledDate)}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{upcomingClass.duration ? `${upcomingClass.duration} min` : ''} {upcomingClass.subject ? `â€¢ ${upcomingClass.subject}` : ''}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{upcomingClass.duration ? `${upcomingClass.duration} min` : ''} {upcomingClass.subject ? `• ${upcomingClass.subject}` : ''}</div>
                 </div>
                 <div className="text-sm text-muted-foreground">With {`${upcomingClass.teacher?.firstName || ''} ${upcomingClass.teacher?.lastName || ''}`.trim()}</div>
               </div>
@@ -2061,12 +2038,12 @@ const DashboardHome = ({ isActive = true }) => {
                   <div key={c._id} className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium truncate">{c.studentName || 'Student'}</div>
-                      <div className="text-xs text-muted-foreground">{formatClassDate(c.scheduledDate)} â€¢ {c.duration ? `${c.duration} min` : ''} {c.subject ? `â€¢ ${c.subject}` : ''}</div>
+                      <div className="text-xs text-muted-foreground">{formatClassDate(c.scheduledDate)} • {c.duration ? `${c.duration} min` : ''} {c.subject ? `• ${c.subject}` : ''}</div>
                       {c.lessonTopic && <div className="text-xs text-muted-foreground mt-1 truncate">Topic: {c.lessonTopic}</div>}
                       {c.teacherNotes && <div className="text-xs text-muted-foreground mt-1 truncate">Notes: {c.teacherNotes}</div>}
                       {(c.recitedQuran || c.surah) && (
                         <div className="text-xs text-muted-foreground mt-1 truncate">
-                          {c.recitedQuran ? `Quran: ${c.recitedQuran}` : `Surah: ${c.surah?.name || 'â€”'} ${c.verseEnd ? `(up to verse ${c.verseEnd})` : ''}`}
+                          {c.recitedQuran ? `Quran: ${c.recitedQuran}` : `Surah: ${c.surah?.name || '—'} ${c.verseEnd ? `(up to verse ${c.verseEnd})` : ''}`}
                         </div>
                       )}
                     </div>
@@ -2095,17 +2072,9 @@ const DashboardHome = ({ isActive = true }) => {
             <p className="text-sm text-muted-foreground">You have <strong className="text-foreground">{stats.data.upcomingClasses || 0}</strong> classes coming up.</p>
           )}
           <div className="mt-3 flex flex-wrap gap-2">
-            <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Timezone: {user?.timezone || 'â€”'}</span>
+            <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Timezone: {user?.timezone || '—'}</span>
             <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-xs font-medium text-foreground">Upcoming: {stats.data.upcomingClasses || 0}</span>
           </div>
-        </div>
-        <div className="lg:col-span-1">
-          <HijriDateCard
-            timeZone={user?.timezone}
-            hijriOffset={hijriOffset}
-            userId={user?._id}
-            initialUserOffset={user?.uiPreferences?.hijriOffsetDays}
-          />
         </div>
       </div>
 
@@ -2201,7 +2170,7 @@ const DashboardHome = ({ isActive = true }) => {
             <div>
               <p className="text-xs font-medium tracking-wide text-muted-foreground">Last submitted feedback</p>
               <h3 className="text-lg font-semibold text-foreground">{latestFeedback.teacherName}</h3>
-              <p className="text-xs text-muted-foreground">{latestFeedback.type === 'monthly' ? 'Monthly check-in' : 'First class'} â€¢ {formatDateDDMMMYYYY(latestFeedback.submittedAt)}</p>
+              <p className="text-xs text-muted-foreground">{latestFeedback.type === 'monthly' ? 'Monthly check-in' : 'First class'} • {formatDateDDMMMYYYY(latestFeedback.submittedAt)}</p>
             </div>
             {typeof isAdmin === 'function' && isAdmin() && (
               <button
@@ -2257,7 +2226,7 @@ const DashboardHome = ({ isActive = true }) => {
             <div className="flex items-start gap-4">
               <div className="flex-1">
                 <h3 id="welcome-title" className="text-2xl font-bold">Welcome to Waraqa platform{user?.firstName ? `, ${user.firstName}` : ''}!</h3>
-                <p className="text-sm text-muted-foreground mt-2">Weâ€™re delighted to have you with us. <br />
+                <p className="text-sm text-muted-foreground mt-2">We're delighted to have you with us. <br />
                 Please complete your profile, then add your student(s) on the Students. This helps us personalize your experience and get classes scheduled faster. <br />
 
                 </p>

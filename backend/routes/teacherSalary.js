@@ -289,24 +289,30 @@ router.get('/admin/invoices', authenticateToken, requireAdmin, async (req, res) 
 
     let summary = null;
     if (includeSummary === 'true') {
-      const summaryMatch = { ...query };
+      // Build a clean summary match: start from query but drop $or (regex search)
+      // since aggregation pipelines don't accept JS RegExp objects in $match.
+      // Also strip pagination-unrelated keys that could break aggregation.
+      const { $or: _dropped, ...baseMatch } = query;
+      const summaryMatch = { ...baseMatch };
+
       let summaryMonth = summaryMatch.month || null;
       let summaryYear = summaryMatch.year || null;
 
-      if (!summaryMonth || !summaryYear) {
-        const now = new Date();
-        summaryMonth = summaryMonth || now.getMonth() + 1;
-        summaryYear = summaryYear || now.getFullYear();
-        summaryMatch.month = summaryMonth;
-        summaryMatch.year = summaryYear;
+      // Only default to current month when NO month/year filter was provided
+      // (avoids showing misleading zeros when browsing all months).
+      const hasPeriodFilter = !!(summaryMonth && summaryYear);
+
+      if (!hasPeriodFilter) {
+        // Summarise over the exact same scope as the list (all matching invoices).
+        // Don't inject a current-month constraint that the list doesn't have.
+        summaryMonth = null;
+        summaryYear = null;
       }
 
       const periodSummary = await buildInvoiceSummary(summaryMatch);
-      const periodInfo = {
-        month: summaryMonth,
-        year: summaryYear,
-        label: getPeriodLabel(summaryMonth, summaryYear)
-      };
+      const periodInfo = hasPeriodFilter
+        ? { month: summaryMonth, year: summaryYear, label: getPeriodLabel(summaryMonth, summaryYear) }
+        : { month: null, year: null, label: 'Current filter' };
 
       summary = {
         period: {
@@ -315,15 +321,17 @@ router.get('/admin/invoices', authenticateToken, requireAdmin, async (req, res) 
         }
       };
 
-      const prevPeriod = getPreviousPeriod(summaryMonth, summaryYear);
-      if (prevPeriod) {
-        const previousMatch = { ...summaryMatch, month: prevPeriod.month, year: prevPeriod.year };
-        const previousSummary = await buildInvoiceSummary(previousMatch);
-        summary.previousPeriod = {
-          ...prevPeriod,
-          label: getPeriodLabel(prevPeriod.month, prevPeriod.year),
-          ...previousSummary
-        };
+      if (hasPeriodFilter) {
+        const prevPeriod = getPreviousPeriod(summaryMonth, summaryYear);
+        if (prevPeriod) {
+          const previousMatch = { ...summaryMatch, month: prevPeriod.month, year: prevPeriod.year };
+          const previousSummary = await buildInvoiceSummary(previousMatch);
+          summary.previousPeriod = {
+            ...prevPeriod,
+            label: getPeriodLabel(prevPeriod.month, prevPeriod.year),
+            ...previousSummary
+          };
+        }
       }
     }
 

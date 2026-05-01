@@ -1111,7 +1111,7 @@ const TeacherSalaries = () => {
                             className={`border-b border-slate-50 cursor-pointer hover:bg-slate-50 ${hasErrors && !allFixed ? 'bg-red-50/40' : hasErrors && allFixed ? 'bg-emerald-50/30' : ''}`}
                             onClick={() => setJobLogsExpandedRow(isExpanded ? null : entry._id)}
                           >
-                            <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{new Date(entry.createdAt).toLocaleString()}</td>
+                            <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{new Date(entry.timestamp).toLocaleString()}</td>
                             <td className="py-2 pr-3">
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                                 entry.action === 'job_run'  ? 'bg-blue-100 text-blue-700' :

@@ -1767,15 +1767,15 @@ router.get('/admin/job-logs', authenticateToken, requireAdmin, async (req, res) 
     const since = new Date();
     since.setMonth(since.getMonth() - months);
 
-    const JOB_ACTIONS = ['job_run', 'job_fail', 'create_invoice', 'bulk_operation'];
+    const JOB_ACTIONS = ['job_run', 'job_fail', 'invoice_create', 'bulk_operation'];
     const filter = {
       action: { $in: JOB_ACTIONS },
-      createdAt: { $gte: since }
+      timestamp: { $gte: since }
     };
 
     const [entries, total] = await Promise.all([
       TeacherSalaryAudit.find(filter)
-        .sort({ createdAt: -1 })
+        .sort({ timestamp: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .populate('actor', 'firstName lastName email')

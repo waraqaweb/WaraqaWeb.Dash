@@ -268,6 +268,28 @@ async function generateTeacherInvoices() {
       // await notifyTeachers(results.invoices);
     }
 
+    // Log successful job_run audit entry
+    await TeacherSalaryAudit.logAction({
+      action: 'job_run',
+      entityType: 'System',
+      actorRole: 'system',
+      success: results.summary.failed === 0,
+      metadata: {
+        month,
+        year,
+        duration: parseFloat(duration),
+        total: results.summary.total,
+        created: results.summary.created,
+        skipped: results.summary.skipped,
+        failed: results.summary.failed,
+        errors: results.errors.map(e => ({
+          teacherId: e.teacherId || null,
+          teacherName: e.teacherName || 'Unknown',
+          error: e.error
+        }))
+      }
+    });
+
     console.log(`\n${'='.repeat(80)}`);
     console.log(`[GenerateTeacherInvoicesJob] Completed at ${new Date().toISOString()}`);
     console.log(`${'='.repeat(80)}\n`);

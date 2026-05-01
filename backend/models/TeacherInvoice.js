@@ -66,7 +66,7 @@ const bonusSchema = new Schema({
 const extraSchema = new Schema({
   category: {
     type: String,
-    enum: ['reimbursement', 'bonus', 'penalty', 'other'],
+    enum: ['reimbursement', 'bonus', 'penalty', 'premium', 'other'],
     required: true
   },
   amountUSD: { type: Number, required: true }, // can be negative for penalties

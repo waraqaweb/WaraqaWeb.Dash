@@ -275,11 +275,13 @@ const SalariesPage = () => {
 
   const buildTeacherMessage = (salary, publicLink) => {
     const firstName = String(salary?.teacher?.firstName || '').trim() || 'الأستاذ';
+    const gender = salary?.teacher?.gender;
+    const title = gender === 'female' ? 'أستاذة' : 'أستاذ';
     const month = Number(salary?.billingPeriod?.month || 0);
     const monthName = month >= 1 && month <= 12 ? arabicMonths[month - 1] : '—';
     const payDay = salary?.teacherPayment?.payDay || salary?.payDay || '5';
     const lines = [
-      'السلام عليكم ورحمة الله وبركاته أستاذ / أستاذة ' + firstName + '،',
+      'السلام عليكم ورحمة الله وبركاته ' + title + ' / ' + firstName + '،',
       '',
       'نود إعلامكم بأن فاتورة راتبكم عن شهر ' + monthName + ' قد أُعدّت وأصبحت جاهزة للمراجعة.',
       '',
@@ -298,7 +300,7 @@ const SalariesPage = () => {
   };
 
   const openTeacherMsgModal = (salary) => {
-    const slug = salary?.invoiceSlug;
+    const slug = salary?.shareToken || salary?.invoiceSlug;
     const publicLink = slug ? `${window.location.origin}/dashboard/teacher-salary/shared/${slug}` : '';
     setTeacherMsgModal({ salary, message: buildTeacherMessage(salary, publicLink), copied: false });
   };

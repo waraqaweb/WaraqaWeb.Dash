@@ -329,7 +329,7 @@ router.get('/admin/invoices', authenticateToken, requireAdmin, async (req, res) 
 
     const [invoices, total] = await Promise.all([
       TeacherInvoice.find(query)
-        .populate('teacher', 'firstName lastName email teacherInfo')
+        .populate('teacher', 'firstName lastName email phone whatsapp gender teacherInfo')
         .sort({ year: -1, month: -1, createdAt: -1 })
         .limit(parseInt(limit))
         .skip(skip)
@@ -362,7 +362,7 @@ router.get('/admin/invoices', authenticateToken, requireAdmin, async (req, res) 
 router.get('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const invoice = await TeacherInvoice.findById(req.params.id)
-      .populate('teacher', 'firstName lastName email teacherInfo')
+      .populate('teacher', 'firstName lastName email phone whatsapp gender teacherInfo')
       .populate('bonuses.addedBy', 'firstName lastName')
       .populate('extras.addedBy', 'firstName lastName')
       .populate('bonuses.guardianId', 'firstName lastName')
@@ -1387,7 +1387,7 @@ router.get('/teacher/invoices', authenticateToken, requireTeacher, async (req, r
 router.get('/teacher/invoices/:id', authenticateToken, requireTeacher, async (req, res) => {
   try {
     const invoice = await TeacherInvoice.findById(req.params.id)
-      .populate('teacher', 'firstName lastName email teacherInfo')
+      .populate('teacher', 'firstName lastName email phone whatsapp gender teacherInfo')
       .populate('bonuses.addedBy', 'firstName lastName')
       .populate('extras.addedBy', 'firstName lastName')
       .populate('bonuses.guardianId', 'firstName lastName')

@@ -336,11 +336,13 @@ const TeacherSalaries = () => {
 
   const buildTeacherMessage = (invoice, publicLink) => {
     const firstName = String(invoice?.teacher?.firstName || '').trim() || 'الأستاذ';
+    const gender = invoice?.teacher?.gender;
+    const title = gender === 'female' ? 'أستاذة' : 'أستاذ';
     const month = Number(invoice?.month || 0);
     const monthName = month >= 1 && month <= 12 ? arabicMonths[month - 1] : '—';
     const payDay = invoice?.teacherPayment?.payDay || invoice?.payDay || '5';
     const lines = [
-      'السلام عليكم ورحمة الله وبركاته أستاذ / أستاذة ' + firstName + '،',
+      'السلام عليكم ورحمة الله وبركاته ' + title + ' / ' + firstName + '،',
       '',
       'نود إعلامكم بأن فاتورة راتبكم عن شهر ' + monthName + ' قد أُعدّت وأصبحت جاهزة للمراجعة.',
       '',

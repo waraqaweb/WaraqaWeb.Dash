@@ -182,7 +182,7 @@ function baseEmailTemplate({ preheader = '', body, icon = '', footerNote = '', b
   const year    = new Date().getFullYear();
   const BRAND   = '#2C736C';
   const BRAND2  = '#235c56';
-  const dashUrl = `${(process.env.FRONTEND_URL || 'https://dashboard.waraqaweb.com').replace(/\/$/, '')}/dashboard`;
+  const dashUrl = `${(process.env.FRONTEND_URL || 'https://dashboard.waraqaweb.com').split(',')[0].trim().replace(/\/$/, '')}/dashboard`;
 
   // Icon shown inside the header — white stroke so it reads on dark teal background
   const headerIcon = icon
@@ -240,7 +240,8 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;font-size:1
 const _B = '#2C736C';
 
 function _infoRow(label, value) {
-  return `<tr><td style="padding:7px 0;color:#6b7280;font-size:13px;width:38%;vertical-align:top;">${label}</td><td style="padding:7px 0;font-size:14px;font-weight:600;color:#111827;">${value || '—'}</td></tr>`;
+  const display = (value === 0 || value === '0') ? '0' : (value || '—');
+  return `<tr><td style="padding:7px 0;color:#6b7280;font-size:13px;width:38%;vertical-align:top;">${label}</td><td style="padding:7px 0;font-size:14px;font-weight:600;color:#111827;">${display}</td></tr>`;
 }
 function _infoTable(rows) {
   return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:12px 0;">${rows}</table>`;
@@ -280,7 +281,7 @@ function _dateOnly(date, tz) {
   } catch { return new Date(date).toDateString(); }
 }
 function _dashUrl(path = '') {
-  return `${(process.env.FRONTEND_URL || 'https://dashboard.waraqaweb.com').replace(/\/$/, '')}/dashboard${path}`;
+  return `${(process.env.FRONTEND_URL || 'https://dashboard.waraqaweb.com').split(',')[0].trim().replace(/\/$/, '')}/dashboard${path}`;
 }
 
 // ─── SVG Icons — hand-drawn sketch style, white stroke for header use ────────
@@ -725,13 +726,104 @@ async function sendBonusAdded(teacher, invoice, bonus) {
 
 async function sendAdminInvoiceGenerationSummary(admin, summary) {
   try {
-    const branding    = await loadBrandingAndLogo();
-    const hasPeriod   = summary?.month && summary?.year;
-    const subj        = hasPeriod ? `Monthly invoices generated — ${summary.month}/${summary.year}` : 'Monthly invoices generated';
-    const rows        = _infoRow('Processed', summary.totalProcessed || 0) + _infoRow('Created', summary.created || 0) + _infoRow('Skipped', summary.skipped?.length || 0) + _infoRow('Failed', summary.failed?.length || 0);
-    const skip        = summary.skipped?.length ? _alert(`Skipped: ${summary.skipped.slice(0,5).map(t=>t.name||'?').join(', ')}${summary.skipped.length>5?` +${summary.skipped.length-5} more`:''}`, '#fffbeb', '#f59e0b', '#92400e') : '';
-    const body        = `${_hi(admin.firstName)}<p style="margin:0 0 14px;">Invoice generation completed${hasPeriod ? ` for <strong>${summary.month}/${summary.year}</strong>` : ''}.</p>${_card(_infoTable(rows))}${skip}`;
-    const html        = baseEmailTemplate({ preheader: `${summary.created || 0} invoices generated`, body, branding });
+    const branding  = await loadBrandingAndLogo();
+    const hasPeriod = summary?.month && summary?.year;
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const monthLabel = hasPeriod ? `${MONTH_NAMES[(summary.month - 1) % 12]} ${summary.year}` : '';
+    const subj = hasPeriod ? `Teacher salary invoices generated — ${monthLabel}` : 'Teacher salary invoices generated';
+
+    // ── Summary counts row ────────────────────────────────────────────────────
+    const processed = summary.totalProcessed ?? 0;
+    const created   = summary.created ?? 0;
+    const skippedArr = Array.isArray(summary.skipped) ? summary.skipped : [];
+    const failedArr  = Array.isArray(summary.failed)  ? summary.failed  : [];
+    const countRows =
+      _infoRow('Period',    hasPeriod ? `<strong>${monthLabel}</strong>` : '—') +
+      _infoRow('Processed', processed) +
+      _infoRow('Created',   created)   +
+      _infoRow('Skipped',   skippedArr.length) +
+      _infoRow('Failed',    failedArr.length);
+
+    // ── Financial totals ─────────────────────────────────────────────────────
+    const invoiceSummaries = Array.isArray(summary.invoiceSummaries) ? summary.invoiceSummaries : [];
+    const totalHours = invoiceSummaries.reduce((s, i) => s + (i.totalHours   || 0), 0);
+    const totalUSD   = invoiceSummaries.reduce((s, i) => s + (i.grossAmountUSD || 0), 0);
+    const totalEGP   = invoiceSummaries.reduce((s, i) => s + (i.netAmountEGP  || 0), 0);
+
+    const financialRows = invoiceSummaries.length > 0
+      ? _infoRow('Total hours invoiced', `${totalHours.toFixed(1)} hrs`) +
+        _infoRow('Gross amount (USD)',    `$${totalUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) +
+        _infoRow('Net payable (EGP)',     `EGP ${totalEGP.toLocaleString('en-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+      : '';
+
+    // ── Per-teacher breakdown table ──────────────────────────────────────────
+    let teacherTable = '';
+    if (invoiceSummaries.length > 0) {
+      const rows = invoiceSummaries
+        .sort((a, b) => (b.grossAmountUSD || 0) - (a.grossAmountUSD || 0))
+        .map(t => `<tr>
+          <td style="padding:6px 8px;font-size:13px;border-bottom:1px solid #e5e7eb;">${t.teacherName || '—'}</td>
+          <td style="padding:6px 8px;font-size:13px;text-align:right;border-bottom:1px solid #e5e7eb;">${(t.totalHours || 0).toFixed(1)}</td>
+          <td style="padding:6px 8px;font-size:13px;text-align:right;border-bottom:1px solid #e5e7eb;">$${(t.grossAmountUSD || 0).toFixed(2)}</td>
+          <td style="padding:6px 8px;font-size:13px;text-align:right;border-bottom:1px solid #e5e7eb;">EGP ${(t.netAmountEGP || 0).toLocaleString('en-EG', { maximumFractionDigits: 0 })}</td>
+        </tr>`).join('');
+      teacherTable = `
+        <div style="margin:18px 0;">
+          <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#374151;">Created invoices (${invoiceSummaries.length})</p>
+          <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-family:inherit;">
+            <thead>
+              <tr style="background:#f3f4f6;">
+                <th style="padding:7px 8px;font-size:12px;text-align:left;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Teacher</th>
+                <th style="padding:7px 8px;font-size:12px;text-align:right;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Hours</th>
+                <th style="padding:7px 8px;font-size:12px;text-align:right;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Gross (USD)</th>
+                <th style="padding:7px 8px;font-size:12px;text-align:right;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Net (EGP)</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // ── Failed details ────────────────────────────────────────────────────────
+    let failedSection = '';
+    if (failedArr.length > 0) {
+      const items = failedArr.map(f =>
+        `<li style="margin:4px 0;font-size:13px;"><strong>${f.teacherName || 'Unknown'}</strong>: ${f.error || 'Unknown error'}</li>`
+      ).join('');
+      failedSection = _alert(
+        `<strong>⚠ ${failedArr.length} invoice(s) failed to generate:</strong><ul style="margin:8px 0 0;padding-left:18px;">${items}</ul>`,
+        '#fef2f2', '#ef4444', '#991b1b'
+      );
+    }
+
+    // ── Skipped details ──────────────────────────────────────────────────────
+    let skippedSection = '';
+    if (skippedArr.length > 0) {
+      const MAX_SHOW = 8;
+      const shown = skippedArr.slice(0, MAX_SHOW).map(t => t.teacherName || t.name || '?').join(', ');
+      const extra = skippedArr.length > MAX_SHOW ? ` +${skippedArr.length - MAX_SHOW} more` : '';
+      skippedSection = _alert(
+        `<strong>${skippedArr.length} teacher(s) skipped</strong> (already invoiced or zero hours): ${shown}${extra}.`,
+        '#fffbeb', '#f59e0b', '#92400e'
+      );
+    }
+
+    // ── Assemble body ─────────────────────────────────────────────────────────
+    const body =
+      `${_hi(admin.firstName)}` +
+      `<p style="margin:0 0 14px;">Here is the automatic salary invoice generation report${hasPeriod ? ` for <strong>${monthLabel}</strong>` : ''}.</p>` +
+      _card(_infoTable(countRows) + (financialRows ? '<hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">' + _infoTable(financialRows) : '')) +
+      teacherTable +
+      failedSection +
+      skippedSection +
+      _btn('Review Teacher Invoices', _dashUrl('/teacher-salaries'));
+
+    const html = baseEmailTemplate({
+      preheader: `${created} invoice${created !== 1 ? 's' : ''} generated${hasPeriod ? ` for ${monthLabel}` : ''}`,
+      body,
+      branding
+    });
+
     await sendMail({ to: admin.email, subject: subj, html });
     await EmailLog.create({ to: admin.email, subject: subj, type: 'invoiceGenerationSummary', status: 'sent', userId: admin._id, sentAt: new Date() });
     console.log(`[EmailService] Admin summary email sent to ${admin.email}`);

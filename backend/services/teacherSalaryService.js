@@ -293,8 +293,16 @@ class TeacherSalaryService {
     try {
       // Check if teacher has custom rate override
       if (teacher.teacherInfo?.customRateOverride?.enabled) {
+        const customRate = Number(teacher.teacherInfo.customRateOverride.rateUSD);
+        if (!Number.isFinite(customRate) || customRate < 0) {
+          throw new Error(
+            `Teacher has a custom rate override enabled but the rate value is invalid ` +
+            `(${teacher.teacherInfo.customRateOverride.rateUSD}). ` +
+            `Please set a valid USD rate in the teacher's profile before generating invoices.`
+          );
+        }
         return {
-          rate: teacher.teacherInfo.customRateOverride.rateUSD,
+          rate: customRate,
           partition: 'custom',
           source: 'teacher_custom',
           description: 'Custom rate override'
@@ -645,10 +653,12 @@ class TeacherSalaryService {
       const results = {
         success: true,
         invoices: [],
+        invoiceSummaries: [],
         skipped: [],
         adjusted: [],
         adjustmentsCreated: [],
         errors: [],
+        warnings: [],
         summary: {
           total: teachers.length,
           created: 0,
@@ -912,6 +922,13 @@ class TeacherSalaryService {
                 if (invoice) {
                   results.invoices.push(invoice);
                   results.summary.created++;
+                  results.invoiceSummaries.push({
+                    teacherName: `${teacher.firstName} ${teacher.lastName}`.trim() || 'Teacher',
+                    teacherId: teacher._id,
+                    totalHours: invoice.totalHours,
+                    grossAmountUSD: invoice.grossAmountUSD,
+                    netAmountEGP: invoice.netAmountEGP
+                  });
 
                   // After successfully creating an invoice, subtract the invoiced hours from the
                   // teacher's running monthly counter.  We use a delta instead of zeroing because
@@ -966,13 +983,15 @@ class TeacherSalaryService {
                     // Track zeroed count for summary
                     results.summary.zeroed = (results.summary.zeroed || 0) + 1;
                   } catch (zeroErr) {
-                    console.warn(`[generateMonthlyInvoices] Failed to zero monthly hours for teacher ${teacher._id}:`, zeroErr && zeroErr.message);
-                    results.errors.push({
+                    // Invoice was created successfully — don't count this as a failure.
+                    // The monthly hours counter will self-correct on the next reset cycle.
+                    console.warn(`[generateMonthlyInvoices] Failed to zero monthly hours for teacher ${teacher._id} (invoice was created):`, zeroErr && zeroErr.message);
+                    results.warnings = results.warnings || [];
+                    results.warnings.push({
                       teacherId: teacher._id,
                       teacherName: `${teacher.firstName} ${teacher.lastName}`,
-                      error: `Zeroing failed: ${zeroErr.message}`
+                      warning: `Hours counter update failed (invoice was created): ${zeroErr.message}`
                     });
-                    results.summary.failed++;
                   }
 
                 } else {

@@ -814,10 +814,10 @@ async function notifyAdminInvoiceGeneration(summary) {
         const periodText = hasPeriod ? `${summary.month}/${summary.year}` : null;
 
         // Create in-app notification
-        const totalTeachers = summary.totalProcessed || summary.total || summary.summary?.total || 0;
-        const createdCount = summary.created || summary.summary?.created || 0;
-        const skippedCount = summary.skipped?.length || summary.summary?.skipped || 0;
-        const failedCount = summary.failed?.length || summary.summary?.failed || 0;
+        const totalTeachers = summary.totalProcessed ?? summary.total ?? summary.summary?.total ?? 0;
+        const createdCount = summary.created ?? summary.summary?.created ?? 0;
+        const skippedCount = summary.skipped?.length ?? summary.summary?.skipped ?? 0;
+        const failedCount = summary.failed?.length ?? summary.summary?.failed ?? 0;
 
         await Notification.create({
           user: admin._id,

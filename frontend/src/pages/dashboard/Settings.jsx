@@ -689,6 +689,8 @@ const Settings = () => {
   const [emailLogsFilter, setEmailLogsFilter] = useState({ type: '', status: '' });
   const [emailLogsLoading, setEmailLogsLoading] = useState(false);
   const [emailLogsExpanded, setEmailLogsExpanded] = useState(false);
+  const [emailLogsSelected, setEmailLogsSelected] = useState(new Set());
+  const [emailLogsDeletingIds, setEmailLogsDeletingIds] = useState(new Set());
   // Test panel
   const [emailTestTo, setEmailTestTo] = useState('');
   const [emailTestTypes, setEmailTestTypes] = useState(['classCreated']);
@@ -3597,7 +3599,7 @@ const Settings = () => {
               </div>
               {emailLogsExpanded && (
                 <>
-                  <div className="flex gap-2 mb-3">
+                  <div className="flex gap-2 mb-3 flex-wrap">
                     <select
                       value={emailLogsFilter.type}
                       onChange={e => { const f = { ...emailLogsFilter, type: e.target.value }; setEmailLogsFilter(f); loadEmailLogs(1, f); }}
@@ -3616,9 +3618,33 @@ const Settings = () => {
                       <option value="">All statuses</option>
                       {['sent','failed','skipped','queued'].map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
-                    <button onClick={() => loadEmailLogs(emailLogsPage)} className="text-xs px-2 py-1 border border-border rounded bg-muted ml-auto">
+                    <button onClick={() => loadEmailLogs(emailLogsPage)} className="text-xs px-2 py-1 border border-border rounded bg-muted">
                       Refresh
                     </button>
+                    {emailLogsSelected.size > 0 && (
+                      <button
+                        onClick={async () => {
+                          const ids = Array.from(emailLogsSelected);
+                          setEmailLogsDeletingIds(new Set(ids));
+                          try {
+                            await api.delete('/settings/email/logs', { data: { ids } });
+                            setEmailLogsSelected(new Set());
+                            setToast({ type: 'success', message: `Deleted ${ids.length} log${ids.length > 1 ? 's' : ''}` });
+                            loadEmailLogs(emailLogsPage);
+                          } catch (err) {
+                            setToast({ type: 'error', message: err?.response?.data?.message || 'Delete failed' });
+                          } finally {
+                            setEmailLogsDeletingIds(new Set());
+                          }
+                        }}
+                        className="ml-auto text-xs px-2 py-1 border border-red-200 rounded bg-red-50 text-red-600 hover:bg-red-100"
+                      >
+                        Delete selected ({emailLogsSelected.size})
+                      </button>
+                    )}
+                    {emailLogsSelected.size === 0 && (
+                      <span className="ml-auto" />
+                    )}
                   </div>
                   {emailLogsLoading ? (
                     <div className="text-sm text-muted-foreground py-4 text-center">Loading…</div>
@@ -3629,6 +3655,20 @@ const Settings = () => {
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="border-b border-border text-muted-foreground">
+                            <th className="py-1 pr-2 w-6">
+                              <input
+                                type="checkbox"
+                                className="w-3 h-3 cursor-pointer"
+                                checked={emailLogs.length > 0 && emailLogs.every(l => emailLogsSelected.has(l._id))}
+                                onChange={e => {
+                                  if (e.target.checked) {
+                                    setEmailLogsSelected(new Set(emailLogs.map(l => l._id)));
+                                  } else {
+                                    setEmailLogsSelected(new Set());
+                                  }
+                                }}
+                              />
+                            </th>
                             <th className="text-left py-1 pr-2">Date</th>
                             <th className="text-left py-1 pr-2">To</th>
                             <th className="text-left py-1 pr-2">Subject</th>
@@ -3639,7 +3679,19 @@ const Settings = () => {
                         </thead>
                         <tbody>
                           {emailLogs.map(log => (
-                            <tr key={log._id} className="border-b border-border/50">
+                            <tr key={log._id} className={`border-b border-border/50 ${emailLogsSelected.has(log._id) ? 'bg-red-50/40' : ''}`}>
+                              <td className="py-1 pr-2">
+                                <input
+                                  type="checkbox"
+                                  className="w-3 h-3 cursor-pointer"
+                                  checked={emailLogsSelected.has(log._id)}
+                                  onChange={e => {
+                                    const next = new Set(emailLogsSelected);
+                                    if (e.target.checked) next.add(log._id); else next.delete(log._id);
+                                    setEmailLogsSelected(next);
+                                  }}
+                                />
+                              </td>
                               <td className="py-1 pr-2 whitespace-nowrap">{new Date(log.createdAt).toLocaleString()}</td>
                               <td className="py-1 pr-2">{log.to}</td>
                               <td className="py-1 pr-2 max-w-[180px] truncate">{log.subject}</td>
@@ -3652,7 +3704,7 @@ const Settings = () => {
                                   'bg-muted text-muted-foreground'
                                 }`}>{log.status}</span>
                               </td>
-                              <td className="py-1">
+                              <td className="py-1 flex items-center gap-2">
                                 {log.status === 'failed' && (
                                   <button
                                     onClick={async () => {
@@ -3667,6 +3719,23 @@ const Settings = () => {
                                     className="text-primary text-[10px] underline"
                                   >Retry</button>
                                 )}
+                                <button
+                                  disabled={emailLogsDeletingIds.has(log._id)}
+                                  onClick={async () => {
+                                    setEmailLogsDeletingIds(prev => new Set([...prev, log._id]));
+                                    try {
+                                      await api.delete(`/settings/email/logs/${log._id}`);
+                                      setToast({ type: 'success', message: 'Deleted' });
+                                      setEmailLogsSelected(prev => { const n = new Set(prev); n.delete(log._id); return n; });
+                                      loadEmailLogs(emailLogsPage);
+                                    } catch (err) {
+                                      setToast({ type: 'error', message: err?.response?.data?.message || 'Delete failed' });
+                                    } finally {
+                                      setEmailLogsDeletingIds(prev => { const n = new Set(prev); n.delete(log._id); return n; });
+                                    }
+                                  }}
+                                  className="text-red-400 hover:text-red-600 text-[10px] disabled:opacity-40"
+                                >Delete</button>
                               </td>
                             </tr>
                           ))}

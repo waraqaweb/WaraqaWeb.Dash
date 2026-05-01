@@ -112,6 +112,33 @@ const TeacherSalaries = () => {
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [copiedLinkId, setCopiedLinkId] = useState(null);
   const [teacherMsgModal, setTeacherMsgModal] = useState(null);
+
+  // Job history panel state
+  const [jobLogs, setJobLogs] = useState([]);
+  const [jobLogsTotal, setJobLogsTotal] = useState(0);
+  const [jobLogsLoading, setJobLogsLoading] = useState(false);
+  const [jobLogsExpanded, setJobLogsExpanded] = useState(false);
+  const [jobLogsPage, setJobLogsPage] = useState(1);
+  const [jobLogsExpandedRow, setJobLogsExpandedRow] = useState(null);
+  const JOB_LOGS_LIMIT = 20;
+
+  const loadJobLogs = useCallback(async (page = 1) => {
+    setJobLogsLoading(true);
+    try {
+      const res = await api.get('/teacher-salary/admin/job-logs', { params: { months: 3, page, limit: JOB_LOGS_LIMIT } });
+      setJobLogs(res.data.entries || []);
+      setJobLogsTotal(res.data.total || 0);
+      setJobLogsPage(page);
+    } catch (_) {
+      // silent
+    } finally {
+      setJobLogsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (jobLogsExpanded) loadJobLogs(1);
+  }, [jobLogsExpanded, loadJobLogs]);
   const fetchInvoicesKeyRef = useRef('');
   const fetchInvoicesInFlightRef = useRef(false);
   const fetchInvoicesAbortRef = useRef(null);
@@ -1023,6 +1050,127 @@ const TeacherSalaries = () => {
             </>
           )}
         </div>
+      </div>
+
+      {/* Job / Invoice Generation History */}
+      <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5 mt-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-medium text-sm text-slate-800">Invoice Generation History</div>
+          {!jobLogsExpanded ? (
+            <button
+              onClick={() => setJobLogsExpanded(true)}
+              className="text-xs px-2 py-1 border border-slate-200 rounded bg-slate-50 text-slate-600 hover:bg-slate-100"
+            >Load history</button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => loadJobLogs(jobLogsPage)}
+                className="text-xs px-2 py-1 border border-slate-200 rounded bg-slate-50 text-slate-600 hover:bg-slate-100"
+              >Refresh</button>
+              <button
+                onClick={() => setJobLogsExpanded(false)}
+                className="text-xs px-2 py-1 border border-slate-200 rounded bg-slate-50 text-slate-400 hover:bg-slate-100"
+              >Hide</button>
+            </div>
+          )}
+        </div>
+        {jobLogsExpanded && (
+          jobLogsLoading ? (
+            <div className="py-6 text-center text-sm text-slate-400">Loading…</div>
+          ) : jobLogs.length === 0 ? (
+            <div className="py-6 text-center text-sm text-slate-400">No job log entries in the last 3 months</div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-slate-500">
+                      <th className="text-left py-1.5 pr-3 font-medium">Date</th>
+                      <th className="text-left py-1.5 pr-3 font-medium">Action</th>
+                      <th className="text-left py-1.5 pr-3 font-medium">Period</th>
+                      <th className="text-left py-1.5 pr-3 font-medium">Result</th>
+                      <th className="text-left py-1.5 font-medium">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jobLogs.map(entry => {
+                      const isJobRun = entry.action === 'job_run';
+                      const meta = entry.metadata || {};
+                      const errors = entry._errorsWithStatus || meta.errors || [];
+                      const created = meta.created ?? meta.summary?.created;
+                      const skipped = meta.skipped ?? meta.summary?.skipped;
+                      const failed  = meta.failed  ?? meta.summary?.failed ?? errors.length;
+                      const period  = meta.month && meta.year ? `${meta.month}/${meta.year}` : '—';
+                      const isExpanded = jobLogsExpandedRow === entry._id;
+                      const hasErrors = errors.length > 0;
+                      const allFixed = errors.length > 0 && errors.every(e => e.subsequentlyFixed);
+
+                      return (
+                        <React.Fragment key={entry._id}>
+                          <tr
+                            className={`border-b border-slate-50 cursor-pointer hover:bg-slate-50 ${hasErrors && !allFixed ? 'bg-red-50/40' : hasErrors && allFixed ? 'bg-emerald-50/30' : ''}`}
+                            onClick={() => setJobLogsExpandedRow(isExpanded ? null : entry._id)}
+                          >
+                            <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{new Date(entry.createdAt).toLocaleString()}</td>
+                            <td className="py-2 pr-3">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                entry.action === 'job_run'  ? 'bg-blue-100 text-blue-700' :
+                                entry.action === 'job_fail' ? 'bg-red-100 text-red-700' :
+                                'bg-slate-100 text-slate-600'
+                              }`}>{entry.action}</span>
+                            </td>
+                            <td className="py-2 pr-3 font-medium text-slate-700">{period}</td>
+                            <td className="py-2 pr-3">
+                              {isJobRun ? (
+                                <span className="text-slate-600">
+                                  {created !== undefined ? `${created} created` : ''}
+                                  {skipped !== undefined ? `, ${skipped} skipped` : ''}
+                                  {(failed > 0) ? (
+                                    <span className={`ml-1 font-semibold ${allFixed ? 'text-emerald-600' : 'text-red-600'}`}>
+                                      , {failed} failed{allFixed ? ' ✓ fixed' : ''}
+                                    </span>
+                                  ) : null}
+                                  {(failed === 0 && !hasErrors) ? <span className="text-emerald-600"> ✓</span> : null}
+                                </span>
+                              ) : (
+                                <span className={entry.success === false ? 'text-red-600 font-medium' : 'text-emerald-600'}>{entry.success === false ? 'Failed' : 'OK'}</span>
+                              )}
+                            </td>
+                            <td className="py-2 text-slate-400">{hasErrors ? (isExpanded ? '▲' : '▼') : ''}</td>
+                          </tr>
+                          {isExpanded && hasErrors && (
+                            <tr>
+                              <td colSpan={5} className="pb-3 pt-0">
+                                <div className="ml-2 rounded-lg border border-slate-100 bg-white p-3">
+                                  <div className="text-xs font-medium text-slate-600 mb-2">Failed teachers:</div>
+                                  {errors.map((err, i) => (
+                                    <div key={i} className={`flex items-start gap-2 py-1 text-xs border-b border-slate-50 last:border-0 ${err.subsequentlyFixed ? 'text-emerald-700' : 'text-red-700'}`}>
+                                      <span className={`shrink-0 font-bold ${err.subsequentlyFixed ? 'text-emerald-500' : 'text-red-400'}`}>{err.subsequentlyFixed ? '✓' : '✗'}</span>
+                                      <span className="font-medium">{err.teacherName || 'Unknown'}</span>
+                                      <span className="text-slate-500 flex-1">{err.error || err.reason || '—'}</span>
+                                      {err.subsequentlyFixed && <span className="shrink-0 text-emerald-600 font-medium">Invoice created later</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {jobLogsTotal > JOB_LOGS_LIMIT && (
+                <div className="flex items-center gap-2 mt-2 text-xs text-slate-500">
+                  <button disabled={jobLogsPage <= 1} onClick={() => loadJobLogs(jobLogsPage - 1)} className="px-2 py-1 border border-slate-200 rounded bg-slate-50 disabled:opacity-40">Prev</button>
+                  <span>Page {jobLogsPage} / {Math.ceil(jobLogsTotal / JOB_LOGS_LIMIT)}</span>
+                  <button disabled={jobLogsPage >= Math.ceil(jobLogsTotal / JOB_LOGS_LIMIT)} onClick={() => loadJobLogs(jobLogsPage + 1)} className="px-2 py-1 border border-slate-200 rounded bg-slate-50 disabled:opacity-40">Next</button>
+                </div>
+              )}
+            </>
+          )
+        )}
       </div>
 
       {/* Floating Action Buttons */}

@@ -1751,4 +1751,85 @@ router.post('/admin/bulk/delete', authenticateToken, requireAdmin, async (req, r
   }
 });
 
+// ── Job / audit log ──────────────────────────────────────────────────────────
+
+/**
+ * GET /api/teacher-salary/admin/job-logs
+ * Returns the last N months of TeacherSalaryAudit entries focused on job runs and failures.
+ * Query params: months (default 3), page (default 1), limit (default 50)
+ */
+router.get('/admin/job-logs', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const months = Math.min(Math.max(Number(req.query.months) || 3, 1), 24);
+    const page   = Math.max(Number(req.query.page)  || 1, 1);
+    const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+
+    const since = new Date();
+    since.setMonth(since.getMonth() - months);
+
+    const JOB_ACTIONS = ['job_run', 'job_fail', 'create_invoice', 'bulk_operation'];
+    const filter = {
+      action: { $in: JOB_ACTIONS },
+      createdAt: { $gte: since }
+    };
+
+    const [entries, total] = await Promise.all([
+      TeacherSalaryAudit.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('actor', 'firstName lastName email')
+        .lean(),
+      TeacherSalaryAudit.countDocuments(filter)
+    ]);
+
+    // For each job_run entry that has errors, check if those teachers subsequently got invoices created
+    const enriched = await Promise.all(entries.map(async entry => {
+      if (entry.action !== 'job_run') return entry;
+
+      const errors = entry.metadata?.errors || [];
+      if (errors.length === 0) return entry;
+
+      const month = entry.metadata?.month;
+      const year  = entry.metadata?.year;
+      if (!month || !year) return entry;
+
+      // Check which failed teachers now have invoices
+      const failedIds = errors
+        .map(e => e.teacherId)
+        .filter(Boolean);
+
+      if (failedIds.length === 0) return entry;
+
+      const existing = await TeacherInvoice.find({
+        teacher: { $in: failedIds },
+        month,
+        year,
+        deleted: false
+      }).select('teacher status').lean();
+
+      const fixedSet = new Set(existing.map(i => i.teacher?.toString()));
+
+      return {
+        ...entry,
+        _errorsWithStatus: errors.map(e => ({
+          ...e,
+          subsequentlyFixed: e.teacherId ? fixedSet.has(e.teacherId.toString()) : false
+        }))
+      };
+    }));
+
+    res.json({
+      success: true,
+      entries: enriched,
+      total,
+      page,
+      pages: Math.ceil(total / limit)
+    });
+  } catch (error) {
+    console.error('[GET /admin/job-logs] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

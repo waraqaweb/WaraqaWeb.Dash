@@ -21,12 +21,16 @@ async function loadBrandingAndLogo() {
   const now = Date.now();
   if (_brandingCache && now - _brandingCachedAt < BRANDING_TTL) return _brandingCache;
   try {
-    const s = await Setting.findOne({ key: 'branding' }).lean();
-    const b = s?.value || {};
+    const docs = await Setting.find({ key: { $in: ['branding.logo', 'branding.title', 'branding.slogan'] } }).lean();
+    const byKey = {};
+    docs.forEach(d => { byKey[d.key] = d.value; });
+    const logoVal = byKey['branding.logo'] || {};
+    // Only use an absolute http(s) URL — data URIs are blocked by most email clients
+    const logoUrl = (typeof logoVal.url === 'string' && /^https?:\/\//i.test(logoVal.url)) ? logoVal.url : null;
     _brandingCache = {
-      title:   b.title   || 'Waraqa',
-      slogan:  b.slogan  || '',
-      logoUrl: b.logo?.url || b.logo?.dataUri || null,
+      title:   (typeof byKey['branding.title'] === 'string' ? byKey['branding.title'] : null) || 'Waraqa',
+      slogan:  (typeof byKey['branding.slogan'] === 'string' ? byKey['branding.slogan'] : null) || '',
+      logoUrl,
     };
     _brandingCachedAt = now;
   } catch {

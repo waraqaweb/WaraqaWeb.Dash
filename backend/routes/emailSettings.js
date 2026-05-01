@@ -285,4 +285,34 @@ router.post('/resend/:logId', async (req, res) => {
   }
 });
 
+// ── Delete email log entries ──────────────────────────────────────────────────
+
+// Delete a single log entry
+router.delete('/logs/:logId', async (req, res) => {
+  try {
+    const deleted = await EmailLog.findByIdAndDelete(req.params.logId);
+    if (!deleted) return res.status(404).json({ message: 'Log entry not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Bulk delete log entries: DELETE /logs  body: { ids: ['...', ...] }
+router.delete('/logs', async (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ message: 'ids array required' });
+    }
+    if (ids.length > 500) {
+      return res.status(400).json({ message: 'Maximum 500 entries per batch' });
+    }
+    const result = await EmailLog.deleteMany({ _id: { $in: ids } });
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

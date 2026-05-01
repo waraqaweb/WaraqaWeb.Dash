@@ -791,6 +791,17 @@ const TeacherSalaries = () => {
                               <span className="capitalize">{invoice.status || 'draft'}</span>
                             </span>
                             <span className="text-sm font-semibold text-slate-700">{invoice.invoiceNumber}</span>
+                            <span className="text-sm font-semibold text-slate-800">
+                              {invoice.teacher?.firstName} {invoice.teacher?.lastName}
+                            </span>
+                            {/* Amount in green next to status */}
+                            {(() => {
+                              const egpCandidates = [invoice.netAmountEGP, invoice.totalEGP, invoice.grossAmountEGP];
+                              for (const c of egpCandidates) {
+                                if (Number(c) > 0) return <span key="amt" className="text-sm font-bold text-emerald-600">{formatCurrency(c, 'EGP')}</span>;
+                              }
+                              return null;
+                            })()}
                           </div>
 
                           <div className="space-y-1 text-sm text-slate-600">
@@ -841,55 +852,63 @@ const TeacherSalaries = () => {
                                 </span>
                               </div>
 
-                              <div className="inline-flex items-center gap-2">
-                                <span className="text-xs text-slate-500">
-                                  {(() => {
-                                    const candidates = invoice.bonusesEGP || invoice.bonusTotalEGP || invoice.bonusesTotal;
-                                    if (candidates && Number(candidates) > 0) return `Bonus: ${formatCurrency(candidates, 'EGP')}`;
-                                    if (Array.isArray(invoice.bonuses) && invoice.bonuses.length) {
-                                      const sum = invoice.bonuses.reduce((s, b) => s + (Number(b.amount || 0)), 0);
-                                      if (sum > 0) return `Bonus: ${formatCurrency(sum, 'EGP')}`;
-                                    }
-                                    return 'Bonus: None';
-                                  })()}
-                                </span>
-                              </div>
+                              {/* Bonus — only if present */}
+                              {(() => {
+                                const bonusEGP = Number(invoice.bonusesEGP || invoice.bonusTotalEGP || invoice.bonusesTotal || 0);
+                                const bonusFromArr = Array.isArray(invoice.bonuses) ? invoice.bonuses.reduce((s, b) => s + (Number(b.amountUSD || b.amount || 0)), 0) : 0;
+                                if (bonusEGP > 0 || bonusFromArr > 0) {
+                                  const label = bonusEGP > 0 ? `Bonus: ${formatCurrency(bonusEGP, 'EGP')}` : `Bonus: $${bonusFromArr.toFixed(2)}`;
+                                  return (
+                                    <div className="inline-flex items-center gap-1">
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">
+                                        🎁 {label}
+                                      </span>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
 
-                              <div className="inline-flex items-center gap-2">
-                                <span className="text-xs text-slate-500">
-                                  {invoice.paidAt ? (
-                                    `Paid on ${formatDateDDMMMYYYY(invoice.paidAt)}` + (invoice.payment?.amount ? ` • ${formatCurrency(invoice.payment.amount, invoice.payment.currency || 'EGP')}` : '')
-                                  ) : (invoice.payment?.amount ? `${formatCurrency(invoice.payment.amount, invoice.payment.currency || 'EGP')}` : 'Payment: Not recorded')}
-                                </span>
-                              </div>
+                              {/* Extras — only if present, color-coded by category */}
+                              {(() => {
+                                const extras = Array.isArray(invoice.extras) ? invoice.extras : [];
+                                if (extras.length === 0 && !Number(invoice.extrasUSD)) return null;
+                                const premiumExtras = extras.filter(e => e.category === 'premium');
+                                const otherExtras = extras.filter(e => e.category !== 'premium');
+                                const premiumUSD = premiumExtras.reduce((s, e) => s + (Number(e.amountUSD || 0)), 0);
+                                const otherUSD = otherExtras.reduce((s, e) => s + (Number(e.amountUSD || 0)), 0);
+                                return (
+                                  <>
+                                    {premiumUSD !== 0 && (
+                                      <div className="inline-flex items-center gap-1">
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700 border border-orange-200">
+                                          ⭐ Premium: ${premiumUSD.toFixed(2)}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {otherUSD !== 0 && (
+                                      <div className="inline-flex items-center gap-1">
+                                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold border ${
+                                          otherUSD > 0
+                                            ? 'bg-sky-50 text-sky-700 border-sky-200'
+                                            : 'bg-red-50 text-red-700 border-red-200'
+                                        }`}>
+                                          {otherUSD > 0 ? '＋' : '－'} Extra: ${Math.abs(otherUSD).toFixed(2)}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
 
-                              <div className="inline-flex items-center gap-2">
-                                {(() => {
-                                  const asNumber = (v) => Number(v) || 0;
-                                  // Prefer server-provided EGP totals when available
-                                  const egpCandidates = [invoice.netAmountEGP, invoice.totalEGP, invoice.grossAmountEGP, invoice.finalTotalEGP, invoice.finalTotalInEGP];
-                                  for (const c of egpCandidates) {
-                                    if (asNumber(c) > 0) return <span className="font-semibold text-slate-900">{formatCurrency(c, 'EGP')}</span>;
-                                  }
-
-                                  // If finalTotal exists and is in USD, try to convert using known exchange rates
-                                  const final = asNumber(invoice.finalTotal);
-                                  if (final > 0) {
-                                    if ((invoice.currency || 'EGP') === 'EGP') {
-                                      return <span className="font-semibold text-slate-900">{formatCurrency(final, 'EGP')}</span>;
-                                    }
-
-                                    const ex = invoice.exchangeRateSnapshot?.rate || invoice.exchangeRate || invoice.exchangeRateEGP || invoice.usdToEgp || invoice.exchangeRateUsed;
-                                    const exNum = asNumber(ex);
-                                    if (exNum > 0) {
-                                      return <span className="font-semibold text-slate-900">{formatCurrency(final * exNum, 'EGP')}{ex !== invoice.exchangeRateSnapshot?.rate ? ' (derived)' : ''}</span>;
-                                    }
-                                  }
-
-                                  // Last resort: show whatever finalTotal exists (formatted with assumed currency)
-                                  return <span className="font-semibold text-slate-900">{formatCurrency(invoice.finalTotal, invoice.currency)}</span>;
-                                })()}
-                              </div>
+                              {/* Payment — only if paid */}
+                              {invoice.paidAt && (
+                                <div className="inline-flex items-center gap-2">
+                                  <span className="text-xs text-emerald-600 font-medium">
+                                    ✓ Paid {formatDateDDMMMYYYY(invoice.paidAt)}{invoice.payment?.amount ? ` • ${formatCurrency(invoice.payment.amount, invoice.payment.currency || 'EGP')}` : ''}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>

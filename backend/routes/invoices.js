@@ -1278,12 +1278,37 @@ router.post('/attach-class', authenticateToken, requireAdmin, async (req, res) =
       });
     }
 
-    const openInvoice = await Invoice.findOne({
+    const openInvoices = await Invoice.find({
       guardian: guardianId,
       type: 'guardian_invoice',
       status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
       deleted: { $ne: true }
     }).sort({ createdAt: 1 });
+
+    let openInvoice = openInvoices[0] || null;
+    if (openInvoices.length > 1) {
+      try {
+        const chain = await InvoiceService.rebalanceGuardianInvoices(guardianId);
+        const classIdStr = String(classDoc._id);
+        const ownerEntry = (chain?.invoices || []).find((entry) => {
+          if (!['draft', 'pending', 'sent', 'overdue'].includes(String(entry?.status || '').toLowerCase())) {
+            return false;
+          }
+          return (entry?.items || []).some((item) => {
+            const itemClassId = item?.class?._id || item?.class || item?.lessonId;
+            return itemClassId && String(itemClassId) === classIdStr;
+          });
+        });
+
+        if (ownerEntry?.invoiceId) {
+          const ownerId = String(ownerEntry.invoiceId);
+          const matched = openInvoices.find((inv) => String(inv._id) === ownerId);
+          if (matched) openInvoice = matched;
+        }
+      } catch (_) {
+        // Keep deterministic oldest-open fallback.
+      }
+    }
 
     if (openInvoice) {
       const guardian = await User.findById(guardianId).lean();

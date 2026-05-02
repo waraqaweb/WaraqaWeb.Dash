@@ -219,6 +219,41 @@ async function resolveUninvoicedLessons(options = {}) {
   const InvoiceService = require('./invoiceService');
   const User = require('../models/User');
 
+  const findTargetUnpaidInvoice = async (guardianId, classId) => {
+    const unpaidInvoices = await Invoice.find({
+      guardian: guardianId,
+      type: 'guardian_invoice',
+      status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
+      deleted: { $ne: true }
+    }).sort({ createdAt: 1 });
+
+    if (!unpaidInvoices.length) return null;
+
+    const classIdStr = String(classId);
+    try {
+      const chain = await InvoiceService.rebalanceGuardianInvoices(guardianId);
+      const ownerEntry = (chain?.invoices || []).find((entry) => {
+        if (!['draft', 'pending', 'sent', 'overdue'].includes(String(entry?.status || '').toLowerCase())) {
+          return false;
+        }
+        return (entry?.items || []).some((item) => {
+          const itemClassId = item?.class?._id || item?.class || item?.lessonId;
+          return itemClassId && String(itemClassId) === classIdStr;
+        });
+      });
+
+      if (ownerEntry?.invoiceId) {
+        const ownerId = String(ownerEntry.invoiceId);
+        const matched = unpaidInvoices.find((inv) => String(inv._id) === ownerId);
+        if (matched) return matched;
+      }
+    } catch (_) {
+      // Fall back to oldest open invoice.
+    }
+
+    return unpaidInvoices[0];
+  };
+
   const linkClassToInvoice = async (classDoc, invoiceId) => {
     try {
       await Class.updateOne(
@@ -306,12 +341,7 @@ async function resolveUninvoicedLessons(options = {}) {
         // Class was not placed — fall through to open invoice / create-new paths below
       }
 
-      const openInvoice = await Invoice.findOne({
-        guardian: guardianId,
-        type: 'guardian_invoice',
-        status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
-        deleted: { $ne: true }
-      }).sort({ createdAt: 1 });
+      const openInvoice = await findTargetUnpaidInvoice(guardianId, classDoc._id);
 
       if (openInvoice) {
         const syncResult = await InvoiceService.syncUnpaidInvoiceItems(openInvoice, {

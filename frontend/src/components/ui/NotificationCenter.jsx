@@ -774,7 +774,7 @@ const NotificationCenter = () => {
                             )}
                           </div>
                         )}
-                        {!isActionableReschedule(notification) && !isUninvoicedResolved(notification) && notification?.actionLink && (
+                        {!isActionableReschedule(notification) && !isUninvoicedLessonsNotification(notification) && notification?.actionLink && (
                           <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                             <button
                               type="button"

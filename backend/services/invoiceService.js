@@ -2255,13 +2255,43 @@ class InvoiceService {
         return { success: false, reason: 'no_guardian' };
       }
 
-      // Find the guardian's most recent unpaid invoice
-      const unpaidInvoice = await Invoice.findOne({
-        guardian: guardianId,
-        type: 'guardian_invoice',
-        status: { $in: ['draft', 'pending'] }, // Only add to draft/pending invoices
-        deleted: { $ne: true }
-      }).sort({ createdAt: -1 });
+      // Pick the invoice using the same chain allocation logic used by dynamic invoice rendering.
+      const resolveTargetInvoice = async () => {
+        const unpaidInvoices = await Invoice.find({
+          guardian: guardianId,
+          type: 'guardian_invoice',
+          status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
+          deleted: { $ne: true }
+        }).sort({ createdAt: 1 });
+
+        if (!unpaidInvoices.length) return null;
+
+        const classIdStr = String(classDoc._id);
+        try {
+          const chain = await InvoiceService.rebalanceGuardianInvoices(guardianId);
+          const ownerEntry = (chain?.invoices || []).find((entry) => {
+            if (!['draft', 'pending', 'sent', 'overdue'].includes(String(entry?.status || '').toLowerCase())) {
+              return false;
+            }
+            return (entry?.items || []).some((item) => {
+              const itemClassId = item?.class?._id || item?.class || item?.lessonId;
+              return itemClassId && String(itemClassId) === classIdStr;
+            });
+          });
+
+          if (ownerEntry?.invoiceId) {
+            const ownerId = String(ownerEntry.invoiceId);
+            const matched = unpaidInvoices.find((inv) => String(inv._id) === ownerId);
+            if (matched) return matched;
+          }
+        } catch (_) {
+          // Fall back to oldest open invoice if chain rebalance fails.
+        }
+
+        return unpaidInvoices[0];
+      };
+
+      const unpaidInvoice = await resolveTargetInvoice();
 
       if (!unpaidInvoice) {
         return { success: false, reason: 'no_unpaid_invoice' };
@@ -2283,17 +2313,7 @@ class InvoiceService {
         return { success: false, reason: 'already_in_another_invoice', invoiceId: alreadyInAnyInvoice._id };
       }
 
-      // Check if the class date is within the invoice billing period
       const classDate = classDoc.scheduledDate || new Date();
-      const billingStart = unpaidInvoice.billingPeriod?.startDate;
-      const billingEnd = unpaidInvoice.billingPeriod?.endDate;
-      
-      if (billingStart && billingEnd) {
-        if (classDate < billingStart || classDate >= billingEnd) {
-          // Instead of silently rejecting, signal that a new invoice may be needed
-          return { success: false, reason: 'outside_billing_period', guardianId };
-        }
-      }
 
       console.log(`[maybeAddClassToUnpaidInvoice] Adding class ${classDoc._id} to invoice ${unpaidInvoice.invoiceNumber}`);
 

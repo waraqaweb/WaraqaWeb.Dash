@@ -97,18 +97,20 @@ router.post('/', authenticateToken, async (req, res) => {
     // ── Email: poor performance alert ──────────────────────────────────────
     try {
       if (typeof teacherPerformanceRating === 'number' && teacherPerformanceRating <= 4) {
-        const { enqueueEmail, buildPoorPerformanceEmail } = require('../services/emailService');
+        const { enqueueEmail, buildPoorPerformanceEmail, loadBrandingAndLogo } = require('../services/emailService');
         const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
         const guardianUser = await User.findById(user._id).select('email firstName timezone').lean();
         const classObj = classId ? await Class.findById(classId).select('scheduledDate subject student').lean() : null;
         const studentName = classObj?.student?.studentName || '';
         if (guardianUser?.email && await shouldSendEmail(user._id, 'poorPerformance')) {
+          const branding = await loadBrandingAndLogo();
           const tpl = await buildPoorPerformanceEmail({
             guardian: guardianUser,
             student: { studentName },
             classObj: { scheduledDate: classObj?.scheduledDate, subject: classObj?.subject },
             teacherNote: '',
             performanceRating: teacherPerformanceRating,
+            branding,
           });
           await enqueueEmail({ to: guardianUser.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: 'poorPerformance', userId: user._id, relatedId: feedback._id, priority: 2 });
         }

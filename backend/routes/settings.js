@@ -390,6 +390,44 @@ router.get('/branding', async (req, res) => {
   }
 });
 
+// Public logo endpoint used by email templates when branding.logo is stored as dataUri fallback.
+router.get('/branding/logo', async (req, res) => {
+  try {
+    const logoSetting = await Setting.findOne({ key: 'branding.logo' }).lean();
+    const logo = logoSetting?.value;
+    if (!logo) {
+      return res.status(404).send('Logo not found');
+    }
+
+    if (typeof logo === 'string' && /^https?:\/\//i.test(logo)) {
+      return res.redirect(302, logo);
+    }
+
+    if (typeof logo?.url === 'string' && /^https?:\/\//i.test(logo.url)) {
+      return res.redirect(302, logo.url);
+    }
+
+    if (typeof logo?.dataUri === 'string' && logo.dataUri.startsWith('data:image/')) {
+      const match = logo.dataUri.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (!match) {
+        return res.status(400).send('Invalid logo data');
+      }
+
+      const mimeType = match[1];
+      const base64 = match[2];
+      const buffer = Buffer.from(base64, 'base64');
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Cache-Control', 'public, max-age=300');
+      return res.send(buffer);
+    }
+
+    return res.status(404).send('Logo not found');
+  } catch (err) {
+    console.error('Failed to serve branding logo', err);
+    return res.status(500).send('Failed to load logo');
+  }
+});
+
 // Subjects/Courses/Levels catalog (authenticated read)
 // Used by class create/edit dropdowns + class report topic dropdowns.
 router.get('/subjects-catalog', authenticateToken, async (req, res) => {

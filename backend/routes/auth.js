@@ -181,11 +181,12 @@ router.post(
 
       // --- Email: registration welcome ---
       try {
-        const { enqueueEmail, buildRegistrationWelcomeEmail } = require('../services/emailService');
+        const { enqueueEmail, buildRegistrationWelcomeEmail, loadBrandingAndLogo } = require('../services/emailService');
         const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
         const canSend = await shouldSendEmail(user._id, 'registration');
         if (canSend && user.email) {
-          const tpl = await buildRegistrationWelcomeEmail({ name: user.firstName, email: user.email, role: user.role });
+          const branding = await loadBrandingAndLogo();
+          const tpl = await buildRegistrationWelcomeEmail({ user, branding });
           await enqueueEmail({ to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: 'registration', userId: user._id, priority: 2 });
         }
       } catch (e) { console.warn('[Email] registration welcome failed:', e.message); }

@@ -17,19 +17,43 @@ let _brandingCache    = null;
 let _brandingCachedAt = 0;
 const BRANDING_TTL    = 5 * 60 * 1000;
 
+function resolvePublicAppBaseUrl() {
+  const raw =
+    process.env.PUBLIC_APP_URL
+    || process.env.APP_BASE_URL
+    || process.env.FRONTEND_URL
+    || 'https://app.waraqaweb.com';
+  return String(raw).split(',')[0].trim().replace(/\/$/, '');
+}
+
 async function loadBrandingAndLogo() {
   const now = Date.now();
   if (_brandingCache && now - _brandingCachedAt < BRANDING_TTL) return _brandingCache;
   try {
     const docs = await Setting.find({ key: { $in: ['branding.logo', 'branding.title', 'branding.slogan'] } }).lean();
     const byKey = {};
-    docs.forEach(d => { byKey[d.key] = d.value; });
-    const logoVal = byKey['branding.logo'] || {};
-    // Only use an absolute http(s) URL — data URIs are blocked by most email clients
-    const logoUrl = (typeof logoVal.url === 'string' && /^https?:\/\//i.test(logoVal.url)) ? logoVal.url : null;
+    docs.forEach(d => { byKey[d.key] = d; });
+    const logoDoc = byKey['branding.logo'];
+    const logoVal = logoDoc?.value || null;
+
+    // Support legacy string, object URL, and dataUri fallback uploads from branding settings.
+    let logoUrl = null;
+    if (typeof logoVal === 'string' && /^https?:\/\//i.test(logoVal)) {
+      logoUrl = logoVal;
+    } else if (logoVal && typeof logoVal === 'object') {
+      if (typeof logoVal.url === 'string' && /^https?:\/\//i.test(logoVal.url)) {
+        logoUrl = logoVal.url;
+      } else if (typeof logoVal.dataUri === 'string' && logoVal.dataUri.startsWith('data:image/')) {
+        // Expose dataUri-based logo via public HTTP endpoint so email clients can load it.
+        const base = resolvePublicAppBaseUrl();
+        const stamp = logoDoc?.updatedAt ? new Date(logoDoc.updatedAt).getTime() : now;
+        logoUrl = `${base}/api/settings/branding/logo?v=${stamp}`;
+      }
+    }
+
     _brandingCache = {
-      title:   (typeof byKey['branding.title'] === 'string' ? byKey['branding.title'] : null) || 'Waraqa',
-      slogan:  (typeof byKey['branding.slogan'] === 'string' ? byKey['branding.slogan'] : null) || '',
+      title:   (typeof byKey['branding.title']?.value === 'string' ? byKey['branding.title'].value : null) || 'Waraqa',
+      slogan:  (typeof byKey['branding.slogan']?.value === 'string' ? byKey['branding.slogan'].value : null) || '',
       logoUrl,
     };
     _brandingCachedAt = now;
@@ -186,7 +210,7 @@ function baseEmailTemplate({ preheader = '', body, icon = '', footerNote = '', b
   const year    = new Date().getFullYear();
   const BRAND   = '#2C736C';
   const BRAND2  = '#235c56';
-  const dashUrl = `${(process.env.FRONTEND_URL || 'https://dashboard.waraqaweb.com').split(',')[0].trim().replace(/\/$/, '')}/dashboard`;
+  const dashUrl = `${resolvePublicAppBaseUrl()}/dashboard`;
 
   // Icon shown inside the header — white stroke so it reads on dark teal background
   const headerIcon = icon
@@ -194,7 +218,7 @@ function baseEmailTemplate({ preheader = '', body, icon = '', footerNote = '', b
     : '';
 
   const headerLogoSection = logoUrl
-    ? `<img src="${logoUrl}" alt="${title}" style="height:48px;max-width:160px;display:inline-block;margin-bottom:4px;filter:brightness(0) invert(1) opacity(0.93);">`
+    ? `<img src="${logoUrl}" alt="${title}" style="height:48px;max-width:180px;display:inline-block;margin-bottom:4px;object-fit:contain;">`
     : `<div style="width:44px;height:44px;background:rgba(255,255,255,0.16);border:2px solid rgba(255,255,255,0.35);border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:4px;font-size:20px;color:white;font-weight:800;">${title.charAt(0).toUpperCase()}</div>`;
 
   return `<!DOCTYPE html>
@@ -285,7 +309,7 @@ function _dateOnly(date, tz) {
   } catch { return new Date(date).toDateString(); }
 }
 function _dashUrl(path = '') {
-  return `${(process.env.FRONTEND_URL || 'https://dashboard.waraqaweb.com').split(',')[0].trim().replace(/\/$/, '')}/dashboard${path}`;
+  return `${resolvePublicAppBaseUrl()}/dashboard${path}`;
 }
 
 // ─── SVG Icons — hand-drawn sketch style, white stroke for header use ────────
@@ -494,6 +518,9 @@ function buildGuardianInvoiceCreatedEmail({ guardian, invoice, branding }) {
   const period = invoice.billingPeriodLabel || (invoice.month && invoice.year ? `${invoice.month}/${invoice.year}` : '');
   const amount = invoice.totalAmountDue != null ? `${Number(invoice.totalAmountDue).toFixed(2)} ${invoice.currency || 'USD'}`
     : invoice.totalEGP != null ? `${Number(invoice.totalEGP).toFixed(2)} EGP` : 'See invoice';
+  const invoiceLink = invoice?.invoiceSlug
+    ? `${resolvePublicAppBaseUrl()}/public/invoices/${invoice.invoiceSlug}`
+    : _dashUrl('/invoices');
   let rows = _infoRow('Invoice #', invoice.invoiceNumber || invoice._id);
   if (period) rows += _infoRow('Period', period);
   rows += _infoRow('Amount Due', amount);
@@ -501,7 +528,7 @@ function buildGuardianInvoiceCreatedEmail({ guardian, invoice, branding }) {
     <p style="margin:0 0 14px;color:#374151;">A new invoice has been created for your account.</p>
     ${_card(_infoTable(rows))}
     ${_alert('Payment instructions (PayPal link) will be sent soon by your administrator.', '#eff6ff', '#3b82f6', '#1e40af')}
-    ${_btn('View Invoice', _dashUrl('/invoices'))}`;
+    ${_btn('Open Invoice', invoiceLink)}`;
   const text = `Hi ${guardian.firstName || 'there'},\n\nNew invoice created.\nInvoice: ${invoice.invoiceNumber || ''}\n${period ? `Period: ${period}\n` : ''}Amount: ${amount}\n\nPayment instructions will follow.`;
   return { subject: `New invoice — ${period || invoice.invoiceNumber || 'details inside'}`, html: baseEmailTemplate({ preheader: `Invoice: ${amount}`, body, icon: _ICONS.invoice, branding }), text };
 }
@@ -607,11 +634,14 @@ function buildTeacherInvoiceEmail({ teacher, invoice, isMonthly, branding }) {
   if (pStr)                  rows += _infoRow('Period', pStr);
   if (invoice.totalHours)    rows += _infoRow('Hours', `${Number(invoice.totalHours).toFixed(2)} h`);
   rows += _infoRow('Total', `<strong style="font-size:15px;">${total}</strong>`);
+  const targetUrl = invoice?.shareToken
+    ? `${resolvePublicAppBaseUrl()}/dashboard/teacher-salary/shared/${invoice.shareToken}`
+    : _dashUrl('/salaries');
   const body = `${_hi(teacher.firstName)}
     <p style="margin:0 0 14px;color:#374151;">Your salary invoice${pStr ? ` for <strong>${pStr}</strong>` : ''} is ready.</p>
     ${_card(_infoTable(rows))}
     ${isMonthly ? _alert('Payment will be sent before the <strong>6th of this month</strong>.', '#f0fdf4', '#22c55e', '#14532d') : ''}
-    ${_btn('View Invoice', _dashUrl('/salary'))}`;
+    ${_btn('Open Invoice', targetUrl)}`;
   const text = `Hi ${teacher.firstName || 'there'},\n\nInvoice ready${pStr ? ` for ${pStr}` : ''}.\nTotal: ${total}\n${isMonthly ? 'Payment before the 6th.\n' : ''}`;
   return { subject: `Invoice ready${pStr ? ` — ${pStr}` : ''}`, html: baseEmailTemplate({ preheader: `Invoice: ${total}`, body, icon: _ICONS.invoice, branding }), text };
 }

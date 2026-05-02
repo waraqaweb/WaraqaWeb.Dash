@@ -202,7 +202,13 @@ async function notifyClassEvent({
 
   // ── Email hooks for class events ──────────────────────────────────────────
   try {
-    const { enqueueEmail, buildClassCreatedEmail, buildClassCancelledEmail, buildClassRescheduledEmail } = require('./emailService');
+    const {
+      enqueueEmail,
+      buildClassCreatedEmail,
+      buildClassCancelledEmail,
+      buildClassRescheduledEmail,
+      loadBrandingAndLogo,
+    } = require('./emailService');
     const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
     const eventEmailType = eventType === 'added' ? 'classCreated' : eventType === 'cancelled' ? 'classCancelled' : eventType === 'rescheduled' ? 'classRescheduled' : null;
     if (!eventEmailType) return; // time_changed: no dedicated email
@@ -211,20 +217,37 @@ async function notifyClassEvent({
     const teacherUserFull = teacherId ? await User.findById(teacherId).select('email firstName lastName timezone').lean() : null;
     const guardianUserFull = guardianId ? await User.findById(guardianId).select('email firstName timezone').lean() : null;
 
-    const classData = {
+    const branding = await loadBrandingAndLogo();
+    const classPayload = {
       subject: classObj.subject,
       scheduledDate: classObj.scheduledDate,
-      duration: classObj.duration,
-      studentName: classObj?.student?.studentName || classObj?.studentSnapshot?.studentName || classObj?.studentSnapshot?.firstName || '',
+      durationMinutes: classObj.duration,
       meetingLink: classObj.meetingLink,
+      recurrence: classObj.recurrence || { type: 'none' },
+    };
+    const studentPayload = {
+      firstName: classObj?.student?.studentName || classObj?.studentSnapshot?.studentName || classObj?.studentSnapshot?.firstName || '',
+      lastName: '',
     };
 
     if (teacherUserFull?.email && await shouldSendEmail(teacherId, eventEmailType)) {
-      const tpl = await buildFn({ recipient: teacherUserFull, classData, role: 'teacher' });
+      const tpl = await buildFn({
+        recipient: teacherUserFull,
+        classObj: classPayload,
+        student: studentPayload,
+        role: 'teacher',
+        branding,
+      });
       await enqueueEmail({ to: teacherUserFull.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: eventEmailType, userId: teacherId, relatedId: _id, priority: 2 });
     }
     if (guardianUserFull?.email && await shouldSendEmail(guardianId, eventEmailType)) {
-      const tpl = await buildFn({ recipient: guardianUserFull, classData, role: 'guardian' });
+      const tpl = await buildFn({
+        recipient: guardianUserFull,
+        classObj: classPayload,
+        student: studentPayload,
+        role: 'guardian',
+        branding,
+      });
       await enqueueEmail({ to: guardianUserFull.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: eventEmailType, userId: guardianId, relatedId: _id, priority: 2 });
     }
   } catch (e) {

@@ -1055,56 +1055,71 @@ router.get("/", authenticateToken, async (req, res) => {
       filters.status = { $in: STATUS_ALLOW_LIST };
     }
 
-    const [rawClasses, totalClasses] = await Promise.all([
-      Class.find(filters)
-        .select([
-          'title',
-          'description',
-          'subject',
-          'status',
-          'scheduledDate',
-          'duration',
-          'endsAt',
-          'timezone',
-          'meetingLink',
-          'materials._id',
-          'materials.kind',
-          'materials.name',
-          'materials.libraryItem',
-          'materials.uploadedByRole',
-          'parentRecurringClass',
-          'student.guardianId',
-          'student.studentId',
-          'student.studentName',
-          'pendingReschedule',
-          'cancellation',
-          'classReport.submittedAt',
-          'classReport.classScore',
-          'classReport.attendance',
-          'classReport.subject',
-          'classReport.subjects',
-          'classReport.lessonTopic',
-          'classReport.customLessonTopic',
-          'classReport.teacherNotes',
-          'classReport.supervisorNotes',
-          'classReport.newAssignment',
-          'classReport.surah',
-          'classReport.verseEnd',
-          'classReport.recitedQuran',
-          'reportSubmission.status',
-          'createdAt',
-          'updatedAt'
-        ].join(' '))
-        .populate({ path: "teacher", select: "firstName lastName email phone profilePicture", options: { lean: true } })
-        .populate({ path: "student.guardianId", select: "firstName lastName email phone", options: { lean: true } })
-        .sort(sortObj)
-        .skip(skip)
-        .limit(limitNum)
-        .lean(),
-      Class.countDocuments(filters),
-    ]);
+    const listPromise = Class.find(filters)
+      .select([
+        'title',
+        'description',
+        'subject',
+        'status',
+        'scheduledDate',
+        'duration',
+        'endsAt',
+        'timezone',
+        'meetingLink',
+        'materials._id',
+        'materials.kind',
+        'materials.name',
+        'materials.libraryItem',
+        'materials.uploadedByRole',
+        'parentRecurringClass',
+        'student.guardianId',
+        'student.studentId',
+        'student.studentName',
+        'pendingReschedule',
+        'cancellation',
+        'classReport.submittedAt',
+        'classReport.classScore',
+        'classReport.attendance',
+        'classReport.subject',
+        'classReport.subjects',
+        'classReport.lessonTopic',
+        'classReport.customLessonTopic',
+        'classReport.teacherNotes',
+        'classReport.supervisorNotes',
+        'classReport.newAssignment',
+        'classReport.surah',
+        'classReport.verseEnd',
+        'classReport.recitedQuran',
+        'reportSubmission.status',
+        'createdAt',
+        'updatedAt'
+      ].join(' '))
+      .populate({ path: "teacher", select: "firstName lastName email phone profilePicture", options: { lean: true } })
+      .populate({ path: "student.guardianId", select: "firstName lastName email phone", options: { lean: true } })
+      .sort(sortObj)
+      .skip(skip)
+      .limit(limitNum)
+      .maxTimeMS(45000)
+      .lean();
 
-    mark(`db:done rows=${(rawClasses || []).length} total=${totalClasses}`);
+    const countPromise = Class.countDocuments(filters)
+      .maxTimeMS(8000)
+      .then((value) => ({ ok: true, value }))
+      .catch((err) => ({ ok: false, err }));
+
+    const [rawClasses, countResult] = await Promise.all([listPromise, countPromise]);
+
+    let totalClasses = null;
+    let countAccurate = false;
+    if (countResult?.ok) {
+      totalClasses = Number(countResult.value) || 0;
+      countAccurate = true;
+    } else {
+      const reason = countResult?.err?.message || 'unknown';
+      console.warn(`[classes:list] countDocuments skipped/slow, using fallback pagination (${reason})`);
+    }
+
+    mark(`db:done rows=${(rawClasses || []).length} total=${countAccurate ? totalClasses : 'fallback'}`);
 
     await hydrateUnknownStudentNames(rawClasses);
 
@@ -1120,7 +1135,13 @@ router.get("/", authenticateToken, async (req, res) => {
       };
     });
 
-    const totalPages = Math.ceil(totalClasses / limitNum);
+    const hasLikelyNextPage = Array.isArray(rawClasses) && rawClasses.length === limitNum;
+    const totalPages = countAccurate
+      ? Math.max(1, Math.ceil(totalClasses / limitNum))
+      : Math.max(pageNum, pageNum + (hasLikelyNextPage ? 1 : 0));
+    const estimatedTotalClasses = countAccurate
+      ? totalClasses
+      : skip + (rawClasses?.length || 0) + (hasLikelyNextPage ? 1 : 0);
 
     // Get user's timezone for conversion
     const userTimezone = req.user?.timezone || DEFAULT_TIMEZONE;
@@ -1136,8 +1157,9 @@ router.get("/", authenticateToken, async (req, res) => {
       pagination: {
         currentPage: pageNum,
         totalPages,
-        totalClasses,
-        hasNextPage: pageNum < totalPages,
+        totalClasses: estimatedTotalClasses,
+        countAccurate,
+        hasNextPage: countAccurate ? pageNum < totalPages : hasLikelyNextPage,
         hasPrevPage: pageNum > 1,
       },
       userTimezone,

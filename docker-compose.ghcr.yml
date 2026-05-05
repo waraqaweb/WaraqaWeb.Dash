@@ -1,12 +1,12 @@
 services:
   backend:
-    image: ghcr.io/waraqaweb/waraqa-backend:main
+    image: ghcr.io/waraqaweb/waraqa-backend:${DEPLOY_IMAGE_TAG:-main}
     build: null
 
   frontend:
-    image: ghcr.io/waraqaweb/waraqa-frontend:main
+    image: ghcr.io/waraqaweb/waraqa-frontend:${DEPLOY_IMAGE_TAG:-main}
     build: null
 
   nginx:
-    image: ghcr.io/waraqaweb/waraqa-nginx:main
+    image: ghcr.io/waraqaweb/waraqa-nginx:${DEPLOY_IMAGE_TAG:-main}
     build: null

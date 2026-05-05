@@ -73,6 +73,7 @@ COMPOSE_BASE=(docker compose -p "$COMPOSE_PROJECT_NAME")
 COMPOSE_GHCR=(docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f docker-compose.ghcr.yml)
 
 MODE="${1:-auto}"  # auto | all | no-build | pull
+TARGET_REF="${TARGET_REF:-origin/main}"
 
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
@@ -86,15 +87,25 @@ OLD_SHA="$(git rev-parse HEAD)"
 
 echo "[deploy] repo: $ROOT_DIR"
 echo "[deploy] mode: $MODE"
+echo "[deploy] target_ref: $TARGET_REF"
 echo "[deploy] old:  $OLD_SHA"
 
 git fetch origin main
 # Hard reset keeps the droplet in a clean, reproducible state
 # (avoids merge conflicts and half-applied changes)
-git reset --hard origin/main
+if ! git rev-parse --verify --quiet "${TARGET_REF}^{commit}" >/dev/null; then
+  echo "[deploy] ERROR: target ref is not available locally after fetch: $TARGET_REF"
+  exit 1
+fi
+git reset --hard "$TARGET_REF"
 
 git rev-parse HEAD > "$PREV_FILE"
 NEW_SHA="$(git rev-parse HEAD)"
+
+if [[ "$MODE" == "pull" ]]; then
+  export DEPLOY_IMAGE_TAG="${DEPLOY_IMAGE_TAG:-$NEW_SHA}"
+  echo "[deploy] image_tag: $DEPLOY_IMAGE_TAG"
+fi
 
 # Surface the deployed version inside running containers (used by /api/health).
 export APP_VERSION="${APP_VERSION:-$NEW_SHA}"

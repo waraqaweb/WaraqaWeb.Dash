@@ -1,8 +1,10 @@
 name: Deploy to DigitalOcean Droplet
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["Build & Push Docker Images (GHCR)"]
+    types: [completed]
+  workflow_dispatch:
 
 concurrency:
   group: deploy-do-droplet
@@ -10,6 +12,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Validate deploy secrets
@@ -77,15 +80,25 @@ jobs:
           DO_HOST: ${{ vars.DO_HOST }}
           DO_USER: ${{ vars.DO_USER }}
           DO_APP_DIR: ${{ vars.DO_APP_DIR }}
-          BUILD_VERSION: ${{ github.run_number }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
         run: |
           set -euo pipefail
+
+          DEPLOY_SHA="${WORKFLOW_RUN_SHA:-}"
+          BUILD_VERSION_VALUE="${WORKFLOW_RUN_NUMBER:-${GITHUB_RUN_NUMBER}}"
+
+          if [ -n "${DEPLOY_SHA}" ]; then
+            echo "[deploy] Preparing pull-based deploy for sha=${DEPLOY_SHA}"
+          else
+            echo "[deploy] No workflow_run SHA provided; falling back to current origin/main"
+          fi
 
           ssh -i ~/.ssh/do_deploy_key \
             -o BatchMode=yes \
             -o ConnectTimeout=20 \
             -o StrictHostKeyChecking=yes \
-            "${DO_USER}@${DO_HOST}" "DO_APP_DIR='${DO_APP_DIR}' BUILD_VERSION='${BUILD_VERSION}' bash -se" <<'EOF'
+            "${DO_USER}@${DO_HOST}" "DO_APP_DIR='${DO_APP_DIR}' BUILD_VERSION='${BUILD_VERSION_VALUE}' DEPLOY_SHA='${DEPLOY_SHA}' bash -se" <<'EOF'
           set -euo pipefail
 
           APP_DIR="${DO_APP_DIR}"
@@ -131,10 +144,16 @@ jobs:
           export BUILD_VERSION="${BUILD_VERSION}"
           export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+          if [ -n "${DEPLOY_SHA:-}" ]; then
+            export TARGET_REF="${DEPLOY_SHA}"
+            export DEPLOY_IMAGE_TAG="${DEPLOY_SHA}"
+            echo "[deploy] using immutable image tag ${DEPLOY_IMAGE_TAG}"
+          fi
+
           chmod +x deploy/scripts/deploy.sh || true
 
-          echo "[deploy] running deploy/scripts/deploy.sh auto"
-          deploy/scripts/deploy.sh auto
+          echo "[deploy] running deploy/scripts/deploy.sh pull"
+          deploy/scripts/deploy.sh pull
 
           echo "[deploy] git_head_after=$(git rev-parse --short HEAD)"
           echo "[deploy] pruning old docker images"

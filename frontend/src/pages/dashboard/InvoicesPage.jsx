@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
+import useDomainRefresh from '../../hooks/useDomainRefresh';
 import {
   Search,
   ChevronDown,
@@ -80,6 +81,7 @@ const InvoicesPage = ({ isActive = true }) => {
   const fetchInvoicesKeyRef = useRef('');
   const fetchInvoicesAbortRef = useRef(null);
   const fetchInvoicesRequestIdRef = useRef(0);
+  const lastActiveFetchSignatureRef = useRef('');
   const [loading, setLoading] = useState(true);
   const showLoading = useMinLoading(loading);
   const [error, setError] = useState('');
@@ -279,10 +281,36 @@ const InvoicesPage = ({ isActive = true }) => {
 
   useEffect(() => {
     if (!isActive) return;
+    const requestSignature = JSON.stringify({
+      userId: user?._id || user?.id || null,
+      statusFilter,
+      typeFilter,
+      segmentFilter,
+      currentPage,
+      activeTab: resolvedActiveTab,
+      search: normalizedSearchTerm || '',
+    });
+
+    if (lastActiveFetchSignatureRef.current === requestSignature) {
+      return;
+    }
+
+    lastActiveFetchSignatureRef.current = requestSignature;
+
     fetchInvoices();
     if (isAdmin()) fetchStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, normalizedSearchTerm]);
+  }, [isActive, statusFilter, typeFilter, segmentFilter, currentPage, activeTab, normalizedSearchTerm, resolvedActiveTab, user?._id, user?.id]);
+
+  useDomainRefresh({
+    domains: ['invoices'],
+    isActive,
+    onRefresh: () => {
+      fetchInvoices();
+      if (isAdmin()) fetchStats();
+    },
+    minIntervalMs: 1500,
+  });
 
   useEffect(() => {
     if (!isActive) return;

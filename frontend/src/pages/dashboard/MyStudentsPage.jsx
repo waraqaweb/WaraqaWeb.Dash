@@ -19,6 +19,7 @@ import api from '../../api/axios';
 import { deleteStudent as deleteStandaloneStudent } from '../../api/students';
 import ExportExcelButton from '../../components/ui/ExportExcelButton';
 import { mapStudentRow, downloadExcel } from '../../utils/exportToExcel';
+import useDomainRefresh from '../../hooks/useDomainRefresh';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 
@@ -84,7 +85,7 @@ const copyToClipboard = (text) => {
 };
 
 
-const MyStudentsPage = () => {
+const MyStudentsPage = ({ isActive = true }) => {
   const { user, isAdmin, isTeacher, isGuardian, loading } = useAuth();
   const { searchTerm, globalFilter } = useSearch();
   const [students, setStudents] = useState([]);
@@ -102,7 +103,7 @@ const MyStudentsPage = () => {
   const [editingStudent, setEditingStudent] = useState(null);
   const [expandedStudent, setExpandedStudent] = useState(null);
   const [localSearchTerm] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState(localSearchTerm);
+  const [, setDebouncedSearch] = useState(localSearchTerm);
   const [useGlobalSearch] = useState(true); // Guardian option
   const [guardianFilter] = useState('all');
   const [, setGuardiansList] = useState([]);
@@ -119,6 +120,8 @@ const MyStudentsPage = () => {
 
   const fetchStudentsRef = React.useRef(null);
   const fetchGuardiansListRef = React.useRef(null);
+  const lastStudentsFetchSignatureRef = useRef('');
+  const [studentDataVersion, setStudentDataVersion] = useState(0);
 
   const deriveStudentTimezone = (s) => {
     return s?.guardianTimezone || s?.timezone || s?.studentInfo?.guardianTimezone || s?.studentInfo?.timezone || 'UTC';
@@ -149,11 +152,22 @@ const MyStudentsPage = () => {
   // Fetch students when component mounts or filters change
   // Wait for auth loading to finish before fetching to ensure token header is set
   useEffect(() => {
-    if (user && !loading) {
-      fetchStudentsRef.current?.();
-      if (!isGuardian || !isGuardian()) fetchGuardiansListRef.current?.();
+    if (!isActive || !user || loading) return;
+
+    const fetchSignature = JSON.stringify({
+      userId: user?._id || user?.id || null,
+      role: user?.role || null,
+      guardianFilter,
+    });
+
+    if (lastStudentsFetchSignatureRef.current === fetchSignature) {
+      return;
     }
-  }, [user, loading, debouncedSearch, guardianFilter, sortBy, sortOrder, isGuardian]);
+
+    lastStudentsFetchSignatureRef.current = fetchSignature;
+    fetchStudentsRef.current?.();
+    if (!isGuardian || !isGuardian()) fetchGuardiansListRef.current?.();
+  }, [guardianFilter, isActive, isGuardian, loading, user?._id, user?.id, user?.role]);
 
   // Search is client-side (Excel-like): do not reset pagination or refetch.
 
@@ -162,20 +176,18 @@ const MyStudentsPage = () => {
     studentsRef.current = students || [];
   }, [students]);
 
-const fetchStudents = async () => {
+const fetchStudents = async ({ force = false } = {}) => {
   const requestSignature = JSON.stringify({
+    userId: user?._id || user?.id || null,
     role: user?.role,
     guardianFilter,
-    statusFilter,
-    globalFilter,
-    page: currentPage,
   });
 
-  if (fetchStudentsKeyRef.current === requestSignature && (studentsRef.current || []).length > 0 && !localLoading) {
+  if (!force && fetchStudentsKeyRef.current === requestSignature && (studentsRef.current || []).length > 0 && !localLoading) {
     return;
   }
 
-  if (fetchStudentsInFlightRef.current && fetchStudentsKeyRef.current === requestSignature) {
+  if (!force && fetchStudentsInFlightRef.current && fetchStudentsKeyRef.current === requestSignature) {
     return;
   }
 
@@ -589,6 +601,21 @@ const fetchGuardiansList = async () => {
   fetchStudentsRef.current = fetchStudents;
   fetchGuardiansListRef.current = fetchGuardiansList;
 
+  useDomainRefresh({
+    domains: ['students', 'users', 'classes'],
+    isActive,
+    onRefresh: () => {
+      hoursFetchKeyRef.current = '';
+      subjectsFetchKeyRef.current = '';
+      setStudentDataVersion((value) => value + 1);
+      fetchStudentsRef.current?.({ force: true });
+      if (!isGuardian || !isGuardian()) {
+        fetchGuardiansListRef.current?.();
+      }
+    },
+    minIntervalMs: 1500,
+  });
+
   const filteredStudents = useMemo(() => {
     let result = students || [];
     const trimmedTerm = (effectiveSearchTerm || '').trim().toLowerCase();
@@ -721,7 +748,7 @@ const fetchGuardiansList = async () => {
   // Fetch hours only for visible students (smart fetching)
   useEffect(() => {
     const run = async () => {
-      if (!user || loading) return;
+      if (!isActive || !user || loading) return;
       if (!visibleIdsKey) {
         setClassesHoursMap({});
         return;
@@ -779,12 +806,12 @@ const fetchGuardiansList = async () => {
         try { classesHoursAbortRef.current.abort(); } catch (_) {}
       }
     };
-  }, [visibleIdsKey, visibleStudentIds, user, loading]);
+  }, [isActive, visibleIdsKey, visibleStudentIds, user, loading, studentDataVersion]);
 
   // Fetch subjects only for currently visible page (admin & teacher).
   useEffect(() => {
     const run = async () => {
-      if (!user || loading) return;
+      if (!isActive || !user || loading) return;
       if (!(isAdmin && isAdmin()) && !(isTeacher && isTeacher())) return;
       if (!visibleIdsKey) return;
 
@@ -828,7 +855,7 @@ const fetchGuardiansList = async () => {
 
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, loading, currentPage, isAdmin, isTeacher, paginatedStudents]);
+  }, [isActive, user, loading, currentPage, isAdmin, isTeacher, paginatedStudents, studentDataVersion]);
 
 
 

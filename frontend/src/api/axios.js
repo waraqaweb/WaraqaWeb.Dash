@@ -1,6 +1,6 @@
 // /frontend/src/api/axios.js
 import axios from "axios";
-import { bumpDomainVersion } from "../utils/sessionCache";
+import { broadcastDomainRefresh } from "../utils/domainRefresh";
 
 const isBrowserOffline = () => {
   try {
@@ -166,29 +166,59 @@ instance.interceptors.response.use(
             return rawUrl;
           }
         })();
-        // Very small, safe invalidation set: bump domain versions so cached GETs
-        // are ignored on next read.
+        const domainsToRefresh = new Set();
+
         if (normalizedPath.startsWith('/classes')) {
-          bumpDomainVersion('classes');
-          bumpDomainVersion('availability');
+          domainsToRefresh.add('classes');
+          domainsToRefresh.add('availability');
+          domainsToRefresh.add('dashboard');
+          domainsToRefresh.add('students');
         }
-        if (normalizedPath.startsWith('/invoices')) bumpDomainVersion('invoices');
-        if (normalizedPath.startsWith('/library')) bumpDomainVersion('library');
-        if (normalizedPath.startsWith('/availability')) bumpDomainVersion('availability');
-        if (normalizedPath.startsWith('/students')) bumpDomainVersion('students');
+        if (normalizedPath.startsWith('/invoices')) {
+          domainsToRefresh.add('invoices');
+          domainsToRefresh.add('dashboard');
+        }
+        if (normalizedPath.startsWith('/library')) domainsToRefresh.add('library');
+        if (normalizedPath.startsWith('/availability')) domainsToRefresh.add('availability');
+        if (normalizedPath.startsWith('/students')) {
+          domainsToRefresh.add('students');
+          domainsToRefresh.add('dashboard');
+        }
         if (normalizedPath.startsWith('/users')) {
-          bumpDomainVersion('users');
-          bumpDomainVersion('students');
-          bumpDomainVersion('teachers');
-          bumpDomainVersion('guardians');
+          domainsToRefresh.add('users');
+          domainsToRefresh.add('students');
+          domainsToRefresh.add('teachers');
+          domainsToRefresh.add('guardians');
+          domainsToRefresh.add('dashboard');
         }
-        if (normalizedPath.startsWith('/teachers')) bumpDomainVersion('teachers');
-        if (normalizedPath.startsWith('/guardians')) bumpDomainVersion('guardians');
-        if (normalizedPath.startsWith('/salaries')) bumpDomainVersion('salaries');
-        if (normalizedPath.startsWith('/teacher-salary')) bumpDomainVersion('teacher-salary');
+        if (normalizedPath.startsWith('/teachers')) {
+          domainsToRefresh.add('teachers');
+          domainsToRefresh.add('dashboard');
+        }
+        if (normalizedPath.startsWith('/guardians')) {
+          domainsToRefresh.add('guardians');
+          domainsToRefresh.add('dashboard');
+        }
+        if (normalizedPath.startsWith('/feedbacks')) {
+          domainsToRefresh.add('feedbacks');
+          domainsToRefresh.add('dashboard');
+        }
+        if (normalizedPath.startsWith('/classReports') || normalizedPath.startsWith('/class-reports')) {
+          domainsToRefresh.add('classes');
+          domainsToRefresh.add('feedbacks');
+          domainsToRefresh.add('dashboard');
+        }
+        if (normalizedPath.startsWith('/dashboard')) domainsToRefresh.add('dashboard');
+        if (normalizedPath.startsWith('/settings')) domainsToRefresh.add('settings');
+        if (normalizedPath.startsWith('/salaries')) domainsToRefresh.add('salaries');
+        if (normalizedPath.startsWith('/teacher-salary')) domainsToRefresh.add('teacher-salary');
+
+        if (domainsToRefresh.size > 0) {
+          broadcastDomainRefresh(Array.from(domainsToRefresh));
+        }
       }
     } catch (e) {
-      // ignore cache version bump failures
+      // ignore cache invalidation failures
     }
 
     return response;

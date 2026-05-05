@@ -26,22 +26,12 @@ import StatCard from '../../components/dashboard/widgets/StatCard';
 import NextClassCard from '../../components/dashboard/widgets/NextClassCard';
 import PendingReportsList from '../../components/dashboard/widgets/PendingReportsList';
 import FirstClassReminder from '../../components/dashboard/widgets/FirstClassReminder';
-import DashboardChartCard from '../../components/dashboard/widgets/DashboardChartCard';
 import DashboardDecoration from '../../components/dashboard/widgets/DashboardDecoration';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-  Tooltip,
-  BarChart,
-  Bar,
-} from 'recharts';
+import useDomainRefresh from '../../hooks/useDomainRefresh';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { getHomepageAnnouncementContainerClass, getHomepageAnnouncementTextClass } from '../../utils/homepageAnnouncement';
 const BusinessIntelligenceModal = React.lazy(() => import('../../components/admin/BusinessIntelligenceModal'));
+const AdminDashboardCharts = React.lazy(() => import('../../components/dashboard/widgets/AdminDashboardCharts'));
 
 const formatClassDate = (d) => {
   if (!d) return '—';
@@ -470,6 +460,7 @@ const DashboardHome = ({ isActive = true }) => {
   const fetchStatsInFlightRef = useRef(false);
   const fetchStatsKeyRef = useRef('');
   const fetchStatsAbortRef = useRef(null);
+  const hasLoadedStatsRef = useRef(false);
   const fetchStatsRequestIdRef = useRef(0);
 
   useEffect(() => {
@@ -542,9 +533,22 @@ const DashboardHome = ({ isActive = true }) => {
     fetchStatsInFlightRef.current = false;
   }, [userRole, user?._id, user?.role]);
 
+  useDomainRefresh({
+    domains: ['dashboard'],
+    isActive,
+    onRefresh: fetchStats,
+    minIntervalMs: 2000,
+  });
+
   useEffect(() => {
+    hasLoadedStatsRef.current = false;
+  }, [userRole, user?._id]);
+
+  useEffect(() => {
+    if (!isActive || hasLoadedStatsRef.current) return;
+    hasLoadedStatsRef.current = true;
     fetchStats();
-  }, [fetchStats]);
+  }, [fetchStats, isActive]);
 
   useEffect(() => {
     let active = true;
@@ -630,15 +634,6 @@ const DashboardHome = ({ isActive = true }) => {
       active = false;
     };
   }, []);
-
-  // Refresh dashboard stats when other screens (e.g., Class Report modal) signal an update
-  useEffect(() => {
-    const handler = () => {
-      try { fetchStats(); } catch (e) {}
-    };
-    window.addEventListener('waraqa:dashboard-stats-refresh', handler);
-    return () => window.removeEventListener('waraqa:dashboard-stats-refresh', handler);
-  }, [fetchStats]);
 
   // Debug: help trace why student names might be missing on dashboard views
   useEffect(() => {
@@ -1475,53 +1470,9 @@ const DashboardHome = ({ isActive = true }) => {
                   </div>
 
                   {/* Charts column - stacked vertically */}
-                  <div className="flex flex-col gap-1.5">
-                    <div className="text-xs font-medium text-foreground">Charts</div>
-                    <DashboardChartCard title="Revenue (30 days)" subtitle="Daily revenue">
-                      {(() => {
-                        const ts = data.summary?.timeseries ?? data.timeseries ?? null;
-                        const dates = (ts && ts.dates) ?? [];
-                        const revenue = (ts && ts.revenue) ?? [];
-                        const chartData = dates.map((d, i) => ({ date: d.slice(5), revenue: revenue[i] ?? 0 }));
-                        return chartData.length === 0 ? (
-                          <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">No revenue data</div>
-                        ) : (
-                          <ResponsiveContainer height={110}>
-                            <LineChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 4 }}>
-                              <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
-                              <XAxis dataKey="date" tick={{ fontSize: 9 }} />
-                              <YAxis tick={{ fontSize: 9 }} />
-                              <Tooltip />
-                              <Line type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={2} dot={false} />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        );
-                      })()}
-                    </DashboardChartCard>
-                    <DashboardChartCard title="Classes (30 days)" subtitle="Scheduled vs completed">
-                      {(() => {
-                        const ts = data.summary?.timeseries ?? data.timeseries ?? null;
-                        const dates = (ts && ts.dates) ?? [];
-                        const scheduled = (ts && ts.classesScheduled) ?? [];
-                        const completed = (ts && ts.classesCompleted) ?? [];
-                        const chartData = dates.map((d, i) => ({ date: d.slice(5), scheduled: scheduled[i] ?? 0, completed: completed[i] ?? 0 }));
-                        return chartData.length === 0 ? (
-                          <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">No class data</div>
-                        ) : (
-                          <ResponsiveContainer height={110}>
-                            <BarChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 4 }}>
-                              <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
-                              <XAxis dataKey="date" tick={{ fontSize: 9 }} />
-                              <YAxis tick={{ fontSize: 9 }} />
-                              <Tooltip />
-                              <Bar dataKey="scheduled" fill="#10b981" />
-                              <Bar dataKey="completed" fill="#4f46e5" />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        );
-                      })()}
-                    </DashboardChartCard>
-                  </div>
+                  <React.Suspense fallback={<div className="flex min-h-[250px] items-center justify-center rounded-xl border border-border/60 bg-card/70 p-4 text-sm text-muted-foreground">Loading charts...</div>}>
+                    <AdminDashboardCharts data={data} />
+                  </React.Suspense>
                 </div>
 
                 {Array.isArray(data.adminTimezoneSummary?.alerts) && data.adminTimezoneSummary.alerts.length > 0 && (

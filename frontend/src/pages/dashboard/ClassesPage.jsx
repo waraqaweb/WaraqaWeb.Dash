@@ -6,6 +6,7 @@ import { getTimezoneOptions } from "../../utils/timezoneOptions";
 import { useAuth } from "../../contexts/AuthContext";
 import { useSearch } from "../../contexts/SearchContext";
 import api from '../../api/axios';
+import useDomainRefresh from '../../hooks/useDomainRefresh';
 import { makeCacheKey, readCache, writeCache } from "../../utils/sessionCache";
 import { deleteMeeting, listMeetings } from '../../api/meetings';
 import Select from "react-select";
@@ -451,6 +452,7 @@ const ClassesPage = ({ isActive = true }) => {
   const fetchClassesInFlightRef = useRef(false);
   const fetchClassesAbortRef = useRef(null);
   const fetchClassesRequestIdRef = useRef(0);
+  const lastActiveFetchSignatureRef = useRef('');
   const fetchTeachersRef = useRef(null);
   const fetchGuardiansRef = useRef(null);
   const adminTimezoneRef = useRef(adminTimezone);
@@ -956,6 +958,27 @@ const ClassesPage = ({ isActive = true }) => {
 
   useEffect(() => {
     if (!isActive) return;
+    const requestSignature = JSON.stringify({
+      userId: user?._id || user?.id || null,
+      globalFilter,
+      search: normalizedSearchTerm || '',
+      sortBy,
+      sortOrder,
+      statusFilter,
+      teacherFilter,
+      guardianFilter,
+      tabFilter,
+      currentPage,
+      dateWindow,
+      isAdminUser,
+    });
+
+    if (lastActiveFetchSignatureRef.current === requestSignature) {
+      return;
+    }
+
+    lastActiveFetchSignatureRef.current = requestSignature;
+
     // Avoid referencing callback consts before initialization (TDZ) by calling refs.
     if (fetchClassesRef.current) {
       fetchClassesRef.current();
@@ -978,7 +1001,22 @@ const ClassesPage = ({ isActive = true }) => {
     currentPage,
     dateWindow,
     isAdminUser,
+    user?._id,
+    user?.id,
   ]);
+
+  useDomainRefresh({
+    domains: ['classes'],
+    isActive,
+    onRefresh: () => {
+      try {
+        fetchClassesRef.current?.();
+      } catch (error) {
+        // ignore refresh timing issues
+      }
+    },
+    minIntervalMs: 1500,
+  });
 
   useEffect(() => {
     if (!isActive || !isAdminUser) return;
@@ -991,22 +1029,6 @@ const ClassesPage = ({ isActive = true }) => {
   }, [guardians.length, isActive, isAdminUser, teachers.length]);
 
   // Server-side search is used now; no background prefetch needed.
-
-  // Listen for external refresh requests (e.g., after class report submit from route modal)
-  // Use a ref to avoid referencing fetchClasses before it's initialized (TDZ)
-  
-  useEffect(() => {
-    const handler = () => {
-      try {
-        if (fetchClassesRef.current) fetchClassesRef.current();
-      } catch (err) {
-        // swallow any timing related errors; fetch will run on next normal cycle
-        // console.debug('classes:refresh handler error', err);
-      }
-    };
-    window.addEventListener('classes:refresh', handler);
-    return () => window.removeEventListener('classes:refresh', handler);
-  }, []);
 
   useEffect(() => {
     setTimezoneOptions(getTimezoneOptions());

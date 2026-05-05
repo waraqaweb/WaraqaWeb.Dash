@@ -8,7 +8,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import api from '../api/axios';
 import { io } from 'socket.io-client';
-import { bumpDomainVersion } from '../utils/sessionCache';
+import { broadcastDomainRefresh } from '../utils/domainRefresh';
 import { __entitySearchCacheUserScopeKey } from '../services/entitySearch';
 
 // Create the authentication context
@@ -52,35 +52,58 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     if (!socket) return;
 
-    const safeDispatch = (name) => {
-      try {
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event(name));
-        }
-      } catch (e) {
-        // ignore
-      }
+    const handleClassChange = () => {
+      broadcastDomainRefresh(['classes', 'availability', 'dashboard', 'students']);
     };
 
-    const handleClassChange = () => {
-      try {
-        bumpDomainVersion('classes');
-        bumpDomainVersion('availability');
-      } catch (e) {
-        // ignore
-      }
-      safeDispatch('classes:refresh');
-      safeDispatch('availability:refresh');
+    const handleInvoiceChange = () => {
+      broadcastDomainRefresh(['invoices', 'dashboard']);
+    };
+
+    const handleFeedbackChange = () => {
+      broadcastDomainRefresh(['feedbacks', 'dashboard']);
+    };
+
+    const handleDashboardChange = () => {
+      broadcastDomainRefresh(['dashboard']);
     };
 
     socket.on('class:created', handleClassChange);
     socket.on('class:updated', handleClassChange);
     socket.on('class:deleted', handleClassChange);
+    socket.on('class:bulkDeleted', handleClassChange);
+    socket.on('class:bulkUpdated', handleClassChange);
+    socket.on('class:reportSubmitted', handleClassChange);
+    socket.on('class:reportUnsubmitted', handleClassChange);
+    socket.on('invoice:created', handleInvoiceChange);
+    socket.on('invoice:updated', handleInvoiceChange);
+    socket.on('invoice:paid', handleInvoiceChange);
+    socket.on('invoice:refunded', handleInvoiceChange);
+    socket.on('invoice:permanentlyDeleted', handleInvoiceChange);
+    socket.on('invoice:restored', handleInvoiceChange);
+    socket.on('feedback:new', handleFeedbackChange);
+    socket.on('feedback:read', handleFeedbackChange);
+    socket.on('feedback:archived', handleFeedbackChange);
+    socket.on('dashboard:statsUpdated', handleDashboardChange);
 
     return () => {
       socket.off('class:created', handleClassChange);
       socket.off('class:updated', handleClassChange);
       socket.off('class:deleted', handleClassChange);
+      socket.off('class:bulkDeleted', handleClassChange);
+      socket.off('class:bulkUpdated', handleClassChange);
+      socket.off('class:reportSubmitted', handleClassChange);
+      socket.off('class:reportUnsubmitted', handleClassChange);
+      socket.off('invoice:created', handleInvoiceChange);
+      socket.off('invoice:updated', handleInvoiceChange);
+      socket.off('invoice:paid', handleInvoiceChange);
+      socket.off('invoice:refunded', handleInvoiceChange);
+      socket.off('invoice:permanentlyDeleted', handleInvoiceChange);
+      socket.off('invoice:restored', handleInvoiceChange);
+      socket.off('feedback:new', handleFeedbackChange);
+      socket.off('feedback:read', handleFeedbackChange);
+      socket.off('feedback:archived', handleFeedbackChange);
+      socket.off('dashboard:statsUpdated', handleDashboardChange);
     };
   }, [socket]);
 

@@ -5,39 +5,41 @@
  * Includes sidebar navigation and main content area
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { SearchProvider, useSearch } from '../../contexts/SearchContext';
 import Sidebar from '../../components/layout/Sidebar';
 import GlobalSearchBar from '../../components/ui/GlobalSearchBar';
+import LoadingSpinner from '../../components/ui/LoadingSpinner';
 // Profile modal removed in favor of unified Profile page/modal
-import DashboardHome from './DashboardHome';
-import ProfilePage from './ProfilePage';
-import TeachersPage from './TeachersPage';
-import GuardiansPage from './GuardiansPage';
-import MyStudentsPage from './MyStudentsPage';
-import ClassesPage from './ClassesPage';
-import InvoicesPage from './InvoicesPage';
-import ClassReportPage from './ClassReportPage';
-import TeacherSalaries from '../admin/TeacherSalaries';
-import LibraryDashboard from '../library/LibraryDashboard';
-import TeacherAvailabilityPage from './TeacherAvailabilityPage';
-import MeetingAvailabilityAdminPage from './MeetingAvailabilityAdminPage';
-import Settings from "./Settings";
-import PresenterPage from "./PresenterPage";
 import ImpersonationBanner from '../../components/ui/ImpersonationBanner';
 import SystemVacationBanner from '../../components/ui/SystemVacationBanner';
 import NotificationCenter from '../../components/ui/NotificationCenter';
-import FeedbacksAdmin from './FeedbacksAdmin';
-import TeacherContractPage from './TeacherContractPage';
 import { Menu, X } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import VacationManagementPage from './VacationManagementPage';
 import { DeleteClassCountdownProvider, useDeleteClassCountdown } from '../../contexts/DeleteClassCountdownContext';
 import { DeleteActionCountdownProvider, useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import DeleteCountdownToast from '../../components/ui/DeleteCountdownToast';
 import ToastHost from '../../components/ui/ToastHost';
 import { showToast } from '../../utils/toast';
+
+const DashboardHome = React.lazy(() => import('./DashboardHome'));
+const ProfilePage = React.lazy(() => import('./ProfilePage'));
+const TeachersPage = React.lazy(() => import('./TeachersPage'));
+const GuardiansPage = React.lazy(() => import('./GuardiansPage'));
+const MyStudentsPage = React.lazy(() => import('./MyStudentsPage'));
+const ClassesPage = React.lazy(() => import('./ClassesPage'));
+const InvoicesPage = React.lazy(() => import('./InvoicesPage'));
+const ClassReportPage = React.lazy(() => import('./ClassReportPage'));
+const TeacherSalaries = React.lazy(() => import('../admin/TeacherSalaries'));
+const LibraryDashboard = React.lazy(() => import('../library/LibraryDashboard'));
+const TeacherAvailabilityPage = React.lazy(() => import('./TeacherAvailabilityPage'));
+const MeetingAvailabilityAdminPage = React.lazy(() => import('./MeetingAvailabilityAdminPage'));
+const Settings = React.lazy(() => import('./Settings'));
+const PresenterPage = React.lazy(() => import('./PresenterPage'));
+const FeedbacksAdmin = React.lazy(() => import('./FeedbacksAdmin'));
+const TeacherContractPage = React.lazy(() => import('./TeacherContractPage'));
+const VacationManagementPage = React.lazy(() => import('./VacationManagementPage'));
 
 const DeleteCountdownHost = () => {
   const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds, phase } = useDeleteClassCountdown();
@@ -324,7 +326,7 @@ const Dashboard = () => {
       : [...mountedViews, activeView];
 
     return (
-      <>
+      <Suspense fallback={<div className="flex min-h-[320px] items-center justify-center px-4 py-10"><LoadingSpinner /></div>}>
         {viewsToRender.map((viewKey) => (
           <div
             key={viewKey}
@@ -333,7 +335,7 @@ const Dashboard = () => {
             {renderView(viewKey, viewKey === activeView)}
           </div>
         ))}
-      </>
+      </Suspense>
     );
   };
 

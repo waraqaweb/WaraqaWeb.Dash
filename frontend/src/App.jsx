@@ -5,47 +5,42 @@
  * for the Online Class Management System
  */
 
-import React from 'react';
+import React, { Suspense } from 'react';
 import api from './api/axios';
 import { makeCacheKey, readCache, writeCache } from './utils/sessionCache';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import './App.css';
 
-// Import components
-import LoginPage from './components/auth/LoginPage';
-import AdminLoginPage from './components/auth/AdminLoginPage';
-import RegisterPage from './components/auth/RegisterPage';
-import ForgotPassword from './components/auth/ForgotPassword';
-import ResetPassword from './components/auth/ResetPassword';
-import Dashboard from './pages/dashboard/Dashboard';
 import LoadingSpinner from './components/ui/LoadingSpinner';
 import useMinLoading from './components/ui/useMinLoading';
-import ClassReportPage from './pages/dashboard/ClassReportPage';
-import DashboardLayout from './components/layout/DashboardLayout';
-// Import invoice modals/pages
-import InvoiceViewModal from './components/invoices/InvoiceViewModal';
-import RecordPaymentModal from './components/invoices/RecordPaymentModal';
-import InvoicePublicPage from './components/invoices/InvoicePublicPage';
-import TeacherInvoicePublicPage from './components/teacherSalary/TeacherInvoicePublicPage';
-import PublicEvaluationBookingPage from './components/meetings/PublicEvaluationBookingPage';
-import PublicStudentRegistrationPage from './components/registration/PublicStudentRegistrationPage';
-import PublicTeacherContractPage from './components/registration/PublicTeacherContractPage';
-import SalariesPage from "./pages/dashboard/salaries/SalariesPage";
-import FeedbacksAdmin from './pages/dashboard/FeedbacksAdmin';
-// Classes modals
-import CreateClassModal from './components/dashboard/CreateClassModal';
-import EditClassModal from './components/dashboard/EditClassModal';
-import RescheduleClassModal from './components/dashboard/RescheduleClassModal';
-import DeleteClassModal from './components/dashboard/DeleteClassModal';
-// Salary modals
-import SalaryViewModal from './pages/dashboard/salaries/SalaryViewModal';
-import SalaryEditModal from './pages/dashboard/salaries/SalaryEditModal';
-import SalaryCreateModal from './pages/dashboard/salaries/SalaryCreateModal';
-// Teacher Salary pages
-import TeacherSalaryDashboard from './pages/teacher/SalaryDashboard';
-import LibraryDashboard from './pages/library/LibraryDashboard';
-import PresenterPublicPage from './pages/PresenterPublicPage';
+
+const LoginPage = React.lazy(() => import('./components/auth/LoginPage'));
+const AdminLoginPage = React.lazy(() => import('./components/auth/AdminLoginPage'));
+const RegisterPage = React.lazy(() => import('./components/auth/RegisterPage'));
+const ForgotPassword = React.lazy(() => import('./components/auth/ForgotPassword'));
+const ResetPassword = React.lazy(() => import('./components/auth/ResetPassword'));
+const Dashboard = React.lazy(() => import('./pages/dashboard/Dashboard'));
+const ClassReportPage = React.lazy(() => import('./pages/dashboard/ClassReportPage'));
+const DashboardLayout = React.lazy(() => import('./components/layout/DashboardLayout'));
+const InvoiceViewModal = React.lazy(() => import('./components/invoices/InvoiceViewModal'));
+const RecordPaymentModal = React.lazy(() => import('./components/invoices/RecordPaymentModal'));
+const InvoicePublicPage = React.lazy(() => import('./components/invoices/InvoicePublicPage'));
+const TeacherInvoicePublicPage = React.lazy(() => import('./components/teacherSalary/TeacherInvoicePublicPage'));
+const PublicEvaluationBookingPage = React.lazy(() => import('./components/meetings/PublicEvaluationBookingPage'));
+const PublicStudentRegistrationPage = React.lazy(() => import('./components/registration/PublicStudentRegistrationPage'));
+const PublicTeacherContractPage = React.lazy(() => import('./components/registration/PublicTeacherContractPage'));
+const SalariesPage = React.lazy(() => import('./pages/dashboard/salaries/SalariesPage'));
+const FeedbacksAdmin = React.lazy(() => import('./pages/dashboard/FeedbacksAdmin'));
+const CreateClassModal = React.lazy(() => import('./components/dashboard/CreateClassModal'));
+const EditClassModal = React.lazy(() => import('./components/dashboard/EditClassModal'));
+const RescheduleClassModal = React.lazy(() => import('./components/dashboard/RescheduleClassModal'));
+const DeleteClassModal = React.lazy(() => import('./components/dashboard/DeleteClassModal'));
+const SalaryViewModal = React.lazy(() => import('./pages/dashboard/salaries/SalaryViewModal'));
+const SalaryEditModal = React.lazy(() => import('./pages/dashboard/salaries/SalaryEditModal'));
+const SalaryCreateModal = React.lazy(() => import('./pages/dashboard/salaries/SalaryCreateModal'));
+const TeacherSalaryDashboard = React.lazy(() => import('./pages/teacher/SalaryDashboard'));
+const PresenterPublicPage = React.lazy(() => import('./pages/PresenterPublicPage'));
 
 /**
  * Protected Route Component
@@ -135,6 +130,7 @@ const AppRoutes = () => {
   return (
     // Render the main routes using the background location if set so the modal can overlay
     <>
+      <Suspense fallback={<LoadingSpinner fullScreen />}>
       <Routes location={background || location}>
       {/* Dashboard-scoped auth routes (preferred in production under /dashboard/*) */}
       <Route
@@ -560,6 +556,7 @@ const AppRoutes = () => {
           } />
         </Routes>
       )}
+      </Suspense>
     </>
   );
 };

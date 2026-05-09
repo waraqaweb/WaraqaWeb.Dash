@@ -1,0 +1,4 @@
+# Waraqa member dashboard. Private, gated, login-only application.
+# All public, indexable marketing content lives at https://www.waraqaweb.com/
+User-agent: *
+Disallow: /

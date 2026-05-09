@@ -14,6 +14,7 @@ import './App.css';
 
 import LoadingSpinner from './components/ui/LoadingSpinner';
 import useMinLoading from './components/ui/useMinLoading';
+import { trackPageView } from './utils/analytics';
 
 const LoginPage = React.lazy(() => import('./components/auth/LoginPage'));
 const AdminLoginPage = React.lazy(() => import('./components/auth/AdminLoginPage'));
@@ -126,6 +127,15 @@ const AppRoutes = () => {
       document.body.classList.remove('homepage-scroll-lock');
     };
   }, [location.pathname, user]);
+
+  // Push a `page_view` event into dataLayer on every SPA route change so GTM
+  // (and therefore GA4) counts dashboard navigation the same way it counts
+  // marketing-site page views. This makes guardian/student/teacher visits to
+  // app.waraqaweb.com show up alongside www.waraqaweb.com in the same GA4
+  // property as engaged returning users.
+  React.useEffect(() => {
+    trackPageView({ path: location.pathname + location.search });
+  }, [location.pathname, location.search]);
 
   return (
     // Render the main routes using the background location if set so the modal can overlay

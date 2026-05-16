@@ -21,6 +21,7 @@ import { MEETING_DEFAULT_DURATIONS } from '../../../constants/meetingConstants';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 import { getPublicAppUrl } from '../../../utils/publicAppLinks';
 import CopyButton from '../../ui/CopyButton';
+import TimeInput from '../../ui/TimeInput';
 import MeetingActivityPanel from './MeetingActivityPanel';
 import RegistrationLeadsPanel from './RegistrationLeadsPanel';
 import TeacherResponsesPanel from './TeacherResponsesPanel';
@@ -1007,20 +1008,16 @@ const MeetingAvailabilityAdminPage = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-medium text-gray-600 mb-1 block">Start</label>
-                  <input
-                    type="time"
+                  <TimeInput
                     value={formState.startTime}
                     onChange={(e) => handleFormChange('startTime', e.target.value)}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600 mb-1 block">End</label>
-                  <input
-                    type="time"
+                  <TimeInput
                     value={formState.endTime}
                     onChange={(e) => handleFormChange('endTime', e.target.value)}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2"
                   />
                 </div>
               </div>
@@ -1205,20 +1202,16 @@ const MeetingAvailabilityAdminPage = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-gray-600 mb-1 block">Start</label>
-                  <input
-                    type="time"
+                  <TimeInput
                     value={timeOffForm.startTime}
                     onChange={(e) => handleTimeOffChange('startTime', e.target.value)}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600 mb-1 block">End</label>
-                  <input
-                    type="time"
+                  <TimeInput
                     value={timeOffForm.endTime}
                     onChange={(e) => handleTimeOffChange('endTime', e.target.value)}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2"
                   />
                 </div>
               </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
+import TimeInput from '../../components/ui/TimeInput';
 import { 
   Calendar, 
   Plus, 
@@ -469,21 +470,17 @@ const TeacherAvailabilityPage = () => {
 
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Start</label>
-                <input
-                  type="time"
+                <TimeInput
                   value={newSlot.startTime}
                   onChange={(e) => setNewSlot({...newSlot, startTime: e.target.value})}
-                  className="w-full border border-gray-200 rounded-md px-3 py-2 bg-white"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">End</label>
-                <input
-                  type="time"
+                <TimeInput
                   value={newSlot.endTime}
                   onChange={(e) => setNewSlot({...newSlot, endTime: e.target.value})}
-                  className="w-full border border-gray-200 rounded-md px-3 py-2 bg-white"
                 />
               </div>
             </div>
@@ -517,12 +514,12 @@ const TeacherAvailabilityPage = () => {
 
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Start</label>
-                <input type="time" value={editingSlot.startTime} onChange={(e) => setEditingSlot({...editingSlot, startTime: e.target.value})} className="w-full border border-gray-200 rounded-md px-3 py-2 bg-white" />
+                <TimeInput value={editingSlot.startTime} onChange={(e) => setEditingSlot({...editingSlot, startTime: e.target.value})} />
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">End</label>
-                <input type="time" value={editingSlot.endTime} onChange={(e) => setEditingSlot({...editingSlot, endTime: e.target.value})} className="w-full border border-gray-200 rounded-md px-3 py-2 bg-white" />
+                <TimeInput value={editingSlot.endTime} onChange={(e) => setEditingSlot({...editingSlot, endTime: e.target.value})} />
               </div>
             </div>
 

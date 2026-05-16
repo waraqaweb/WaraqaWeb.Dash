@@ -10,6 +10,7 @@ import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 import axios from '../../api/axios';
 import SearchSelect from '../ui/SearchSelect';
 import CopyButton from '../ui/CopyButton';
+import TimeInput from '../ui/TimeInput';
 import {
   searchTeachers,
   getTeacherById,
@@ -1193,13 +1194,11 @@ export default function CreateClassModal({
                       </div>
 
                       <div className="min-w-0">
-                        <input
-                          type="time"
+                        <TimeInput
                           value={slot.time || ''}
                           onChange={(e) =>
                             (isStandalone ? updateLocalRecurrenceSlot : updateRecurrenceSlot)?.(index, 'time', e.target.value)
                           }
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
                         />
                       </div>
 

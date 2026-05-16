@@ -11,6 +11,7 @@ import DSTWarningBanner from "../ui/DSTWarningBanner";
 import { checkDSTWarning, convertClassTimeForUser, DEFAULT_TIMEZONE } from "../../utils/timezoneUtils";
 import SearchSelect from '../ui/SearchSelect';
 import WhatsAppGroupButton from './WhatsAppGroupButton';
+import TimeInput from '../ui/TimeInput';
 import {
   searchTeachers,
   getTeacherById,
@@ -524,11 +525,9 @@ export default function EditClassModal({
                       </div>
 
                       <div className="min-w-0">
-                        <input
-                          type="time"
+                        <TimeInput
                           value={slot.time}
                           onChange={(e) => updateRecurrenceSlot(index, 'time', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
                         />
                       </div>
 

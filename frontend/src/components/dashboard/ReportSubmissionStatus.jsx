@@ -38,8 +38,8 @@ function ExtensionModal({ show, hours, reason, processing, onChangeHours, onChan
         {/* header */}
         <div className="border-b border-gray-100 px-5 py-4">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2C736C]/10">
-              <Shield className="h-4 w-4 text-[#2C736C]" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+              <Shield className="h-4 w-4 text-primary" />
             </div>
             <h3 className="text-base font-semibold text-gray-900">Grant Extension</h3>
           </div>
@@ -61,7 +61,7 @@ function ExtensionModal({ show, hours, reason, processing, onChangeHours, onChan
                   onClick={() => onChangeHours(h)}
                   className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
                     Number(hours) === h
-                      ? 'bg-[#2C736C] text-white shadow-sm'
+                      ? 'bg-primary text-white shadow-sm'
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
@@ -75,7 +75,7 @@ function ExtensionModal({ show, hours, reason, processing, onChangeHours, onChan
               max="168"
               value={hours}
               onChange={(e) => onChangeHours(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#2C736C] focus:outline-none focus:ring-2 focus:ring-[#2C736C]/20"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
             />
           </div>
 
@@ -85,7 +85,7 @@ function ExtensionModal({ show, hours, reason, processing, onChangeHours, onChan
             <textarea
               value={reason}
               onChange={(e) => onChangeReason(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm placeholder:text-gray-400 focus:border-[#2C736C] focus:outline-none focus:ring-2 focus:ring-[#2C736C]/20"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
               rows="2"
               placeholder="Reason for extension…"
             />
@@ -106,7 +106,7 @@ function ExtensionModal({ show, hours, reason, processing, onChangeHours, onChan
             type="button"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onGrant(); }}
             disabled={processing}
-            className="rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245e58] disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {processing ? 'Granting…' : 'Grant Extension'}
           </button>
@@ -202,8 +202,8 @@ const ReportSubmissionStatus = ({ classId, userRole, onExtensionGranted, onRefre
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowExtensionModal(true); }}
       className={
         size === 'xs'
-          ? 'shrink-0 rounded-lg bg-[#2C736C] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-[#245e58]'
-          : 'inline-flex items-center gap-1 rounded-lg bg-[#2C736C] px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-[#245e58]'
+          ? 'shrink-0 rounded-lg bg-primary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-primary/90'
+          : 'inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-primary/90'
       }
     >
       {size !== 'xs' && <Shield className="h-3 w-3" />}

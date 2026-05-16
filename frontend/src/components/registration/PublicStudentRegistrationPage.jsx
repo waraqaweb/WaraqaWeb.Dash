@@ -18,10 +18,10 @@ const WEEKDAY_SHORT = {
   Saturday: 'Sat',
   Sunday: 'Sun',
 };
-const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#2C736C] focus:ring-4 focus:ring-[#2C736C]/10';
-const smallTextareaClass = 'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#2C736C] focus:ring-4 focus:ring-[#2C736C]/10 overflow-hidden resize-none';
-const compactInputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#2C736C] focus:ring-4 focus:ring-[#2C736C]/10';
-const singleBorderNoteFieldClass = 'relative block rounded-2xl border border-slate-200 bg-white p-4 pt-6 transition focus-within:border-[#2C736C] focus-within:ring-4 focus-within:ring-[#2C736C]/10';
+const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10';
+const smallTextareaClass = 'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 overflow-hidden resize-none';
+const compactInputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10';
+const singleBorderNoteFieldClass = 'relative block rounded-2xl border border-slate-200 bg-white p-4 pt-6 transition focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/10';
 const singleBorderTextareaClass = 'mt-3 w-full resize-none overflow-hidden bg-transparent p-0 text-sm text-slate-700 outline-none placeholder:text-slate-400';
 const borderedFieldLabelClass = 'absolute left-3 top-0 z-10 -translate-y-1/2 bg-white px-1 py-0 text-[11px] font-semibold leading-none tracking-wide text-slate-500 whitespace-nowrap';
 const dayCardThemes = [
@@ -371,7 +371,7 @@ export default function PublicStudentRegistrationPage() {
                     key={day}
                     type="button"
                     onClick={() => toggleSelectedDay(day)}
-                    className={`rounded-full px-4 py-2 text-sm font-semibold transition ${active ? 'bg-[#2C736C] text-white shadow-sm' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+                    className={`rounded-full px-4 py-2 text-sm font-semibold transition ${active ? 'bg-primary text-white shadow-sm' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
                   >
                     {WEEKDAY_SHORT[day] || day}
                   </button>
@@ -458,7 +458,7 @@ export default function PublicStudentRegistrationPage() {
           <p className="mt-2 text-sm text-slate-600">Thank you. Your availability details have been received successfully. We will review them and contact you soon, Inshaa Allah.</p>
           <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <button type="button" onClick={resetForm} className="rounded-full border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700">Submit another availability</button>
-            <button type="button" onClick={() => setSuccess(false)} className="rounded-full bg-[#2C736C] px-5 py-3 text-sm font-semibold text-white">Edit it</button>
+            <button type="button" onClick={() => setSuccess(false)} className="rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white">Edit it</button>
           </div>
         </div>
       </div>
@@ -474,7 +474,7 @@ export default function PublicStudentRegistrationPage() {
               {branding.logoUrl ? (
                 <img src={branding.logoUrl} alt={branding.title || 'Waraqa'} className="h-12 w-12 object-contain" />
               ) : (
-                <div className="h-12 w-12 rounded-xl bg-[#2C736C]/10" />
+                <div className="h-12 w-12 rounded-xl bg-primary/10" />
               )}
             </div>
             <div>
@@ -484,14 +484,14 @@ export default function PublicStudentRegistrationPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {[1, 2, 3].map((item) => <div key={item} className={`h-2.5 w-14 rounded-full ${item <= step ? 'bg-[#2C736C]' : 'bg-slate-200'}`} />)}
+            {[1, 2, 3].map((item) => <div key={item} className={`h-2.5 w-14 rounded-full ${item <= step ? 'bg-primary' : 'bg-slate-200'}`} />)}
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-8">
           {step === 1 ? (
             <section className="space-y-5">
-              <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><UserRound className="h-5 w-5 text-[#2C736C]" />Contact information</div>
+              <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><UserRound className="h-5 w-5 text-primary" />Contact information</div>
               <div className="grid gap-4 md:grid-cols-2">
                 <input className={inputClass} placeholder="Guardian first name *" value={form.personalInfo.firstName} onChange={(e) => updatePersonal('firstName', e.target.value)} required />
                 <input className={inputClass} placeholder="Guardian last name *" value={form.personalInfo.lastName} onChange={(e) => updatePersonal('lastName', e.target.value)} required />
@@ -516,7 +516,7 @@ export default function PublicStudentRegistrationPage() {
           {step === 2 ? (
             <section className="space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Users className="h-5 w-5 text-[#2C736C]" />Student details</div>
+                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Users className="h-5 w-5 text-primary" />Student details</div>
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium text-slate-600">Number of students</label>
                   <input className={inputClass + ' w-24'} type="number" min="1" max="12" value={studentCount} onChange={(e) => setStudentTotal(e.target.value)} />
@@ -531,8 +531,8 @@ export default function PublicStudentRegistrationPage() {
                       <p className="text-sm text-slate-500">If yes, the first student will use the guardian name automatically.</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => setSelfEnrollment(true)} className={`rounded-full px-4 py-2 text-sm font-semibold ${form.selfEnrollment ? 'bg-[#2C736C] text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Yes</button>
-                      <button type="button" onClick={() => setSelfEnrollment(false)} className={`rounded-full px-4 py-2 text-sm font-semibold ${!form.selfEnrollment ? 'bg-[#2C736C] text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>No</button>
+                      <button type="button" onClick={() => setSelfEnrollment(true)} className={`rounded-full px-4 py-2 text-sm font-semibold ${form.selfEnrollment ? 'bg-primary text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Yes</button>
+                      <button type="button" onClick={() => setSelfEnrollment(false)} className={`rounded-full px-4 py-2 text-sm font-semibold ${!form.selfEnrollment ? 'bg-primary text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>No</button>
                     </div>
                   </div>
                 </div>
@@ -573,7 +573,7 @@ export default function PublicStudentRegistrationPage() {
                       <div className="flex flex-wrap gap-2">
                         {COURSE_OPTIONS.map((course) => {
                             const active = resolvedStudent.courses.includes(course);
-                          return <button key={course} type="button" onClick={() => toggleCourse(index, course)} className={`rounded-full px-3 py-2 text-sm font-medium ${active ? 'bg-[#2C736C] text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>{course}</button>;
+                          return <button key={course} type="button" onClick={() => toggleCourse(index, course)} className={`rounded-full px-3 py-2 text-sm font-medium ${active ? 'bg-primary text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>{course}</button>;
                         })}
                       </div>
                     </div>
@@ -592,7 +592,7 @@ export default function PublicStudentRegistrationPage() {
           {step === 3 ? (
             <section className="space-y-5">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Sparkles className="h-5 w-5 text-[#2C736C]" />Schedule preferences</div>
+                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Sparkles className="h-5 w-5 text-primary" />Schedule preferences</div>
                 <div className="text-sm text-slate-600">Timezone <span className="font-semibold text-slate-900">{displayTimezone}</span></div>
               </div>
 
@@ -601,8 +601,8 @@ export default function PublicStudentRegistrationPage() {
                   <div className="relative rounded-2xl border border-slate-200 bg-slate-50 p-4 pt-6">
                     <span className={borderedFieldLabelClass}>Back-to-back classes?</span>
                     <div className="flex flex-wrap items-center gap-2">
-                      <button type="button" onClick={() => setSchedulingMode('consecutive')} className={`rounded-full px-4 py-2 text-sm font-semibold ${form.availability.schedulingMode === 'consecutive' ? 'bg-[#2C736C] text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Yes — one after another</button>
-                      <button type="button" onClick={() => setSchedulingMode('separate')} className={`rounded-full px-4 py-2 text-sm font-semibold ${form.availability.schedulingMode === 'separate' ? 'bg-[#2C736C] text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>No — separate times</button>
+                      <button type="button" onClick={() => setSchedulingMode('consecutive')} className={`rounded-full px-4 py-2 text-sm font-semibold ${form.availability.schedulingMode === 'consecutive' ? 'bg-primary text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Yes — one after another</button>
+                      <button type="button" onClick={() => setSchedulingMode('separate')} className={`rounded-full px-4 py-2 text-sm font-semibold ${form.availability.schedulingMode === 'separate' ? 'bg-primary text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>No — separate times</button>
                     </div>
                   </div>
                 ) : <div />}
@@ -615,8 +615,8 @@ export default function PublicStudentRegistrationPage() {
                 <div className="relative rounded-2xl border border-slate-200 bg-slate-50 p-4 pt-6">
                   <span className={borderedFieldLabelClass}>Same class duration?</span>
                   <div className="flex flex-wrap items-center gap-2">
-                      <button type="button" onClick={() => updateAvailability('allDurationsSame', true)} className={`rounded-full px-4 py-2 text-sm font-semibold ${form.availability.allDurationsSame ? 'bg-[#2C736C] text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Yes</button>
-                      <button type="button" onClick={() => updateAvailability('allDurationsSame', false)} className={`rounded-full px-4 py-2 text-sm font-semibold ${!form.availability.allDurationsSame ? 'bg-[#2C736C] text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>No</button>
+                      <button type="button" onClick={() => updateAvailability('allDurationsSame', true)} className={`rounded-full px-4 py-2 text-sm font-semibold ${form.availability.allDurationsSame ? 'bg-primary text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Yes</button>
+                      <button type="button" onClick={() => updateAvailability('allDurationsSame', false)} className={`rounded-full px-4 py-2 text-sm font-semibold ${!form.availability.allDurationsSame ? 'bg-primary text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>No</button>
                       {form.availability.allDurationsSame ? (
                         <div className="relative min-w-[170px] pt-2">
                           <span className={borderedFieldLabelClass}>Duration</span>
@@ -655,9 +655,9 @@ export default function PublicStudentRegistrationPage() {
             <button type="button" onClick={() => setStep((prev) => Math.max(prev - 1, 1))} className="rounded-full border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700" disabled={step === 1 || submitting}>Back</button>
             <div className="flex items-center gap-3">
               {step < 3 ? (
-                <button type="button" onClick={handleNext} className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-6 py-3 text-sm font-semibold text-white shadow-sm"><span>Next</span><ChevronRight className="h-4 w-4" /></button>
+                <button type="button" onClick={handleNext} className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white shadow-sm"><span>Next</span><ChevronRight className="h-4 w-4" /></button>
               ) : (
-                <button type="submit" disabled={submitting} className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-6 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
+                <button type="submit" disabled={submitting} className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   <span>{submitting ? 'Submitting…' : 'Submit'}</span>
                 </button>

@@ -585,7 +585,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
       <div className="mx-auto max-w-7xl px-6 py-8">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#2C736C]">Waraqa Curricula</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-primary">Waraqa Curricula</p>
             <h1 className="text-2xl font-semibold text-foreground">Interactive learning</h1>
           </div>
           <div className="flex items-center gap-3">
@@ -595,7 +595,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                 loadLessons();
                 loadTests();
               }}
-              className="text-xs text-[#2C736C]"
+              className="text-xs text-primary"
             >
               Refresh
             </button>
@@ -610,7 +610,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
               onClick={() => setActiveTab(tab)}
               className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${
                 activeTab === tab
-                  ? 'border-[#2C736C]/40 bg-[#2C736C]/10 text-[#2C736C]'
+                  ? 'border-primary/40 bg-primary/10 text-primary'
                   : 'border-slate-200 text-slate-600'
               }`}
             >
@@ -628,7 +628,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                   <div
                     key={subject.name}
                     className={`rounded-3xl border bg-white p-5 shadow-sm transition ${
-                      isActive ? 'border-[#2C736C]/40 bg-[#2C736C]/10 ring-1 ring-[#2C736C]/20' : 'border-slate-100'
+                      isActive ? 'border-primary/40 bg-primary/10 ring-1 ring-primary/20' : 'border-slate-100'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-4">
@@ -638,7 +638,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                         className="flex flex-1 items-center justify-between gap-4 text-left"
                       >
                         <div className="flex items-center gap-4">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#2C736C]/10 text-[#2C736C]">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                             <Folder className="h-5 w-5" />
                           </div>
                           <div>
@@ -646,7 +646,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                             <p className="text-xs text-muted-foreground">{subject.count} lessons</p>
                           </div>
                         </div>
-                        <span className="text-xs text-[#2C736C]">{isActive ? 'Selected' : 'Open'}</span>
+                        <span className="text-xs text-primary">{isActive ? 'Selected' : 'Open'}</span>
                       </button>
                       {isAdmin && !isPublic && (
                         <button
@@ -664,7 +664,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
             </div>
 
             <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#2C736C]">Lessons</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-primary">Lessons</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 {subjectFilter ? `Showing lessons for ${subjectFilter}.` : 'Select a subject to view lessons.'}
               </p>
@@ -672,8 +672,8 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                 {(subjectFilter ? (lessonsBySubject.get(subjectFilter) || []) : []).map((lesson) => (
                   <div
                     key={lesson.id || lesson._id}
-                    className={`relative flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C] ${
-                      lessonDropPreview?.targetLessonId === (lesson.id || lesson._id) ? 'ring-1 ring-[#2C736C]/40' : ''
+                    className={`relative flex items-center justify-between gap-2 rounded-xl bg-primary/10 px-3 py-2 text-left text-xs font-semibold text-primary ${
+                      lessonDropPreview?.targetLessonId === (lesson.id || lesson._id) ? 'ring-1 ring-primary/40' : ''
                     }`}
                     onDragOver={(event) => {
                       if (!isAdmin || isPublic || !subjectFilter || !draggingLessonId) return;
@@ -704,10 +704,10 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                     }}
                   >
                     {lessonDropPreview?.targetLessonId === (lesson.id || lesson._id) && lessonDropPreview?.position === 'before' && (
-                      <div className="pointer-events-none absolute left-2 right-2 top-0.5 h-0.5 rounded bg-[#2C736C]" />
+                      <div className="pointer-events-none absolute left-2 right-2 top-0.5 h-0.5 rounded bg-primary" />
                     )}
                     {lessonDropPreview?.targetLessonId === (lesson.id || lesson._id) && lessonDropPreview?.position === 'after' && (
-                      <div className="pointer-events-none absolute left-2 right-2 bottom-0.5 h-0.5 rounded bg-[#2C736C]" />
+                      <div className="pointer-events-none absolute left-2 right-2 bottom-0.5 h-0.5 rounded bg-primary" />
                     )}
                     {isAdmin && !isPublic && (
                       <button
@@ -727,7 +727,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                           setDraggingLessonId(null);
                           setLessonDropPreview(null);
                         }}
-                        className="rounded-full border border-[#2C736C]/30 p-1 text-[#2C736C] hover:bg-white/60"
+                        className="rounded-full border border-primary/30 p-1 text-primary hover:bg-white/60"
                         title="Reorder lesson"
                         disabled={isReorderingLessons}
                       >
@@ -740,7 +740,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                       className="flex-1 text-left"
                     >
                       <p>{lesson.displayName}</p>
-                      <p className="text-[10px] text-[#2C736C]/80">{lesson.metadata?.lessonStudio?.subtitle || 'Lesson'}</p>
+                      <p className="text-[10px] text-primary/80">{lesson.metadata?.lessonStudio?.subtitle || 'Lesson'}</p>
                     </button>
                     {isAdmin && !isPublic && (
                       <div className="flex items-center gap-2">
@@ -750,7 +750,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                             setLessonToEdit(lesson);
                             setEditLessonOpen(true);
                           }}
-                          className="rounded-full border border-[#2C736C]/30 px-2 py-1 text-[10px] text-[#2C736C]"
+                          className="rounded-full border border-primary/30 px-2 py-1 text-[10px] text-primary"
                         >
                           Edit
                         </button>
@@ -775,7 +775,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
 
             {addLessonOpen && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
+                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-primary/20">
                   <LessonStudio
                     onSave={async (payload) => {
                       const saved = await handleSaveLesson(payload);
@@ -792,7 +792,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
             )}
             {editLessonOpen && lessonToEdit && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
+                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-primary/20">
                   <LessonStudio
                     initialLesson={lessonToEdit}
                     onSave={async (payload) => {
@@ -821,7 +821,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                   <div
                     key={subject.name}
                     className={`rounded-3xl border bg-white p-5 shadow-sm transition ${
-                      isActive ? 'border-[#2C736C]/40 bg-[#2C736C]/10 ring-1 ring-[#2C736C]/20' : 'border-slate-100'
+                      isActive ? 'border-primary/40 bg-primary/10 ring-1 ring-primary/20' : 'border-slate-100'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-4">
@@ -831,7 +831,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                         className="flex flex-1 items-center justify-between gap-4 text-left"
                       >
                         <div className="flex items-center gap-4">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#2C736C]/10 text-[#2C736C]">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                             <Folder className="h-5 w-5" />
                           </div>
                           <div>
@@ -839,7 +839,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                             <p className="text-xs text-muted-foreground">{subject.count} tests</p>
                           </div>
                         </div>
-                        <span className="text-xs text-[#2C736C]">{isActive ? 'Selected' : 'Open'}</span>
+                        <span className="text-xs text-primary">{isActive ? 'Selected' : 'Open'}</span>
                       </button>
                       {isAdmin && !isPublic && (
                         <button
@@ -857,7 +857,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
             </div>
 
             <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#2C736C]">Tests</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-primary">Tests</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 {testSubjectFilter ? `Showing tests for ${testSubjectFilter}.` : 'Select a subject to view tests.'}
               </p>
@@ -865,8 +865,8 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                 {(testSubjectFilter ? (testsBySubject.get(testSubjectFilter) || []) : []).map((test) => (
                   <div
                     key={test.id || test._id}
-                    className={`relative flex items-center justify-between gap-2 rounded-xl bg-[#2C736C]/10 px-3 py-2 text-left text-xs font-semibold text-[#2C736C] ${
-                      testDropPreview?.targetTestId === (test.id || test._id) ? 'ring-1 ring-[#2C736C]/40' : ''
+                    className={`relative flex items-center justify-between gap-2 rounded-xl bg-primary/10 px-3 py-2 text-left text-xs font-semibold text-primary ${
+                      testDropPreview?.targetTestId === (test.id || test._id) ? 'ring-1 ring-primary/40' : ''
                     }`}
                     onDragOver={(event) => {
                       if (!isAdmin || isPublic || !testSubjectFilter || !draggingTestId) return;
@@ -897,10 +897,10 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                     }}
                   >
                     {testDropPreview?.targetTestId === (test.id || test._id) && testDropPreview?.position === 'before' && (
-                      <div className="pointer-events-none absolute left-2 right-2 top-0.5 h-0.5 rounded bg-[#2C736C]" />
+                      <div className="pointer-events-none absolute left-2 right-2 top-0.5 h-0.5 rounded bg-primary" />
                     )}
                     {testDropPreview?.targetTestId === (test.id || test._id) && testDropPreview?.position === 'after' && (
-                      <div className="pointer-events-none absolute left-2 right-2 bottom-0.5 h-0.5 rounded bg-[#2C736C]" />
+                      <div className="pointer-events-none absolute left-2 right-2 bottom-0.5 h-0.5 rounded bg-primary" />
                     )}
                     {isAdmin && !isPublic && (
                       <button
@@ -920,7 +920,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                           setDraggingTestId(null);
                           setTestDropPreview(null);
                         }}
-                        className="rounded-full border border-[#2C736C]/30 p-1 text-[#2C736C] hover:bg-white/60"
+                        className="rounded-full border border-primary/30 p-1 text-primary hover:bg-white/60"
                         title="Reorder test"
                         disabled={isReorderingTests}
                       >
@@ -933,7 +933,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                       className="flex-1 text-left"
                     >
                       <p>{test.displayName}</p>
-                      <p className="text-[10px] text-[#2C736C]/80">{test.metadata?.testStudio?.subtitle || 'Assessment'}</p>
+                      <p className="text-[10px] text-primary/80">{test.metadata?.testStudio?.subtitle || 'Assessment'}</p>
                     </button>
                     {isAdmin && !isPublic && (
                       <div className="flex items-center gap-2">
@@ -943,7 +943,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                             setTestToEdit(test);
                             setEditTestOpen(true);
                           }}
-                          className="rounded-full border border-[#2C736C]/30 px-2 py-1 text-[10px] text-[#2C736C]"
+                          className="rounded-full border border-primary/30 px-2 py-1 text-[10px] text-primary"
                         >
                           Edit
                         </button>
@@ -968,7 +968,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
 
             {addTestOpen && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
+                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-primary/20">
                   <TestStudio
                     onSave={async (payload) => {
                       await handleSaveTest(payload);
@@ -984,7 +984,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
             )}
             {editTestOpen && testToEdit && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-[#2C736C]/20">
+                <div className="h-full w-full max-w-none overflow-y-auto rounded-3xl bg-white shadow-2xl ring-2 ring-primary/20">
                   <TestStudio
                     initialTest={testToEdit}
                     onSave={async (payload) => {
@@ -1012,9 +1012,9 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
-            className="flex flex-col items-center gap-1 text-[#2C736C]"
+            className="flex flex-col items-center gap-1 text-primary"
           >
-            <span className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#2C736C]/40 bg-white shadow-sm hover:bg-[#2C736C]/10">
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-primary/40 bg-white shadow-sm hover:bg-primary/10">
               <Settings className="h-5 w-5" />
             </span>
             <span className="text-[10px] font-semibold">Settings</span>
@@ -1028,9 +1028,9 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                 setAddLessonOpen(true);
               }
             }}
-            className="flex flex-col items-center gap-1 text-[#2C736C]"
+            className="flex flex-col items-center gap-1 text-primary"
           >
-            <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#2C736C] text-white shadow-sm hover:bg-[#245b56]">
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-primary text-white shadow-sm hover:bg-primary/90">
               <Plus className="h-5 w-5" />
             </span>
             <span className="text-[10px] font-semibold">Add</span>
@@ -1060,10 +1060,10 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
 
       {settingsOpen && !isPublic && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-3xl rounded-3xl bg-white p-6 shadow-2xl ring-2 ring-[#2C736C]/20">
+          <div className="w-full max-w-3xl rounded-3xl bg-white p-6 shadow-2xl ring-2 ring-primary/20">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#2C736C]">Settings</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-primary">Settings</p>
                 <h2 className="text-xl font-semibold text-foreground">Interactive learning</h2>
               </div>
               <button
@@ -1086,7 +1086,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                       onClick={() => setAccessScope(value)}
                       className={`rounded-full border px-4 py-2 text-xs font-semibold ${
                         accessScope === value
-                          ? 'border-[#2C736C]/40 bg-[#2C736C]/10 text-[#2C736C]'
+                          ? 'border-primary/40 bg-primary/10 text-primary'
                           : 'border-slate-200 text-slate-600'
                       }`}
                     >
@@ -1251,7 +1251,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                       setAccessDraft({ email: '', password: '', folders: [] });
                       setFolderSearch('');
                     }}
-                    className="rounded-full bg-[#2C736C] px-4 py-2 text-xs font-semibold text-white"
+                    className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white"
                   >
                     Add access
                   </button>
@@ -1276,7 +1276,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                       setHadithList((prev) => [...prev, hadithDraft.trim()]);
                       setHadithDraft('');
                     }}
-                    className="rounded-full bg-[#2C736C] px-4 py-2 text-xs font-semibold text-white"
+                    className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white"
                   >
                     Add
                   </button>
@@ -1309,7 +1309,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
               <button
                 type="button"
                 onClick={saveSettings}
-                className="rounded-full bg-[#2C736C] px-4 py-2 text-xs font-semibold text-white"
+                className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white"
               >
                 Save settings
               </button>

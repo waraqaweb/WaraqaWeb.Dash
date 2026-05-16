@@ -793,7 +793,7 @@ const MeetingAvailabilityAdminPage = () => {
                   key={type}
                   type="button"
                   onClick={() => setActiveType(type)}
-                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${active ? 'bg-[#2C736C] text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${active ? 'bg-primary text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
                 >
                   {MEETING_TYPE_LABELS[type] || type}
                 </button>
@@ -806,7 +806,7 @@ const MeetingAvailabilityAdminPage = () => {
             <button
               type="button"
               onClick={() => setSelectedDaysByType((prev) => ({ ...prev, [activeType]: [new Date().getDay()] }))}
-              className="mr-1 text-xs font-semibold text-[#2C736C] hover:underline"
+              className="mr-1 text-xs font-semibold text-primary hover:underline"
             >
               Today only
             </button>
@@ -817,14 +817,14 @@ const MeetingAvailabilityAdminPage = () => {
                   key={day}
                   type="button"
                   onClick={() => toggleVisibleDay(index)}
-                  className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition ${active ? 'bg-[#2C736C] text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-[#2C736C]'}`}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition ${active ? 'bg-primary text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-primary'}`}
                   title={day}
                 >
                   {SHORT_DAY_NAMES[index]}
                 </button>
               );
             })}
-            <button type="button" onClick={() => openCreateForm(activeSelectedDays[0] ?? new Date().getDay())} className="ml-1 inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110">
+            <button type="button" onClick={() => openCreateForm(activeSelectedDays[0] ?? new Date().getDay())} className="ml-1 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110">
               <Plus className="w-4 h-4" /> Add slot
             </button>
           </div>
@@ -927,7 +927,7 @@ const MeetingAvailabilityAdminPage = () => {
           </div>
         </div>
         <div className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 flex items-center gap-2">
-          <Clock className="w-4 h-4 text-[#2C736C]" />
+          <Clock className="w-4 h-4 text-primary" />
           <span>{timezone}</span>
         </div>
       </div>
@@ -944,7 +944,7 @@ const MeetingAvailabilityAdminPage = () => {
                   key={item.id}
                   type="button"
                   onClick={() => setPageTab(item.id)}
-                  className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${active ? 'border-[#2C736C] bg-[#2C736C] text-white' : 'border-gray-200 bg-white text-gray-700 hover:border-[#2C736C] hover:text-[#2C736C]'}`}
+                  className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${active ? 'border-primary bg-primary text-white' : 'border-gray-200 bg-white text-gray-700 hover:border-primary hover:text-primary'}`}
                 >
                   <Icon className="h-4 w-4" /> {item.label}
                 </button>
@@ -1072,7 +1072,7 @@ const MeetingAvailabilityAdminPage = () => {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
                 >
                   {saving ? 'Saving…' : formState._id ? 'Update' : 'Add'}
                 </button>
@@ -1086,17 +1086,17 @@ const MeetingAvailabilityAdminPage = () => {
 
         <div className="space-y-4 xl:sticky xl:top-6 xl:self-start">
           <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-[#2C736C]" />Default link</div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-primary" />Default link</div>
             <div className="mt-3 flex items-center gap-2">
-              <input type="url" value={meetingLinkValue} onChange={(e) => setMeetingLinkValue(e.target.value)} placeholder="https://meet.google.com/..." className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C736C]" />
-              <button type="button" onClick={handleSaveMeetingLink} disabled={meetingLinkSaving} className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow disabled:opacity-60">{meetingLinkSaving ? 'Saving…' : 'Save'}</button>
+              <input type="url" value={meetingLinkValue} onChange={(e) => setMeetingLinkValue(e.target.value)} placeholder="https://meet.google.com/..." className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+              <button type="button" onClick={handleSaveMeetingLink} disabled={meetingLinkSaving} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow disabled:opacity-60">{meetingLinkSaving ? 'Saving…' : 'Save'}</button>
             </div>
             {meetingLinkStatus.message ? <p className={`mt-2 text-xs ${meetingLinkStatus.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>{meetingLinkStatus.message}</p> : null}
           </div>
 
           <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
             <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-[#2C736C]" />Evaluation link</div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-primary" />Evaluation link</div>
               <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input type="text" value={publicEvaluationLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
                 <div className="flex items-center gap-2 self-end sm:self-auto">
@@ -1108,7 +1108,7 @@ const MeetingAvailabilityAdminPage = () => {
             </div>
 
             <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-[#2C736C]" />Guardian follow-up link</div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-primary" />Guardian follow-up link</div>
               <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input type="text" value={publicGuardianFollowUpLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
                 <div className="flex items-center gap-2 self-end sm:self-auto">
@@ -1118,7 +1118,7 @@ const MeetingAvailabilityAdminPage = () => {
             </div>
 
             <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-[#2C736C]" />Teacher sync link</div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-primary" />Teacher sync link</div>
               <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input type="text" value={publicTeacherSyncLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
                 <div className="flex items-center gap-2 self-end sm:self-auto">
@@ -1128,7 +1128,7 @@ const MeetingAvailabilityAdminPage = () => {
             </div>
 
             <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><UserPlus className="w-4 h-4 text-[#2C736C]" />Registration link</div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><UserPlus className="w-4 h-4 text-primary" />Registration link</div>
               <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input type="text" value={publicRegistrationLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
                 <div className="flex items-center gap-2 self-end sm:self-auto">
@@ -1139,7 +1139,7 @@ const MeetingAvailabilityAdminPage = () => {
             </div>
 
             <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><UserPlus className="w-4 h-4 text-[#2C736C]" />Teacher registration link</div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><UserPlus className="w-4 h-4 text-primary" />Teacher registration link</div>
               <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input type="text" value={publicTeacherRegistrationLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
                 <div className="flex items-center gap-2 self-end sm:self-auto">
@@ -1160,7 +1160,7 @@ const MeetingAvailabilityAdminPage = () => {
                 type="button"
                 onClick={handleToggleMeetingsEnabled}
                 disabled={meetingsEnabledSaving}
-                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white ${meetingsEnabled ? 'bg-[#2C736C]' : 'bg-gray-600'} disabled:opacity-60`}
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white ${meetingsEnabled ? 'bg-primary' : 'bg-gray-600'} disabled:opacity-60`}
               >
                 <Ban className="h-4 w-4" />{meetingsEnabledSaving ? 'Saving…' : meetingsEnabled ? 'Disable' : 'Enable'}
               </button>
@@ -1242,7 +1242,7 @@ const MeetingAvailabilityAdminPage = () => {
                 <button
                   type="button"
                   onClick={handleCreateTimeOff}
-                  className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
                   disabled={timeOffLoading}
                 >
                   {timeOffLoading ? 'Saving…' : 'Add time off'}
@@ -1353,7 +1353,7 @@ const MeetingAvailabilityAdminPage = () => {
                 type="button"
                 onClick={handleDuplicateDay}
                 disabled={duplicating}
-                className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
               >
                 {duplicating ? 'Duplicating…' : 'Duplicate'}
               </button>

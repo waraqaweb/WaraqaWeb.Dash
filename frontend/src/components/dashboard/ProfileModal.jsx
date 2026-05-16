@@ -231,7 +231,7 @@ const ProfileModal = ({ isOpen, onClose }) => {
                             type="checkbox"
                             checked={emailPrefs[key] !== false}
                             onChange={e => setEmailPrefs(p => ({ ...p, [key]: e.target.checked }))}
-                            className="w-3.5 h-3.5 accent-[#2C736C]"
+                            className="w-3.5 h-3.5 accent-primary"
                           />
                           {label}
                         </label>
@@ -252,7 +252,7 @@ const ProfileModal = ({ isOpen, onClose }) => {
                               setEmailPrefsMsg(err?.response?.data?.message || 'Save failed');
                             } finally { setEmailPrefsSaving(false); }
                           }}
-                          className="px-3 py-1 text-xs bg-[#2C736C] text-white rounded disabled:opacity-50"
+                          className="px-3 py-1 text-xs bg-primary text-white rounded disabled:opacity-50"
                         >
                           {emailPrefsSaving ? 'Saving…' : 'Save'}
                         </button>

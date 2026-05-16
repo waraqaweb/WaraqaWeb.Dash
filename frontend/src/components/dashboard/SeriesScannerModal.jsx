@@ -37,7 +37,7 @@ function FilterDropdown({ value, onChange, options, placeholder }) {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Type to filter…"
-                className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs focus:border-[#2C736C] focus:outline-none"
+                className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs focus:border-primary focus:outline-none"
                 autoFocus
               />
             </div>
@@ -45,7 +45,7 @@ function FilterDropdown({ value, onChange, options, placeholder }) {
               <button
                 type="button"
                 onClick={() => { onChange("all"); setOpen(false); setQ(""); }}
-                className={`w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 ${value === "all" ? "font-semibold text-[#2C736C]" : "text-gray-600"}`}
+                className={`w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 ${value === "all" ? "font-semibold text-primary" : "text-gray-600"}`}
               >
                 {placeholder}
               </button>
@@ -54,7 +54,7 @@ function FilterDropdown({ value, onChange, options, placeholder }) {
                   key={o.value}
                   type="button"
                   onClick={() => { onChange(o.value); setOpen(false); setQ(""); }}
-                  className={`w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 ${value === o.value ? "font-semibold text-[#2C736C]" : "text-gray-600"}`}
+                  className={`w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 ${value === o.value ? "font-semibold text-primary" : "text-gray-600"}`}
                 >
                   {o.label}
                 </button>
@@ -269,7 +269,7 @@ export default function SeriesScannerModal({
                 type="button"
                 onClick={onRecreateAll}
                 disabled={recreatingAll || loading || activeList.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[#2C736C] px-3.5 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-[#245e58] disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RotateCcw className={`h-3.5 w-3.5 ${recreatingAll ? "animate-spin" : ""}`} />
                 {recreatingAll ? "Recreating…" : "Recreate All Active"}
@@ -285,7 +285,7 @@ export default function SeriesScannerModal({
                 value={searchText}
                 onChange={(e) => onChangeSearchText?.(e.target.value)}
                 placeholder="Search by name, subject, email…"
-                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-3 text-xs focus:border-[#2C736C] focus:outline-none focus:ring-1 focus:ring-[#2C736C]/30"
+                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-3 text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30"
               />
             </div>
 
@@ -296,7 +296,7 @@ export default function SeriesScannerModal({
               <button
                 type="button"
                 onClick={() => { setTeacherFilter("all"); setGuardianFilter("all"); }}
-                className="text-[10px] font-medium text-[#2C736C] hover:underline"
+                className="text-[10px] font-medium text-primary hover:underline"
               >
                 Clear filters
               </button>

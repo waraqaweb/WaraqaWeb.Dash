@@ -840,7 +840,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                 >
                   {showWelcome ? (
                     <div className="flex min-h-full flex-1 flex-col">
-                      <div className="flex min-h-[60vh] h-full flex-col rounded-3xl border border-[#2C736C]/20 bg-gradient-to-br from-[#E6F3F1] via-white to-slate-100 p-4 shadow-sm">
+                      <div className="flex min-h-[60vh] h-full flex-col rounded-3xl border border-primary/20 bg-gradient-to-br from-[#E6F3F1] via-white to-slate-100 p-4 shadow-sm">
                         <div className="flex flex-wrap items-start justify-between gap-6">
                           <div className="flex items-start gap-4">
                             <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-200 bg-white">
@@ -928,7 +928,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                           <button
                             type="button"
                             onClick={() => handleStartLesson(0)}
-                            className="inline-flex items-center justify-center rounded-full bg-[#2C736C] px-8 py-2.5 text-base font-semibold text-white shadow-sm hover:bg-[#245b56]"
+                            className="inline-flex items-center justify-center rounded-full bg-primary px-8 py-2.5 text-base font-semibold text-white shadow-sm hover:bg-primary/90"
                           >
                             Begin lesson
                           </button>
@@ -1247,7 +1247,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
                   type="button"
                   onClick={handleGoHome}
                   className={`flex flex-col items-center gap-1 rounded-2xl border border-slate-200 px-2.5 py-2.5 text-xs font-semibold ${
-                    showWelcome ? 'border-[#2C736C]/60 bg-[#2C736C] text-white shadow-lg' : 'hover:bg-white'
+                    showWelcome ? 'border-primary/60 bg-primary text-white shadow-lg' : 'hover:bg-white'
                   }`}
                 >
                   <Home className="h-5 w-5" />

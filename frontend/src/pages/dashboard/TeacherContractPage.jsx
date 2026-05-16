@@ -3,7 +3,7 @@ import { CheckCircle2, ChevronRight, FileBadge2, FileText, Loader2, ShieldCheck,
 import { useAuth } from '../../contexts/AuthContext';
 import { getMyTeacherContract, getTeacherContractTemplate, saveMyTeacherContract, updateTeacherContractTemplate } from '../../api/teacherContract';
 
-const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#2C736C] focus:ring-4 focus:ring-[#2C736C]/10';
+const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10';
 
 const getFileLabel = (file, fallback = '') => file?.name || file?.originalName || fallback || 'No file chosen';
 const containsArabic = (value = '') => /[\u0600-\u06FF]/.test(String(value));
@@ -190,7 +190,7 @@ export default function TeacherContractPage() {
             <p className="mt-2 text-sm text-slate-500">نفس أسلوب التسجيل متعدد الخطوات داخل الداشبورد مع حفظ البيانات والوثائق.</p>
           </div>
           <div className="flex items-center gap-2">
-            {[1, 2, 3].map((item) => <div key={item} className={`h-2.5 w-14 rounded-full ${item <= step ? 'bg-[#2C736C]' : 'bg-slate-200'}`} />)}
+            {[1, 2, 3].map((item) => <div key={item} className={`h-2.5 w-14 rounded-full ${item <= step ? 'bg-primary' : 'bg-slate-200'}`} />)}
           </div>
         </div>
 
@@ -198,7 +198,7 @@ export default function TeacherContractPage() {
           <div className="space-y-8">
             {step === 1 ? (
               <section className="space-y-5">
-                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><FileText className="h-5 w-5 text-[#2C736C]" />العقد</div>
+                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><FileText className="h-5 w-5 text-primary" />العقد</div>
                 <div className={`rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-7 text-slate-700 ${containsArabic(contractTemplate) ? 'text-right' : 'text-left'}`} dir={containsArabic(contractTemplate) ? 'rtl' : 'ltr'}>
                   {isAdmin ? (
                     <div className="space-y-3">
@@ -209,7 +209,7 @@ export default function TeacherContractPage() {
                         onChange={(e) => setContractTemplate(e.target.value)}
                       />
                       <div className="flex justify-end">
-                        <button type="button" onClick={handleTemplateSave} disabled={templateSaving} className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-5 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
+                        <button type="button" onClick={handleTemplateSave} disabled={templateSaving} className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
                           {templateSaving ? 'Saving…' : 'Save contract text'}
                         </button>
                       </div>
@@ -230,7 +230,7 @@ export default function TeacherContractPage() {
 
             {step === 2 ? (
               <section className="space-y-5">
-                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><FileBadge2 className="h-5 w-5 text-[#2C736C]" />Identity and Educational Verification</div>
+                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><FileBadge2 className="h-5 w-5 text-primary" />Identity and Educational Verification</div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <label className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <div className="mb-3 text-sm font-semibold text-slate-900">National ID or passport *</div>
@@ -261,7 +261,7 @@ export default function TeacherContractPage() {
 
             {step === 3 ? (
               <section className="space-y-5">
-                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><UserRound className="h-5 w-5 text-[#2C736C]" />Personal information</div>
+                <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><UserRound className="h-5 w-5 text-primary" />Personal information</div>
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   <input className={inputClass + ' xl:col-span-2'} placeholder="Full name *" value={form.fullName} onChange={(e) => updateField('fullName', e.target.value)} />
                   <input className={inputClass} placeholder="E-mail *" type="email" value={form.email} onChange={(e) => updateField('email', e.target.value)} />
@@ -291,9 +291,9 @@ export default function TeacherContractPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <button type="button" onClick={() => handleSave('draft')} disabled={saving} className="rounded-full border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 disabled:opacity-50">Save draft</button>
                 {step < 3 ? (
-                  <button type="button" onClick={handleNext} className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-6 py-3 text-sm font-semibold text-white shadow-sm"><span>Next</span><ChevronRight className="h-4 w-4" /></button>
+                  <button type="button" onClick={handleNext} className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white shadow-sm"><span>Next</span><ChevronRight className="h-4 w-4" /></button>
                 ) : (
-                  <button type="button" onClick={() => handleSave('submitted')} disabled={saving} className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-6 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
+                  <button type="button" onClick={() => handleSave('submitted')} disabled={saving} className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                     <span>{saving ? 'Submitting…' : 'Submit form'}</span>
                   </button>

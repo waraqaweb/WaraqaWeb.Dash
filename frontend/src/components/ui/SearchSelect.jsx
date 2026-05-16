@@ -316,7 +316,7 @@ const SearchSelect = ({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           disabled={disabled}
-          className="w-full pl-9 pr-9 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] disabled:bg-gray-100 disabled:cursor-not-allowed"
+          className="w-full pl-9 pr-9 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary disabled:bg-gray-100 disabled:cursor-not-allowed"
         />
         {inputValue && !disabled && (
           <button
@@ -352,7 +352,7 @@ const SearchSelect = ({
                   key={option.id || option.value || index}
                   type="button"
                   className={`w-full text-left px-3 py-2 text-sm transition-colors ${
-                    index === activeIndex ? 'bg-[#2C736C]/10 text-[#2C736C]' : 'hover:bg-gray-50'
+                    index === activeIndex ? 'bg-primary/10 text-primary' : 'hover:bg-gray-50'
                   }`}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => handleOptionSelect(option)}

@@ -1,12 +1,26 @@
 /**
- * Loading Spinner Component
- * 
- * A reusable loading spinner for the application
+ * Loading indicator.
+ *
+ * - Inline usage (`<LoadingSpinner />`) renders the lightweight `CircleSpinner`
+ *   so list/section loaders feel fast and aren't dominated by a giant SVG.
+ * - `fullScreen` usage renders the branded "Waraqa" loader on a translucent
+ *   backdrop — keep this for app-level transitions only.
  */
 
 import React from 'react';
+import CircleSpinner from './CircleSpinner';
 
 const LoadingSpinner = ({ size = 'md', text = 'Loading...', fullScreen = false }) => {
+  if (!fullScreen) {
+    const inlineSize = size === 'sm' ? 'sm' : size === 'lg' || size === 'xl' ? 'lg' : 'md';
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 p-4">
+        <CircleSpinner size={inlineSize} />
+        {text && <span className="text-sm text-muted-foreground font-medium">{text}</span>}
+      </div>
+    );
+  }
+
   const sizeClasses = {
     sm: 'max-w-[180px]',
     md: 'max-w-[260px]',
@@ -125,4 +139,3 @@ const LoadingSpinner = ({ size = 'md', text = 'Loading...', fullScreen = false }
 };
 
 export default LoadingSpinner;
-

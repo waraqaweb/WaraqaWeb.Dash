@@ -923,7 +923,7 @@ const ClassesCalendarView = ({
           <div className="flex items-center justify-between">
             <div className="space-y-0">
               <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
-                <CalendarCheck className="h-4 w-4 text-[#2C736C]" />
+                <CalendarCheck className="h-4 w-4 text-primary" />
                 <span>{selectedClass.student?.studentName || "Unnamed student"}</span>
                 {selectedClass.isRecurring && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
@@ -1030,9 +1030,9 @@ const ClassesCalendarView = ({
         {(availabilityData || typeof onToggleAvailability === "function") && (
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
-              <span className="inline-flex items-center gap-2 font-medium text-[#2C736C]">
+              <span className="inline-flex items-center gap-2 font-medium text-primary">
                 <span className="relative flex h-4 w-4 items-center justify-center">
-                  <span className="absolute h-3 w-3 rounded-full border border-[#2C736C]/60 bg-[#2C736C]/20" />
+                  <span className="absolute h-3 w-3 rounded-full border border-primary/60 bg-primary/20" />
                 </span>
                 Availability layer
               </span>
@@ -1047,7 +1047,7 @@ const ClassesCalendarView = ({
                 </span>
               )}
               {availabilityLoading && (
-                <Clock className="h-4 w-4 animate-spin text-[#2C736C]" />
+                <Clock className="h-4 w-4 animate-spin text-primary" />
               )}
               <span className="inline-flex items-center gap-2 text-xs font-semibold text-amber-800">
                 <span
@@ -1065,7 +1065,7 @@ const ClassesCalendarView = ({
               <button
                 onClick={onToggleAvailability}
                 type="button"
-                className="inline-flex items-center gap-2 rounded-full border border-[#2C736C]/40 bg-white px-4 py-2 text-sm font-semibold text-[#2C736C] transition hover:bg-[#2C736C]/10"
+                className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-white px-4 py-2 text-sm font-semibold text-primary transition hover:bg-primary/10"
               >
                 {availabilityEnabled ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 <span>{availabilityEnabled ? "Hide availability" : "Show availability"}</span>

@@ -1186,7 +1186,7 @@ const TeacherSalaries = () => {
                 setShowSettingsModal(true);
                 setShowQuickActions(false);
               }}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56]"
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90"
               aria-label="Open salary settings"
             >
               <Settings className="h-4 w-4" />
@@ -1198,7 +1198,7 @@ const TeacherSalaries = () => {
                 setShowQuickActions(false);
               }}
               disabled={generating}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="Open generate invoices dialog"
             >
               <Plus className="h-4 w-4" />
@@ -1220,7 +1220,7 @@ const TeacherSalaries = () => {
 
         <button
           onClick={() => setShowQuickActions(prev => !prev)}
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-[#2C736C] text-white shadow-2xl transition hover:bg-[#245b56]"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-2xl transition hover:bg-primary/90"
           aria-label="Toggle salary quick actions"
         >
           {showQuickActions ? <X className="h-6 w-6" /> : <Plus className="h-6 w-6" />}

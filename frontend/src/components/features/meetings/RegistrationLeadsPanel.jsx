@@ -244,9 +244,9 @@ export default function RegistrationLeadsPanel() {
                       <div className="grid gap-4 lg:grid-cols-2">
                         {(lead.students || []).map((student, index) => (
                           <div key={`${lead._id}-${index}`} className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
-                            <div className="flex items-center gap-2 font-semibold text-slate-900"><Users className="h-4 w-4 text-[#2C736C]" />{student.firstName} {student.lastName}</div>
+                            <div className="flex items-center gap-2 font-semibold text-slate-900"><Users className="h-4 w-4 text-primary" />{student.firstName} {student.lastName}</div>
                             <div className="mt-3 flex flex-wrap gap-2">
-                              {(student.courses || []).map((course) => <span key={`${lead._id}-${index}-${course}`} className="rounded-full bg-[#2C736C]/10 px-3 py-1 text-xs font-semibold text-[#2C736C] ring-1 ring-[#2C736C]/10">{course}</span>)}
+                              {(student.courses || []).map((course) => <span key={`${lead._id}-${index}-${course}`} className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary ring-1 ring-primary/10">{course}</span>)}
                               {student.classesPerWeek ? <span className={`rounded-full px-3 py-1 text-xs font-semibold ${infoPillTone.accent}`}>{student.classesPerWeek}/week</span> : null}
                               {student.birthDate ? <span className={`rounded-full px-3 py-1 text-xs font-semibold ${infoPillTone.neutral}`}>{formatDate(student.birthDate)}</span> : null}
                               {!sharedDuration && student.classDuration ? <span className={`rounded-full px-3 py-1 text-xs font-semibold ${infoPillTone.warning}`}>{student.classDuration} min</span> : null}
@@ -285,7 +285,7 @@ export default function RegistrationLeadsPanel() {
 
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       {lead.status !== 'converted' ? (
-                        <button type="button" onClick={() => handleConvert(lead._id)} disabled={convertingId === lead._id || lead.status === 'archived'} className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
+                        <button type="button" onClick={() => handleConvert(lead._id)} disabled={convertingId === lead._id || lead.status === 'archived'} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
                           <UserPlus className="h-4 w-4" /> {convertingId === lead._id ? 'Creating…' : 'Turn into guardian'}
                         </button>
                       ) : (

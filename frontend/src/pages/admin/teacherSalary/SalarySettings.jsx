@@ -315,7 +315,7 @@ const SalarySettings = () => {
               onClick={() => setActiveTab('exchange-rates')}
               className={`px-4 py-2 rounded-full text-sm font-medium transition ${
                 activeTab === 'exchange-rates'
-                  ? 'bg-[#2C736C] text-white shadow'
+                  ? 'bg-primary text-white shadow'
                   : 'text-slate-600 hover:bg-slate-100'
               }`}
             >
@@ -328,7 +328,7 @@ const SalarySettings = () => {
               onClick={() => setActiveTab('partitions')}
               className={`px-4 py-2 rounded-full text-sm font-medium transition ${
                 activeTab === 'partitions'
-                  ? 'bg-[#2C736C] text-white shadow'
+                  ? 'bg-primary text-white shadow'
                   : 'text-slate-600 hover:bg-slate-100'
               }`}
             >
@@ -341,7 +341,7 @@ const SalarySettings = () => {
               onClick={() => setActiveTab('transfer-fees')}
               className={`px-4 py-2 rounded-full text-sm font-medium transition ${
                 activeTab === 'transfer-fees'
-                  ? 'bg-[#2C736C] text-white shadow'
+                  ? 'bg-primary text-white shadow'
                   : 'text-slate-600 hover:bg-slate-100'
               }`}
             >
@@ -354,7 +354,7 @@ const SalarySettings = () => {
               onClick={() => setActiveTab('guardian-rate')}
               className={`px-4 py-2 rounded-full text-sm font-medium transition ${
                 activeTab === 'guardian-rate'
-                  ? 'bg-[#2C736C] text-white shadow'
+                  ? 'bg-primary text-white shadow'
                   : 'text-slate-600 hover:bg-slate-100'
               }`}
             >
@@ -468,7 +468,7 @@ const SalarySettings = () => {
                       <button
                         type="submit"
                         disabled={saving}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56] disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                       {saving ? (
                         <>
@@ -638,7 +638,7 @@ const SalarySettings = () => {
                                       handleUpdatePartition(partition.name, rate, applyToDrafts);
                                     }}
                                     disabled={saving}
-                                    className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
                                     Save
                                   </button>
@@ -716,7 +716,7 @@ const SalarySettings = () => {
                                 handleUpdateTransferFee('fixed', value);
                               }}
                               disabled={saving}
-                              className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56] disabled:opacity-50 disabled:cursor-not-allowed"
+                              className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               Save
                             </button>
@@ -763,7 +763,7 @@ const SalarySettings = () => {
                                 handleUpdateTransferFee('percentage', value);
                               }}
                               disabled={saving}
-                              className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56] disabled:opacity-50 disabled:cursor-not-allowed"
+                              className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               Save
                             </button>
@@ -832,7 +832,7 @@ const SalarySettings = () => {
                             type="checkbox"
                             checked={applyToAllGuardians}
                             onChange={(e) => setApplyToAllGuardians(e.target.checked)}
-                            className="rounded border-gray-300 text-[#2C736C] focus:ring-[#2C736C]"
+                            className="rounded border-gray-300 text-primary focus:ring-primary"
                           />
                           Apply to all existing guardians (overwrite their individual rates)
                         </label>
@@ -841,7 +841,7 @@ const SalarySettings = () => {
                           <button
                             onClick={handleUpdateGuardianRate}
                             disabled={saving}
-                            className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56] disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             Save
                           </button>

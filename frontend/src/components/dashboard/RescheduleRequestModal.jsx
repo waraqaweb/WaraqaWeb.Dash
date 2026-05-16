@@ -417,7 +417,7 @@ const RescheduleRequestModal = ({
                 <button
                   type="submit"
                   disabled={submitting || !policy?.canRequestReschedule}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#265f59] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {submitting ? "Submitting…" : "Submit request"}
                 </button>

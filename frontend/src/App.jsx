@@ -477,7 +477,7 @@ const AppRoutes = () => {
               </p>
               <button 
                 onClick={() => window.location.href = '/dashboard'}
-                className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56]"
+                className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90"
               >
                 Go to Dashboard
               </button>
@@ -498,7 +498,7 @@ const AppRoutes = () => {
               </p>
               <button 
                 onClick={() => window.location.href = '/dashboard'}
-                className="inline-flex items-center justify-center rounded-lg bg-[#2C736C] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#245b56]"
+                className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary/90"
               >
                 Go to Dashboard
               </button>

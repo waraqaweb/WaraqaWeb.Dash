@@ -40,7 +40,9 @@ import CircleSpinner from '../../components/ui/CircleSpinner';
 import useMinLoading from '../../components/ui/useMinLoading';
 import PrimaryButton from '../../components/ui/PrimaryButton';
 import Badge from '../../components/ui/Badge';
-import InvoiceViewModal from '../../components/invoices/InvoiceViewModal';
+// InvoiceViewModal is large (~3k LOC); load it on demand to keep the
+// initial Invoices page bundle small.
+const InvoiceViewModal = React.lazy(() => import('../../components/invoices/InvoiceViewModal'));
 import RecordPaymentModal from '../../components/invoices/RecordPaymentModal';
 import RefundInvoiceModal from '../../components/invoices/RefundInvoiceModal';
 import CreateGuardianInvoiceModal from '../../components/invoices/CreateGuardianInvoiceModal';
@@ -2249,14 +2251,16 @@ const InvoicesPage = ({ isActive = true }) => {
       </div>
 
       {modalState.type === 'view' && (
-        <InvoiceViewModal
-          invoiceSlug={modalState.invoiceSlug}
-          invoiceId={modalState.invoiceId}
-          initialInvoice={modalInvoiceSeed || invoices.find(inv => inv._id === modalState.invoiceId) || null}
-          onOpenRecordPayment={(invoiceLike) => openModal('payment', invoiceLike || modalInvoiceSeed || modalState.invoiceId)}
-          onClose={() => closeModal(true)}
-          onInvoiceUpdate={handleInvoiceUpdate}
-        />
+        <React.Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-background/40 backdrop-blur-sm"><CircleSpinner size="lg" /></div>}>
+          <InvoiceViewModal
+            invoiceSlug={modalState.invoiceSlug}
+            invoiceId={modalState.invoiceId}
+            initialInvoice={modalInvoiceSeed || invoices.find(inv => inv._id === modalState.invoiceId) || null}
+            onOpenRecordPayment={(invoiceLike) => openModal('payment', invoiceLike || modalInvoiceSeed || modalState.invoiceId)}
+            onClose={() => closeModal(true)}
+            onInvoiceUpdate={handleInvoiceUpdate}
+          />
+        </React.Suspense>
       )}
       {modalState.type === 'payment' && (
         <RecordPaymentModal

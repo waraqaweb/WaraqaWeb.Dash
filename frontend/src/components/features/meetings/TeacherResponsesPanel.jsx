@@ -123,14 +123,14 @@ export default function TeacherResponsesPanel() {
                   <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
                     <div className="grid gap-3 lg:grid-cols-2">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                        <div className="flex items-center gap-2 font-semibold text-slate-900"><UserRound className="h-4 w-4 text-[#2C736C]" />Personal details</div>
+                        <div className="flex items-center gap-2 font-semibold text-slate-900"><UserRound className="h-4 w-4 text-primary" />Personal details</div>
                         <p className="mt-2"><span className="font-medium text-slate-800">Birth date:</span> {item.personalInfo?.birthDate ? formatDate(item.personalInfo.birthDate) : '—'}</p>
                         <p><span className="font-medium text-slate-800">Gender:</span> {item.personalInfo?.gender || '—'}</p>
                         <p><span className="font-medium text-slate-800">Meeting link:</span> {item.personalInfo?.meetingLink || item.personalInfo?.skypeId || '—'}</p>
                         <p><span className="font-medium text-slate-800">Address:</span> {[item.personalInfo?.address?.street, item.personalInfo?.address?.city, item.personalInfo?.address?.country].filter(Boolean).join(', ') || '—'}</p>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                        <div className="flex items-center gap-2 font-semibold text-slate-900"><FileBadge2 className="h-4 w-4 text-[#2C736C]" />Documents</div>
+                        <div className="flex items-center gap-2 font-semibold text-slate-900"><FileBadge2 className="h-4 w-4 text-primary" />Documents</div>
                         <div className="mt-2 space-y-2">
                           {[
                             ['Identity', item.verification?.identityDocument?.url, item.verification?.identityDocument?.mimeType],
@@ -139,7 +139,7 @@ export default function TeacherResponsesPanel() {
                           ].map(([label, url, mimeType]) => (
                             <div key={label} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
                               <span>{label}</span>
-                              {url ? <button type="button" onClick={() => openAsset(url, mimeType)} className="inline-flex items-center gap-1 text-[#2C736C] hover:underline">Open <ExternalLink className="h-3.5 w-3.5" /></button> : <span className="text-slate-400">—</span>}
+                              {url ? <button type="button" onClick={() => openAsset(url, mimeType)} className="inline-flex items-center gap-1 text-primary hover:underline">Open <ExternalLink className="h-3.5 w-3.5" /></button> : <span className="text-slate-400">—</span>}
                             </div>
                           ))}
                         </div>

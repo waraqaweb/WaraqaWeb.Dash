@@ -251,7 +251,7 @@ const GuardianFollowUpModal = ({ open, onClose, students = [], onBooked }) => {
             type="button"
             onClick={handleBook}
             className={`rounded-full px-5 py-2 text-sm font-semibold text-white ${
-              submitting ? 'bg-slate-400' : 'bg-[#2C736C] hover:bg-[#245b56]'
+              submitting ? 'bg-slate-400' : 'bg-primary hover:bg-primary/90'
             }`}
             disabled={submitting}
           >
@@ -372,8 +372,8 @@ const GuardianFollowUpModal = ({ open, onClose, students = [], onBooked }) => {
                         disabled={disabled}
                         className={`h-9 w-full rounded-lg border text-sm transition ${
                           selected
-                            ? 'border-[#2C736C] bg-[#2C736C] text-white'
-                            : 'border-amber-100 bg-white hover:border-[#2C736C]'
+                            ? 'border-primary bg-primary text-white'
+                            : 'border-amber-100 bg-white hover:border-primary'
                         } ${hasSlots ? 'font-bold' : 'font-semibold'} ${disabled ? 'opacity-40 hover:border-amber-100' : ''}`}
                       >
                         {dayNumber}
@@ -403,7 +403,7 @@ const GuardianFollowUpModal = ({ open, onClose, students = [], onBooked }) => {
                           onClick={() => setSelectedSlotId(slot.startUtc)}
                           className={`rounded-full px-4 py-2 text-sm font-semibold ${
                             selectedSlotId === slot.startUtc
-                              ? 'bg-[#2C736C] text-white'
+                              ? 'bg-primary text-white'
                               : 'bg-amber-50 text-amber-900 hover:bg-amber-100'
                           }`}
                           disabled={submitting}

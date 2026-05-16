@@ -40,9 +40,11 @@ const Toast = ({ type = 'success', message = '', onClose }) => {
   return (
     <div
       role="alert"
-      className={`fixed bottom-6 right-6 z-[1000] flex items-start gap-3 rounded-xl border px-4 py-3 shadow-lg backdrop-blur-sm transition-all duration-200 ${
-        visible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
-      } ${colorMap[type] || colorMap.success} max-w-[min(400px,calc(100vw-3rem))]`}
+      className={`fixed z-[1000] flex items-start gap-3 rounded-xl border px-4 py-3 shadow-lg backdrop-blur-sm transition-all duration-200
+        top-4 right-4 sm:top-6 sm:right-6 left-4 sm:left-auto
+        ${visible ? "translate-y-0 opacity-100" : "-translate-y-2 opacity-0"}
+        ${colorMap[type] || colorMap.success}
+        sm:max-w-[min(400px,calc(100vw-3rem))]`}
     >
       <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${iconColorMap[type] || iconColorMap.success}`} />
       <span className="text-sm font-medium leading-snug">{message}</span>

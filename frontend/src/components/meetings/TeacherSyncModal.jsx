@@ -232,7 +232,7 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
             type="button"
             onClick={handleBook}
             className={`rounded-full px-5 py-2 text-sm font-semibold text-white ${
-              submitting ? 'bg-slate-400' : 'bg-[#2C736C] hover:bg-[#245b56]'
+              submitting ? 'bg-slate-400' : 'bg-primary hover:bg-primary/90'
             }`}
             disabled={submitting}
           >
@@ -258,7 +258,7 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
             <label className="inline-flex w-full flex-col gap-1 text-xs font-medium text-slate-600">
               Students you'd like to discuss
               <textarea
-                className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-[#2C736C] focus:ring-2 focus:ring-[#2C736C]/20"
+                className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 rows={3}
                 placeholder="One name per line"
                 value={studentsNotes}
@@ -270,7 +270,7 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
           <label className="inline-flex w-full flex-col gap-1 text-xs font-medium text-slate-600">
             Your timezone
             <select
-              className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-[#2C736C] focus:ring-2 focus:ring-[#2C736C]/20"
+              className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
             >
@@ -282,7 +282,7 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
           <label className="inline-flex w-full flex-col gap-1 text-xs font-medium text-slate-600">
             Preferred calendar
             <select
-              className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-[#2C736C] focus:ring-2 focus:ring-[#2C736C]/20"
+              className="w-full rounded-2xl border border-slate-200 bg-white/70 p-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               value={calendarPreference}
               onChange={(e) => {
                 setCalendarPreference(e.target.value);
@@ -361,8 +361,8 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
                         disabled={disabled}
                         className={`h-9 w-full rounded-lg border text-sm transition ${
                           selected
-                            ? 'border-[#2C736C] bg-[#2C736C] text-white'
-                            : 'border-amber-100 bg-white hover:border-[#2C736C]'
+                            ? 'border-primary bg-primary text-white'
+                            : 'border-amber-100 bg-white hover:border-primary'
                         } ${hasSlots ? 'font-bold' : 'font-semibold'} ${disabled ? 'opacity-40 hover:border-amber-100' : ''}`}
                       >
                         {dayNumber}
@@ -392,7 +392,7 @@ const TeacherSyncModal = ({ open, onClose, onBooked }) => {
                           onClick={() => setSelectedSlotId(slot.startUtc)}
                           className={`rounded-full px-4 py-2 text-sm font-semibold ${
                             selectedSlotId === slot.startUtc
-                              ? 'bg-[#2C736C] text-white'
+                              ? 'bg-primary text-white'
                               : 'bg-amber-50 text-amber-900 hover:bg-amber-100'
                           }`}
                           disabled={submitting}

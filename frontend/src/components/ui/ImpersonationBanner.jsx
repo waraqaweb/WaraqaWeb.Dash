@@ -63,7 +63,7 @@ const ImpersonationBanner = () => {
         <div className="flex items-center space-x-2">
           <button
             onClick={handleStopImpersonation}
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2C736C] px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-[#245b56] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#2C736C]"
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
           >
             <X className="h-3 w-3" />
             Stop Impersonation

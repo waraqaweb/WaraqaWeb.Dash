@@ -911,7 +911,7 @@ export default function CreateClassModal({
                 role="tab"
                 aria-selected={currentNewClass.isRecurring}
                 onClick={() => currentSetNewClass((prev) => ({ ...prev, isRecurring: true }))}
-                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${currentNewClass.isRecurring ? 'bg-[#2C736C] text-white' : 'text-gray-700 hover:bg-white'}`}
+                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${currentNewClass.isRecurring ? 'bg-primary text-white' : 'text-gray-700 hover:bg-white'}`}
               >
                 Recurring Classes
               </button>
@@ -920,7 +920,7 @@ export default function CreateClassModal({
                 role="tab"
                 aria-selected={!currentNewClass.isRecurring}
                 onClick={() => currentSetNewClass((prev) => ({ ...prev, isRecurring: false }))}
-                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${!currentNewClass.isRecurring ? 'bg-[#2C736C] text-white' : 'text-gray-700 hover:bg-white'}`}
+                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${!currentNewClass.isRecurring ? 'bg-primary text-white' : 'text-gray-700 hover:bg-white'}`}
               >
                 Single Class
               </button>
@@ -1086,7 +1086,7 @@ export default function CreateClassModal({
                         scheduledDate: e.target.value,
                       }))
                     }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                   />
                 </div>
 
@@ -1118,7 +1118,7 @@ export default function CreateClassModal({
                       }
                     }}
                     inputMode="numeric"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                     placeholder="Minutes"
                   />
                 </div>
@@ -1155,7 +1155,7 @@ export default function CreateClassModal({
                                 generationPeriodMonths: parseInt(e.target.value),
                               }))
                             }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                           >
                             <option value={1}>1 month</option>
                             <option value={2}>2 months</option>
@@ -1181,7 +1181,7 @@ export default function CreateClassModal({
                               e.target.value === '' ? null : Number(e.target.value)
                             )
                           }
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
                         >
                           <option value="">Select Day</option>
                           {dayNames.map((day, i) => (
@@ -1199,7 +1199,7 @@ export default function CreateClassModal({
                           onChange={(e) =>
                             (isStandalone ? updateLocalRecurrenceSlot : updateRecurrenceSlot)?.(index, 'time', e.target.value)
                           }
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
                         />
                       </div>
 
@@ -1229,7 +1229,7 @@ export default function CreateClassModal({
                             }
                           }}
                           inputMode="numeric"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
                           placeholder="Minutes"
                         />
                       </div>
@@ -1253,7 +1253,7 @@ export default function CreateClassModal({
                     <button
                       type="button"
                       onClick={isStandalone ? addLocalRecurrenceSlot : addRecurrenceSlot}
-                      className="flex items-center space-x-2 px-3 py-2 text-sm text-[#2C736C] border border-[#2C736C] rounded-md hover:bg-[#2C736C] hover:text-white transition-colors"
+                      className="flex items-center space-x-2 px-3 py-2 text-sm text-primary border border-primary rounded-md hover:bg-primary hover:text-white transition-colors"
                     >
                       <Plus className="h-4 w-4" />
                       <span>Add Slot</span>
@@ -1273,7 +1273,7 @@ export default function CreateClassModal({
                   required
                   value={currentNewClass.title || 'One on one'}
                   onChange={(e) => currentSetNewClass((prev) => ({ ...prev, title: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                 >
                   <option value="One on one">One on one</option>
                   <option value="Group classes">Group classes</option>
@@ -1326,7 +1326,7 @@ export default function CreateClassModal({
                         guardianRate: e.target.value === '' ? null : Number(e.target.value),
                       }))
                     }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                     placeholder="Default"
                   />
                   <p className="mt-0.5 text-[11px] text-gray-400">Leave empty for default</p>
@@ -1346,7 +1346,7 @@ export default function CreateClassModal({
                         teacherPremium: e.target.value === '' ? null : Number(e.target.value),
                       }))
                     }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                     placeholder="No premium"
                   />
                   <p className="mt-0.5 text-[11px] text-gray-400">Extra $/hr for teacher</p>
@@ -1380,7 +1380,7 @@ export default function CreateClassModal({
                   onChange={(e) =>
                     currentSetNewClass((prev) => ({ ...prev, meetingLink: e.target.value }))
                   }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                   placeholder="Paste link..."
                 />
               </div>
@@ -1397,7 +1397,7 @@ export default function CreateClassModal({
                   currentSetNewClass((prev) => ({ ...prev, description: e.target.value }))
                 }
                 rows={1}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                 placeholder="Optional notes..."
               />
             </div>

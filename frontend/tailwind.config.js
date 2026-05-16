@@ -19,17 +19,20 @@ module.exports = {
         'custom-teal-dark': 'color-mix(in srgb, var(--primary) 85%, black)',
 
         // App theme tokens
+        // Tokens that support alpha modifiers (e.g. bg-primary/10) wrap the CSS
+        // variable in color-mix() so opacity works regardless of how the variable
+        // is expressed (hex in light mode, oklch in dark mode).
         background: 'var(--background)',
         foreground: 'var(--foreground)',
-        primary: 'var(--primary)',
+        primary: 'color-mix(in srgb, var(--primary), transparent calc((1 - <alpha-value>) * 100%))',
         'primary-foreground': 'var(--primary-foreground)',
-        destructive: 'var(--destructive)',
+        destructive: 'color-mix(in srgb, var(--destructive), transparent calc((1 - <alpha-value>) * 100%))',
         'destructive-foreground': 'var(--destructive-foreground)',
         muted: 'var(--muted)',
         'muted-foreground': 'var(--muted-foreground)',
         border: 'var(--border)',
         input: 'var(--input)',
-        ring: 'var(--ring)',
+        ring: 'color-mix(in srgb, var(--ring), transparent calc((1 - <alpha-value>) * 100%))',
         card: 'var(--card)',
         'card-foreground': 'var(--card-foreground)',
 

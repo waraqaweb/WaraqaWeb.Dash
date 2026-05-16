@@ -3127,7 +3127,7 @@ fetchClassesRef.current = fetchClasses;
             {daySlots.map((slot, index) => (
               <span
                 key={slot._id || `${day}-${index}`}
-                className="inline-flex items-center rounded-full bg-[#F1F8F7] px-3 py-1 text-xs font-medium text-[#2C736C]"
+                className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
               >
                 <Clock className="mr-1 h-3 w-3" />
                 {formatTimeLabel(slot.startTime)} – {formatTimeLabel(slot.endTime)}
@@ -3222,7 +3222,7 @@ fetchClassesRef.current = fetchClasses;
           {isAdmin() && (
             <button
                 onClick={() => setShowCreateModal(true)}
-                className="inline-flex items-center space-x-2 px-4 py-2 bg-[#2C736C] text-white rounded-md shadow-sm hover:bg-[#256a63] transition-colors"
+                className="inline-flex items-center space-x-2 px-4 py-2 bg-primary text-white rounded-md shadow-sm hover:bg-primary/90 transition-colors"
               >
                 <Plus className="h-4 w-4" />
                 <span>Create First Class</span>
@@ -4120,7 +4120,7 @@ fetchClassesRef.current = fetchClasses;
                <div className="flex w-full max-w-xs flex-col gap-3">
                  <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-inner">
                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                     <Clock className="h-4 w-4 text-[#2C736C]" />
+                     <Clock className="h-4 w-4 text-primary" />
                      Local timezone
                    </div>
                    <p className="text-sm text-slate-500">{resolvedTimezone}</p>
@@ -4429,7 +4429,7 @@ fetchClassesRef.current = fetchClasses;
                             <button
                               type="button"
                               onClick={handleSearchAvailabilityBySlots}
-                              className="inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#265f59]"
+                              className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-primary/90"
                               disabled={availabilitySearchLoading}
                             >
                               {availabilitySearchLoading ? 'Searching…' : 'Find available teachers'}
@@ -4550,7 +4550,7 @@ fetchClassesRef.current = fetchClasses;
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <button
                       onClick={handleGenerateShareMessage}
-                      className="inline-flex items-center justify-center rounded-full bg-[#2C736C] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#265f59] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                       disabled={shareLoading || (availabilitySearchMode === 'teacher' ? !hasShareableAvailability : !(availabilitySearchResults?.results?.length > 0))}
                     >
                       {shareLoading ? 'Generating…' : 'Generate friendly message'}
@@ -4597,7 +4597,7 @@ fetchClassesRef.current = fetchClasses;
                       value={recipientPhone}
                       onChange={(e) => setRecipientPhone(e.target.value)}
                       placeholder="e.g. +971501234567"
-                      className="w-full rounded-xl border border-gray-300 px-4 py-2 text-sm focus:border-[#2C736C] focus:outline-none focus:ring-2 focus:ring-[#2C736C]/20"
+                      className="w-full rounded-xl border border-gray-300 px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                     />
                     <p className="text-xs text-gray-500">Include country code. We’ll launch WhatsApp with this number.</p>
                   </div>
@@ -4609,7 +4609,7 @@ fetchClassesRef.current = fetchClasses;
                       onChange={(e) => setShareMessage(e.target.value)}
                       rows={12}
                       placeholder="Click “Generate friendly message” or start writing from scratch."
-                      className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm leading-relaxed shadow-inner focus:border-[#2C736C] focus:outline-none focus:ring-2 focus:ring-[#2C736C]/15"
+                      className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm leading-relaxed shadow-inner focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
                     />
                     <p className="text-xs text-gray-500">Feel free to personalize the tone before sending.</p>
                   </div>

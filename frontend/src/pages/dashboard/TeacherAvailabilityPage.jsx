@@ -345,7 +345,7 @@ const TeacherAvailabilityPage = () => {
           <button
             type="button"
             onClick={() => setSelectedDays([new Date().getDay()])}
-            className="mr-1 text-xs font-semibold text-[#2C736C] hover:underline"
+            className="mr-1 text-xs font-semibold text-primary hover:underline"
           >
             Today only
           </button>
@@ -356,7 +356,7 @@ const TeacherAvailabilityPage = () => {
                 key={day}
                 type="button"
                 onClick={() => toggleVisibleDay(index)}
-                className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition ${active ? 'bg-[#2C736C] text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-[#2C736C]'}`}
+                className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition ${active ? 'bg-primary text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-primary'}`}
                 title={day}
               >
                 {shortDayNames[index]}
@@ -370,7 +370,7 @@ const TeacherAvailabilityPage = () => {
               setShowAddModal(true);
               setNewSlot((prev) => ({ ...prev, dayOfWeek: firstVisible }));
             }}
-            className="ml-1 inline-flex items-center gap-2 rounded-full bg-[#2C736C] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110"
+            className="ml-1 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110"
           >
             <Plus className="w-4 h-4" /> Add slot
           </button>
@@ -566,7 +566,7 @@ const TeacherAvailabilityPage = () => {
                   });
                   setDuplicateTargets(next);
                 }}
-                className="text-xs font-semibold text-[#2C736C] hover:underline"
+                className="text-xs font-semibold text-primary hover:underline"
               >
                 Select all
               </button>
@@ -587,7 +587,7 @@ const TeacherAvailabilityPage = () => {
                     key={day}
                     type="button"
                     onClick={() => toggleDuplicateTarget(index)}
-                    className={`rounded-full border px-3 py-2 text-xs font-semibold transition ${checked ? 'border-[#2C736C] bg-[#2C736C] text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-[#2C736C] hover:text-[#2C736C]'}`}
+                    className={`rounded-full border px-3 py-2 text-xs font-semibold transition ${checked ? 'border-primary bg-primary text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-primary hover:text-primary'}`}
                   >
                     {day}
                   </button>

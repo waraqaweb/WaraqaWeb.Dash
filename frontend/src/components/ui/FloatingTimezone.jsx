@@ -94,7 +94,7 @@ const FloatingTimezone = () => {
           aria-expanded={open}
           aria-label={open ? 'Close time converter' : 'Open time converter'}
           onClick={() => setOpen((s) => !s)}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-[#2C736C] text-white shadow-lg transition hover:bg-[#245b56] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#2C736C]"
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-lg transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
           title={open ? 'Close time converter' : 'Open time converter'}
         >
           <RefreshCcw className="h-5 w-5" />
@@ -134,8 +134,8 @@ const FloatingTimezone = () => {
             {!minimized && (
               <div className="grid grid-cols-1 gap-2">
                 <div className="grid grid-cols-2 gap-2">
-                  <input type="date" value={sourceDate} onChange={(e)=>setSourceDate(e.target.value)} className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C736C]" />
-                  <input type="time" value={sourceTime} onChange={(e)=>setSourceTime(e.target.value)} className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C736C]" />
+                  <input type="date" value={sourceDate} onChange={(e)=>setSourceDate(e.target.value)} className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <input type="time" value={sourceTime} onChange={(e)=>setSourceTime(e.target.value)} className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                 </div>
 
                 <Select value={timezoneOptions.find((opt)=>opt.value===sourceZone)||null} onChange={(opt)=>setSourceZone(opt?.value||sourceZone)} options={timezoneOptions} classNamePrefix="react-select" styles={{container: (base) => ({...base, width: '100%'}), control: (base) => ({...base, minHeight: '32px'})}} placeholder="From timezone" />

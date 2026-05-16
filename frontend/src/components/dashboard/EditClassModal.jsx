@@ -350,7 +350,7 @@ export default function EditClassModal({
                 role="tab"
                 aria-selected={!!editClass.isRecurring}
                 onClick={() => setEditClass((prev) => ({ ...prev, isRecurring: true }))}
-                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${editClass.isRecurring ? 'bg-[#2C736C] text-white' : 'text-gray-700 hover:bg-white'}`}
+                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${editClass.isRecurring ? 'bg-primary text-white' : 'text-gray-700 hover:bg-white'}`}
               >
                 Recurring Classes
               </button>
@@ -359,7 +359,7 @@ export default function EditClassModal({
                 role="tab"
                 aria-selected={!editClass.isRecurring}
                 onClick={() => setEditClass((prev) => ({ ...prev, isRecurring: false }))}
-                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${!editClass.isRecurring ? 'bg-[#2C736C] text-white' : 'text-gray-700 hover:bg-white'}`}
+                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${!editClass.isRecurring ? 'bg-primary text-white' : 'text-gray-700 hover:bg-white'}`}
               >
                 Single Class
               </button>
@@ -432,7 +432,7 @@ export default function EditClassModal({
                         scheduledDate: utcDate ? utcDate.toISOString() : '',
                       }));
                     }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                   />
 
                 </div>
@@ -465,7 +465,7 @@ export default function EditClassModal({
                       }
                     }}
                     inputMode="numeric"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                     placeholder="Minutes"
                   />
                 </div>
@@ -499,7 +499,7 @@ export default function EditClassModal({
                                 generationPeriodMonths: parseInt(e.target.value),
                               }))
                             }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                           >
                             <option value={1}>1 month</option>
                             <option value={2}>2 months</option>
@@ -515,7 +515,7 @@ export default function EditClassModal({
                         <select
                           value={slot.dayOfWeek}
                           onChange={(e) => updateRecurrenceSlot(index, 'dayOfWeek', parseInt(e.target.value))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
                         >
                           {dayNames.map((day, i) => (
                             <option key={i} value={i}>{day}</option>
@@ -528,7 +528,7 @@ export default function EditClassModal({
                           type="time"
                           value={slot.time}
                           onChange={(e) => updateRecurrenceSlot(index, 'time', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
                         />
                       </div>
 
@@ -548,7 +548,7 @@ export default function EditClassModal({
                             }
                           }}
                           inputMode="numeric"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C] truncate whitespace-nowrap"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
                           placeholder="Minutes"
                         />
                       </div>
@@ -572,7 +572,7 @@ export default function EditClassModal({
                     <button
                       type="button"
                       onClick={() => addRecurrenceSlot()}
-                      className="flex items-center space-x-2 px-3 py-2 text-sm text-[#2C736C] border border-[#2C736C] rounded-md hover:bg-[#2C736C] hover:text-white transition-colors"
+                      className="flex items-center space-x-2 px-3 py-2 text-sm text-primary border border-primary rounded-md hover:bg-primary hover:text-white transition-colors"
                     >
                       <Plus className="h-4 w-4" />
                       <span>Add Slot</span>
@@ -589,7 +589,7 @@ export default function EditClassModal({
                   required
                   value={editClass.title || 'One on one'}
                   onChange={(e) => setEditClass((prev) => ({ ...prev, title: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                 >
                   {classTypeOptions.map((opt) => (
                     <option key={opt} value={opt}>{opt}</option>
@@ -640,7 +640,7 @@ export default function EditClassModal({
                         guardianRate: e.target.value === '' ? null : Number(e.target.value),
                       }))
                     }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                     placeholder="Default"
                   />
                   <p className="mt-0.5 text-[11px] text-gray-400">Leave empty for default</p>
@@ -660,7 +660,7 @@ export default function EditClassModal({
                         teacherPremium: e.target.value === '' ? null : Number(e.target.value),
                       }))
                     }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                     placeholder="No premium"
                   />
                   <p className="mt-0.5 text-[11px] text-gray-400">Extra $/hr for teacher</p>
@@ -690,7 +690,7 @@ export default function EditClassModal({
                   type="url"
                   value={editClass.meetingLink || ""}
                   onChange={(e) => setEditClass((prev) => ({ ...prev, meetingLink: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                   placeholder="Paste link..."
                 />
               </div>
@@ -703,7 +703,7 @@ export default function EditClassModal({
                 value={editClass.description || ""}
                 onChange={(e) => setEditClass((prev) => ({ ...prev, description: e.target.value }))}
                 rows={1}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2C736C]"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
                 placeholder="Optional notes..."
               />
             </div>
@@ -724,7 +724,7 @@ export default function EditClassModal({
               </button>
               <button
                 type="submit"
-                className="px-3 py-1.5 text-sm font-medium text-white bg-[#2C736C] rounded-md hover:bg-[#2C736C]/90"
+                className="px-3 py-1.5 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90"
               >
                 {editClass.isRecurring ? "Update Recurring Classes" : "Update Class"}
               </button>

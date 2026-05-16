@@ -24,20 +24,21 @@ import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import CircleSpinner from "../../components/ui/CircleSpinner";
 import useMinLoading from "../../components/ui/useMinLoading";
 import CopyButton from "../../components/ui/CopyButton";
-import EditClassModal from "../../components/dashboard/EditClassModal";
-import CreateClassModal from "../../components/dashboard/CreateClassModal";
+// Heavy modals — render on demand only.
+const EditClassModal = React.lazy(() => import("../../components/dashboard/EditClassModal"));
+const CreateClassModal = React.lazy(() => import("../../components/dashboard/CreateClassModal"));
 import FABCluster from "../../components/FABCluster";
-import MeetingReportModal from "../../components/dashboard/MeetingReportModal";
-import RescheduleClassModal from "../../components/dashboard/RescheduleClassModal";
-import RescheduleRequestModal from "../../components/dashboard/RescheduleRequestModal";
-import RescheduleRequestDetailsModal from "../../components/dashboard/RescheduleRequestDetailsModal";
-import DeleteClassModal from "../../components/dashboard/DeleteClassModal";
-import DuplicateClassModal from "../../components/dashboard/DuplicateClassModal";
+const MeetingReportModal = React.lazy(() => import("../../components/dashboard/MeetingReportModal"));
+const RescheduleClassModal = React.lazy(() => import("../../components/dashboard/RescheduleClassModal"));
+const RescheduleRequestModal = React.lazy(() => import("../../components/dashboard/RescheduleRequestModal"));
+const RescheduleRequestDetailsModal = React.lazy(() => import("../../components/dashboard/RescheduleRequestDetailsModal"));
+const DeleteClassModal = React.lazy(() => import("../../components/dashboard/DeleteClassModal"));
+const DuplicateClassModal = React.lazy(() => import("../../components/dashboard/DuplicateClassModal"));
 import ClassesCalendarView from "../../components/dashboard/ClassesCalendarView";
 import { MEETING_TYPES, MEETING_TYPE_LABELS } from '../../constants/meetingConstants';
-import CancelClassModal from "../../components/dashboard/CancelClassModal";
+const CancelClassModal = React.lazy(() => import("../../components/dashboard/CancelClassModal"));
 import { useDeleteClassCountdown } from "../../contexts/DeleteClassCountdownContext";
-import SeriesScannerModal from "../../components/dashboard/SeriesScannerModal";
+const SeriesScannerModal = React.lazy(() => import("../../components/dashboard/SeriesScannerModal"));
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MEETING_LOOKBACK_DAYS = 60;
 const MEETING_LOOKAHEAD_DAYS = 90;
@@ -4648,13 +4649,17 @@ fetchClassesRef.current = fetchClasses;
         </div>
       )}
 
+      <React.Suspense fallback={null}>
+      {reportModalOpen && (
       <MeetingReportModal
         isOpen={reportModalOpen}
         meeting={reportMeeting}
         onClose={closeMeetingReportModal}
         onSaved={handleMeetingReportSaved}
       />
+      )}
 
+      {showSeriesScanner && (
       <SeriesScannerModal
         isOpen={showSeriesScanner}
         onClose={() => { setShowSeriesScanner(false); setSeriesRecreateAllResult(null); }}
@@ -4677,7 +4682,9 @@ fetchClassesRef.current = fetchClasses;
         recreatingAll={seriesRecreatingAll}
         recreateAllResult={seriesRecreateAllResult}
       />
+      )}
 
+      {showCreateModal && (
       <CreateClassModal
         isOpen={showCreateModal}
         onClose={handleCloseCreateModal}
@@ -4694,8 +4701,10 @@ fetchClassesRef.current = fetchClasses;
         handleCreateClass={handleCreateClass}
         resetNewClassForm={resetNewClassForm}
       />
+      )}
 
       {/* Edit Class Modal */}
+      {showEditModal && (
       <EditClassModal
         isOpen={showEditModal}
         onClose={() => {
@@ -4725,7 +4734,9 @@ fetchClassesRef.current = fetchClasses;
           setEditClass(null);
         }}
       />
+      )}
 
+      {showDuplicateModal && (
       <DuplicateClassModal
         isOpen={showDuplicateModal}
         onClose={handleCloseDuplicateModal}
@@ -4734,8 +4745,10 @@ fetchClassesRef.current = fetchClasses;
         guardians={guardians}
         onDuplicated={handleDuplicateSuccess}
       />
+      )}
 
 
+      {showRescheduleModal && (
       <RescheduleClassModal
         isOpen={showRescheduleModal}
         classId={rescheduleClass?._id}
@@ -4743,7 +4756,9 @@ fetchClassesRef.current = fetchClasses;
         onClose={handleCloseRescheduleModal}
         onRescheduled={handleRescheduleSuccess}
       />
+      )}
 
+      {showRescheduleRequestModal && (
       <RescheduleRequestModal
         isOpen={showRescheduleRequestModal}
         classData={requestClass}
@@ -4753,7 +4768,9 @@ fetchClassesRef.current = fetchClasses;
         onSubmitted={handleRescheduleRequestSuccess}
         userTimezone={user?.timezone || DEFAULT_TIMEZONE}
       />
+      )}
 
+      {rescheduleDetailsOpen && (
       <RescheduleRequestDetailsModal
         isOpen={rescheduleDetailsOpen}
         notification={rescheduleDetailsNotification}
@@ -4767,7 +4784,9 @@ fetchClassesRef.current = fetchClasses;
           await fetchClassesRef.current?.();
         }}
       />
+      )}
 
+      {showCancelModal && (
       <CancelClassModal
         isOpen={showCancelModal}
         classData={cancelTargetClass}
@@ -4781,7 +4800,9 @@ fetchClassesRef.current = fetchClasses;
         userRole={user?.role || (isAdminUser ? "admin" : isTeacherUser ? "teacher" : "guardian")}
         userTimezone={user?.timezone || DEFAULT_TIMEZONE}
       />
+      )}
 
+      {showDeleteModal && (
       <DeleteClassModal
         isOpen={showDeleteModal}
         classId={deleteClass?._id}
@@ -4790,6 +4811,8 @@ fetchClassesRef.current = fetchClasses;
         onClose={handleCloseDeleteModal}
         onCountdownStart={handleDeleteCountdownStart}
       />
+      )}
+      </React.Suspense>
 
 
     </div>

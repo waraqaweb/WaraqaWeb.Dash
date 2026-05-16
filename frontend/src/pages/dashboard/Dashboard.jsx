@@ -9,6 +9,7 @@ import React, { Suspense, useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { SearchProvider, useSearch } from '../../contexts/SearchContext';
 import Sidebar from '../../components/layout/Sidebar';
+import MobileBottomNav from '../../components/layout/MobileBottomNav';
 import GlobalSearchBar from '../../components/ui/GlobalSearchBar';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 // Profile modal removed in favor of unified Profile page/modal
@@ -431,12 +432,23 @@ const Dashboard = () => {
         </div>
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-auto bg-background">
+        <main className="flex-1 overflow-auto bg-background pb-16 md:pb-0">
           <ImpersonationBanner />
           <SystemVacationBanner />
           {renderContent()}
         </main>
       </div>
+
+      {/* Mobile bottom nav */}
+      <MobileBottomNav
+        role={user?.role}
+        currentPath={location.pathname}
+        onNavigate={(path) => {
+          handleViewChange(path.split('/').pop());
+          navigate(path);
+        }}
+        onOpenMore={() => setSidebarOpen(true)}
+      />
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (

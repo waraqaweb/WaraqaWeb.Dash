@@ -33,7 +33,7 @@ import {
   FileText,
   History
 } from 'lucide-react';
-import ProfileEditModal from '../../components/dashboard/ProfileEditModal';
+const ProfileEditModal = React.lazy(() => import('../../components/dashboard/ProfileEditModal'));
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
@@ -1201,12 +1201,14 @@ const GuardiansPage = () => {
         )}
         {/* Profile Edit Modal for Guardians */}
         {editingGuardian && (
-          <ProfileEditModal
-            isOpen={!!editingGuardian}
-            targetUser={editingGuardian}
-            onClose={() => setEditingGuardian(null)}
-            onSaved={() => { fetchGuardians(); setEditingGuardian(null); }}
-          />
+          <React.Suspense fallback={null}>
+            <ProfileEditModal
+              isOpen={!!editingGuardian}
+              targetUser={editingGuardian}
+              onClose={() => setEditingGuardian(null)}
+              onSaved={() => { fetchGuardians(); setEditingGuardian(null); }}
+            />
+          </React.Suspense>
         )}
       </div>
 

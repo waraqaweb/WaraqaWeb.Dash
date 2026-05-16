@@ -21,9 +21,9 @@ import {
   Check,
   X
 } from 'lucide-react';
-import VacationModal from '../../components/dashboard/VacationModal';
-import VacationDetailsModal from '../../components/dashboard/VacationDetailsModal';
-import GuardianStudentVacationModal from '../../components/dashboard/GuardianStudentVacationModal';
+const VacationModal = React.lazy(() => import('../../components/dashboard/VacationModal'));
+const VacationDetailsModal = React.lazy(() => import('../../components/dashboard/VacationDetailsModal'));
+const GuardianStudentVacationModal = React.lazy(() => import('../../components/dashboard/GuardianStudentVacationModal'));
 import PrimaryButton from '../../components/ui/PrimaryButton';
 
 const VACATION_WHATSAPP_REPORT_STORAGE_PREFIX = 'waraqa.vacations.whatsappReport.v1';
@@ -1925,34 +1925,42 @@ const VacationManagementPage = () => {
       ) : null}
 
       {/* Vacation Modal */}
-      <VacationModal
-        isOpen={showCreateModal}
-        onClose={() => {
-          setShowCreateModal(false);
-          setEditingVacation(null);
-        }}
-        type={createType}
-        vacation={editingVacation}
-        onSuccess={handleVacationSuccess}
-      />
+      <React.Suspense fallback={null}>
+        {showCreateModal && (
+          <VacationModal
+            isOpen={showCreateModal}
+            onClose={() => {
+              setShowCreateModal(false);
+              setEditingVacation(null);
+            }}
+            type={createType}
+            vacation={editingVacation}
+            onSuccess={handleVacationSuccess}
+          />
+        )}
 
-      <VacationDetailsModal
-        isOpen={showDetailsModal}
-        onClose={handleCloseDetails}
-        vacation={detailVacation}
-        impact={detailImpact}
-        loading={detailLoading}
-        error={detailError}
-      />
+        {showDetailsModal && (
+          <VacationDetailsModal
+            isOpen={showDetailsModal}
+            onClose={handleCloseDetails}
+            vacation={detailVacation}
+            impact={detailImpact}
+            loading={detailLoading}
+            error={detailError}
+          />
+        )}
 
-      <GuardianStudentVacationModal
-        isOpen={showGuardianStudentModal}
-        onClose={() => setShowGuardianStudentModal(false)}
-        onSuccess={async () => {
-          await fetchData();
-          setShowGuardianStudentModal(false);
-        }}
-      />
+        {showGuardianStudentModal && (
+          <GuardianStudentVacationModal
+            isOpen={showGuardianStudentModal}
+            onClose={() => setShowGuardianStudentModal(false)}
+            onSuccess={async () => {
+              await fetchData();
+              setShowGuardianStudentModal(false);
+            }}
+          />
+        )}
+      </React.Suspense>
 
       {/* Approval Modal */}
       {showApprovalModal && (

@@ -3,14 +3,15 @@ import FolderTree from '../../components/library/FolderTree';
 import LibraryToolbar from '../../components/library/LibraryToolbar';
 import LibraryBreadcrumbs from '../../components/library/LibraryBreadcrumbs';
 import LibraryGrid from '../../components/library/LibraryGrid';
-import ShareRequestModal from '../../components/library/ShareRequestModal';
-import DocumentViewer from '../../components/library/DocumentViewer';
-import WhiteboardModal from '../../components/library/WhiteboardModal';
-import AddFileModal from '../../components/library/admin/AddFileModal';
-import FolderModal from '../../components/library/admin/FolderModal';
-import RenameModal from '../../components/library/admin/RenameModal';
-import DeleteConfirmModal from '../../components/library/admin/DeleteConfirmModal';
-import ShareQueueModal from '../../components/library/admin/ShareQueueModal';
+// Heavy modals — only loaded when opened.
+const ShareRequestModal = React.lazy(() => import('../../components/library/ShareRequestModal'));
+const DocumentViewer = React.lazy(() => import('../../components/library/DocumentViewer'));
+const WhiteboardModal = React.lazy(() => import('../../components/library/WhiteboardModal'));
+const AddFileModal = React.lazy(() => import('../../components/library/admin/AddFileModal'));
+const FolderModal = React.lazy(() => import('../../components/library/admin/FolderModal'));
+const RenameModal = React.lazy(() => import('../../components/library/admin/RenameModal'));
+const DeleteConfirmModal = React.lazy(() => import('../../components/library/admin/DeleteConfirmModal'));
+const ShareQueueModal = React.lazy(() => import('../../components/library/admin/ShareQueueModal'));
 import useLibraryData from '../../hooks/useLibraryData';
 import { useAuth } from '../../contexts/AuthContext';
 import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
@@ -379,6 +380,8 @@ const LibraryDashboardContent = () => {
         </div>
       </div>
 
+      <React.Suspense fallback={null}>
+      {shareModalOpen && (
       <ShareRequestModal
         open={shareModalOpen}
         onClose={() => setShareModalOpen(false)}
@@ -386,6 +389,7 @@ const LibraryDashboardContent = () => {
         folders={flattenedTree}
         isSubmitting={isShareSubmitting}
       />
+      )}
 
       {canManageLibrary && activeModal?.type === 'addFile' && (
         <AddFileModal
@@ -437,6 +441,7 @@ const LibraryDashboardContent = () => {
 
       {viewerItem && <DocumentViewer item={viewerItem} onClose={() => setViewerItem(null)} />}
       {whiteboardOpen && <WhiteboardModal open onClose={() => setWhiteboardOpen(false)} />}
+      </React.Suspense>
     </div>
   );
 };

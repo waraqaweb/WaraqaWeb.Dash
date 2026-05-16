@@ -15,7 +15,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useSearch } from '../../contexts/SearchContext';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import { formatDateDDMMMYYYY } from '../../utils/date';
-import TeacherInvoiceDetailModal from '../../components/teacherSalary/TeacherInvoiceDetailModal';
+const TeacherInvoiceDetailModal = React.lazy(() => import('../../components/teacherSalary/TeacherInvoiceDetailModal'));
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import {
   FileText,
@@ -494,17 +494,19 @@ const SalaryDashboard = () => {
 
       {/* Detail Modal */}
       {showDetailModal && selectedInvoice && (
-        <TeacherInvoiceDetailModal
-          invoiceId={selectedInvoice._id}
-          onClose={() => {
-            setShowDetailModal(false);
-            setSelectedInvoice(null);
-          }}
-          onUpdate={() => {
-            fetchInvoices();
-            fetchYTDSummary();
-          }}
-        />
+        <React.Suspense fallback={null}>
+          <TeacherInvoiceDetailModal
+            invoiceId={selectedInvoice._id}
+            onClose={() => {
+              setShowDetailModal(false);
+              setSelectedInvoice(null);
+            }}
+            onUpdate={() => {
+              fetchInvoices();
+              fetchYTDSummary();
+            }}
+          />
+        </React.Suspense>
       )}
     </div>
   );

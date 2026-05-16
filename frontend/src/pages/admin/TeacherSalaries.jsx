@@ -22,14 +22,15 @@ import ExportExcelButton from '../../components/ui/ExportExcelButton';
 import { fetchAllForExport, mapSalaryRow, downloadExcel } from '../../utils/exportToExcel';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import { formatDateDDMMMYYYY } from '../../utils/date';
-import TeacherInvoiceDetailModal from '../../components/teacherSalary/TeacherInvoiceDetailModal';
-import PublishInvoiceDialog from '../../components/teacherSalary/PublishInvoiceDialog';
-import MarkPaidDialog from '../../components/teacherSalary/MarkPaidDialog';
-import AddBonusDialog from '../../components/teacherSalary/AddBonusDialog';
-import AddExtraDialog from '../../components/teacherSalary/AddExtraDialog';
-import SalarySettingsModal from '../../components/teacherSalary/SalarySettingsModal';
-import GenerateInvoicesModal from '../../components/teacherSalary/GenerateInvoicesModal';
-import ZeroMonthlyHoursModal from '../../components/teacherSalary/ZeroMonthlyHoursModal';
+// Heavy modals — only loaded when opened.
+const TeacherInvoiceDetailModal = React.lazy(() => import('../../components/teacherSalary/TeacherInvoiceDetailModal'));
+const PublishInvoiceDialog = React.lazy(() => import('../../components/teacherSalary/PublishInvoiceDialog'));
+const MarkPaidDialog = React.lazy(() => import('../../components/teacherSalary/MarkPaidDialog'));
+const AddBonusDialog = React.lazy(() => import('../../components/teacherSalary/AddBonusDialog'));
+const AddExtraDialog = React.lazy(() => import('../../components/teacherSalary/AddExtraDialog'));
+const SalarySettingsModal = React.lazy(() => import('../../components/teacherSalary/SalarySettingsModal'));
+const GenerateInvoicesModal = React.lazy(() => import('../../components/teacherSalary/GenerateInvoicesModal'));
+const ZeroMonthlyHoursModal = React.lazy(() => import('../../components/teacherSalary/ZeroMonthlyHoursModal'));
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import {
   TEACHER_SALARY_VIEW_KEY,
@@ -1228,6 +1229,7 @@ const TeacherSalaries = () => {
       </div>
 
       {/* Modals */}
+      <React.Suspense fallback={null}>
       {showDetailModal && selectedInvoice && (
         <TeacherInvoiceDetailModal
           invoiceId={selectedInvoice._id}
@@ -1325,6 +1327,7 @@ const TeacherSalaries = () => {
           }}
         />
       )}
+      </React.Suspense>
 
       {/* Teacher Arabic message modal */}
       {teacherMsgModal && (

@@ -5,10 +5,10 @@ import api from '../../api/axios';
 import { useAuth } from "../../contexts/AuthContext";
 import { useNavigate, useLocation } from 'react-router-dom';
 import useFeedbackPrompts from '../../hooks/useFeedbackPrompts';
-import FirstClassFeedbackModal from '../../components/feedback/FirstClassFeedbackModal';
-import MonthlyFeedbackModal from '../../components/feedback/MonthlyFeedbackModal';
-import GuardianFollowUpModal from '../../components/meetings/GuardianFollowUpModal';
-import TeacherSyncModal from '../../components/meetings/TeacherSyncModal';
+const FirstClassFeedbackModal = React.lazy(() => import('../../components/feedback/FirstClassFeedbackModal'));
+const MonthlyFeedbackModal = React.lazy(() => import('../../components/feedback/MonthlyFeedbackModal'));
+const GuardianFollowUpModal = React.lazy(() => import('../../components/meetings/GuardianFollowUpModal'));
+const TeacherSyncModal = React.lazy(() => import('../../components/meetings/TeacherSyncModal'));
 import Toast from '../../components/ui/Toast';
 import {
   Users,
@@ -1634,7 +1634,7 @@ const DashboardHome = ({ isActive = true }) => {
     const pendingTotal = (Array.isArray(data.pendingReports) ? data.pendingReports.length : 0)
       + (Array.isArray(data.overdueReports) ? data.overdueReports.length : 0);
     return (
-      <div className="space-y-4 sm:space-y-6">
+      <div className="space-y-3 sm:space-y-4 lg:space-y-5">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="bg-gradient-to-r from-primary/10 to-card rounded-xl p-3 sm:p-4 border border-primary/20 lg:col-span-2 shadow-sm">
             <h2 className="text-xl sm:text-2xl font-semibold mb-1 sm:mb-2 text-foreground">{greetingTitle}</h2>
@@ -1821,7 +1821,7 @@ const DashboardHome = ({ isActive = true }) => {
     // (greeting computed globally as greetingTitle/greetingSubtitle)
 
     return (
-      <div className="space-y-4 sm:space-y-6">
+      <div className="space-y-3 sm:space-y-4 lg:space-y-5">
         <div className="grid grid-cols-1 lg:grid-cols-3 lg:grid-rows-2 gap-4">
           <div className="lg:col-span-2 lg:row-span-1 rounded-2xl border border-border bg-gradient-to-r from-sidebar-accent/45 via-sidebar-accent/25 to-primary/35 p-4 sm:p-5 shadow-sm">
             <h2 className="text-xl font-semibold mb-1 text-foreground">{greetingTitle}</h2>
@@ -2013,7 +2013,7 @@ const DashboardHome = ({ isActive = true }) => {
   };
 
   const renderStudentDashboard = () => (
-    <div className="space-y-6">
+    <div className="space-y-3 sm:space-y-4 lg:space-y-5">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="bg-gradient-to-r from-primary/10 to-card rounded-xl p-3 sm:p-4 border border-primary/20 lg:col-span-2 shadow-sm">
           <h2 className="text-xl sm:text-2xl font-semibold mb-2 text-foreground">{greetingTitle}</h2>
@@ -2221,32 +2221,41 @@ const DashboardHome = ({ isActive = true }) => {
           </div>
         </div>
       )}
-      <GuardianFollowUpModal
-        open={showGuardianFollowUpModal}
-        onClose={() => setShowGuardianFollowUpModal(false)}
-        students={(stats.data && stats.data.myChildren) || []}
-        onBooked={handleGuardianFollowUpBooked}
-      />
-      <TeacherSyncModal
-        open={showTeacherSyncModal}
-        onClose={() => setShowTeacherSyncModal(false)}
-        onBooked={handleTeacherSyncBooked}
-      />
-      <FirstClassFeedbackModal
-        open={showFirstClassModal}
-        onClose={handleCloseFirstFeedbackModal}
-        prompt={activeFirstPrompt}
-        onSubmitted={handleFeedbackSubmitted}
-        onDismissed={handleFeedbackDismissed}
-      />
-
-      <MonthlyFeedbackModal
-        open={showMonthlyModal}
-        onClose={handleCloseMonthlyFeedbackModal}
-        prompt={activeMonthlyPrompt}
-        onSubmitted={handleFeedbackSubmitted}
-        onDismissed={handleFeedbackDismissed}
-      />
+      <React.Suspense fallback={null}>
+        {showGuardianFollowUpModal && (
+          <GuardianFollowUpModal
+            open={showGuardianFollowUpModal}
+            onClose={() => setShowGuardianFollowUpModal(false)}
+            students={(stats.data && stats.data.myChildren) || []}
+            onBooked={handleGuardianFollowUpBooked}
+          />
+        )}
+        {showTeacherSyncModal && (
+          <TeacherSyncModal
+            open={showTeacherSyncModal}
+            onClose={() => setShowTeacherSyncModal(false)}
+            onBooked={handleTeacherSyncBooked}
+          />
+        )}
+        {showFirstClassModal && (
+          <FirstClassFeedbackModal
+            open={showFirstClassModal}
+            onClose={handleCloseFirstFeedbackModal}
+            prompt={activeFirstPrompt}
+            onSubmitted={handleFeedbackSubmitted}
+            onDismissed={handleFeedbackDismissed}
+          />
+        )}
+        {showMonthlyModal && (
+          <MonthlyFeedbackModal
+            open={showMonthlyModal}
+            onClose={handleCloseMonthlyFeedbackModal}
+            prompt={activeMonthlyPrompt}
+            onSubmitted={handleFeedbackSubmitted}
+            onDismissed={handleFeedbackDismissed}
+          />
+        )}
+      </React.Suspense>
 
       {feedbackToast.show && (
         <Toast

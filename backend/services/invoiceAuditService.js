@@ -340,9 +340,58 @@ async function resolveUninvoicedLessons(options = {}) {
         // Defensive: handled:true without a linked invoice — fall through.
       }
 
-      const openInvoice = await findTargetUnpaidInvoice(guardianId, classDoc._id);
+      let openInvoice = await findTargetUnpaidInvoice(guardianId, classDoc._id);
 
       if (openInvoice) {
+        // Ensure the target unpaid invoice can actually hold this lesson before syncing.
+        // syncUnpaidInvoiceItems prunes anything that falls outside billingPeriod.endDate,
+        // coverage.endDate, or the coverage.maxHours cap, so we extend those windows /
+        // bump the cap to fit the incoming class. Without this, attached items are
+        // silently evicted on the next sync (the recurring uninvoiced-lesson bug).
+        try {
+          const Invoice = require('../models/Invoice');
+          const live = await Invoice.findById(openInvoice._id);
+          if (live) {
+            let mutated = false;
+            const classDate = classDoc.scheduledDate ? new Date(classDoc.scheduledDate) : null;
+            if (classDate && !Number.isNaN(classDate.getTime())) {
+              const endOfDay = new Date(classDate);
+              endOfDay.setHours(23, 59, 59, 999);
+              if (!live.billingPeriod) live.billingPeriod = {};
+              const bpEnd = live.billingPeriod.endDate ? new Date(live.billingPeriod.endDate) : null;
+              if (!bpEnd || classDate > bpEnd) {
+                live.billingPeriod.endDate = endOfDay;
+                mutated = true;
+              }
+              if (live.coverage) {
+                const covEnd = live.coverage.endDate ? new Date(live.coverage.endDate) : null;
+                if (covEnd && classDate > covEnd) {
+                  live.coverage.endDate = endOfDay;
+                  mutated = true;
+                }
+              }
+            }
+            const capHours = Number(live?.coverage?.maxHours);
+            if (Number.isFinite(capHours) && capHours > 0) {
+              const currentMinutes = (live.items || []).reduce((acc, it) => acc + (Number(it?.duration) || 0), 0);
+              const incomingMinutes = Number(classDoc.duration || 0) || 0;
+              const neededHours = Math.ceil(((currentMinutes + incomingMinutes) / 60) * 100) / 100;
+              if (neededHours > capHours) {
+                live.coverage.maxHours = neededHours;
+                mutated = true;
+              }
+            }
+            if (mutated) {
+              live.markModified('billingPeriod');
+              if (live.coverage) live.markModified('coverage');
+              await live.save();
+              openInvoice = live.toObject ? live.toObject() : live;
+            }
+          }
+        } catch (e) {
+          console.warn('[invoiceAudit] failed to extend invoice window before sync:', e?.message || e);
+        }
+
         const syncResult = await InvoiceService.syncUnpaidInvoiceItems(openInvoice, {
           note: 'Auto-sync uninvoiced lesson',
           cleanupDuplicates: true,

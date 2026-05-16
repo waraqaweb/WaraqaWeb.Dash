@@ -1783,7 +1783,7 @@ const InvoicesPage = ({ isActive = true }) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
-      <div className="mx-auto w-full max-w-7xl px-6 py-8 space-y-8">
+      <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-4 sm:py-6 lg:px-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8">
         {isAdmin() && stats && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[

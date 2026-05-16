@@ -774,7 +774,7 @@ const GuardiansPage = () => {
   const isConfirmValid = logActionConfirm.trim() === confirmToken;
 
   return (
-    <div className="p-6 bg-background min-h-screen">
+    <div className="p-3 sm:p-4 lg:p-6 bg-background min-h-screen">
       <div className="max-w-7xl mx-auto">
 
         {/* Error Message */}

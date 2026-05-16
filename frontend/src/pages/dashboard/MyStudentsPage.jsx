@@ -988,7 +988,7 @@ const fetchGuardiansList = async () => {
 
   if (!user || !((isGuardian && isGuardian()) || (isAdmin && isAdmin()) || (isTeacher && isTeacher()))) {
     return (
-      <div className="p-6 bg-background min-h-screen">
+      <div className="p-3 sm:p-4 lg:p-6 bg-background min-h-screen">
         <div className="max-w-7xl mx-auto">
           <div className="text-center text-red-600">
             <h1 className="text-2xl font-bold mb-4">Access Denied</h1>
@@ -1017,7 +1017,7 @@ const fetchGuardiansList = async () => {
   };
 
   return (
-    <div className="p-5 bg-background min-h-screen">
+    <div className="p-3 sm:p-4 lg:p-5 bg-background min-h-screen">
       <div className="max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-wrap items-center gap-3 mb-4">

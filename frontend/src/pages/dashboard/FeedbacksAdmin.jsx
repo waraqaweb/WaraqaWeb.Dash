@@ -428,7 +428,7 @@ const FeedbacksAdmin = () => {
   }, [total, limit]);
 
   return (
-    <div className="p-6 bg-background min-h-screen">
+    <div className="p-3 sm:p-4 lg:p-6 bg-background min-h-screen">
       <div className="mx-auto flex max-w-6xl flex-col gap-6">
         <section className="bg-card rounded-lg shadow-sm border border-border p-5">
           <div className="flex flex-wrap items-start gap-6">

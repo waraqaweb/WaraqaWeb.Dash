@@ -373,9 +373,41 @@ async function resolveUninvoicedLessons(options = {}) {
             }
             const capHours = Number(live?.coverage?.maxHours);
             if (Number.isFinite(capHours) && capHours > 0) {
+              // We must size the cap to fit every class that buildDynamicClassList
+              // would surface for this invoice, not just the incoming lesson, otherwise
+              // sync's "break on cap exceeded" loop will silently drop other unbilled
+              // classes that fall within the same billing window.
+              const Class = require('../models/Class');
+              const bpStart = live.billingPeriod && live.billingPeriod.startDate ? new Date(live.billingPeriod.startDate) : null;
+              const bpEnd = live.billingPeriod && live.billingPeriod.endDate ? new Date(live.billingPeriod.endDate) : null;
+              const dateFilter = {};
+              if (bpStart) dateFilter.$gte = bpStart;
+              if (bpEnd) {
+                const endInc = new Date(bpEnd);
+                endInc.setHours(23, 59, 59, 999);
+                dateFilter.$lte = endInc;
+              }
+              const candidateQuery = {
+                'student.guardianId': live.guardian,
+                hidden: { $ne: true },
+                status: { $nin: ['cancelled', 'refunded', 'pattern'] },
+                paidByGuardian: { $ne: true },
+                $or: [
+                  { billedInInvoiceId: null },
+                  { billedInInvoiceId: { $exists: false } },
+                  { billedInInvoiceId: live._id }
+                ]
+              };
+              if (Object.keys(dateFilter).length) candidateQuery.scheduledDate = dateFilter;
+              const candidates = await Class.find(candidateQuery).select('_id duration').lean();
+              let candidateMinutes = candidates.reduce((acc, c) => acc + (Number(c?.duration) || 0), 0);
+              // Make sure the incoming class is included (it may already be in candidates).
+              if (!candidates.some((c) => String(c._id) === String(classDoc._id))) {
+                candidateMinutes += Number(classDoc.duration || 0) || 0;
+              }
               const currentMinutes = (live.items || []).reduce((acc, it) => acc + (Number(it?.duration) || 0), 0);
-              const incomingMinutes = Number(classDoc.duration || 0) || 0;
-              const neededHours = Math.ceil(((currentMinutes + incomingMinutes) / 60) * 100) / 100;
+              const neededMinutes = Math.max(candidateMinutes, currentMinutes + (Number(classDoc.duration || 0) || 0));
+              const neededHours = Math.ceil((neededMinutes / 60) * 100) / 100;
               if (neededHours > capHours) {
                 live.coverage.maxHours = neededHours;
                 mutated = true;

@@ -164,9 +164,28 @@ const EvaluationPage = ({ isActive = true }) => {
     });
   }, [updateStudent]);
 
-  // â”€â”€â”€ Loading state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── Socket: live feedback notification ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!socket) return undefined;
+    const handler = async (payload) => {
+      try {
+        const r = payload?.ratings || {};
+        const overall = r.overall ? `${r.overall}/5` : 'New';
+        showToast(`✨ Feedback from ${payload.studentName} — ${overall}`);
+        // If it concerns the open session, refresh it so the UI shows the new feedback.
+        if (session?._id && payload.sessionId === session._id) {
+          const { data } = await api.get(`/evaluations/${session._id}`);
+          if (data?.session) setSession(data.session);
+        }
+      } catch (err) { /* noop */ }
+    };
+    socket.on('evaluation-feedback-received', handler);
+    return () => socket.off('evaluation-feedback-received', handler);
+  }, [socket, session?._id]);
+
+  // ─── Loading state ────────────────────────────────────────────────────────────────────
   if (loading || !session) {
-    return <div className="p-8 text-center text-muted-foreground">Loading evaluationâ€¦</div>;
+    return <div className="p-8 text-center text-muted-foreground">Loading evaluation…</div>;
   }
 
   const activeStudent = session.students?.[activeStudentIdx] || emptyStudent();
@@ -246,26 +265,7 @@ const EvaluationPage = ({ isActive = true }) => {
     }
   };
 
-  // ─── Socket: live feedback notification ────────────────────────────────────────────────
-  useEffect(() => {
-    if (!socket) return undefined;
-    const handler = async (payload) => {
-      try {
-        const r = payload?.ratings || {};
-        const overall = r.overall ? `${r.overall}/5` : 'New';
-        showToast(`✨ Feedback from ${payload.studentName} — ${overall}`);
-        // If it concerns the open session, refresh it so the UI shows the new feedback.
-        if (session?._id && payload.sessionId === session._id) {
-          const { data } = await api.get(`/evaluations/${session._id}`);
-          if (data?.session) setSession(data.session);
-        }
-      } catch (err) { /* noop */ }
-    };
-    socket.on('evaluation-feedback-received', handler);
-    return () => socket.off('evaluation-feedback-received', handler);
-  }, [socket, session?._id]);
-
-  // â”€â”€â”€ Render shell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── Render shell ──────────────────────────────────────────────────────────────────────
   return (
     <div className="p-3 sm:p-6 max-w-6xl mx-auto">
       {/* Top bar: student tabs + section progress */}

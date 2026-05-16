@@ -1204,10 +1204,18 @@ router.post('/uninvoiced-lessons/resolve', authenticateToken, requireAdmin, asyn
         }
       });
 
-      // Mark any open "uninvoiced lessons detected" warning as read now that we've resolved
+      // Mark any open "uninvoiced lessons detected" warning as read for ALL admins.
+      // The detection notification is dedup'd per-admin, so resolving as one admin
+      // would otherwise leave the warning visible on every other admin's bell.
+      // We only clear when there are no remaining flagged lessons — a partial
+      // resolve still leaves real work for other admins.
       const Notification = require('../models/Notification');
+      const remainingFlagged = Number(summary.total || 0)
+        - Number(summary.attached || 0)
+        - Number(summary.created || 0);
+      const adminScope = remainingFlagged > 0 ? { user: req.user._id } : {};
       await Notification.updateMany(
-        { user: req.user._id, relatedTo: 'system', relatedId: 'uninvoiced-lessons', isRead: false, 'metadata.kind': 'uninvoiced_lessons' },
+        { ...adminScope, relatedTo: 'system', relatedId: 'uninvoiced-lessons', isRead: false, 'metadata.kind': 'uninvoiced_lessons' },
         { $set: { isRead: true } }
       ).catch(() => { /* best effort */ });
     } catch (notifyErr) {

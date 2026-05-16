@@ -326,10 +326,9 @@ async function resolveUninvoicedLessons(options = {}) {
 
       const paidInsert = await InvoiceService.insertClassIntoPaidInvoiceChain(classDoc);
       if (paidInsert?.handled) {
-        // Re-fetch from DB — syncInvoiceCoverageClasses (called inside insertClassIntoPaidInvoiceChain)
-        // sets billedInInvoiceId only when the class was actually placed in a paid invoice.
-        // If the class overflowed every invoice in the chain, billedInInvoiceId will still be null
-        // and handled:true is a false positive — fall through to the open-invoice / create path.
+        // handled:true now means the trigger class was actually placed in a
+        // paid invoice (insertClassIntoPaidInvoiceChain re-checks billedInInvoiceId
+        // before reporting). Re-fetch to capture the linked invoice id.
         const refreshedCls = await Class.findById(classId).select('billedInInvoiceId').lean();
         const paidInvoiceId = refreshedCls?.billedInInvoiceId || paidInsert?.invoiceId;
         if (paidInvoiceId) {
@@ -338,7 +337,7 @@ async function resolveUninvoicedLessons(options = {}) {
           summary.details.push({ classId: String(classId), action: 'attached', target: 'paid invoice', invoiceId: String(paidInvoiceId), studentName, guardianName });
           continue;
         }
-        // Class was not placed — fall through to open invoice / create-new paths below
+        // Defensive: handled:true without a linked invoice — fall through.
       }
 
       const openInvoice = await findTargetUnpaidInvoice(guardianId, classDoc._id);

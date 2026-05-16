@@ -1041,6 +1041,54 @@ class InvoiceService {
       }).sort({ createdAt: 1 });
 
       if (existingUnpaid) {
+        // Before syncing, ensure the invoice's billing period actually covers
+        // (a) the triggering class and (b) any other currently-unbilled lessons
+        // for this guardian. Otherwise the sync (which is scoped to billingPeriod)
+        // will leave later classes stuck and the audit will keep flagging them.
+        try {
+          const studentIdsForExtend = Array.isArray(guardian.guardianInfo?.students)
+            ? guardian.guardianInfo.students.map((s) => s && (s._id || s.id)).filter(Boolean)
+            : [];
+
+          const candidateDates = [];
+          const triggerDate = ensureDate(classDoc.scheduledDate);
+          if (triggerDate) candidateDates.push(triggerDate);
+
+          if (studentIdsForExtend.length) {
+            const latestUnbilled = await Class.findOne({
+              'student.guardianId': guardian._id,
+              'student.studentId': { $in: studentIdsForExtend },
+              billedInInvoiceId: null,
+              status: { $in: ['attended', 'missed_by_student', 'completed', 'absent'] },
+              scheduledDate: { $lt: now }
+            })
+              .sort({ scheduledDate: -1 })
+              .select('scheduledDate')
+              .lean();
+            if (latestUnbilled?.scheduledDate) candidateDates.push(latestUnbilled.scheduledDate);
+          }
+
+          if (candidateDates.length) {
+            const maxNeeded = new Date(Math.max(...candidateDates.map((d) => new Date(d).getTime())));
+            const currentEnd = ensureDate(existingUnpaid.billingPeriod?.endDate)
+              || ensureDate(existingUnpaid.coverage?.endDate);
+            if (!currentEnd || maxNeeded > currentEnd) {
+              const newEnd = new Date(maxNeeded.getTime());
+              newEnd.setHours(23, 59, 59, 999);
+              if (existingUnpaid.billingPeriod) {
+                existingUnpaid.billingPeriod.endDate = newEnd;
+              }
+              if (existingUnpaid.coverage) {
+                existingUnpaid.coverage.endDate = newEnd;
+              }
+              await existingUnpaid.save();
+              console.log(`[First-Lesson Invoice] Extended existing unpaid invoice ${existingUnpaid._id} billingPeriod.endDate to ${newEnd.toISOString()} to cover unbilled lessons.`);
+            }
+          }
+        } catch (extendErr) {
+          console.warn('[First-Lesson Invoice] Failed to extend existing unpaid invoice window:', extendErr?.message || extendErr);
+        }
+
         await InvoiceService.syncUnpaidInvoiceItems(existingUnpaid, {
           adminUserId: createdBy || null,
           note: 'Synced unpaid invoice (first-lesson)'
@@ -1057,6 +1105,11 @@ class InvoiceService {
         : [];
       
       let billingStartDate = firstDate;
+      // Track the latest unbilled class date so the new invoice's window can be
+      // extended to cover ALL currently uninvoiced lessons in one pass. Otherwise
+      // a fixed one-month window leaves lessons just past the boundary stranded
+      // and the audit keeps re-flagging them.
+      let latestUnbilledDate = firstDate;
       if (studentIds.length > 0) {
         // Find earliest unbilled class for this guardian
         const earliestClass = await Class.findOne({
@@ -1068,14 +1121,31 @@ class InvoiceService {
           .sort({ scheduledDate: 1 })
           .select('scheduledDate')
           .lean();
-        
+
         if (earliestClass && earliestClass.scheduledDate < billingStartDate) {
           billingStartDate = earliestClass.scheduledDate;
           console.log(`[First-Lesson Invoice] Found earlier unbilled class: ${billingStartDate.toISOString()}`);
         }
+
+        // Find the LATEST already-happened (i.e. confirmed-billable) unbilled class
+        // so we can size the window to cover every stuck lesson in one shot.
+        const latestClass = await Class.findOne({
+          'student.guardianId': guardian._id,
+          'student.studentId': { $in: studentIds },
+          billedInInvoiceId: null,
+          status: { $in: ['attended', 'missed_by_student', 'completed', 'absent'] },
+          scheduledDate: { $lt: now }
+        })
+          .sort({ scheduledDate: -1 })
+          .select('scheduledDate')
+          .lean();
+
+        if (latestClass && latestClass.scheduledDate > latestUnbilledDate) {
+          latestUnbilledDate = latestClass.scheduledDate;
+        }
       }
-      
-      // Cap auto-generated coverage at the end of the earliest class's calendar month
+
+      // Default to a one-calendar-month window starting at the earliest unbilled class.
       let billingWindowDays = getDaysInMonth(billingStartDate);
       let searchEndDate = getFixedWindowEndExclusive(billingStartDate, billingWindowDays);
 
@@ -1086,6 +1156,24 @@ class InvoiceService {
         billingStartDate = firstDate;
         billingWindowDays = getDaysInMonth(firstDate);
         searchEndDate = getFixedWindowEndExclusive(firstDate, billingWindowDays);
+      }
+
+      // Extend the window forward so it covers EVERY currently-unbilled, already-
+      // delivered class for this guardian. Without this, a single Resolve click
+      // leaves any class past the one-month boundary stuck and the audit notification
+      // keeps recurring on every run.
+      if (latestUnbilledDate >= searchEndDate) {
+        const extendedEnd = new Date(latestUnbilledDate.getTime());
+        extendedEnd.setHours(23, 59, 59, 999);
+        // Round up to the next day boundary so the exclusive end is past lastDate.
+        extendedEnd.setDate(extendedEnd.getDate() + 1);
+        extendedEnd.setHours(0, 0, 0, 0);
+        searchEndDate = extendedEnd;
+        billingWindowDays = Math.max(
+          billingWindowDays,
+          Math.ceil((searchEndDate.getTime() - billingStartDate.getTime()) / (24 * 60 * 60 * 1000))
+        );
+        console.log(`[First-Lesson Invoice] Extended window to include latest unbilled class: ${latestUnbilledDate.toISOString()} → searchEndDate=${searchEndDate.toISOString()}`);
       }
 
       // Build initial item from the reported class
@@ -2627,6 +2715,11 @@ class InvoiceService {
       }
 
       if (carryClasses.length) {
+        // Only reset state on classes that ACTUALLY had a stale invoice link or
+        // paid flag. Blindly clearing paidByGuardian:false / billedInInvoiceId:null
+        // on classes that were already in that state is a no-op at best, but on
+        // classes that were ALSO mid-resolution it would erase a freshly-applied
+        // link. Guard with $or so only stale rows are touched.
         const ids = carryClasses
           .map((cls) => normalizeClassId(cls?._id))
           .filter(Boolean)
@@ -2634,13 +2727,30 @@ class InvoiceService {
           .filter(Boolean);
         if (ids.length) {
           await Class.updateMany(
-            { _id: { $in: ids } },
+            {
+              _id: { $in: ids },
+              $or: [
+                { billedInInvoiceId: { $ne: null } },
+                { paidByGuardian: true }
+              ]
+            },
             { $set: { billedInInvoiceId: null, billedAt: null, flaggedUninvoiced: true, paidByGuardian: false }, $unset: { paidByGuardianAt: 1 } }
           ).exec();
         }
       }
 
-      return { success: true, handled: true, affectedInvoices };
+      // Report whether the trigger class was actually placed in a paid invoice.
+      // The audit resolver uses this to decide whether to fall through to the
+      // open-invoice / create-new paths. Returning handled:true unconditionally
+      // is misleading when every invoice in the chain overflowed.
+      const triggerId = classDoc?._id ? String(classDoc._id) : null;
+      let triggerPlaced = false;
+      if (triggerId) {
+        const refreshed = await Class.findById(classDoc._id).select('billedInInvoiceId').lean();
+        triggerPlaced = Boolean(refreshed?.billedInInvoiceId);
+      }
+
+      return { success: true, handled: triggerPlaced, affectedInvoices };
     } catch (err) {
       console.warn('[insertClassIntoPaidInvoiceChain] failed:', err?.message || err);
       return { success: false, error: err?.message || 'domino_failed' };

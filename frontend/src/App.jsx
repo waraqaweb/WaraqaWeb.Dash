@@ -31,6 +31,7 @@ const TeacherInvoicePublicPage = React.lazy(() => import('./components/teacherSa
 const PublicEvaluationBookingPage = React.lazy(() => import('./components/meetings/PublicEvaluationBookingPage'));
 const PublicStudentRegistrationPage = React.lazy(() => import('./components/registration/PublicStudentRegistrationPage'));
 const PublicTeacherContractPage = React.lazy(() => import('./components/registration/PublicTeacherContractPage'));
+const PublicEvaluationFeedbackPage = React.lazy(() => import('./components/evaluation/PublicEvaluationFeedbackPage'));
 const SalariesPage = React.lazy(() => import('./pages/dashboard/salaries/SalariesPage'));
 const FeedbacksAdmin = React.lazy(() => import('./pages/dashboard/FeedbacksAdmin'));
 const CreateClassModal = React.lazy(() => import('./components/dashboard/CreateClassModal'));
@@ -341,6 +342,18 @@ const AppRoutes = () => {
             <Dashboard />
           </ProtectedRoute>
         }
+      />
+      <Route
+        path="/dashboard/evaluation"
+        element={
+          <ProtectedRoute requiredRole="admin">
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboard/evaluation/feedback/:token"
+        element={<PublicEvaluationFeedbackPage />}
       />
       <Route
         path="/dashboard/interactive-learning"

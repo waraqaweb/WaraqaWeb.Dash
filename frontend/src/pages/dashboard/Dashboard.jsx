@@ -41,6 +41,7 @@ const PresenterPage = React.lazy(() => import('./PresenterPage'));
 const FeedbacksAdmin = React.lazy(() => import('./FeedbacksAdmin'));
 const TeacherContractPage = React.lazy(() => import('./TeacherContractPage'));
 const VacationManagementPage = React.lazy(() => import('./VacationManagementPage'));
+const EvaluationPage = React.lazy(() => import('./EvaluationPage'));
 
 const DeleteCountdownHost = () => {
   const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds, phase } = useDeleteClassCountdown();
@@ -139,6 +140,7 @@ const Dashboard = () => {
     if (role === 'admin') return true;
 
     const normalized = String(path || '').split('?')[0].replace(/\/+$/, '');
+    // Note: '/dashboard/evaluation' is intentionally admin-only — not added to other roles.
     const allow = {
       teacher: [
         '/dashboard',
@@ -312,6 +314,8 @@ const Dashboard = () => {
         return <ClassReportPage isActive={isActive} />;
       case 'vacation-management':
         return <VacationManagementPage isActive={isActive} />;
+      case 'evaluation':
+        return user?.role === 'admin' ? <EvaluationPage isActive={isActive} /> : <DashboardHome isActive={isActive} />;
       /* Removed 'reports' and 'users' pages from the dashboard: these pages are intentionally
          not rendered here so they are not accessible via direct URL anymore. */
       case "settings":

@@ -1,0 +1,40 @@
+/* Quran fonts for the evaluation page.
+ * - "Amiri Quran" is the closest open-source match to the Saudi (Madinah) Mushaf style.
+ * - "Scheherazade New" emulates the Naskh-style IndoPak / Turkish & Urdu mushaf style.
+ * Both are hosted by Google Fonts (open source).
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Scheherazade+New:wght@400;700&display=swap');
+
+.font-quran-uthmani {
+  font-family: 'Amiri Quran', 'Scheherazade New', 'Traditional Arabic', serif;
+  line-height: 2.4;
+  font-size: 2rem;
+}
+
+.font-quran-indopak {
+  font-family: 'Scheherazade New', 'Noto Naskh Arabic', serif;
+  line-height: 2.6;
+  font-size: 2.1rem;
+  font-weight: 700;
+}
+
+.font-arabic-display {
+  font-family: 'Scheherazade New', 'Amiri Quran', 'Traditional Arabic', serif;
+}
+
+/* Local helper for evaluation form inputs to avoid sprinkling long
+ * Tailwind class lists in every field. Scoped via the class name. */
+.eval-input {
+  width: 100%;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.875rem;
+}
+.eval-input:focus {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 1px;
+}

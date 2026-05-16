@@ -25,6 +25,7 @@ const VacationModal = React.lazy(() => import('../../components/dashboard/Vacati
 const VacationDetailsModal = React.lazy(() => import('../../components/dashboard/VacationDetailsModal'));
 const GuardianStudentVacationModal = React.lazy(() => import('../../components/dashboard/GuardianStudentVacationModal'));
 import PrimaryButton from '../../components/ui/PrimaryButton';
+import CircleSpinner from '../../components/ui/CircleSpinner';
 
 const VACATION_WHATSAPP_REPORT_STORAGE_PREFIX = 'waraqa.vacations.whatsappReport.v1';
 const ISLAMIC_DECORATIVE_LINE = '۞ ┈┈┈ ✦ ┈┈┈ ۞';
@@ -1342,8 +1343,8 @@ const VacationManagementPage = () => {
       <div className="bg-white rounded-lg shadow">
         {loading ? (
           <div className="p-8 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-2 text-gray-600">Loading vacations...</p>
+            <CircleSpinner size="md" className="mx-auto" />
+            <p className="mt-2 text-muted-foreground">Loading vacations...</p>
           </div>
         ) : filteredIndividualVacations.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
@@ -1551,8 +1552,8 @@ const VacationManagementPage = () => {
       <div className="bg-white rounded-lg shadow">
         {loading ? (
           <div className="p-8 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto"></div>
-            <p className="mt-2 text-gray-600">Loading system vacations...</p>
+            <CircleSpinner size="md" className="mx-auto" />
+            <p className="mt-2 text-muted-foreground">Loading system vacations...</p>
           </div>
         ) : filteredSystemVacations.length === 0 ? (
           <div className="p-8 text-center text-gray-500">

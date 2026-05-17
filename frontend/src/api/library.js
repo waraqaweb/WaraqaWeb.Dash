@@ -26,6 +26,9 @@ export const fetchFolderContents = (folderId, params) =>
     })
   );
 
+export const fetchLibraryItem = (itemId, params) =>
+  handle(() => api.get(`/library/items/${itemId}`, { params }));
+
 export const searchLibrary = (params) =>
   handle(() => api.get('/library/search', { params }), () => ({ items: [] }));
 

@@ -190,7 +190,7 @@ function serializeFolder(folder, { includeSecretMeta = false } = {}) {
   return base;
 }
 
-function serializeItem(item, { includeStorageSecrets = false, folder, permissions } = {}) {
+function serializeItem(item, { includeStorageSecrets = false, folder, permissions, slim = false } = {}) {
   if (!item) return null;
   const storage = item.storage || {};
   const storagePayload = includeStorageSecrets
@@ -205,6 +205,31 @@ function serializeItem(item, { includeStorageSecrets = false, folder, permission
         metadata: storage.metadata
       };
 
+  // In slim mode (used by list endpoints) we strip the heavy `metadata`
+  // payload (lesson/test studio pages can be megabytes each) but preserve
+  // the few scalar fields the UI uses for filtering/grouping. Clients
+  // fetch the full item lazily via GET /library/items/:itemId on select.
+  let metadataPayload = item.metadata;
+  if (slim && item.metadata && typeof item.metadata === 'object') {
+    const ls = item.metadata.lessonStudio;
+    const ts = item.metadata.testStudio;
+    metadataPayload = {};
+    if (ls && typeof ls === 'object') {
+      metadataPayload.lessonStudio = {
+        subject: ls.subject,
+        level: ls.level,
+        title: ls.title
+      };
+    }
+    if (ts && typeof ts === 'object') {
+      metadataPayload.testStudio = {
+        subject: ts.subject,
+        level: ts.level,
+        title: ts.title
+      };
+    }
+  }
+
   return {
     id: asId(item._id),
     folder: asId(item.folder),
@@ -215,7 +240,7 @@ function serializeItem(item, { includeStorageSecrets = false, folder, permission
     level: item.level,
     tags: item.tags,
     orderIndex: item.orderIndex,
-    previewAsset: item.previewAsset,
+    previewAsset: slim ? undefined : item.previewAsset,
     storage: storagePayload,
     contentType: item.contentType,
     mimeType: item.mimeType,
@@ -226,7 +251,7 @@ function serializeItem(item, { includeStorageSecrets = false, folder, permission
     inheritsSecret: item.inheritsSecret,
     language: item.language,
     seriesKey: item.seriesKey,
-    metadata: item.metadata,
+    metadata: metadataPayload,
     downloadCount: item.downloadCount,
     lastOpenedAt: item.lastOpenedAt,
     publishedAt: item.publishedAt,
@@ -302,7 +327,14 @@ async function getFolderContents({
     const itemDocs = await LibraryItem.find(itemFilter)
       .sort({ orderIndex: 1, displayName: 1 })
       .skip((page - 1) * limit)
-      .limit(limit);
+      .limit(limit)
+      // Project only what the list UI needs. The full `metadata` (lesson
+      // pages / test pages, often MBs each) is fetched lazily by clients
+      // via GET /library/items/:itemId when an item is selected. We do
+      // still need a tiny slice of metadata for subject grouping fallback.
+      .select(
+        'folder displayName slug description subject level tags orderIndex contentType mimeType pageCount allowDownload status isSecret inheritsSecret language seriesKey downloadCount lastOpenedAt publishedAt createdAt updatedAt storage metadata.lessonStudio.subject metadata.lessonStudio.level metadata.lessonStudio.title metadata.testStudio.subject metadata.testStudio.level metadata.testStudio.title'
+      );
 
     items = itemDocs.filter((item) => canViewItem(item, parentFolderDoc, access));
     pagination = { page, limit, total: totalItems, returned: items.length };
@@ -315,6 +347,7 @@ async function getFolderContents({
     items: items.map((item) =>
       serializeItem(item, {
         folder: parentFolderDoc,
+        slim: true,
         permissions: {
           canDownload: canDownloadItem(item, parentFolderDoc, access)
         }

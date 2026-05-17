@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import LessonStudio from '../../components/lessons/LessonStudio';
 import TestStudio from '../../components/lessons/TestStudio';
 import LessonStudioViewer from '../../components/lessons/LessonStudioViewer';
-import { createLibraryFolder, createLibraryItem, deleteLibraryItem, fetchFolderContents, fetchTree, updateLibraryItem } from '../../api/library';
+import { createLibraryFolder, createLibraryItem, deleteLibraryItem, fetchFolderContents, fetchLibraryItem, fetchTree, updateLibraryItem } from '../../api/library';
 import { useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import { Plus, Folder, Settings, Link2, GripVertical } from 'lucide-react';
 import api from '../../api/axios';
@@ -54,44 +54,57 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
   const [isReorderingTests, setIsReorderingTests] = useState(false);
   const { searchTerm: globalSearchTerm } = useSearch();
 
-  const resolveLessonsFolder = useCallback(async () => {
-    const { tree } = await fetchTree();
-    const locate = (nodes) => {
+  // Locate (or create) a top-level folder by display name in a pre-fetched
+  // tree. Hoisted so both lessons + tests can share a single `fetchTree()`
+  // call instead of issuing two identical roundtrips on mount.
+  const locateFolder = useCallback((tree, name) => {
+    const target = name.toLowerCase();
+    const walk = (nodes) => {
       for (const node of nodes || []) {
-        if ((node.displayName || '').toLowerCase() === LESSONS_FOLDER_NAME.toLowerCase()) return node;
+        if ((node.displayName || '').toLowerCase() === target) return node;
         if (node.children?.length) {
-          const found = locate(node.children);
+          const found = walk(node.children);
           if (found) return found;
         }
       }
       return null;
     };
-    const existing = locate(tree || []);
-    if (existing) return existing.id || existing._id;
-    const created = await createLibraryFolder({ displayName: LESSONS_FOLDER_NAME, parentFolder: null });
-    return created?.id || created?._id || null;
+    return walk(tree || []);
   }, []);
 
-  const resolveTestsFolder = useCallback(async () => {
+  const resolveFolderInTree = useCallback(async (tree, name) => {
+    const existing = locateFolder(tree, name);
+    if (existing) return existing.id || existing._id;
+    const created = await createLibraryFolder({ displayName: name, parentFolder: null });
+    return created?.id || created?._id || null;
+  }, [locateFolder]);
+
+  const loadLessonsAndTests = useCallback(async () => {
+    // Single tree fetch shared between both columns.
     const { tree } = await fetchTree();
-    const locate = (nodes) => {
-      for (const node of nodes || []) {
-        if ((node.displayName || '').toLowerCase() === TESTS_FOLDER_NAME.toLowerCase()) return node;
-        if (node.children?.length) {
-          const found = locate(node.children);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-    const existing = locate(tree || []);
-    if (existing) return existing.id || existing._id;
-    const created = await createLibraryFolder({ displayName: TESTS_FOLDER_NAME, parentFolder: null });
-    return created?.id || created?._id || null;
-  }, []);
+    const [lessonsFolder, testsFolder] = await Promise.all([
+      resolveFolderInTree(tree, LESSONS_FOLDER_NAME),
+      resolveFolderInTree(tree, TESTS_FOLDER_NAME)
+    ]);
+    setLessonsFolderId(lessonsFolder);
+    setTestsFolderId(testsFolder);
 
+    // Fetch both folder contents in parallel. The backend now serves a slim
+    // payload (no per-item lessonStudio pages); full metadata is fetched
+    // lazily on select.
+    const [lessonsPayload, testsPayload] = await Promise.all([
+      lessonsFolder ? fetchFolderContents(lessonsFolder, { limit: 200 }) : Promise.resolve(null),
+      testsFolder ? fetchFolderContents(testsFolder, { limit: 200 }) : Promise.resolve(null)
+    ]);
+    setLessons((lessonsPayload?.items || []).filter((item) => item.contentType === 'lesson'));
+    setTests((testsPayload?.items || []).filter((item) => item.contentType === 'test'));
+  }, [resolveFolderInTree]);
+
+  // Legacy single-side reloaders, used after create/edit/delete. They still
+  // share the tree+folder lookups via the helpers above.
   const loadLessons = useCallback(async () => {
-    const folderId = await resolveLessonsFolder();
+    const { tree } = await fetchTree();
+    const folderId = await resolveFolderInTree(tree, LESSONS_FOLDER_NAME);
     setLessonsFolderId(folderId);
     if (!folderId) {
       setLessons([]);
@@ -100,10 +113,11 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     const payload = await fetchFolderContents(folderId, { limit: 200 });
     const items = (payload?.items || []).filter((item) => item.contentType === 'lesson');
     setLessons(items);
-  }, [resolveLessonsFolder]);
+  }, [resolveFolderInTree]);
 
   const loadTests = useCallback(async () => {
-    const folderId = await resolveTestsFolder();
+    const { tree } = await fetchTree();
+    const folderId = await resolveFolderInTree(tree, TESTS_FOLDER_NAME);
     setTestsFolderId(folderId);
     if (!folderId) {
       setTests([]);
@@ -112,13 +126,22 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     const payload = await fetchFolderContents(folderId, { limit: 200 });
     const items = (payload?.items || []).filter((item) => item.contentType === 'test');
     setTests(items);
-  }, [resolveTestsFolder]);
+  }, [resolveFolderInTree]);
+
+  const resolveLessonsFolder = useCallback(async () => {
+    const { tree } = await fetchTree();
+    return resolveFolderInTree(tree, LESSONS_FOLDER_NAME);
+  }, [resolveFolderInTree]);
+
+  const resolveTestsFolder = useCallback(async () => {
+    const { tree } = await fetchTree();
+    return resolveFolderInTree(tree, TESTS_FOLDER_NAME);
+  }, [resolveFolderInTree]);
 
   useEffect(() => {
     if (!isActive) return;
-    loadLessons();
-    loadTests();
-  }, [isActive, loadLessons, loadTests]);
+    loadLessonsAndTests();
+  }, [isActive, loadLessonsAndTests]);
 
   const subjects = useMemo(() => {
     const counts = new Map();
@@ -204,6 +227,37 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
     });
     return map;
   }, [tests, isPublic, allowedSubjectSet]);
+
+  // Lesson/test rows now carry only the slim payload (no `metadata.pages`).
+  // Resolve the full item lazily when the user opens one so list rendering
+  // stays fast even with hundreds of curriculum pieces.
+  const openLesson = useCallback(async (lesson) => {
+    if (!lesson) return;
+    const lessonId = lesson.id || lesson._id;
+    setSelectedLesson(lesson); // optimistic — viewer can show shell instantly
+    if (!lessonId || lesson.metadata?.lessonStudio?.pages) return;
+    try {
+      const payload = await fetchLibraryItem(lessonId);
+      const full = payload?.item;
+      if (full) setSelectedLesson(full);
+    } catch {
+      /* viewer will fall back to slim data */
+    }
+  }, []);
+
+  const openTest = useCallback(async (test) => {
+    if (!test) return;
+    const testId = test.id || test._id;
+    setSelectedTest(test);
+    if (!testId || test.metadata?.testStudio?.pages) return;
+    try {
+      const payload = await fetchLibraryItem(testId);
+      const full = payload?.item;
+      if (full) setSelectedTest(full);
+    } catch {
+      /* noop */
+    }
+  }, []);
 
   useEffect(() => {
     if (!isActive) return;
@@ -748,7 +802,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                     )}
                     <button
                       type="button"
-                      onClick={() => setSelectedLesson(lesson)}
+                      onClick={() => openLesson(lesson)}
                       className="flex-1 text-left"
                     >
                       <p>{lesson.displayName}</p>
@@ -758,8 +812,14 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            setLessonToEdit(lesson);
+                          onClick={async () => {
+                            // Edit needs full lesson (with metadata.pages).
+                            let full = lesson;
+                            try {
+                              const payload = await fetchLibraryItem(lesson.id || lesson._id);
+                              if (payload?.item) full = payload.item;
+                            } catch { /* fall back to slim */ }
+                            setLessonToEdit(full);
                             setEditLessonOpen(true);
                           }}
                           className="rounded-full border border-primary/30 px-2 py-1 text-[10px] text-primary"
@@ -941,7 +1001,7 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                     )}
                     <button
                       type="button"
-                      onClick={() => setSelectedTest(test)}
+                      onClick={() => openTest(test)}
                       className="flex-1 text-left"
                     >
                       <p>{test.displayName}</p>
@@ -951,8 +1011,13 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            setTestToEdit(test);
+                          onClick={async () => {
+                            let full = test;
+                            try {
+                              const payload = await fetchLibraryItem(test.id || test._id);
+                              if (payload?.item) full = payload.item;
+                            } catch { /* fall back to slim */ }
+                            setTestToEdit(full);
                             setEditTestOpen(true);
                           }}
                           className="rounded-full border border-primary/30 px-2 py-1 text-[10px] text-primary"

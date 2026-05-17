@@ -169,7 +169,7 @@ router.get(
         parentId: folderId,
         includeItems: true,
         page: Number(req.query.page) || 1,
-        limit: Math.min(Number(req.query.limit) || 25, 100),
+        limit: Math.min(Number(req.query.limit) || 25, 200),
         search: req.query.search || '',
         shareToken: shareTokenFromRequest(req)
       });
@@ -211,7 +211,7 @@ router.get(
         parentId: parentId || null,
         includeItems: includeItems !== 'false',
         page: Number(page) || 1,
-        limit: Math.min(Number(limit) || 25, 100),
+        limit: Math.min(Number(limit) || 25, 200),
         search,
         shareToken: shareTokenFromRequest(req)
       });
@@ -233,7 +233,7 @@ router.get(
         parentId: resolveFolderParam(req.params.folderId),
         includeItems: req.query.includeItems !== 'false',
         page: Number(req.query.page) || 1,
-        limit: Math.min(Number(req.query.limit) || 25, 100),
+        limit: Math.min(Number(req.query.limit) || 25, 200),
         search: req.query.search || '',
         shareToken: shareTokenFromRequest(req)
       });

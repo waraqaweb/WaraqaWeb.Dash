@@ -29,11 +29,15 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
     if (req.query.status === 'active' || req.query.status === 'completed') {
       filter.status = req.query.status;
     }
-    const sessions = await EvaluationSession.find(filter)
-      .sort({ updatedAt: -1 })
-      .limit(limit)
-      .select('title status students.name students.endedAt students.feedback.submittedAt endedAt createdAt updatedAt')
-      .lean();
+    // When `full=true`, return the full doc for the most recent matching
+    // session inline so the UI avoids a second list→detail round-trip.
+    const wantFull = String(req.query.full || '').toLowerCase() === 'true';
+    const projection = wantFull
+      ? undefined
+      : 'title status students.name students.endedAt students.feedback.submittedAt endedAt createdAt updatedAt';
+    const query = EvaluationSession.find(filter).sort({ updatedAt: -1 }).limit(limit);
+    if (projection) query.select(projection);
+    const sessions = await query.lean();
     res.json({ sessions });
   } catch (err) {
     console.error('[evaluations] list failed', err);

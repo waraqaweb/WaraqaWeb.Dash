@@ -195,17 +195,14 @@ const EvaluationPage = ({ isActive = true }) => {
     let cancel = false;
     (async () => {
       try {
-        const { data } = await api.get('/evaluations', { params: { limit: 5, status: 'active' } });
+        // Single round-trip: backend returns the full latest active session
+        // doc inline when `full=true` is set, avoiding the previous
+        // list→detail waterfall.
+        const { data } = await api.get('/evaluations', { params: { limit: 1, status: 'active', full: 'true' } });
         if (cancel) return;
         const latest = (data?.sessions || [])[0];
         if (latest) {
-          // Need full doc — list now returns slim projection.
-          const full = await api.get(`/evaluations/${latest._id}`);
-          if (cancel) return;
-          const sess = full.data?.session;
-          if (sess) {
-            setSession({ ...sess, students: sess.students?.length ? sess.students : [emptyStudent()] });
-          }
+          setSession({ ...latest, students: latest.students?.length ? latest.students : [emptyStudent()] });
         } else {
           const { data: created } = await api.post('/evaluations', { title: '' });
           if (cancel) return;

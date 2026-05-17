@@ -131,6 +131,12 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  useEffect(() => {
+    const handler = (e) => setFocusMode(!!e.detail);
+    window.addEventListener('dashboard:set-focus-mode', handler);
+    return () => window.removeEventListener('dashboard:set-focus-mode', handler);
+  }, []);
   // Derive initial view from the current URL so a hard refresh of a dashboard
   // sub-route (e.g. /dashboard/evaluation) doesn't mount DashboardHome first
   // and fire its data-loading requests before the URL-driven effect runs.
@@ -371,6 +377,7 @@ const Dashboard = () => {
         <DeleteActionCountdownProvider>
       <div className="flex h-screen bg-background">
       {/* Sidebar */}
+        <div className={focusMode ? 'hidden' : 'contents'}>
         <Sidebar 
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -378,10 +385,12 @@ const Dashboard = () => {
         onViewChange={handleViewChange}
         onOpenProfileModal={() => navigate('/dashboard/profile')}
       />
+        </div>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Bar */}
+        {!focusMode && (
         <header className="bg-card border-b border-border px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between">
           <div className="flex items-center space-x-4">
             {/* Mobile menu button */}
@@ -427,11 +436,14 @@ const Dashboard = () => {
             </div>
           </div>
         </header>
+        )}
 
         {/* Mobile Search Bar */}
+        {!focusMode && (
         <div className="md:hidden px-4 py-2 bg-card border-b border-border">
           <GlobalSearchBar activeView={activeView} />
         </div>
+        )}
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-auto bg-background pb-16 md:pb-0">
@@ -442,6 +454,7 @@ const Dashboard = () => {
       </div>
 
       {/* Mobile bottom nav */}
+      {!focusMode && (
       <MobileBottomNav
         role={user?.role}
         currentPath={location.pathname}
@@ -451,7 +464,7 @@ const Dashboard = () => {
         }}
         onOpenMore={() => setSidebarOpen(true)}
       />
-
+      )}
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div 

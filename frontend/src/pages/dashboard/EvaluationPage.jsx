@@ -33,6 +33,7 @@ import {
   XCircle, MinusCircle, Send, Link as LinkIcon, Users,
   History, Maximize2, Minimize2, Shuffle, Pencil, Save,
   ArrowUp, ArrowDown, RefreshCw, BookOpen, Flag, Sparkles,
+  PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -147,9 +148,16 @@ const EvaluationPage = ({ isActive = true }) => {
     () => ALL_SECTIONS.filter((s) => s.testable).map((s) => s.key),
   );
   const [welcomeShown, setWelcomeShown] = useState(true);
+  const [sideMenuHidden, setSideMenuHidden] = useState(false);
 
   const shellRef = useRef(null);
   const saveTimer = useRef(null);
+
+  // Notify Dashboard shell to hide/show its sidebar+header for this page.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('dashboard:set-focus-mode', { detail: sideMenuHidden }));
+    return () => window.dispatchEvent(new CustomEvent('dashboard:set-focus-mode', { detail: false }));
+  }, [sideMenuHidden]);
 
   // ── Visible sections = intro + student + (selected, in chosen order) + summary + links
   const visibleSections = useMemo(() => {
@@ -438,29 +446,15 @@ const EvaluationPage = ({ isActive = true }) => {
         onAddStudent={() => addStudentInline()}
       />
 
-      <div className="eval-body">
-        {/* Left rail — journey */}
-        <aside className="eval-rail-left">
-          {welcomeShown ? (
-            <div className="text-center px-2">
-              <div className="font-thuluth text-2xl text-emerald-900 mt-2">رحلة التقييم</div>
-              <div className="font-display-en text-xs text-emerald-700 mt-1 tracking-widest uppercase">Your journey</div>
-              <p className="font-display-en text-[11px] text-emerald-700/70 mt-3 leading-relaxed">
-                Pick subjects on the right. Drag through the stages from welcome to summary.
-              </p>
-            </div>
-          ) : (
-            <JourneyRail
-              sections={visibleSections}
-              activeIdx={sectionIdx}
-              onJump={setSectionIdx}
-              allSections={ALL_SECTIONS}
-              selected={selectedSections}
-              onToggle={toggleSection}
-            />
-          )}
-        </aside>
+      {!welcomeShown && (
+        <JourneyBar
+          sections={visibleSections}
+          activeIdx={sectionIdx}
+          onJump={setSectionIdx}
+        />
+      )}
 
+      <div className="eval-body">
         {/* Centre — scrollable content */}
         <main className="eval-content">
           {welcomeShown ? (
@@ -579,6 +573,15 @@ const EvaluationPage = ({ isActive = true }) => {
 
         {/* Right rail — actions */}
         <aside className="eval-rail-right">
+          <button
+            type="button"
+            className="rail-btn"
+            title={sideMenuHidden ? 'Show dashboard menu' : 'Hide dashboard menu'}
+            onClick={() => setSideMenuHidden((x) => !x)}
+          >
+            {sideMenuHidden ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+            <span className="rb-cap">{sideMenuHidden ? 'Show' : 'Hide'}</span>
+          </button>
           <button type="button" className="rail-btn" title="Welcome / pick subjects" onClick={() => setWelcomeShown(true)}>
             <Sparkles className="h-5 w-5" />
             <span className="rb-cap">Welcome</span>
@@ -672,7 +675,35 @@ const BrandedHeader = ({
   </header>
 );
 
-/* ─── Vertical journey rail ────────────────────────────────────────────── */
+/* ─── Horizontal journey bar (chevron breadcrumb) ──────────────────────── */
+
+const arabicNum = (n) => {
+  const map = ['٠','١','٢','٣','٤','٥','٦','٧','٨','٩'];
+  return String(n).split('').map((d) => map[+d] ?? d).join('');
+};
+
+const JourneyBar = ({ sections, activeIdx, onJump }) => (
+  <nav className="eval-journey-top" aria-label="Evaluation journey">
+    {sections.map((s, i) => {
+      const cls = i === activeIdx ? 'is-active' : i < activeIdx ? 'is-done' : '';
+      return (
+        <button
+          key={s.key}
+          type="button"
+          className={`j-step ${cls}`}
+          onClick={() => onJump(i)}
+          title={`${s.title} — ${s.ar}`}
+        >
+          <span className="j-num">{arabicNum(i + 1)}</span>
+          <span className="j-en"><bdi>{s.title}</bdi></span>
+          <span className="j-ar" dir="rtl">{s.ar}</span>
+        </button>
+      );
+    })}
+  </nav>
+);
+
+/* ─── Vertical journey rail (legacy, kept for back-compat) ─────────────── */
 
 const JourneyRail = ({ sections, activeIdx, onJump, allSections, selected, onToggle }) => {
   const [pickerOpen, setPickerOpen] = useState(false);

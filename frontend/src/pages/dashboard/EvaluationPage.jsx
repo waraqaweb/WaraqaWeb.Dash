@@ -29,10 +29,10 @@ import {
 } from '../../data/evaluationContent';
 import '../../styles/quran-fonts.css';
 import {
-  ChevronRight, ChevronLeft, Plus, Trash2, Copy, CheckCircle2,
+  ChevronRight, ChevronLeft, ChevronDown, Plus, Trash2, Copy, CheckCircle2,
   XCircle, MinusCircle, Send, Link as LinkIcon, Users,
-  History, Maximize2, Minimize2, Shuffle, Pencil, Save, Settings as SettingsIcon,
-  ArrowUp, ArrowDown, RefreshCw, BookOpen,
+  History, Maximize2, Minimize2, Shuffle, Pencil, Save,
+  ArrowUp, ArrowDown, RefreshCw, BookOpen, Flag, Sparkles,
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -151,14 +151,16 @@ const EvaluationPage = ({ isActive = true }) => {
   const shellRef = useRef(null);
   const saveTimer = useRef(null);
 
-  // ── Visible sections = welcome + intro + student + selected + summary/links
+  // ── Visible sections = intro + student + (selected, in chosen order) + summary + links
   const visibleSections = useMemo(() => {
-    const fixed = ['intro', 'student'];
-    const tail = ['summary', 'links'];
-    const inOrder = ALL_SECTIONS
-      .filter((s) => fixed.includes(s.key) || selectedSections.includes(s.key) || tail.includes(s.key))
-      .map((s) => s);
-    return inOrder;
+    const byKey = Object.fromEntries(ALL_SECTIONS.map((s) => [s.key, s]));
+    const result = [byKey.intro, byKey.student];
+    selectedSections.forEach((k) => {
+      const s = byKey[k];
+      if (s && s.testable) result.push(s);
+    });
+    result.push(byKey.summary, byKey.links);
+    return result.filter(Boolean);
   }, [selectedSections]);
 
   // ── Branding load ─────────────────────────────────────────────────────────
@@ -292,15 +294,6 @@ const EvaluationPage = ({ isActive = true }) => {
     setSectionIdx(0);
   };
 
-  const addStudent = () => {
-    const name = window.prompt('Student name?', `Student ${(session?.students?.length || 0) + 1}`);
-    if (!name) return;
-    updateSession((prev) => ({ ...prev, students: [...(prev.students || []), emptyStudent(name)] }));
-    setActiveStudentIdx(session?.students?.length || 0);
-    setWelcomeShown(false);
-    goTo('student');
-  };
-
   const endTest = () => {
     if (!window.confirm('End this evaluation and mark it completed?')) return;
     updateSession((prev) => ({ ...prev, status: 'completed', endedAt: new Date().toISOString() }));
@@ -405,11 +398,30 @@ const EvaluationPage = ({ isActive = true }) => {
   const activeStudent = session.students?.[activeStudentIdx] || emptyStudent();
   const section = visibleSections[sectionIdx] || visibleSections[0];
 
-  /* ─── Render ─────────────────────────────────────────────────────────── */
+  const renameStudent = (i, name) => updateSession((prev) => {
+    const arr = [...(prev.students || [])];
+    if (!arr[i]) return prev;
+    arr[i] = { ...arr[i], name };
+    return { ...prev, students: arr };
+  });
+  const removeStudent = (i) => updateSession((prev) => {
+    const arr = (prev.students || []).filter((_, j) => j !== i);
+    setActiveStudentIdx((x) => Math.max(0, Math.min(arr.length - 1, x)));
+    return { ...prev, students: arr.length ? arr : [emptyStudent()] };
+  });
+  const addStudentInline = (name) => {
+    const newName = (name || `Student ${(session.students?.length || 0) + 1}`).trim() || 'Student';
+    updateSession((prev) => ({ ...prev, students: [...(prev.students || []), emptyStudent(newName)] }));
+  };
+
+  const toggleSection = (key) => setSelectedSections((curr) =>
+    curr.includes(key) ? curr.filter((k) => k !== key) : [...curr, key],
+  );
+
+  /* ─── Render (v2 layout: fixed viewport, side rails, scrollable centre) ─ */
 
   return (
-    <div ref={shellRef} className="eval-shell min-h-screen">
-      {/* Branded header */}
+    <div ref={shellRef} className="eval-app-shell">
       <BrandedHeader
         branding={branding}
         adminName={adminName}
@@ -420,166 +432,175 @@ const EvaluationPage = ({ isActive = true }) => {
         onOpenHistory={openHistory}
         editorOn={editorOn}
         onToggleEditor={() => setEditorOn((x) => !x)}
+        students={session.students || []}
+        activeStudentIdx={activeStudentIdx}
+        onPickStudent={(i) => setActiveStudentIdx(i)}
+        onAddStudent={() => addStudentInline()}
       />
 
-      <div className="mx-auto max-w-6xl px-3 sm:px-6 pb-12">
-        {/* Student tabs */}
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <Users className="h-4 w-4 text-emerald-700" />
-          {(session.students || []).map((s, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => { setActiveStudentIdx(i); setWelcomeShown(false); }}
-              className={`px-3 py-1.5 rounded-full text-sm border transition ${
-                i === activeStudentIdx
-                  ? 'bg-emerald-600 text-white border-emerald-700 shadow'
-                  : 'bg-white/60 border-emerald-200 text-emerald-900 hover:bg-white'
-              }`}
-            >
-              {s.name || `Student ${i + 1}`}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={addStudent}
-            className="px-2.5 py-1.5 rounded-full text-sm border border-dashed border-emerald-400 text-emerald-700 hover:bg-emerald-50"
-          >
-            <Plus className="inline h-4 w-4" /> Add student
-          </button>
-        </div>
-
-        {welcomeShown ? (
-          <WelcomeSlide
-            branding={branding}
-            adminName={adminName}
-            studentName={activeStudent.name}
-            allSections={ALL_SECTIONS}
-            selected={selectedSections}
-            onToggle={(key) => setSelectedSections((curr) =>
-              curr.includes(key) ? curr.filter((k) => k !== key) : [...curr, key],
-            )}
-            onStart={startEvaluation}
-          />
-        ) : (
-          <>
-            {/* Stepper */}
-            <Stepper
+      <div className="eval-body">
+        {/* Left rail — journey */}
+        <aside className="eval-rail-left">
+          {welcomeShown ? (
+            <div className="text-center px-2">
+              <div className="font-thuluth text-2xl text-emerald-900 mt-2">رحلة التقييم</div>
+              <div className="font-display-en text-xs text-emerald-700 mt-1 tracking-widest uppercase">Your journey</div>
+              <p className="font-display-en text-[11px] text-emerald-700/70 mt-3 leading-relaxed">
+                Pick subjects on the right. Drag through the stages from welcome to summary.
+              </p>
+            </div>
+          ) : (
+            <JourneyRail
               sections={visibleSections}
               activeIdx={sectionIdx}
               onJump={setSectionIdx}
+              allSections={ALL_SECTIONS}
+              selected={selectedSections}
+              onToggle={toggleSection}
             />
+          )}
+        </aside>
 
-            {/* Slide */}
-            <div className="eval-slide eval-fade p-4 sm:p-8 mt-3 min-h-[480px]">
-              {section.key === 'intro' && (
-                <IntroSlide bio={bio} onBioChange={setBio} adminName={adminName} branding={branding} />
-              )}
-              {section.key === 'student' && (
-                <StudentSlide student={activeStudent} onChange={updateStudent} />
-              )}
-              {section.key === 'reading-letters' && (
-                <ReadingLettersSlide
-                  student={activeStudent}
-                  onChange={updateStudent}
-                  onAnswer={upsertAnswer}
-                  editorOn={editorOn}
-                  custom={customContent.letters}
-                  setCustom={(p) => setCustom('letters', p)}
-                  resetCustom={() => resetCustom('letters')}
-                />
-              )}
-              {section.key === 'reading-words' && (
-                <ReadingWordsSlide
-                  student={activeStudent}
-                  onChange={updateStudent}
-                  onAnswer={upsertAnswer}
-                  diacritics={diacritics}
-                  onToggleDiacritics={() => setDiacritics((d) => !d)}
-                  editorOn={editorOn}
-                  custom={customContent.words}
-                  setCustom={(p) => setCustom('words', p)}
-                  resetCustom={() => resetCustom('words')}
-                />
-              )}
-              {section.key === 'quran-recitation' && (
-                <QuranSlide
-                  student={activeStudent}
-                  onAnswer={upsertAnswer}
-                  font={quranFont}
-                  onChangeFont={setQuranFont}
-                />
-              )}
-              {section.key === 'tajweed-theory' && (
-                <TajweedTheorySlide student={activeStudent} onAnswer={upsertAnswer} />
-              )}
-              {section.key === 'tajweed-practical' && (
-                <TajweedPracticalSlide student={activeStudent} onAnswer={upsertAnswer} />
-              )}
-              {section.key === 'arabic-skills' && (
-                <ArabicSkillsSlide student={activeStudent} onAnswer={upsertAnswer} />
-              )}
-              {section.key === 'summary' && (
-                <SummarySlide
-                  session={session}
-                  student={activeStudent}
-                  onChange={updateStudent}
-                  onSendFeedback={async (email) => {
-                    try {
-                      const { data } = await api.post(
-                        `/evaluations/${session._id}/students/${activeStudent._id || ''}/send-feedback`,
-                        { email },
-                      );
-                      showToast('Feedback request sent.');
-                      return data?.link || '';
-                    } catch (err) {
-                      const link = err?.response?.data?.link;
-                      showToast(err?.response?.data?.message || 'Failed to send feedback email');
-                      return link || '';
-                    }
-                  }}
-                />
-              )}
-              {section.key === 'links' && <LinksSlide />}
-            </div>
+        {/* Centre — scrollable content */}
+        <main className="eval-content">
+          {welcomeShown ? (
+            <WelcomeSlide
+              branding={branding}
+              adminName={adminName}
+              students={session.students || []}
+              activeStudentIdx={activeStudentIdx}
+              onPickStudent={setActiveStudentIdx}
+              onAddStudent={addStudentInline}
+              onRenameStudent={renameStudent}
+              onRemoveStudent={removeStudent}
+              allSections={ALL_SECTIONS}
+              selected={selectedSections}
+              onToggle={toggleSection}
+              onStart={startEvaluation}
+            />
+          ) : (
+            <>
+              <div className="eval-slide-v2 slide-anim" key={section.key}>
+                <SlideHeading section={section} index={sectionIdx} total={visibleSections.length} />
+                {section.key === 'intro' && (
+                  <IntroSlide bio={bio} onBioChange={setBio} adminName={adminName} branding={branding} />
+                )}
+                {section.key === 'student' && (
+                  <StudentSlide student={activeStudent} onChange={updateStudent} />
+                )}
+                {section.key === 'reading-letters' && (
+                  <ReadingLettersSlide
+                    student={activeStudent}
+                    onChange={updateStudent}
+                    onAnswer={upsertAnswer}
+                    editorOn={editorOn}
+                    custom={customContent.letters}
+                    setCustom={(p) => setCustom('letters', p)}
+                    resetCustom={() => resetCustom('letters')}
+                  />
+                )}
+                {section.key === 'reading-words' && (
+                  <ReadingWordsSlide
+                    student={activeStudent}
+                    onChange={updateStudent}
+                    onAnswer={upsertAnswer}
+                    diacritics={diacritics}
+                    onToggleDiacritics={() => setDiacritics((d) => !d)}
+                    editorOn={editorOn}
+                    custom={customContent.words}
+                    setCustom={(p) => setCustom('words', p)}
+                    resetCustom={() => resetCustom('words')}
+                  />
+                )}
+                {section.key === 'quran-recitation' && (
+                  <QuranSlide
+                    student={activeStudent}
+                    onAnswer={upsertAnswer}
+                    font={quranFont}
+                    onChangeFont={setQuranFont}
+                  />
+                )}
+                {section.key === 'tajweed-theory' && (
+                  <TajweedTheorySlide student={activeStudent} onAnswer={upsertAnswer} />
+                )}
+                {section.key === 'tajweed-practical' && (
+                  <TajweedPracticalSlide student={activeStudent} onAnswer={upsertAnswer} />
+                )}
+                {section.key === 'arabic-skills' && (
+                  <ArabicSkillsSlide student={activeStudent} onAnswer={upsertAnswer} />
+                )}
+                {section.key === 'summary' && (
+                  <SummarySlide
+                    session={session}
+                    student={activeStudent}
+                    onChange={updateStudent}
+                    onSendFeedback={async (email) => {
+                      try {
+                        const { data } = await api.post(
+                          `/evaluations/${session._id}/students/${activeStudent._id || ''}/send-feedback`,
+                          { email },
+                        );
+                        showToast('Feedback request sent.');
+                        return data?.link || '';
+                      } catch (err) {
+                        const link = err?.response?.data?.link;
+                        showToast(err?.response?.data?.message || 'Failed to send feedback email');
+                        return link || '';
+                      }
+                    }}
+                  />
+                )}
+                {section.key === 'links' && <LinksSlide />}
+              </div>
 
-            {/* Footer nav */}
-            <div className="flex items-center justify-between mt-4">
-              <button
-                type="button"
-                onClick={goPrev}
-                disabled={sectionIdx === 0}
-                className="px-3 py-2 rounded-full border border-emerald-300 bg-white/70 text-emerald-800 text-sm disabled:opacity-40 hover:bg-white"
-              >
-                <ChevronLeft className="inline h-4 w-4" /> Previous
-              </button>
-              <div className="flex items-center gap-2">
+              <div className="eval-footer-bar">
                 <button
                   type="button"
-                  onClick={() => setWelcomeShown(true)}
-                  className="px-3 py-2 rounded-full bg-white/70 border border-emerald-200 text-emerald-800 text-sm"
+                  onClick={goPrev}
+                  disabled={sectionIdx === 0}
+                  className="px-3 py-2 rounded-full border border-emerald-300 bg-white/80 text-emerald-800 text-sm disabled:opacity-40 hover:bg-white inline-flex items-center gap-1 font-display-en"
                 >
-                  Back to welcome
+                  <ChevronLeft className="h-4 w-4" /> Previous
                 </button>
+                <div className="text-xs text-emerald-700/80 font-display-en">
+                  <bdi>Stage {sectionIdx + 1} of {visibleSections.length}</bdi>
+                </div>
                 <button
                   type="button"
-                  onClick={endTest}
-                  className="px-3 py-2 rounded-full border border-rose-300 bg-white/70 text-rose-700 text-sm"
+                  onClick={sectionIdx === visibleSections.length - 1 ? endTest : goNext}
+                  className="px-4 py-2 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-sm shadow inline-flex items-center gap-1 font-display-en"
                 >
-                  End test
-                </button>
-                <button
-                  type="button"
-                  onClick={goNext}
-                  disabled={sectionIdx === visibleSections.length - 1}
-                  className="px-4 py-2 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-sm disabled:opacity-40 shadow"
-                >
-                  Next <ChevronRight className="inline h-4 w-4" />
+                  {sectionIdx === visibleSections.length - 1 ? (<><Flag className="h-4 w-4" /> Finish</>) : (<>Next <ChevronRight className="h-4 w-4" /></>)}
                 </button>
               </div>
-            </div>
-          </>
-        )}
+            </>
+          )}
+        </main>
+
+        {/* Right rail — actions */}
+        <aside className="eval-rail-right">
+          <button type="button" className="rail-btn" title="Welcome / pick subjects" onClick={() => setWelcomeShown(true)}>
+            <Sparkles className="h-5 w-5" />
+            <span className="rb-cap">Welcome</span>
+          </button>
+          <button type="button" className="rail-btn" title={editorOn ? 'Stop editing' : 'Customize items'} onClick={() => setEditorOn((x) => !x)}>
+            <Pencil className="h-5 w-5" />
+            <span className="rb-cap">{editorOn ? 'Done' : 'Edit'}</span>
+          </button>
+          <button type="button" className="rail-btn" title="Past sessions" onClick={openHistory}>
+            <History className="h-5 w-5" />
+            <span className="rb-cap">History</span>
+          </button>
+          <button type="button" className="rail-btn" title={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen}>
+            {fullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+            <span className="rb-cap">{fullscreen ? 'Exit' : 'Full'}</span>
+          </button>
+          <div className="flex-1" />
+          <button type="button" className="rail-btn is-danger" title="End and mark completed" onClick={endTest}>
+            <Flag className="h-5 w-5" />
+            <span className="rb-cap">Finish</span>
+          </button>
+        </aside>
       </div>
 
       {historyOpen && (
@@ -597,63 +618,144 @@ const EvaluationPage = ({ isActive = true }) => {
   );
 };
 
-/* ─── Branded header ───────────────────────────────────────────────────── */
+/* ─── Branded top bar (compact) ────────────────────────────────────────── */
 
 const BrandedHeader = ({
   branding, adminName, saving, sessionStatus,
-  fullscreen, onToggleFullscreen, onOpenHistory, editorOn, onToggleEditor,
+  students, activeStudentIdx, onPickStudent, onAddStudent,
 }) => (
-  <header className="px-3 sm:px-6 pt-4 pb-3">
-    <div className="mx-auto max-w-6xl flex items-center justify-between gap-3">
+  <header className="eval-topbar px-4 py-2.5">
+    <div className="mx-auto max-w-[1400px] flex items-center gap-3 flex-wrap">
       <div className="flex items-center gap-3">
         {branding.logoUrl ? (
-          <img src={branding.logoUrl} alt="" className="h-11 w-11 rounded-xl shadow ring-1 ring-emerald-200 bg-white object-contain" />
+          <img src={branding.logoUrl} alt="" className="h-10 w-10 rounded-xl shadow ring-1 ring-emerald-200 bg-white object-contain floaty" />
         ) : (
-          <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 grid place-items-center text-white font-bold">و</div>
+          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 grid place-items-center text-white font-bold floaty">و</div>
         )}
         <div className="leading-tight">
-          <div className="text-xs uppercase tracking-[0.3em] text-emerald-700 font-semibold">{branding.title || 'Waraqa'} · Live Evaluation</div>
-          <h1 className="eval-title-ar text-xl sm:text-2xl text-emerald-900" dir="rtl">استوديو التقييم</h1>
+          <div className="font-display-en text-[10px] uppercase tracking-[0.32em] text-emerald-700 font-semibold">
+            <bdi>{branding.title || 'Waraqa'} · Live Evaluation</bdi>
+          </div>
+          <h1 className="font-thuluth text-xl text-emerald-900" dir="rtl">استوديو التقييم</h1>
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 ms-auto flex-wrap">
+        <Users className="h-4 w-4 text-emerald-700" />
+        {(students || []).map((s, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onPickStudent(i)}
+            className={`px-3 py-1 rounded-full text-xs border font-display-en transition ${
+              i === activeStudentIdx
+                ? 'bg-emerald-600 text-white border-emerald-700 shadow'
+                : 'bg-white/80 border-emerald-200 text-emerald-900 hover:bg-white'
+            }`}
+            title={s.name}
+          >
+            <bdi>{s.name || `Student ${i + 1}`}</bdi>
+          </button>
+        ))}
         <button
           type="button"
-          onClick={onToggleEditor}
-          title={editorOn ? 'Disable editing of test items' : 'Edit test items (add/remove/reorder)'}
-          className={`px-2.5 py-1.5 rounded-full text-xs border inline-flex items-center gap-1 transition ${
-            editorOn ? 'bg-amber-500 text-white border-amber-600 shadow' : 'bg-white/70 border-emerald-200 text-emerald-800 hover:bg-white'
-          }`}
+          onClick={onAddStudent}
+          className="px-2.5 py-1 rounded-full text-xs border border-dashed border-emerald-400 text-emerald-700 hover:bg-emerald-50 inline-flex items-center gap-1 font-display-en"
         >
-          <Pencil className="h-3.5 w-3.5" /> {editorOn ? 'Editing' : 'Customize'}
+          <Plus className="h-3.5 w-3.5" /> Student
         </button>
-        <button
-          type="button"
-          onClick={onOpenHistory}
-          title="Past sessions"
-          className="px-2.5 py-1.5 rounded-full text-xs border bg-white/70 border-emerald-200 text-emerald-800 hover:bg-white inline-flex items-center gap-1"
-        >
-          <History className="h-3.5 w-3.5" /> History
-        </button>
-        <button
-          type="button"
-          onClick={onToggleFullscreen}
-          title={fullscreen ? 'Exit full screen' : 'Enter full screen'}
-          className="px-2.5 py-1.5 rounded-full text-xs border bg-white/70 border-emerald-200 text-emerald-800 hover:bg-white inline-flex items-center gap-1"
-        >
-          {fullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-          {fullscreen ? 'Exit' : 'Full screen'}
-        </button>
-        <div className="hidden sm:block text-[11px] text-muted-foreground pl-2">
-          {saving ? 'Saving…' : 'All saved'} · {sessionStatus}
+        <div className="hidden sm:block text-[11px] text-emerald-700/70 ms-2 font-display-en">
+          <bdi>{saving ? 'Saving…' : 'All saved'} · {sessionStatus}</bdi>
         </div>
       </div>
     </div>
   </header>
 );
 
-/* ─── Stepper ──────────────────────────────────────────────────────────── */
+/* ─── Vertical journey rail ────────────────────────────────────────────── */
+
+const JourneyRail = ({ sections, activeIdx, onJump, allSections, selected, onToggle }) => {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const available = allSections.filter((s) => s.testable && !selected.includes(s.key));
+  return (
+    <div className="flex flex-col h-full">
+      <div className="text-center mb-2">
+        <div className="font-thuluth text-emerald-900 text-xl" dir="rtl">رحلتك</div>
+        <div className="font-display-en text-[10px] uppercase tracking-widest text-emerald-700/80">Your journey</div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto pr-1">
+        {sections.map((s, i) => {
+          const active = i === activeIdx;
+          const done = i < activeIdx;
+          const cls = `journey-step ${active ? 'is-active' : done ? 'is-done' : ''}`;
+          return (
+            <React.Fragment key={s.key}>
+              <button type="button" onClick={() => onJump(i)} className={cls}>
+                <span className="num">{toArabicDigits(i + 1)}</span>
+                <span className="min-w-0">
+                  <span className="label-en truncate block"><bdi>{s.title}</bdi></span>
+                  <span className="label-ar truncate block" dir="rtl">{s.ar}</span>
+                </span>
+                <span aria-hidden>{s.icon || ''}</span>
+              </button>
+              {i < sections.length - 1 && (
+                <div className="journey-arrow"><ChevronDown className="h-4 w-4" /></div>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+
+      {available.length > 0 && (
+        <div className="border-t border-emerald-100 mt-2 pt-2">
+          <button
+            type="button"
+            onClick={() => setPickerOpen((v) => !v)}
+            className="w-full px-3 py-2 rounded-xl border border-dashed border-emerald-400 text-emerald-700 text-xs inline-flex items-center justify-center gap-1 font-display-en hover:bg-emerald-50"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add subject
+          </button>
+          {pickerOpen && (
+            <div className="mt-2 space-y-1 slide-anim">
+              {available.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => { onToggle(s.key); setPickerOpen(false); }}
+                  className="w-full text-start px-2 py-1.5 rounded-lg hover:bg-emerald-50 text-xs text-emerald-900 inline-flex items-center gap-2"
+                >
+                  <span>{s.icon}</span>
+                  <bdi className="font-display-en">{s.title}</bdi>
+                  <span className="ms-auto text-emerald-700/70" dir="rtl">{s.ar}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─── Slide heading ────────────────────────────────────────────────────── */
+
+const SlideHeading = ({ section, index, total }) => (
+  <div className="slide-heading">
+    <div className="min-w-0">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="slide-progress-pill">
+          <bdi>Stage {index + 1} / {total}</bdi>
+        </span>
+        {section.icon && <span className="text-2xl">{section.icon}</span>}
+      </div>
+      <h2><bdi>{section.title}</bdi></h2>
+      <div className="ar mt-0.5" dir="rtl">{section.ar}</div>
+    </div>
+  </div>
+);
+
+/* ─── Stepper (legacy · horizontal, kept for back-compat) ──────────────── */
 
 const Stepper = ({ sections, activeIdx, onJump }) => (
   <nav className="flex flex-wrap gap-1.5">
@@ -684,71 +786,142 @@ const Stepper = ({ sections, activeIdx, onJump }) => (
   </nav>
 );
 
-/* ─── Welcome (section picker) ─────────────────────────────────────────── */
+/* ─── Welcome (multi-student + ordered subjects) ───────────────────────── */
 
-const WelcomeSlide = ({ branding, adminName, studentName, allSections, selected, onToggle, onStart }) => (
-  <div className="eval-slide eval-fade p-6 sm:p-10">
-    <div className="text-center">
-      {branding.logoUrl ? (
-        <img src={branding.logoUrl} alt="" className="mx-auto h-20 w-20 rounded-2xl shadow ring-1 ring-emerald-200 bg-white object-contain" />
-      ) : (
-        <div className="mx-auto h-20 w-20 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 grid place-items-center text-white text-3xl font-bold shadow">و</div>
-      )}
-      <h2 className="eval-title-ar mt-4 text-3xl text-emerald-900" dir="rtl">أهلًا وسهلًا</h2>
-      <p className="mt-1 text-emerald-800 text-lg">Ahlan wa sahlan!</p>
-      <p className="mt-2 text-emerald-700">
-        Welcome {studentName} — your evaluation today is guided by <strong>{adminName}</strong>.
-      </p>
-      <p className="mt-1 text-sm text-emerald-700/80">
-        Pick the parts you’d like to focus on. There are no wrong answers — just signals to teach you better. Bismillāh!
-      </p>
-    </div>
+const WelcomeSlide = ({
+  branding, adminName, students, activeStudentIdx,
+  onPickStudent, onAddStudent, onRenameStudent, onRemoveStudent,
+  allSections, selected, onToggle, onStart,
+}) => {
+  const [newName, setNewName] = useState('');
+  const handleAdd = () => {
+    const v = (newName || '').trim();
+    if (!v) return;
+    onAddStudent(v);
+    setNewName('');
+  };
+  return (
+    <div className="welcome-grid slide-anim">
+      {/* ── Left · greeting + students ── */}
+      <div className="welcome-card">
+        <div className="text-center">
+          {branding.logoUrl ? (
+            <img src={branding.logoUrl} alt="" className="mx-auto h-20 w-20 rounded-2xl shadow ring-1 ring-emerald-200 bg-white object-contain floaty" />
+          ) : (
+            <div className="mx-auto h-20 w-20 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 grid place-items-center text-white text-3xl font-bold shadow floaty">و</div>
+          )}
+          <h2 className="font-thuluth mt-3 text-4xl text-emerald-900" dir="rtl">أهلًا وسهلًا</h2>
+          <p className="font-naskh text-emerald-800 text-lg mt-1" dir="rtl">بسم الله نبدأ</p>
+          <p className="font-display-en text-emerald-700 mt-2 text-sm">
+            <bdi>Today's evaluator: <strong>{adminName}</strong>.</bdi>
+          </p>
+        </div>
 
-    <div className="mt-8">
-      <h3 className="text-sm font-semibold text-emerald-900 mb-3">Choose what to test:</h3>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {allSections.filter((s) => s.testable).map((s) => {
-          const on = selected.includes(s.key);
-          return (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => onToggle(s.key)}
-              className={`text-left rounded-2xl border-2 p-4 transition ${
-                on
-                  ? 'border-emerald-500 bg-gradient-to-br from-emerald-50 to-white shadow'
-                  : 'border-emerald-100 bg-white/60 hover:border-emerald-300'
-              }`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="text-3xl">{s.icon || '📘'}</div>
-                <div className={`text-[10px] uppercase tracking-wider font-semibold ${on ? 'text-emerald-700' : 'text-emerald-400'}`}>
-                  {on ? 'Selected' : 'Tap to add'}
-                </div>
-              </div>
-              <div className="mt-2 font-semibold text-emerald-900">{s.title}</div>
-              <div className="text-sm text-emerald-700/80" dir="rtl">{s.ar}</div>
+        <div className="mt-6">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-display-en text-sm font-semibold text-emerald-900 inline-flex items-center gap-2">
+              <Users className="h-4 w-4" /> Students
+            </h3>
+            <span className="text-[11px] text-emerald-700/70 font-display-en">{students.length} ready</span>
+          </div>
+          <ul className="space-y-2">
+            {students.map((s, i) => (
+              <li
+                key={i}
+                className={`flex items-center gap-2 rounded-xl border px-2.5 py-1.5 transition ${
+                  i === activeStudentIdx ? 'border-emerald-500 bg-emerald-50' : 'border-emerald-200 bg-white/70'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onPickStudent(i)}
+                  className={`h-7 w-7 rounded-full inline-flex items-center justify-center text-xs font-bold ${
+                    i === activeStudentIdx ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-700'
+                  }`}
+                  title="Active for editing"
+                >{toArabicDigits(i + 1)}</button>
+                <input
+                  className="flex-1 bg-transparent text-sm text-emerald-900 focus:outline-none font-display-en"
+                  value={s.name || ''}
+                  onChange={(e) => onRenameStudent(i, e.target.value)}
+                />
+                {students.length > 1 && (
+                  <button type="button" onClick={() => onRemoveStudent(i)} className="text-rose-600 hover:bg-rose-50 p-1 rounded" title="Remove">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              className="eval-input flex-1 font-display-en"
+              placeholder="Add another student (you can also add later)"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
+            />
+            <button type="button" onClick={handleAdd}
+              className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-xs inline-flex items-center gap-1 font-display-en">
+              <Plus className="h-3.5 w-3.5" /> Add
             </button>
-          );
-        })}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Right · subjects (ordered) ── */}
+      <div className="welcome-card">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-thuluth text-emerald-900 text-2xl" dir="rtl">ماذا نختبر اليوم؟</h3>
+            <p className="font-display-en text-xs text-emerald-700/80 mt-0.5">
+              Tap subjects in the order you want to test them.
+            </p>
+          </div>
+          <span className="slide-progress-pill"><bdi>{selected.length} chosen</bdi></span>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3 mt-4">
+          {allSections.filter((s) => s.testable).map((s) => {
+            const order = selected.indexOf(s.key);
+            const on = order >= 0;
+            return (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => onToggle(s.key)}
+                className={`subject-card ${on ? 'is-on' : ''}`}
+              >
+                {on && <span className="order-pill">{toArabicDigits(order + 1)}</span>}
+                <div className="flex items-start gap-3">
+                  <div className="icon">{s.icon || '📘'}</div>
+                  <div className="min-w-0">
+                    <div className="font-display-en font-semibold text-emerald-900 truncate"><bdi>{s.title}</bdi></div>
+                    <div className="font-naskh text-emerald-700/85 text-sm truncate" dir="rtl">{s.ar}</div>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-6 flex items-center justify-between gap-3">
+          <span className="text-xs text-emerald-700/80 font-display-en">
+            Subjects will run one after another. Add or remove anytime from the left rail.
+          </span>
+          <button
+            type="button"
+            onClick={onStart}
+            disabled={selected.length === 0}
+            className="px-6 py-2.5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold shadow hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 inline-flex items-center gap-2 font-display-en"
+          >
+            Start <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
-
-    <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-      <button
-        type="button"
-        onClick={onStart}
-        disabled={selected.length === 0}
-        className="px-6 py-3 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold shadow hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40"
-      >
-        Start evaluation
-      </button>
-      <span className="text-xs text-emerald-700/80">
-        {selected.length} section{selected.length === 1 ? '' : 's'} selected
-      </span>
-    </div>
-  </div>
-);
+  );
+};
 
 /* ─── Intro / bio ──────────────────────────────────────────────────────── */
 
@@ -1359,6 +1532,53 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
 
 /* ─── Summary ──────────────────────────────────────────────────────────── */
 
+// Smart per-section "starting point" — find the deepest level where the student
+// scored ≥1 correct/partial. Returns a label suggesting where to begin next.
+const LEVEL_ORDER = ['easy', 'medium', 'advanced'];
+const SECTION_LABELS = {
+  'reading-letters':   { en: 'Reading · Letters',   ar: 'قراءة · الحروف' },
+  'reading-words':     { en: 'Reading · Words',     ar: 'قراءة · الكلمات' },
+  'quran-recitation':  { en: 'Qur’an Recitation',   ar: 'تلاوة القرآن' },
+  'tajweed-theory':    { en: 'Tajweed · Theory',    ar: 'تجويد · نظري' },
+  'tajweed-practical': { en: 'Tajweed · Practical', ar: 'تجويد · تطبيقي' },
+  'arabic-grammar':    { en: 'Arabic · Grammar',    ar: 'العربية · النحو' },
+  'arabic-vocab':      { en: 'Arabic · Vocabulary', ar: 'العربية · المفردات' },
+  'arabic-comprehension': { en: 'Arabic · Comprehension', ar: 'العربية · الفهم' },
+  'arabic-writing':    { en: 'Arabic · Writing',    ar: 'العربية · الكتابة' },
+  'arabic-speaking':   { en: 'Arabic · Speaking',   ar: 'العربية · التحدث' },
+};
+const NEXT_LEVEL = { easy: 'medium', medium: 'advanced', advanced: 'advanced+' };
+
+const summarizeJourney = (answers = []) => {
+  const bySection = {};
+  answers.forEach((a) => {
+    if (!a.section || a.section === 'reading-letters' || a.section === 'reading-words' || a.section === 'quran-recitation'
+        || a.section === 'tajweed-theory' || a.section === 'tajweed-practical'
+        || a.section.startsWith('arabic-')) {
+      bySection[a.section] = bySection[a.section] || [];
+      bySection[a.section].push(a);
+    }
+  });
+  const out = [];
+  Object.entries(bySection).forEach(([sec, list]) => {
+    const counts = { easy: 0, medium: 0, advanced: 0, none: 0 };
+    const passed = { easy: false, medium: false, advanced: false };
+    list.forEach((a) => {
+      const lv = LEVEL_ORDER.includes(a.level) ? a.level : 'none';
+      counts[lv] = (counts[lv] || 0) + 1;
+      if ((a.expertVerdict === 'correct' || a.expertVerdict === 'partial') && lv !== 'none') passed[lv] = true;
+    });
+    let deepest = null;
+    LEVEL_ORDER.forEach((lv) => { if (passed[lv]) deepest = lv; });
+    let nextPoint;
+    if (!deepest && (counts.easy + counts.medium + counts.advanced) === 0) nextPoint = 'easy'; // not tested → start easy
+    else if (!deepest) nextPoint = 'easy'; // tested but failed easy
+    else nextPoint = NEXT_LEVEL[deepest];
+    out.push({ section: sec, deepest, nextPoint, total: list.length });
+  });
+  return out;
+};
+
 const SummarySlide = ({ session, student, onChange, onSendFeedback }) => {
   const totals = useMemo(() => {
     const t = { correct: 0, partial: 0, incorrect: 0, skipped: 0, total: 0 };
@@ -1372,6 +1592,8 @@ const SummarySlide = ({ session, student, onChange, onSendFeedback }) => {
 
   const [feedbackEmail, setFeedbackEmail] = useState(student.contactEmail || '');
   const [feedbackLink, setFeedbackLink] = useState('');
+
+  const journey = useMemo(() => summarizeJourney(student.answers), [student.answers]);
 
   const exportText = useMemo(() => {
     const lines = [];
@@ -1397,6 +1619,38 @@ const SummarySlide = ({ session, student, onChange, onSendFeedback }) => {
         <Stat label="Incorrect" value={totals.incorrect} cls="from-rose-500 to-pink-600" />
         <Stat label="Skipped"   value={totals.skipped}   cls="from-zinc-400 to-zinc-600" />
       </div>
+
+      {journey.length > 0 && (
+        <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/70 to-white p-4 mb-4">
+          <div className="flex items-baseline justify-between gap-2 mb-2">
+            <h4 className="font-display-en text-sm font-semibold text-emerald-900">Starting point recommendation</h4>
+            <span className="font-naskh text-emerald-800 text-base" dir="rtl">نقطة الانطلاق المقترحة</span>
+          </div>
+          <ul className="space-y-1.5">
+            {journey.map((j) => {
+              const label = SECTION_LABELS[j.section] || { en: j.section, ar: '' };
+              const reached = j.deepest ? `Reached ${j.deepest}` : 'Did not pass easy';
+              return (
+                <li key={j.section} className="flex items-center justify-between gap-3 rounded-xl bg-white/80 border border-emerald-100 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="font-display-en text-sm font-semibold text-emerald-900 truncate"><bdi>{label.en}</bdi></div>
+                    <div className="font-naskh text-emerald-700/80 text-xs truncate" dir="rtl">{label.ar}</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="font-display-en text-[10px] uppercase tracking-wider text-emerald-700/70"><bdi>{reached}</bdi></div>
+                    <div className="font-display-en text-sm font-bold text-emerald-800">
+                      <bdi>Next → {j.nextPoint}</bdi>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="font-display-en text-[11px] text-emerald-700/70 mt-2">
+            Tip: untested subjects mean the student stopped earlier — start from the easiest item there.
+          </p>
+        </div>
+      )}
 
       <div className="grid sm:grid-cols-2 gap-3">
         <div>

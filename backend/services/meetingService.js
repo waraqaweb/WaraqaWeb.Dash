@@ -1022,6 +1022,83 @@ const setMeetingAttendance = async ({ meetingId, adminId, attendanceStatus }) =>
   return formatMeetingResponse(meeting);
 };
 
+const sendMeetingReminder = async ({ meetingId, adminId }) => {
+  if (!meetingId) {
+    throw createError(400, 'Meeting id is required');
+  }
+  const admin = await resolveAdmin(adminId);
+  const meeting = await Meeting.findById(meetingId);
+  if (!meeting) {
+    throw createError(404, 'Meeting not found');
+  }
+  if (admin && meeting.adminId && String(meeting.adminId) !== String(admin._id)) {
+    throw createError(403, 'Not allowed to send a reminder for this meeting');
+  }
+
+  const tz = meeting.timezone || meeting.bookingPayload?.timezone || 'Africa/Cairo';
+  const whenStr = meeting.scheduledStart
+    ? moment(meeting.scheduledStart).tz(tz).format('ddd, MMM D, YYYY [at] h:mm A')
+    : 'TBD';
+  const tzLabel = tz;
+
+  const recipients = new Set();
+  const addEmail = (e) => {
+    if (!e) return;
+    const v = String(e).trim().toLowerCase();
+    if (v && /.+@.+\..+/.test(v)) recipients.add(v);
+  };
+  addEmail(meeting.bookingPayload?.guardianEmail);
+  if (Array.isArray(meeting.attendees?.additionalEmails)) {
+    meeting.attendees.additionalEmails.forEach(addEmail);
+  }
+  if (meeting.teacherId) {
+    try {
+      const teacher = await User.findById(meeting.teacherId).select('email');
+      if (teacher?.email) addEmail(teacher.email);
+    } catch (_) { /* noop */ }
+  }
+  if (!recipients.size) {
+    throw createError(400, 'No recipient email on file for this meeting');
+  }
+
+  const guardianName = meeting.bookingPayload?.guardianName || '';
+  const link = meeting.meetingLinkSnapshot || '';
+  const subject = `Reminder: your meeting is on ${whenStr}`;
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;background:#ffffff;color:#0f172a;">
+      <h2 style="margin:0 0 12px;color:#0f172a;">Friendly reminder</h2>
+      <p style="margin:0 0 14px;color:#374151;">Hi ${guardianName || 'there'},</p>
+      <p style="margin:0 0 14px;color:#374151;">This is a quick reminder about your upcoming meeting with Waraqa.</p>
+      <table style="width:100%;border-collapse:collapse;margin:8px 0 16px;">
+        <tr>
+          <td style="padding:10px 12px;background:#e0f2fe;border-radius:8px 0 0 8px;color:#075985;font-size:12px;font-weight:600;">When</td>
+          <td style="padding:10px 12px;background:#f0f9ff;border-radius:0 8px 8px 0;color:#0c4a6e;font-weight:600;">${whenStr}</td>
+        </tr>
+        <tr><td style="padding:8px 12px;color:#94a3b8;font-size:12px;" colspan="2">Timezone: ${tzLabel}</td></tr>
+      </table>
+      ${link ? `<p style="margin:0 0 14px;"><a href="${link}" style="display:inline-block;background:#0284c7;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600;">Join meeting</a></p>` : ''}
+      <p style="margin:0 0 14px;color:#374151;">If you need to change the time, just reply to this email.</p>
+      <p style="margin:24px 0 0;color:#94a3b8;font-size:12px;">— Waraqa</p>
+    </div>`;
+  const text = `Hi ${guardianName || 'there'},\n\nReminder: your meeting is on ${whenStr} (${tzLabel}).\n${link ? `Join: ${link}\n` : ''}\nReply to this email if you need to reschedule.\n\n— Waraqa`;
+
+  const results = [];
+  for (const to of recipients) {
+    try {
+      await emailService.sendMail({ to, subject, html, text });
+      results.push({ to, ok: true });
+    } catch (err) {
+      console.error('[meetings] reminder email failed for', to, err?.message || err);
+      results.push({ to, ok: false, error: err?.message || 'send failed' });
+    }
+  }
+
+  meeting.reminders = meeting.reminders || {};
+  meeting.reminders.lastSentAt = new Date();
+  await meeting.save();
+  return { meeting: formatMeetingResponse(meeting), results };
+};
+
 const sendRescheduleEmails = async ({ meeting, prevStart, prevEnd, reason }) => {
   try {
     const tz = meeting.timezone || meeting.bookingPayload?.timezone || 'Africa/Cairo';
@@ -1221,6 +1298,7 @@ module.exports = {
   hardDeleteMeeting,
   setMeetingAttendance,
   rescheduleMeeting,
+  sendMeetingReminder,
   submitMeetingReport,
   resolveAdmin,
   buildCalendarLinks,

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, FileText, RefreshCw, Trash2, Users, Pencil, XCircle, UserCheck, UserX, Ban } from 'lucide-react';
-import { listMeetings, rescheduleMeeting, deleteMeeting, hardDeleteMeeting, updateMeetingAttendance } from '../../../api/meetings';
+import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, FileText, RefreshCw, Trash2, Users, Pencil, XCircle, UserCheck, UserX, Ban, Bell } from 'lucide-react';
+import { listMeetings, rescheduleMeeting, deleteMeeting, hardDeleteMeeting, updateMeetingAttendance, sendMeetingReminder } from '../../../api/meetings';
 import { MEETING_TYPE_LABELS, MEETING_TYPE_TONES } from '../../../constants/meetingConstants';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 import MeetingReportModal from '../../dashboard/MeetingReportModal';
@@ -180,6 +180,28 @@ export default function MeetingActivityPanel({ timezone }) {
     setItems((prev) => prev.map((m) => (m._id === updated._id ? { ...m, ...updated } : m)));
   };
 
+  const sendReminder = async (meetingId) => {
+    setBusyId(meetingId);
+    try {
+      const data = await sendMeetingReminder(meetingId);
+      if (data?.meeting?._id) {
+        setItems((prev) => prev.map((m) => (m._id === data.meeting._id ? { ...m, ...data.meeting } : m)));
+      }
+      const failed = (data?.results || []).filter((r) => !r.ok);
+      if (failed.length) {
+        setError(`Reminder failed for: ${failed.map((r) => r.to).join(', ')}`);
+      } else {
+        setError('');
+      }
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to send reminder');
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const iconBtn = (cls) => `inline-flex items-center justify-center h-8 w-8 rounded-full border text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed ${cls}`;
+
   const renderCard = (meeting, mode = 'scheduled') => {
     const isOpen = expandedId === meeting._id;
     const isRescheduling = rescheduleId === meeting._id;
@@ -215,65 +237,103 @@ export default function MeetingActivityPanel({ timezone }) {
           </div>
           {isOpen ? <ChevronUp className="mt-1 h-4 w-4 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 text-slate-400" />}
         </button>
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-          {!isRescheduling ? (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
+          {/* Attendance group */}
+          <div className="flex items-center gap-1.5" aria-label="Attendance">
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); openReschedule(meeting); }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-100"
-            >
-              <Pencil className="h-3.5 w-3.5" /> Reschedule
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setReportMeeting(meeting); }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-100"
-          >
-            <FileText className="h-3.5 w-3.5" /> {meeting?.report?.submittedAt ? 'Edit report' : 'Add report'}
-          </button>
-          <button
-            type="button"
-            disabled={busyId === meeting._id}
-            onClick={(e) => { e.stopPropagation(); markAttendance(meeting._id, 'attended'); }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
-          >
-            <UserCheck className="h-3.5 w-3.5" /> Attended
-          </button>
-          <button
-            type="button"
-            disabled={busyId === meeting._id}
-            onClick={(e) => { e.stopPropagation(); markAttendance(meeting._id, 'no_show'); }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-60"
-          >
-            <UserX className="h-3.5 w-3.5" /> No-show
-          </button>
-          <button
-            type="button"
-            disabled={busyId === meeting._id}
-            onClick={(e) => { e.stopPropagation(); markAttendance(meeting._id, 'cancelled_no_penalty'); }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
-          >
-            <Ban className="h-3.5 w-3.5" /> No penalty
-          </button>
-          {meeting.status !== 'cancelled' ? (
-            <button
-              type="button"
+              title="Mark attended"
+              aria-label="Mark attended"
               disabled={busyId === meeting._id}
-              onClick={(e) => { e.stopPropagation(); cancelOne(meeting._id); }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60"
+              onClick={(e) => { e.stopPropagation(); markAttendance(meeting._id, 'attended'); }}
+              className={iconBtn('border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100')}
             >
-              <XCircle className="h-3.5 w-3.5" /> Cancel
+              <UserCheck className="h-4 w-4" />
             </button>
+            <button
+              type="button"
+              title="Mark no-show"
+              aria-label="Mark no-show"
+              disabled={busyId === meeting._id}
+              onClick={(e) => { e.stopPropagation(); markAttendance(meeting._id, 'no_show'); }}
+              className={iconBtn('border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100')}
+            >
+              <UserX className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              title="Cancel (no penalty)"
+              aria-label="Cancel (no penalty)"
+              disabled={busyId === meeting._id}
+              onClick={(e) => { e.stopPropagation(); markAttendance(meeting._id, 'cancelled_no_penalty'); }}
+              className={iconBtn('border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100')}
+            >
+              <Ban className="h-4 w-4" />
+            </button>
+          </div>
+
+          <span className="mx-1 h-6 w-px bg-slate-200" aria-hidden="true" />
+
+          {/* Control group */}
+          <div className="flex items-center gap-1.5" aria-label="Controls">
+            {!isRescheduling ? (
+              <button
+                type="button"
+                title="Reschedule"
+                aria-label="Reschedule"
+                onClick={(e) => { e.stopPropagation(); openReschedule(meeting); }}
+                className={iconBtn('border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100')}
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              title="Send reminder email"
+              aria-label="Send reminder email"
+              disabled={busyId === meeting._id}
+              onClick={(e) => { e.stopPropagation(); sendReminder(meeting._id); }}
+              className={iconBtn('border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100')}
+            >
+              <Bell className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              title={meeting?.report?.submittedAt ? 'Edit report' : 'Add report'}
+              aria-label={meeting?.report?.submittedAt ? 'Edit report' : 'Add report'}
+              onClick={(e) => { e.stopPropagation(); setReportMeeting(meeting); }}
+              className={iconBtn('border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100')}
+            >
+              <FileText className="h-4 w-4" />
+            </button>
+            {meeting.status !== 'cancelled' ? (
+              <button
+                type="button"
+                title="Cancel meeting"
+                aria-label="Cancel meeting"
+                disabled={busyId === meeting._id}
+                onClick={(e) => { e.stopPropagation(); cancelOne(meeting._id); }}
+                className={iconBtn('border-amber-200 bg-white text-amber-700 hover:bg-amber-50')}
+              >
+                <XCircle className="h-4 w-4" />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              title="Delete permanently"
+              aria-label="Delete permanently"
+              disabled={busyId === meeting._id}
+              onClick={(e) => { e.stopPropagation(); deleteOne(meeting._id); }}
+              className={iconBtn('border-red-200 bg-white text-red-700 hover:bg-red-50')}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          {meeting?.reminders?.lastSentAt ? (
+            <span className="ml-auto text-[10px] text-slate-400">
+              Reminder sent {formatWhen(meeting.reminders.lastSentAt, timezone || meeting.timezone)}
+            </span>
           ) : null}
-          <button
-            type="button"
-            disabled={busyId === meeting._id}
-            onClick={(e) => { e.stopPropagation(); deleteOne(meeting._id); }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
-          >
-            <Trash2 className="h-3.5 w-3.5" /> Delete
-          </button>
         </div>
         {isRescheduling ? (
           <div className="mt-3 space-y-2 rounded-xl border border-sky-200 bg-sky-50/50 p-3">

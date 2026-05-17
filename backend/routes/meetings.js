@@ -239,6 +239,18 @@ router.patch('/:meetingId/reschedule', authenticateToken, requireAdmin, async (r
   }
 });
 
+router.post('/:meetingId/remind', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await meetingService.sendMeetingReminder({
+      meetingId: req.params.meetingId,
+      adminId: parseAdminId(req)
+    });
+    res.json({ message: 'Reminder sent', meeting: result.meeting, results: result.results });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.delete('/:meetingId/hard', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await meetingService.hardDeleteMeeting({

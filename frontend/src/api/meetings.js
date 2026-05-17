@@ -73,6 +73,12 @@ export async function rescheduleMeeting(meetingId, payload) {
   return data.meeting;
 }
 
+export async function sendMeetingReminder(meetingId) {
+  if (!meetingId) throw new Error('meetingId is required to send reminder');
+  const { data } = await api.post(`${BASE}/${meetingId}/remind`);
+  return data;
+}
+
 export async function hardDeleteMeeting(meetingId) {
   if (!meetingId) throw new Error('meetingId is required to delete');
   const { data } = await api.delete(`${BASE}/${meetingId}/hard`);

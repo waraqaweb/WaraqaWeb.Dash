@@ -38,3 +38,87 @@
   outline: 2px solid hsl(var(--primary));
   outline-offset: 1px;
 }
+
+/* ─── Branded slide deck ────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@500;700&display=swap');
+
+.eval-shell {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(16,185,129,0.18), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(20,184,166,0.14), transparent 60%),
+    radial-gradient(800px 600px at 50% 110%, rgba(132,204,22,0.12), transparent 65%),
+    linear-gradient(180deg, #f7fbf8 0%, #f2f7f3 100%);
+}
+.dark .eval-shell {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(16,185,129,0.18), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(20,184,166,0.10), transparent 60%),
+    linear-gradient(180deg, #0b1216 0%, #0a0f12 100%);
+}
+
+.eval-title-ar {
+  font-family: 'Reem Kufi', 'Scheherazade New', serif;
+  letter-spacing: 0.5px;
+}
+
+.eval-slide {
+  background: rgba(255,255,255,0.85);
+  border: 1px solid rgba(16,185,129,0.18);
+  border-radius: 22px;
+  box-shadow: 0 20px 50px -25px rgba(16,94,76,0.35);
+  backdrop-filter: blur(6px);
+}
+.dark .eval-slide {
+  background: rgba(15,23,29,0.7);
+  border-color: rgba(16,185,129,0.25);
+}
+
+/* Letter / word "tile" card — used for randomised colourful drilling */
+.letter-tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  min-height: 88px;
+  padding: 14px 20px;
+  border-radius: 18px;
+  font-family: 'Scheherazade New', 'Amiri Quran', serif;
+  font-size: 3rem;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.18);
+  box-shadow: 0 10px 25px -10px rgba(0,0,0,0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  cursor: pointer;
+  user-select: none;
+}
+.letter-tile:hover { transform: translateY(-2px); box-shadow: 0 14px 30px -10px rgba(0,0,0,0.4); }
+.letter-tile.small { min-width: 64px; min-height: 64px; font-size: 2rem; padding: 10px 16px; }
+.letter-tile.word  { min-width: 0; padding: 14px 22px; font-size: 2.2rem; }
+
+.letter-tile-correct   { outline: 3px solid #10b981; outline-offset: 2px; }
+.letter-tile-incorrect { outline: 3px solid #f43f5e; outline-offset: 2px; }
+.letter-tile-partial   { outline: 3px solid #f59e0b; outline-offset: 2px; }
+
+/* Stepper dot */
+.eval-step-dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+}
+
+/* Quran verse marker */
+.quran-aya-marker {
+  display: inline-block;
+  font-family: 'Amiri Quran', serif;
+  margin: 0 6px;
+  color: #047857;
+  font-size: 0.85em;
+}
+
+@keyframes evalFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.eval-fade { animation: evalFadeIn 0.25s ease both; }

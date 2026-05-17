@@ -311,19 +311,6 @@ const LibraryDashboardContent = () => {
             <p className="text-xs text-muted-foreground">Refreshing folders…</p>
           )}
 
-          {canManageLibrary && (
-            <a
-              href="/dashboard/evaluation"
-              className="rounded-2xl border border-emerald-300 bg-emerald-50 p-4 shadow-sm hover:bg-emerald-100 transition block"
-            >
-              <h3 className="text-sm font-semibold text-emerald-900">Live Evaluation</h3>
-              <p className="mt-1 text-xs text-emerald-800">
-                Run a guided Qur&apos;an &amp; Arabic assessment with one or several students.
-              </p>
-              <span className="mt-2 inline-block text-xs font-medium text-emerald-900 underline">Open evaluation →</span>
-            </a>
-          )}
-
           <div className="rounded-2xl border border-border bg-card/70 p-4 shadow-sm">
             <h3 className="text-sm font-semibold text-foreground">Access status</h3>
             {canManageLibrary ? (

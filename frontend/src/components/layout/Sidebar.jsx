@@ -54,7 +54,6 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
       { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
       { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },
-      { id: 'evaluation', label: 'Evaluation', icon: GraduationCap, roles: ['admin'], link: '/dashboard/evaluation' },
       { id: 'presenter', label: 'Curricula', icon: Monitor, roles: presenterRoles, link: '/dashboard/interactive-learning' },
     ];
 

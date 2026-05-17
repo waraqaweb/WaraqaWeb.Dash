@@ -99,6 +99,14 @@ Tasks
 Tasks.local
 
 # =========================
+# Local scratch / sanity / publish-log files
+# =========================
+.tool_sanity.txt
+.git_publish_log.txt
+draft
+draft.*
+
+# =========================
 # Git backup artifacts
 # =========================
 .git.backup*/

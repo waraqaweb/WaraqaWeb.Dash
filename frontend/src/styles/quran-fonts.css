@@ -425,6 +425,28 @@
   box-shadow: 0 20px 50px -32px rgba(16,94,76,0.4);
   display: flex; flex-direction: column;
 }
+
+/* Welcome intro = single card with two panes separated by a vertical rule */
+.welcome-intro-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 820px) {
+  .welcome-intro-grid {
+    grid-template-columns: 1fr 1px 1fr;
+    align-items: stretch;
+  }
+  .welcome-intro-grid::before {
+    content: '';
+    grid-column: 2;
+    background: linear-gradient(to bottom, transparent, rgba(16,185,129,0.35), transparent);
+    width: 1px;
+    align-self: stretch;
+  }
+  .welcome-intro-grid > .welcome-pane:nth-of-type(1) { grid-column: 1; padding-inline-end: 14px; }
+  .welcome-intro-grid > .welcome-pane:nth-of-type(2) { grid-column: 3; padding-inline-start: 14px; }
+}
+.welcome-pane { min-width: 0; display: flex; flex-direction: column; }
 .subject-card {
   position: relative; overflow: hidden;
   text-align: start;

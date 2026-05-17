@@ -144,9 +144,7 @@ const EvaluationPage = ({ isActive = true }) => {
   const [editorOn, setEditorOn] = useState(false);
   const [branding, setBranding] = useState({ title: 'Waraqa', slogan: '', logoUrl: null });
   const [customContent, setCustomContent] = useState(() => loadCustom(adminId));
-  const [selectedSections, setSelectedSections] = useState(
-    () => ALL_SECTIONS.filter((s) => s.testable).map((s) => s.key),
-  );
+  const [selectedSections, setSelectedSections] = useState([]);
   const [welcomeShown, setWelcomeShown] = useState(true);
   const [sideMenuHidden, setSideMenuHidden] = useState(false);
 
@@ -159,10 +157,11 @@ const EvaluationPage = ({ isActive = true }) => {
     return () => window.dispatchEvent(new CustomEvent('dashboard:set-focus-mode', { detail: false }));
   }, [sideMenuHidden]);
 
-  // ── Visible sections = intro + student + (selected, in chosen order) + summary + links
+  // ── Visible sections = (selected, in chosen order) + summary + links
+  //    Welcome screen handles greeting + evaluator + student intro.
   const visibleSections = useMemo(() => {
     const byKey = Object.fromEntries(ALL_SECTIONS.map((s) => [s.key, s]));
-    const result = [byKey.intro, byKey.student];
+    const result = [];
     selectedSections.forEach((k) => {
       const s = byKey[k];
       if (s && s.testable) result.push(s);
@@ -461,6 +460,10 @@ const EvaluationPage = ({ isActive = true }) => {
             <WelcomeSlide
               branding={branding}
               adminName={adminName}
+              bio={bio}
+              onBioChange={setBio}
+              activeStudent={activeStudent}
+              onUpdateStudent={updateStudent}
               students={session.students || []}
               activeStudentIdx={activeStudentIdx}
               onPickStudent={setActiveStudentIdx}
@@ -820,135 +823,244 @@ const Stepper = ({ sections, activeIdx, onJump }) => (
 /* ─── Welcome (multi-student + ordered subjects) ───────────────────────── */
 
 const WelcomeSlide = ({
-  branding, adminName, students, activeStudentIdx,
+  branding, adminName, bio, onBioChange,
+  activeStudent, onUpdateStudent,
+  students, activeStudentIdx,
   onPickStudent, onAddStudent, onRenameStudent, onRemoveStudent,
   allSections, selected, onToggle, onStart,
 }) => {
+  const [step, setStep] = useState('intro'); // 'intro' | 'subjects'
   const [newName, setNewName] = useState('');
+  const [editingBio, setEditingBio] = useState(false);
   const handleAdd = () => {
     const v = (newName || '').trim();
     if (!v) return;
     onAddStudent(v);
     setNewName('');
   };
-  return (
-    <div className="welcome-grid slide-anim">
-      {/* ── Left · greeting + students ── */}
-      <div className="welcome-card">
-        <div className="text-center">
-          {branding.logoUrl ? (
-            <img src={branding.logoUrl} alt="" className="mx-auto h-20 w-20 rounded-2xl shadow ring-1 ring-emerald-200 bg-white object-contain floaty" />
-          ) : (
-            <div className="mx-auto h-20 w-20 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 grid place-items-center text-white text-3xl font-bold shadow floaty">و</div>
-          )}
-          <h2 className="font-thuluth mt-3 text-4xl text-emerald-900" dir="rtl">أهلًا وسهلًا</h2>
-          <p className="font-naskh text-emerald-800 text-lg mt-1" dir="rtl">بسم الله نبدأ</p>
-          <p className="font-display-en text-emerald-700 mt-2 text-sm">
-            <bdi>Today's evaluator: <strong>{adminName}</strong>.</bdi>
-          </p>
+
+  if (step === 'intro') {
+    return (
+      <div className="welcome-card slide-anim welcome-intro">
+        {/* Top tiny stepper */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2 text-emerald-700/80 font-display-en text-[11px] uppercase tracking-wider">
+            <span className="slide-progress-pill"><bdi>Step 1 / 2</bdi></span>
+            <span>Introduction · <span dir="rtl" className="font-naskh">التعارف</span></span>
+          </div>
+          <div className="text-[11px] text-emerald-700/70 font-display-en"><bdi>Next: choose subjects</bdi></div>
         </div>
 
-        <div className="mt-6">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-display-en text-sm font-semibold text-emerald-900 inline-flex items-center gap-2">
-              <Users className="h-4 w-4" /> Students
-            </h3>
-            <span className="text-[11px] text-emerald-700/70 font-display-en">{students.length} ready</span>
-          </div>
-          <ul className="space-y-2">
-            {students.map((s, i) => (
-              <li
-                key={i}
-                className={`flex items-center gap-2 rounded-xl border px-2.5 py-1.5 transition ${
-                  i === activeStudentIdx ? 'border-emerald-500 bg-emerald-50' : 'border-emerald-200 bg-white/70'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => onPickStudent(i)}
-                  className={`h-7 w-7 rounded-full inline-flex items-center justify-center text-xs font-bold ${
-                    i === activeStudentIdx ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-700'
-                  }`}
-                  title="Active for editing"
-                >{toArabicDigits(i + 1)}</button>
-                <input
-                  className="flex-1 bg-transparent text-sm text-emerald-900 focus:outline-none font-display-en"
-                  value={s.name || ''}
-                  onChange={(e) => onRenameStudent(i, e.target.value)}
-                />
-                {students.length > 1 && (
-                  <button type="button" onClick={() => onRemoveStudent(i)} className="text-rose-600 hover:bg-rose-50 p-1 rounded" title="Remove">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              className="eval-input flex-1 font-display-en"
-              placeholder="Add another student (you can also add later)"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
-            />
-            <button type="button" onClick={handleAdd}
-              className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-xs inline-flex items-center gap-1 font-display-en">
-              <Plus className="h-3.5 w-3.5" /> Add
-            </button>
-          </div>
-        </div>
-      </div>
+        <div className="welcome-intro-grid">
+          {/* ── Left · greeting + evaluator ── */}
+          <div className="welcome-pane">
+            <div className="text-center">
+              {branding.logoUrl ? (
+                <img src={branding.logoUrl} alt="" className="mx-auto h-16 w-16 rounded-2xl shadow ring-1 ring-emerald-200 bg-white object-contain floaty" />
+              ) : (
+                <div className="mx-auto h-16 w-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 grid place-items-center text-white text-2xl font-bold shadow floaty">و</div>
+              )}
+              <h2 className="font-thuluth mt-2 text-3xl text-emerald-900" dir="rtl">أهلًا وسهلًا</h2>
+              <p className="font-naskh text-emerald-800 text-base mt-0.5" dir="rtl">بسم الله نبدأ</p>
+              <p className="font-display-en text-emerald-700 mt-1 text-sm">
+                <bdi>Today's evaluator: <strong>{adminName}</strong></bdi>
+              </p>
+            </div>
 
-      {/* ── Right · subjects (ordered) ── */}
-      <div className="welcome-card">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-thuluth text-emerald-900 text-2xl" dir="rtl">ماذا نختبر اليوم؟</h3>
-            <p className="font-display-en text-xs text-emerald-700/80 mt-0.5">
-              Tap subjects in the order you want to test them.
-            </p>
-          </div>
-          <span className="slide-progress-pill"><bdi>{selected.length} chosen</bdi></span>
-        </div>
-
-        <div className="grid sm:grid-cols-2 gap-3 mt-4">
-          {allSections.filter((s) => s.testable).map((s) => {
-            const order = selected.indexOf(s.key);
-            const on = order >= 0;
-            return (
-              <button
-                key={s.key}
-                type="button"
-                onClick={() => onToggle(s.key)}
-                className={`subject-card ${on ? 'is-on' : ''}`}
-              >
-                {on && <span className="order-pill">{toArabicDigits(order + 1)}</span>}
-                <div className="flex items-start gap-3">
-                  <div className="icon">{s.icon || '📘'}</div>
-                  <div className="min-w-0">
-                    <div className="font-display-en font-semibold text-emerald-900 truncate"><bdi>{s.title}</bdi></div>
-                    <div className="font-naskh text-emerald-700/85 text-sm truncate" dir="rtl">{s.ar}</div>
-                  </div>
+            <div className="mt-4 pt-3 border-t border-emerald-100">
+              <div className="flex items-baseline justify-between gap-2">
+                <h3 className="font-display-en text-sm font-semibold text-emerald-900"><bdi>Meet your evaluator</bdi></h3>
+                <span className="font-naskh text-emerald-800 text-sm" dir="rtl">تعرّف على معلمك</span>
+              </div>
+              {!editingBio ? (
+                <>
+                  <p className="font-display-en text-sm text-emerald-800/90 mt-1.5">
+                    <bdi>{bio.title}{bio.subtitle ? ` · ${bio.subtitle}` : ''}</bdi>
+                  </p>
+                  {(bio.paragraphs || []).slice(0, 2).map((p, i) => (
+                    <p key={i} className="font-display-en text-[13px] text-emerald-800/80 leading-relaxed mt-1.5">
+                      <bdi>{p}</bdi>
+                    </p>
+                  ))}
+                </>
+              ) : (
+                <div className="space-y-2 mt-2">
+                  <input className="eval-input" placeholder="Title" value={bio.title} onChange={(e) => onBioChange({ ...bio, title: e.target.value })} />
+                  <input className="eval-input" placeholder="Subtitle" value={bio.subtitle} onChange={(e) => onBioChange({ ...bio, subtitle: e.target.value })} />
+                  {(bio.paragraphs || []).map((p, i) => (
+                    <textarea
+                      key={i}
+                      className="eval-input min-h-[60px]"
+                      value={p}
+                      onChange={(e) => {
+                        const next = [...bio.paragraphs];
+                        next[i] = e.target.value;
+                        onBioChange({ ...bio, paragraphs: next });
+                      }}
+                    />
+                  ))}
                 </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setEditingBio((v) => !v)}
+                className="mt-2 text-[11px] text-emerald-700 underline font-display-en"
+              >
+                {editingBio ? 'Done' : 'Edit bio (this session)'}
               </button>
-            );
-          })}
+            </div>
+          </div>
+
+          {/* ── Right · student introduction ── */}
+          <div className="welcome-pane">
+            <div className="flex items-baseline justify-between gap-2 mb-2">
+              <h3 className="font-display-en text-sm font-semibold text-emerald-900 inline-flex items-center gap-2">
+                <Users className="h-4 w-4" /> <bdi>Tell us about yourself</bdi>
+              </h3>
+              <span className="font-naskh text-emerald-800 text-sm" dir="rtl">عرّفنا بنفسك</span>
+            </div>
+
+            {/* Student tabs (multi-student) */}
+            {students.length > 1 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {students.map((s, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => onPickStudent(i)}
+                    className={`px-2.5 py-1 rounded-full text-[11px] inline-flex items-center gap-1 border font-display-en ${
+                      i === activeStudentIdx ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white/70 border-emerald-200 text-emerald-800'
+                    }`}
+                  >
+                    <span className="font-bold">{toArabicDigits(i + 1)}</span>
+                    <bdi>{s.name || `Student ${i + 1}`}</bdi>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Name">
+                <input className="eval-input" value={activeStudent.name || ''} onChange={(e) => onUpdateStudent({ name: e.target.value })} />
+              </Field>
+              <Field label="Age">
+                <input type="number" className="eval-input" value={activeStudent.age || ''} onChange={(e) => onUpdateStudent({ age: Number(e.target.value) || undefined })} />
+              </Field>
+              <Field label="Contact email" full>
+                <input className="eval-input" value={activeStudent.contactEmail || ''} onChange={(e) => onUpdateStudent({ contactEmail: e.target.value })} />
+              </Field>
+              <Field label="Subjects of interest" full>
+                <input className="eval-input"
+                  placeholder="comma separated"
+                  value={(activeStudent.desiredSubjects || []).join(', ')}
+                  onChange={(e) => onUpdateStudent({ desiredSubjects: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
+                />
+              </Field>
+              <Field label="Availability" full>
+                <textarea className="eval-input min-h-[48px]" value={activeStudent.availability || ''} onChange={(e) => onUpdateStudent({ availability: e.target.value })} />
+              </Field>
+              <Field label="General notes" full>
+                <textarea className="eval-input min-h-[48px]" value={activeStudent.generalNotes || ''} onChange={(e) => onUpdateStudent({ generalNotes: e.target.value })} />
+              </Field>
+            </div>
+
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                className="eval-input flex-1 font-display-en"
+                placeholder="Add another student (optional)"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
+              />
+              <button type="button" onClick={handleAdd}
+                className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-xs inline-flex items-center gap-1 font-display-en">
+                <Plus className="h-3.5 w-3.5" /> Add
+              </button>
+              {students.length > 1 && (
+                <button type="button" onClick={() => onRemoveStudent(activeStudentIdx)} className="text-rose-700 hover:bg-rose-50 p-1.5 rounded-full" title="Remove current student">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="mt-6 flex items-center justify-between gap-3">
-          <span className="text-xs text-emerald-700/80 font-display-en">
-            Subjects will run one after another. Add or remove anytime from the left rail.
-          </span>
+        <div className="mt-4 flex items-center justify-end">
           <button
             type="button"
-            onClick={onStart}
-            disabled={selected.length === 0}
-            className="px-6 py-2.5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold shadow hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 inline-flex items-center gap-2 font-display-en"
+            onClick={() => setStep('subjects')}
+            className="px-6 py-2.5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold shadow inline-flex items-center gap-2 font-display-en"
           >
-            Start <ChevronRight className="h-4 w-4" />
+            <bdi>Next · choose subjects</bdi> <ChevronRight className="h-4 w-4" />
           </button>
         </div>
+      </div>
+    );
+  }
+
+  /* step === 'subjects' */
+  return (
+    <div className="welcome-card slide-anim">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 text-emerald-700/80 font-display-en text-[11px] uppercase tracking-wider">
+          <span className="slide-progress-pill"><bdi>Step 2 / 2</bdi></span>
+          <span>Subjects · <span dir="rtl" className="font-naskh">المواد</span></span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setStep('intro')}
+          className="text-[11px] text-emerald-700 underline font-display-en"
+        >
+          <bdi>← back to introduction</bdi>
+        </button>
+      </div>
+
+      <div className="flex items-baseline justify-between">
+        <div>
+          <h3 className="font-thuluth text-emerald-900 text-2xl" dir="rtl">ماذا نختبر اليوم؟</h3>
+          <p className="font-display-en text-xs text-emerald-700/80 mt-0.5">
+            <bdi>Tap subjects in the order you want to test them.</bdi>
+          </p>
+        </div>
+        <span className="slide-progress-pill"><bdi>{selected.length} chosen</bdi></span>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5 mt-3">
+        {allSections.filter((s) => s.testable).map((s) => {
+          const order = selected.indexOf(s.key);
+          const on = order >= 0;
+          return (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => onToggle(s.key)}
+              className={`subject-card ${on ? 'is-on' : ''}`}
+            >
+              {on && <span className="order-pill">{toArabicDigits(order + 1)}</span>}
+              <div className="flex items-start gap-3">
+                <div className="icon">{s.icon || '📘'}</div>
+                <div className="min-w-0">
+                  <div className="font-display-en font-semibold text-emerald-900 truncate"><bdi>{s.title}</bdi></div>
+                  <div className="font-naskh text-emerald-700/85 text-sm truncate" dir="rtl">{s.ar}</div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <span className="text-xs text-emerald-700/80 font-display-en">
+          <bdi>Subjects will run in the order you tapped them.</bdi>
+        </span>
+        <button
+          type="button"
+          onClick={onStart}
+          disabled={selected.length === 0}
+          className="px-6 py-2.5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold shadow disabled:opacity-40 inline-flex items-center gap-2 font-display-en"
+        >
+          <bdi>Start evaluation</bdi> <ChevronRight className="h-4 w-4" />
+        </button>
       </div>
     </div>
   );

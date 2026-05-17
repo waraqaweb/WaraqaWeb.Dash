@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { Eye, EyeOff, User, Lock, AlertCircle } from 'lucide-react';
 
@@ -21,6 +21,7 @@ const LoginPage = () => {
 
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleChange = (e) => {
     setFormData({
@@ -40,8 +41,15 @@ const LoginPage = () => {
       const result = await login(formData.email, formData.password);
       
       if (result.success) {
-        // Redirect to dashboard for all non-admin roles
-        navigate('/dashboard');
+        // Send the user back to the originally-requested URL (set by
+        // ProtectedRoute) if it's a /dashboard URL; otherwise fall back to
+        // the dashboard root.
+        const from = location?.state?.from;
+        const fromPath = from && typeof from.pathname === 'string' ? from.pathname : '';
+        const target = fromPath.startsWith('/dashboard') && fromPath !== '/dashboard/login'
+          ? `${fromPath}${from.search || ''}`
+          : '/dashboard';
+        navigate(target, { replace: true });
       } else {
         setError(result.error);
       }

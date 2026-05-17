@@ -51,16 +51,17 @@ const PresenterPublicPage = React.lazy(() => import('./pages/PresenterPublicPage
 const ProtectedRoute = ({ children, requiredRole = null, allowedRoles = null }) => {
   const { user, loading, hasRole } = useAuth();
   const showLoading = useMinLoading(loading);
-
-  
+  const location = useLocation();
 
   if (showLoading) {
     return <LoadingSpinner fullScreen />;
   }
 
   if (!user) {
-    
-    return <Navigate to="/dashboard/login" replace />;
+    // Preserve the originally-requested URL so the user can be sent back
+    // there after a successful login, instead of always landing on the
+    // dashboard root (which would then auto-restore the last saved path).
+    return <Navigate to="/dashboard/login" replace state={{ from: location }} />;
   }
 
   const requiredRoles = Array.isArray(allowedRoles) && allowedRoles.length > 0

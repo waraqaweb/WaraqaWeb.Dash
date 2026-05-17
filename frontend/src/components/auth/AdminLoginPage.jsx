@@ -5,7 +5,7 @@
  */
 
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { Eye, EyeOff, Shield, Lock, AlertCircle, ArrowLeft } from 'lucide-react';
 
@@ -20,6 +20,7 @@ const AdminLoginPage = () => {
 
   const { adminLogin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleChange = (e) => {
     setFormData({
@@ -39,7 +40,13 @@ const AdminLoginPage = () => {
       const result = await adminLogin(formData.email, formData.password);
       
       if (result.success) {
-        navigate('/dashboard');
+        // Restore the originally-requested URL (set by ProtectedRoute) if any.
+        const from = location?.state?.from;
+        const fromPath = from && typeof from.pathname === 'string' ? from.pathname : '';
+        const target = fromPath.startsWith('/dashboard') && fromPath !== '/dashboard/login' && fromPath !== '/dashboard/admin-login'
+          ? `${fromPath}${from.search || ''}`
+          : '/dashboard';
+        navigate(target, { replace: true });
       } else {
         setError(result.error);
       }

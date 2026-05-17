@@ -919,14 +919,7 @@ const MeetingAvailabilityAdminPage = () => {
 
   return (
     <div className="mx-auto max-w-[1600px] p-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Calendar className="w-6 h-6 text-gray-700" />
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">Meeting Availability</h1>
-            <p className="text-sm text-gray-500">Control the bookable windows for evaluations and syncs.</p>
-          </div>
-        </div>
+      <div className="flex justify-end">
         <div className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 flex items-center gap-2">
           <Clock className="w-4 h-4 text-primary" />
           <span>{timezone}</span>

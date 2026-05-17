@@ -101,7 +101,7 @@ export default function MeetingActivityPanel({ timezone }) {
       else scheduledList.push(item);
     });
     return {
-      scheduled: scheduledList.sort((a, b) => new Date(a.scheduledStart) - new Date(b.scheduledStart)),
+      scheduled: scheduledList.sort((a, b) => new Date(b.scheduledStart) - new Date(a.scheduledStart)),
       reported: reportedList.sort((a, b) => new Date(b.report?.submittedAt || b.updatedAt) - new Date(a.report?.submittedAt || a.updatedAt)),
     };
   }, [items]);

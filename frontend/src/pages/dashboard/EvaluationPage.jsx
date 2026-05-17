@@ -829,7 +829,7 @@ const WelcomeSlide = ({
   onPickStudent, onAddStudent, onRenameStudent, onRemoveStudent,
   allSections, selected, onToggle, onStart,
 }) => {
-  const [step, setStep] = useState('intro'); // 'intro' | 'subjects'
+  const [step, setStep] = useState('evaluator'); // 'evaluator' | 'student' | 'subjects'
   const [newName, setNewName] = useState('');
   const [editingBio, setEditingBio] = useState(false);
   const handleAdd = () => {
@@ -839,97 +839,137 @@ const WelcomeSlide = ({
     setNewName('');
   };
 
-  if (step === 'intro') {
-    return (
-      <div className="welcome-card slide-anim welcome-intro">
-        {/* Top tiny stepper */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2 text-emerald-700/80 font-display-en text-[11px] uppercase tracking-wider">
-            <span className="slide-progress-pill"><bdi>Step 1 / 2</bdi></span>
-            <span>Introduction · <span dir="rtl" className="font-naskh">التعارف</span></span>
-          </div>
-          <div className="text-[11px] text-emerald-700/70 font-display-en"><bdi>Next: choose subjects</bdi></div>
-        </div>
+  const bullets = (bio.paragraphs || []).filter(Boolean);
+  // Always include role/title as a leading bullet if not already in paragraphs.
+  const introBullets = [
+    bio.title ? `${bio.title}${bio.subtitle ? ` · ${bio.subtitle}` : ''}` : null,
+    ...bullets,
+  ].filter(Boolean).slice(0, 4);
 
-        <div className="welcome-intro-grid">
-          {/* ── Left · greeting + evaluator ── */}
-          <div className="welcome-pane">
-            <div className="text-center">
-              {branding.logoUrl ? (
-                <img src={branding.logoUrl} alt="" className="mx-auto h-16 w-16 rounded-2xl shadow ring-1 ring-emerald-200 bg-white object-contain floaty" />
-              ) : (
-                <div className="mx-auto h-16 w-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 grid place-items-center text-white text-2xl font-bold shadow floaty">و</div>
+  const StepChips = (
+    <div className="welcome-steps">
+      <span className={`welcome-step ${step === 'evaluator' ? 'is-on' : 'is-done'}`}>
+        <span className="num">١</span> <bdi>Meet evaluator</bdi>
+      </span>
+      <span className="welcome-step-sep" />
+      <span className={`welcome-step ${step === 'student' ? 'is-on' : step === 'subjects' ? 'is-done' : ''}`}>
+        <span className="num">٢</span> <bdi>About you</bdi>
+      </span>
+      <span className="welcome-step-sep" />
+      <span className={`welcome-step ${step === 'subjects' ? 'is-on' : ''}`}>
+        <span className="num">٣</span> <bdi>Subjects</bdi>
+      </span>
+    </div>
+  );
+
+  if (step === 'evaluator') {
+    return (
+      <div className="welcome-stage slide-anim">
+        <div className="welcome-card is-tall tint-emerald">
+          {StepChips}
+
+          <div className="hero-evaluator">
+            <div className="halo">
+              <div className="halo-inner">
+                {branding.logoUrl ? (
+                  <img src={branding.logoUrl} alt="" className="h-[110px] w-[110px] object-contain" />
+                ) : (
+                  <div className="h-[110px] w-[110px] rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 grid place-items-center text-white text-4xl font-bold">و</div>
+                )}
+              </div>
+            </div>
+
+            <div className="font-display-en text-[11px] uppercase tracking-[0.32em] text-emerald-700 font-semibold mt-3">
+              <bdi>Today's evaluator</bdi>
+            </div>
+            <h2>{adminName}</h2>
+            <p className="greeting-ar" dir="rtl">أهلًا وسهلًا · بسم الله نبدأ</p>
+            <p className="tagline">
+              <bdi>A short introduction before we begin. Click <strong>Continue</strong> when you're ready.</bdi>
+            </p>
+
+            <div className="bio-bullets">
+              {introBullets.map((p, i) => (
+                <div key={i} className="bio-bullet">
+                  <span className="dot">{toArabicDigits(i + 1)}</span>
+                  <span className="text"><bdi>{p}</bdi></span>
+                </div>
+              ))}
+              {introBullets.length === 0 && (
+                <div className="bio-bullet">
+                  <span className="dot">١</span>
+                  <span className="text font-display-en text-emerald-700/70 italic">
+                    <bdi>Click "Edit bio" below to add introduction points.</bdi>
+                  </span>
+                </div>
               )}
-              <h2 className="font-thuluth mt-2 text-3xl text-emerald-900" dir="rtl">أهلًا وسهلًا</h2>
-              <p className="font-naskh text-emerald-800 text-base mt-0.5" dir="rtl">بسم الله نبدأ</p>
-              <p className="font-display-en text-emerald-700 mt-1 text-sm">
-                <bdi>Today's evaluator: <strong>{adminName}</strong></bdi>
+            </div>
+
+            {editingBio && (
+              <div className="grid gap-2 mt-4 w-full max-w-[700px] mx-auto">
+                <input className="eval-input" placeholder="Title (e.g. CEO at Waraqa)" value={bio.title} onChange={(e) => onBioChange({ ...bio, title: e.target.value })} />
+                <input className="eval-input" placeholder="Subtitle (e.g. Qur'an & Arabic expert)" value={bio.subtitle} onChange={(e) => onBioChange({ ...bio, subtitle: e.target.value })} />
+                {(bio.paragraphs || []).map((p, i) => (
+                  <textarea
+                    key={i}
+                    className="eval-input min-h-[48px]"
+                    placeholder={`Bullet point ${i + 1}`}
+                    value={p}
+                    onChange={(e) => {
+                      const next = [...bio.paragraphs];
+                      next[i] = e.target.value;
+                      onBioChange({ ...bio, paragraphs: next });
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditingBio((v) => !v)}
+              className="welcome-back mt-3"
+            >
+              {editingBio ? 'Done editing' : 'Edit bio (this session)'}
+            </button>
+          </div>
+
+          <div className="welcome-footer">
+            <span className="font-display-en text-xs text-emerald-700/70"><bdi>Step 1 of 3</bdi></span>
+            <button type="button" onClick={() => setStep('student')} className="welcome-cta">
+              <bdi>Continue · about the student</bdi> <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'student') {
+    return (
+      <div className="welcome-stage slide-anim">
+        <div className="welcome-card is-tall tint-indigo">
+          {StepChips}
+
+          <div className="px-2 pt-2 pb-4 flex-1 flex flex-col justify-center">
+            <div className="text-center mb-4">
+              <h2 className="font-thuluth text-3xl text-slate-900" dir="rtl">عرّفنا بنفسك</h2>
+              <div className="font-display-en text-sm text-indigo-700 font-semibold mt-1">
+                <bdi>Tell us about the student</bdi>
+              </div>
+              <p className="font-display-en text-xs text-slate-500 mt-1">
+                <bdi>Quick details so we can tailor the evaluation.</bdi>
               </p>
             </div>
 
-            <div className="mt-4 pt-3 border-t border-emerald-100">
-              <div className="flex items-baseline justify-between gap-2">
-                <h3 className="font-display-en text-sm font-semibold text-emerald-900"><bdi>Meet your evaluator</bdi></h3>
-                <span className="font-naskh text-emerald-800 text-sm" dir="rtl">تعرّف على معلمك</span>
-              </div>
-              {!editingBio ? (
-                <>
-                  <p className="font-display-en text-sm text-emerald-800/90 mt-1.5">
-                    <bdi>{bio.title}{bio.subtitle ? ` · ${bio.subtitle}` : ''}</bdi>
-                  </p>
-                  {(bio.paragraphs || []).slice(0, 2).map((p, i) => (
-                    <p key={i} className="font-display-en text-[13px] text-emerald-800/80 leading-relaxed mt-1.5">
-                      <bdi>{p}</bdi>
-                    </p>
-                  ))}
-                </>
-              ) : (
-                <div className="space-y-2 mt-2">
-                  <input className="eval-input" placeholder="Title" value={bio.title} onChange={(e) => onBioChange({ ...bio, title: e.target.value })} />
-                  <input className="eval-input" placeholder="Subtitle" value={bio.subtitle} onChange={(e) => onBioChange({ ...bio, subtitle: e.target.value })} />
-                  {(bio.paragraphs || []).map((p, i) => (
-                    <textarea
-                      key={i}
-                      className="eval-input min-h-[60px]"
-                      value={p}
-                      onChange={(e) => {
-                        const next = [...bio.paragraphs];
-                        next[i] = e.target.value;
-                        onBioChange({ ...bio, paragraphs: next });
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => setEditingBio((v) => !v)}
-                className="mt-2 text-[11px] text-emerald-700 underline font-display-en"
-              >
-                {editingBio ? 'Done' : 'Edit bio (this session)'}
-              </button>
-            </div>
-          </div>
-
-          {/* ── Right · student introduction ── */}
-          <div className="welcome-pane">
-            <div className="flex items-baseline justify-between gap-2 mb-2">
-              <h3 className="font-display-en text-sm font-semibold text-emerald-900 inline-flex items-center gap-2">
-                <Users className="h-4 w-4" /> <bdi>Tell us about yourself</bdi>
-              </h3>
-              <span className="font-naskh text-emerald-800 text-sm" dir="rtl">عرّفنا بنفسك</span>
-            </div>
-
-            {/* Student tabs (multi-student) */}
             {students.length > 1 && (
-              <div className="flex flex-wrap gap-1.5 mb-2">
+              <div className="flex flex-wrap gap-1.5 justify-center mb-3">
                 {students.map((s, i) => (
                   <button
                     key={i}
                     type="button"
                     onClick={() => onPickStudent(i)}
                     className={`px-2.5 py-1 rounded-full text-[11px] inline-flex items-center gap-1 border font-display-en ${
-                      i === activeStudentIdx ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white/70 border-emerald-200 text-emerald-800'
+                      i === activeStudentIdx ? 'bg-indigo-600 text-white border-indigo-600 shadow' : 'bg-white/70 border-indigo-200 text-indigo-800'
                     }`}
                   >
                     <span className="font-bold">{toArabicDigits(i + 1)}</span>
@@ -939,60 +979,64 @@ const WelcomeSlide = ({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="Name">
+            <div className="student-form-grid">
+              <div>
+                <label className="eval-field-label">Name · <span dir="rtl" className="font-naskh">الاسم</span></label>
                 <input className="eval-input" value={activeStudent.name || ''} onChange={(e) => onUpdateStudent({ name: e.target.value })} />
-              </Field>
-              <Field label="Age">
+              </div>
+              <div>
+                <label className="eval-field-label">Age · <span dir="rtl" className="font-naskh">العمر</span></label>
                 <input type="number" className="eval-input" value={activeStudent.age || ''} onChange={(e) => onUpdateStudent({ age: Number(e.target.value) || undefined })} />
-              </Field>
-              <Field label="Contact email" full>
-                <input className="eval-input" value={activeStudent.contactEmail || ''} onChange={(e) => onUpdateStudent({ contactEmail: e.target.value })} />
-              </Field>
-              <Field label="Subjects of interest" full>
+              </div>
+              <div className="full">
+                <label className="eval-field-label">Contact email · <span dir="rtl" className="font-naskh">البريد الإلكتروني</span></label>
+                <input className="eval-input" placeholder="name@example.com" value={activeStudent.contactEmail || ''} onChange={(e) => onUpdateStudent({ contactEmail: e.target.value })} />
+              </div>
+              <div className="full">
+                <label className="eval-field-label">Subjects of interest · <span dir="rtl" className="font-naskh">المواد المرغوبة</span></label>
                 <input className="eval-input"
-                  placeholder="comma separated"
+                  placeholder="comma separated (e.g. Qur'an, Arabic, Tajweed)"
                   value={(activeStudent.desiredSubjects || []).join(', ')}
                   onChange={(e) => onUpdateStudent({ desiredSubjects: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
                 />
-              </Field>
-              <Field label="Availability" full>
-                <textarea className="eval-input min-h-[48px]" value={activeStudent.availability || ''} onChange={(e) => onUpdateStudent({ availability: e.target.value })} />
-              </Field>
-              <Field label="General notes" full>
-                <textarea className="eval-input min-h-[48px]" value={activeStudent.generalNotes || ''} onChange={(e) => onUpdateStudent({ generalNotes: e.target.value })} />
-              </Field>
-            </div>
-
-            <div className="mt-2 flex items-center gap-2">
-              <input
-                className="eval-input flex-1 font-display-en"
-                placeholder="Add another student (optional)"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
-              />
-              <button type="button" onClick={handleAdd}
-                className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-xs inline-flex items-center gap-1 font-display-en">
-                <Plus className="h-3.5 w-3.5" /> Add
-              </button>
-              {students.length > 1 && (
-                <button type="button" onClick={() => onRemoveStudent(activeStudentIdx)} className="text-rose-700 hover:bg-rose-50 p-1.5 rounded-full" title="Remove current student">
-                  <Trash2 className="h-4 w-4" />
+              </div>
+              <div className="full">
+                <label className="eval-field-label">Availability · <span dir="rtl" className="font-naskh">المواعيد المتاحة</span></label>
+                <textarea className="eval-input min-h-[52px]" value={activeStudent.availability || ''} onChange={(e) => onUpdateStudent({ availability: e.target.value })} />
+              </div>
+              <div className="full">
+                <label className="eval-field-label">General notes · <span dir="rtl" className="font-naskh">ملاحظات عامة</span></label>
+                <textarea className="eval-input min-h-[52px]" value={activeStudent.generalNotes || ''} onChange={(e) => onUpdateStudent({ generalNotes: e.target.value })} />
+              </div>
+              <div className="full flex items-center gap-2 mt-1">
+                <input
+                  className="eval-input flex-1 font-display-en"
+                  placeholder="Add another student (optional)"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
+                />
+                <button type="button" onClick={handleAdd}
+                  className="px-3 py-2 rounded-full bg-indigo-600 text-white text-xs inline-flex items-center gap-1 font-display-en shadow">
+                  <Plus className="h-3.5 w-3.5" /> Add
                 </button>
-              )}
+                {students.length > 1 && (
+                  <button type="button" onClick={() => onRemoveStudent(activeStudentIdx)} className="text-rose-700 hover:bg-rose-50 p-2 rounded-full" title="Remove current student">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="mt-4 flex items-center justify-end">
-          <button
-            type="button"
-            onClick={() => setStep('subjects')}
-            className="px-6 py-2.5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold shadow inline-flex items-center gap-2 font-display-en"
-          >
-            <bdi>Next · choose subjects</bdi> <ChevronRight className="h-4 w-4" />
-          </button>
+          <div className="welcome-footer">
+            <button type="button" onClick={() => setStep('evaluator')} className="welcome-back inline-flex items-center gap-1">
+              <ChevronLeft className="h-4 w-4" /> back to evaluator
+            </button>
+            <button type="button" onClick={() => setStep('subjects')} className="welcome-cta">
+              <bdi>Continue · choose subjects</bdi> <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1000,67 +1044,57 @@ const WelcomeSlide = ({
 
   /* step === 'subjects' */
   return (
-    <div className="welcome-card slide-anim">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 text-emerald-700/80 font-display-en text-[11px] uppercase tracking-wider">
-          <span className="slide-progress-pill"><bdi>Step 2 / 2</bdi></span>
-          <span>Subjects · <span dir="rtl" className="font-naskh">المواد</span></span>
-        </div>
-        <button
-          type="button"
-          onClick={() => setStep('intro')}
-          className="text-[11px] text-emerald-700 underline font-display-en"
-        >
-          <bdi>← back to introduction</bdi>
-        </button>
-      </div>
+    <div className="welcome-stage slide-anim">
+      <div className="welcome-card is-tall tint-amber">
+        {StepChips}
 
-      <div className="flex items-baseline justify-between">
-        <div>
-          <h3 className="font-thuluth text-emerald-900 text-2xl" dir="rtl">ماذا نختبر اليوم؟</h3>
-          <p className="font-display-en text-xs text-emerald-700/80 mt-0.5">
-            <bdi>Tap subjects in the order you want to test them.</bdi>
-          </p>
+        <div className="flex items-baseline justify-between px-2">
+          <div>
+            <h3 className="font-thuluth text-emerald-900 text-2xl" dir="rtl">ماذا نختبر اليوم؟</h3>
+            <p className="font-display-en text-xs text-emerald-700/80 mt-0.5">
+              <bdi>Tap subjects in the order you want to test them.</bdi>
+            </p>
+          </div>
+          <span className="slide-progress-pill"><bdi>{selected.length} chosen</bdi></span>
         </div>
-        <span className="slide-progress-pill"><bdi>{selected.length} chosen</bdi></span>
-      </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5 mt-3">
-        {allSections.filter((s) => s.testable).map((s) => {
-          const order = selected.indexOf(s.key);
-          const on = order >= 0;
-          return (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => onToggle(s.key)}
-              className={`subject-card ${on ? 'is-on' : ''}`}
-            >
-              {on && <span className="order-pill">{toArabicDigits(order + 1)}</span>}
-              <div className="flex items-start gap-3">
-                <div className="icon">{s.icon || '📘'}</div>
-                <div className="min-w-0">
-                  <div className="font-display-en font-semibold text-emerald-900 truncate"><bdi>{s.title}</bdi></div>
-                  <div className="font-naskh text-emerald-700/85 text-sm truncate" dir="rtl">{s.ar}</div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5 mt-4 px-1 flex-1">
+          {allSections.filter((s) => s.testable).map((s) => {
+            const order = selected.indexOf(s.key);
+            const on = order >= 0;
+            return (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => onToggle(s.key)}
+                className={`subject-card ${on ? 'is-on' : ''}`}
+              >
+                {on && <span className="order-pill">{toArabicDigits(order + 1)}</span>}
+                <div className="flex items-start gap-3">
+                  <div className="icon">{s.icon || '📘'}</div>
+                  <div className="min-w-0">
+                    <div className="font-display-en font-semibold text-emerald-900 truncate"><bdi>{s.title}</bdi></div>
+                    <div className="font-naskh text-emerald-700/85 text-sm truncate" dir="rtl">{s.ar}</div>
+                  </div>
                 </div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+              </button>
+            );
+          })}
+        </div>
 
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <span className="text-xs text-emerald-700/80 font-display-en">
-          <bdi>Subjects will run in the order you tapped them.</bdi>
-        </span>
-        <button
-          type="button"
-          onClick={onStart}
-          disabled={selected.length === 0}
-          className="px-6 py-2.5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold shadow disabled:opacity-40 inline-flex items-center gap-2 font-display-en"
-        >
-          <bdi>Start evaluation</bdi> <ChevronRight className="h-4 w-4" />
-        </button>
+        <div className="welcome-footer">
+          <button type="button" onClick={() => setStep('student')} className="welcome-back inline-flex items-center gap-1">
+            <ChevronLeft className="h-4 w-4" /> back to student
+          </button>
+          <button
+            type="button"
+            onClick={onStart}
+            disabled={selected.length === 0}
+            className="welcome-cta"
+          >
+            <bdi>Start evaluation</bdi> <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
   );

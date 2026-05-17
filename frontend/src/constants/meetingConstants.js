@@ -22,6 +22,13 @@ export const MEETING_TYPE_LABELS = Object.freeze({
   [MEETING_TYPES.TEACHER_SYNC]: 'Teacher Sync',
 });
 
+// Tailwind classes used to color-code meeting-type pills in admin views.
+export const MEETING_TYPE_TONES = Object.freeze({
+  [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 'bg-sky-50 text-sky-700 border-sky-200',
+  [MEETING_TYPES.TEACHER_SYNC]: 'bg-violet-50 text-violet-700 border-violet-200',
+});
+
 export const PUBLIC_BOOKABLE_MEETING_TYPES = Object.freeze([
   MEETING_TYPES.NEW_STUDENT_EVALUATION,
 ]);

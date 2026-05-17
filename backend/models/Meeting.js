@@ -229,6 +229,21 @@ const meetingSchema = new mongoose.Schema({
     cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     cancelledAt: { type: Date }
   },
+  // Attendance disposition recorded by admin once the meeting time has
+  // passed. Independent of `status` so we can keep "scheduled" rows visible
+  // until an explicit attendance is captured.
+  attendanceStatus: {
+    type: String,
+    enum: ['attended', 'no_show', 'cancelled_no_penalty', null],
+    default: null
+  },
+  // Opaque short token embedded in confirmation emails so recipients can
+  // reschedule/cancel without logging in. Unique per meeting.
+  actionToken: {
+    type: String,
+    trim: true,
+    index: true
+  },
   visibility: {
     showInCalendar: { type: Boolean, default: true },
     displayColor: { type: String, default: '#FEF9C3' }

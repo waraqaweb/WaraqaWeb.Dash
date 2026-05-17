@@ -970,6 +970,57 @@ const cancelMeeting = async ({ meetingId, adminId, reason }) => {
   return formatMeetingResponse(meeting);
 };
 
+const ATTENDANCE_STATUSES = ['attended', 'no_show', 'cancelled_no_penalty'];
+
+const hardDeleteMeeting = async ({ meetingId, adminId }) => {
+  if (!meetingId) {
+    throw createError(400, 'Meeting id is required');
+  }
+  const admin = await resolveAdmin(adminId);
+  const meeting = await Meeting.findById(meetingId);
+  if (!meeting) {
+    throw createError(404, 'Meeting not found');
+  }
+  if (admin && meeting.adminId && String(meeting.adminId) !== String(admin._id)) {
+    throw createError(403, 'Not allowed to delete this meeting');
+  }
+  await Meeting.findByIdAndDelete(meetingId);
+  return { _id: meetingId, deleted: true };
+};
+
+const setMeetingAttendance = async ({ meetingId, adminId, attendanceStatus }) => {
+  if (!meetingId) {
+    throw createError(400, 'Meeting id is required');
+  }
+  if (!ATTENDANCE_STATUSES.includes(attendanceStatus)) {
+    throw createError(400, `attendanceStatus must be one of: ${ATTENDANCE_STATUSES.join(', ')}`);
+  }
+  const admin = await resolveAdmin(adminId);
+  const meeting = await Meeting.findById(meetingId);
+  if (!meeting) {
+    throw createError(404, 'Meeting not found');
+  }
+  if (admin && meeting.adminId && String(meeting.adminId) !== String(admin._id)) {
+    throw createError(403, 'Not allowed to update this meeting');
+  }
+  meeting.attendanceStatus = attendanceStatus;
+  // Map attendance to coarse status if the meeting is still scheduled
+  if (attendanceStatus === 'attended') {
+    meeting.status = MEETING_STATUSES.COMPLETED;
+  } else if (attendanceStatus === 'no_show') {
+    meeting.status = MEETING_STATUSES.NO_SHOW;
+  } else if (attendanceStatus === 'cancelled_no_penalty' && meeting.status !== MEETING_STATUSES.CANCELLED) {
+    meeting.status = MEETING_STATUSES.CANCELLED;
+    meeting.cancellation = meeting.cancellation || {
+      reason: 'Cancelled (no penalty)',
+      cancelledBy: admin?._id,
+      cancelledAt: new Date()
+    };
+  }
+  await meeting.save();
+  return formatMeetingResponse(meeting);
+};
+
 const rescheduleMeeting = async ({ meetingId, adminId, startTime, endTime, durationMinutes, reason }) => {
   if (!meetingId) {
     throw createError(400, 'Meeting id is required');
@@ -1098,6 +1149,8 @@ module.exports = {
   bookMeeting,
   listMeetings,
   cancelMeeting,
+  hardDeleteMeeting,
+  setMeetingAttendance,
   rescheduleMeeting,
   submitMeetingReport,
   resolveAdmin,

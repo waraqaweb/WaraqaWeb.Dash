@@ -194,10 +194,10 @@ const MeetingReportModal = ({ isOpen, meeting = null, onClose, onSaved }) => {
       setError('');
       const payload = buildPayload();
       const meetingId = meeting._id || meeting.id;
-      await submitMeetingReport(meetingId, payload);
+      const updated = await submitMeetingReport(meetingId, payload);
       setSuccessMessage('Meeting report saved');
       if (onSaved) {
-        onSaved();
+        onSaved(updated);
       }
     } catch (err) {
       const message = err?.response?.data?.message || 'Failed to save meeting report';

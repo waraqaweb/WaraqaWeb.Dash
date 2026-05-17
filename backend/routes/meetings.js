@@ -239,4 +239,29 @@ router.patch('/:meetingId/reschedule', authenticateToken, requireAdmin, async (r
   }
 });
 
+router.delete('/:meetingId/hard', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await meetingService.hardDeleteMeeting({
+      meetingId: req.params.meetingId,
+      adminId: parseAdminId(req)
+    });
+    res.json({ message: 'Meeting deleted', ...result });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.patch('/:meetingId/attendance', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const meeting = await meetingService.setMeetingAttendance({
+      meetingId: req.params.meetingId,
+      adminId: parseAdminId(req),
+      attendanceStatus: req.body?.attendanceStatus
+    });
+    res.json({ message: 'Attendance updated', meeting });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 module.exports = router;

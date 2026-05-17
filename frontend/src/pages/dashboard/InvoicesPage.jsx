@@ -1411,8 +1411,14 @@ const InvoicesPage = ({ isActive = true }) => {
         const aPaid = isPaid(a);
         const bPaid = isPaid(b);
         if (aPaid !== bPaid) return aPaid ? 1 : -1;
-        const ld = linkTiebreak(a, b);
-        if (ld !== 0) return ld;
+        // Link tiebreak only matters for unpaid invoices (WA-ready surfacing).
+        // For paid invoices and inside search results the user expects strict
+        // recency order — newest first, oldest last — without the link split
+        // scrambling older paid invoices above newer ones.
+        if (!searchMode && !aPaid && !bPaid) {
+          const ld = linkTiebreak(a, b);
+          if (ld !== 0) return ld;
+        }
         return recentFirst(a, b);
       });
       return list;

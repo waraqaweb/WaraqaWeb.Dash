@@ -131,8 +131,16 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeView, setActiveView] = useState('home');
-  const [mountedViews, setMountedViews] = useState(['home']);
+  // Derive initial view from the current URL so a hard refresh of a dashboard
+  // sub-route (e.g. /dashboard/evaluation) doesn't mount DashboardHome first
+  // and fire its data-loading requests before the URL-driven effect runs.
+  const getViewFromPath = (path) => {
+    if (!path || path === '/dashboard' || path === '/dashboard/') return 'home';
+    const segments = String(path).split('?')[0].split('/').filter(Boolean);
+    return segments[segments.length - 1] || 'home';
+  };
+  const [activeView, setActiveView] = useState(() => getViewFromPath(location.pathname));
+  const [mountedViews, setMountedViews] = useState(() => [getViewFromPath(location.pathname)]);
   const lastDashboardPathRef = React.useRef(null);
 
   const isPathAllowedForRole = React.useCallback((path) => {
@@ -259,17 +267,7 @@ const Dashboard = () => {
 
   // Determine active view from URL path
   useEffect(() => {
-    const path = location.pathname;
-    
-    // Extract view from path
-    if (path === '/dashboard' || path === '/dashboard/') {
-      setActiveView('home');
-    } else {
-      // Extract the last segment after /dashboard/
-      const segments = path.split('/').filter(Boolean);
-      const viewSegment = segments[segments.length - 1];
-      setActiveView(viewSegment);
-    }
+    setActiveView(getViewFromPath(location.pathname));
   }, [location.pathname]);
 
   // Keep visited views mounted so lists don't reload on every tab switch.

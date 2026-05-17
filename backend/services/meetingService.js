@@ -970,6 +970,72 @@ const cancelMeeting = async ({ meetingId, adminId, reason }) => {
   return formatMeetingResponse(meeting);
 };
 
+const rescheduleMeeting = async ({ meetingId, adminId, startTime, endTime, durationMinutes, reason }) => {
+  if (!meetingId) {
+    throw createError(400, 'Meeting id is required');
+  }
+  if (!startTime) {
+    throw createError(400, 'startTime is required');
+  }
+  const newStart = new Date(startTime);
+  if (Number.isNaN(newStart.getTime())) {
+    throw createError(400, 'Invalid startTime');
+  }
+  const admin = await resolveAdmin(adminId);
+  const meeting = await Meeting.findById(meetingId);
+  if (!meeting) {
+    throw createError(404, 'Meeting not found');
+  }
+  if (admin && meeting.adminId && String(meeting.adminId) !== String(admin._id)) {
+    throw createError(403, 'Not allowed to reschedule this meeting');
+  }
+
+  const prevStart = meeting.scheduledStart;
+  const prevEnd = meeting.scheduledEnd;
+  const prevDurationMs = prevEnd && prevStart ? (prevEnd.getTime() - prevStart.getTime()) : null;
+
+  let newEnd;
+  if (endTime) {
+    newEnd = new Date(endTime);
+    if (Number.isNaN(newEnd.getTime())) {
+      throw createError(400, 'Invalid endTime');
+    }
+  } else if (durationMinutes && Number(durationMinutes) > 0) {
+    newEnd = new Date(newStart.getTime() + Number(durationMinutes) * 60000);
+  } else if (prevDurationMs && prevDurationMs > 0) {
+    newEnd = new Date(newStart.getTime() + prevDurationMs);
+  } else {
+    newEnd = new Date(newStart.getTime() + 30 * 60000);
+  }
+  if (newEnd <= newStart) {
+    throw createError(400, 'End must be after start');
+  }
+
+  meeting.scheduledStart = newStart;
+  meeting.scheduledEnd = newEnd;
+  meeting.durationMinutes = Math.round((newEnd.getTime() - newStart.getTime()) / 60000);
+  if (meeting.status === MEETING_STATUSES.CANCELLED) {
+    meeting.status = MEETING_STATUSES.SCHEDULED;
+    meeting.cancellation = undefined;
+  }
+  if (!Array.isArray(meeting.rescheduleHistory)) {
+    meeting.rescheduleHistory = [];
+  }
+  meeting.rescheduleHistory.push({
+    previousStart: prevStart,
+    previousEnd: prevEnd,
+    newStart,
+    newEnd,
+    reason: (reason || '').trim() || undefined,
+    rescheduledBy: admin?._id,
+    rescheduledAt: new Date()
+  });
+  meeting.markModified('rescheduleHistory');
+
+  await meeting.save();
+  return formatMeetingResponse(meeting);
+};
+
 const submitMeetingReport = async ({ meetingId, payload, submittedBy }) => {
   const meeting = await Meeting.findById(meetingId);
   if (!meeting) {
@@ -1032,6 +1098,7 @@ module.exports = {
   bookMeeting,
   listMeetings,
   cancelMeeting,
+  rescheduleMeeting,
   submitMeetingReport,
   resolveAdmin,
   buildCalendarLinks,

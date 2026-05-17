@@ -223,4 +223,20 @@ router.delete('/:meetingId', authenticateToken, requireAdmin, async (req, res) =
   }
 });
 
+router.patch('/:meetingId/reschedule', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const meeting = await meetingService.rescheduleMeeting({
+      meetingId: req.params.meetingId,
+      adminId: parseAdminId(req),
+      startTime: req.body?.startTime,
+      endTime: req.body?.endTime,
+      durationMinutes: req.body?.durationMinutes,
+      reason: req.body?.reason
+    });
+    res.json({ message: 'Meeting rescheduled', meeting });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 module.exports = router;

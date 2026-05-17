@@ -66,3 +66,9 @@ export async function deleteMeeting(meetingId) {
   const { data } = await api.delete(`${BASE}/${meetingId}`);
   return data.meeting;
 }
+
+export async function rescheduleMeeting(meetingId, payload) {
+  if (!meetingId) throw new Error('meetingId is required to reschedule');
+  const { data } = await api.patch(`${BASE}/${meetingId}/reschedule`, payload);
+  return data.meeting;
+}

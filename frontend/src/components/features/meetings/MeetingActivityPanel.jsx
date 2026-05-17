@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, Clock3, FileText, RefreshCw, Users } from 'lucide-react';
-import { listMeetings } from '../../../api/meetings';
+import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, Clock3, FileText, RefreshCw, Users, Pencil } from 'lucide-react';
+import { listMeetings, rescheduleMeeting } from '../../../api/meetings';
 import { MEETING_TYPE_LABELS } from '../../../constants/meetingConstants';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
@@ -25,11 +25,23 @@ const formatWhen = (value, timezone) => {
   }
 };
 
+const toLocalDatetimeInput = (value) => {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 export default function MeetingActivityPanel({ timezone }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [expandedId, setExpandedId] = useState('');
+  const [rescheduleId, setRescheduleId] = useState('');
+  const [rescheduleStart, setRescheduleStart] = useState('');
+  const [rescheduleSaving, setRescheduleSaving] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState('');
 
   const load = async () => {
     try {
@@ -81,8 +93,40 @@ export default function MeetingActivityPanel({ timezone }) {
     };
   }, [items]);
 
+  const openReschedule = (meeting) => {
+    setRescheduleId(meeting._id);
+    setRescheduleStart(toLocalDatetimeInput(meeting.scheduledStart));
+    setRescheduleError('');
+  };
+
+  const closeReschedule = () => {
+    setRescheduleId('');
+    setRescheduleStart('');
+    setRescheduleError('');
+    setRescheduleSaving(false);
+  };
+
+  const saveReschedule = async (meetingId) => {
+    if (!rescheduleStart) {
+      setRescheduleError('Pick a new date and time');
+      return;
+    }
+    setRescheduleSaving(true);
+    setRescheduleError('');
+    try {
+      const iso = new Date(rescheduleStart).toISOString();
+      const updated = await rescheduleMeeting(meetingId, { startTime: iso });
+      setItems((prev) => prev.map((m) => (m._id === meetingId ? { ...m, ...updated } : m)));
+      closeReschedule();
+    } catch (err) {
+      setRescheduleError(err?.response?.data?.message || 'Failed to reschedule');
+      setRescheduleSaving(false);
+    }
+  };
+
   const renderCard = (meeting, mode = 'scheduled') => {
     const isOpen = expandedId === meeting._id;
+    const isRescheduling = rescheduleId === meeting._id;
     const studentNames = (meeting?.bookingPayload?.students || []).map((student) => student.studentName).filter(Boolean);
     const contactName = meeting?.attendees?.teacherName || meeting?.bookingPayload?.guardianName;
     const contactEmail = meeting?.bookingPayload?.guardianEmail;
@@ -110,12 +154,64 @@ export default function MeetingActivityPanel({ timezone }) {
           </div>
           {isOpen ? <ChevronUp className="mt-1 h-4 w-4 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 text-slate-400" />}
         </button>
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+          {!isRescheduling ? (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openReschedule(meeting); }}
+              className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Reschedule
+            </button>
+          ) : null}
+        </div>
+        {isRescheduling ? (
+          <div className="mt-3 space-y-2 rounded-xl border border-sky-200 bg-sky-50/50 p-3">
+            <label className="block text-xs font-semibold text-slate-700">New date &amp; time (your local time)</label>
+            <input
+              type="datetime-local"
+              value={rescheduleStart}
+              onChange={(e) => setRescheduleStart(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+            />
+            {rescheduleError ? <div className="text-xs text-red-600">{rescheduleError}</div> : null}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={rescheduleSaving}
+                onClick={() => saveReschedule(meeting._id)}
+                className="inline-flex items-center gap-1 rounded-full bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-60"
+              >
+                {rescheduleSaving ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                type="button"
+                disabled={rescheduleSaving}
+                onClick={closeReschedule}
+                className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <span className="text-[11px] text-slate-500">Duration is preserved. No email is sent automatically.</span>
+            </div>
+          </div>
+        ) : null}
         {isOpen ? (
           <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-sm text-slate-600">
             {contactEmail ? <p><span className="font-semibold text-slate-800">Email:</span> {contactEmail}</p> : null}
             {meeting?.bookingPayload?.guardianPhone ? <p><span className="font-semibold text-slate-800">Phone:</span> {meeting.bookingPayload.guardianPhone}</p> : null}
             {meeting?.bookingPayload?.notes ? <p><span className="font-semibold text-slate-800">Notes:</span> {meeting.bookingPayload.notes}</p> : null}
             {meeting?.report?.notes ? <p><span className="font-semibold text-slate-800">Report:</span> {meeting.report.notes}</p> : null}
+            {Array.isArray(meeting?.rescheduleHistory) && meeting.rescheduleHistory.length ? (
+              <div>
+                <p className="font-semibold text-slate-800">Reschedule history</p>
+                <ul className="mt-1 space-y-1 text-xs text-slate-500">
+                  {meeting.rescheduleHistory.slice(-5).map((h, i) => (
+                    <li key={i}>{formatWhen(h.previousStart, timezone || meeting.timezone)} → {formatWhen(h.newStart, timezone || meeting.timezone)}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

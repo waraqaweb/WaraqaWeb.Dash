@@ -302,7 +302,7 @@ export default function MeetingActivityPanel({ timezone }) {
               >
                 Cancel
               </button>
-              <span className="text-[11px] text-slate-500">Duration is preserved. No email is sent automatically.</span>
+              <span className="text-[11px] text-slate-500">Duration is preserved. Guardian &amp; teacher get an email automatically.</span>
             </div>
           </div>
         ) : null}

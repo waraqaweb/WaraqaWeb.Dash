@@ -12,6 +12,7 @@ const SystemVacation = require('../models/SystemVacation');
 const User = require('../models/User');
 const RegistrationLead = require('../models/RegistrationLead');
 const notificationService = require('./notificationService');
+const emailService = require('./emailService');
 const {
   MEETING_TYPES,
   MEETING_STATUSES,
@@ -1021,6 +1022,72 @@ const setMeetingAttendance = async ({ meetingId, adminId, attendanceStatus }) =>
   return formatMeetingResponse(meeting);
 };
 
+const sendRescheduleEmails = async ({ meeting, prevStart, prevEnd, reason }) => {
+  try {
+    const tz = meeting.timezone || meeting.bookingPayload?.timezone || 'Africa/Cairo';
+    const fmt = (d) => (d ? moment(d).tz(tz).format('ddd, MMM D, YYYY [at] h:mm A') : 'TBD');
+    const oldStr = fmt(prevStart);
+    const newStr = fmt(meeting.scheduledStart);
+    const tzLabel = tz;
+
+    const recipients = new Set();
+    const addEmail = (e) => {
+      if (!e) return;
+      const v = String(e).trim().toLowerCase();
+      if (v && /.+@.+\..+/.test(v)) recipients.add(v);
+    };
+    addEmail(meeting.bookingPayload?.guardianEmail);
+    if (Array.isArray(meeting.attendees?.additionalEmails)) {
+      meeting.attendees.additionalEmails.forEach(addEmail);
+    }
+    if (meeting.teacherId) {
+      try {
+        const teacher = await User.findById(meeting.teacherId).select('email');
+        if (teacher?.email) addEmail(teacher.email);
+      } catch (_) { /* noop */ }
+    }
+    if (!recipients.size) return;
+
+    const guardianName = meeting.bookingPayload?.guardianName || '';
+    const subject = `Your meeting has been rescheduled — ${newStr}`;
+    const reasonBlock = reason
+      ? `<p style="margin:0 0 14px;color:#374151;"><strong>Reason:</strong> ${String(reason).replace(/[<>&]/g, '')}</p>`
+      : '';
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;background:#ffffff;color:#0f172a;">
+        <h2 style="margin:0 0 12px;color:#0f172a;">Meeting rescheduled</h2>
+        <p style="margin:0 0 14px;color:#374151;">Hi ${guardianName || 'there'},</p>
+        <p style="margin:0 0 14px;color:#374151;">Your meeting with Waraqa has been moved to a new time.</p>
+        ${reasonBlock}
+        <table style="width:100%;border-collapse:collapse;margin:8px 0 16px;">
+          <tr>
+            <td style="padding:10px 12px;background:#f1f5f9;border-radius:8px 0 0 8px;color:#64748b;font-size:12px;">Previous time</td>
+            <td style="padding:10px 12px;background:#f8fafc;border-radius:0 8px 8px 0;color:#475569;text-decoration:line-through;">${oldStr}</td>
+          </tr>
+          <tr><td style="height:6px;" colspan="2"></td></tr>
+          <tr>
+            <td style="padding:10px 12px;background:#e0f2fe;border-radius:8px 0 0 8px;color:#075985;font-size:12px;font-weight:600;">New time</td>
+            <td style="padding:10px 12px;background:#f0f9ff;border-radius:0 8px 8px 0;color:#0c4a6e;font-weight:600;">${newStr}</td>
+          </tr>
+          <tr><td style="padding:8px 12px;color:#94a3b8;font-size:12px;" colspan="2">Timezone: ${tzLabel}</td></tr>
+        </table>
+        <p style="margin:0 0 14px;color:#374151;">If this new time does not work for you, please reply to this email so we can find another slot.</p>
+        <p style="margin:24px 0 0;color:#94a3b8;font-size:12px;">— Waraqa</p>
+      </div>`;
+    const text = `Hi ${guardianName || 'there'},\n\nYour meeting has been rescheduled.\n\nPrevious time: ${oldStr}\nNew time: ${newStr}\nTimezone: ${tzLabel}\n${reason ? `Reason: ${reason}\n` : ''}\nIf the new time does not work, please reply to this email.\n\n— Waraqa`;
+
+    for (const to of recipients) {
+      try {
+        await emailService.sendMail({ to, subject, html, text });
+      } catch (err) {
+        console.error('[meetings] reschedule email failed for', to, err?.message || err);
+      }
+    }
+  } catch (err) {
+    console.error('[meetings] sendRescheduleEmails failed:', err?.message || err);
+  }
+};
+
 const rescheduleMeeting = async ({ meetingId, adminId, startTime, endTime, durationMinutes, reason }) => {
   if (!meetingId) {
     throw createError(400, 'Meeting id is required');
@@ -1084,6 +1151,8 @@ const rescheduleMeeting = async ({ meetingId, adminId, startTime, endTime, durat
   meeting.markModified('rescheduleHistory');
 
   await meeting.save();
+  // Fire-and-forget email to guardian + teacher (+ additional emails)
+  sendRescheduleEmails({ meeting, prevStart, prevEnd, reason }).catch(() => {});
   return formatMeetingResponse(meeting);
 };
 

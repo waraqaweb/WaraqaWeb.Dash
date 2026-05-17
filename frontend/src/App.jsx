@@ -775,23 +775,12 @@ function App() {
   }, []);
 
   const resolvedBasename = React.useMemo(() => {
-    // Dev: Vite serves from root, no /dashboard/ prefix
-    const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
-    if (isDev) return '/';
-
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname || '/';
-
-      // These public paths are served by nginx rewriting directly to index.html
-      // without the /dashboard/ prefix — basename must be '/'
-      if (path.startsWith('/public/') || path.startsWith('/interactive-learning')) return '/';
-
-      // Use Vite's injected BASE_URL (= '/dashboard/' in production builds, '/' in dev)
-      const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) || '/';
-      const normalizedBase = baseUrl === '/' ? '/' : baseUrl.replace(/\/$/, ''); // '/dashboard'
-      if (normalizedBase !== '/' && path.startsWith(normalizedBase)) return normalizedBase;
-    }
-
+    // All routes in this app are declared with absolute paths (e.g. "/dashboard/home",
+    // "/public/invoices/:slug"), so React Router's basename must stay at "/" — otherwise
+    // v6 strips the basename from the URL before matching and "/dashboard/foo" routes
+    // never match the corresponding "/dashboard/foo" URL.
+    // Vite's `base: '/dashboard/'` (vite.config.js) already handles asset URL rewriting;
+    // that is independent of the router basename.
     return '/';
   }, []);
 

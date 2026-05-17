@@ -89,6 +89,23 @@ const shuffle = (arr) => {
 
 const stripDiacritics = (s) => String(s).replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '');
 
+// Pick a writing direction for a mixed-language prompt by looking at the
+// first strong-directional character. If the sentence starts with a Latin
+// letter / digit we lay the whole row LTR (so the question reads naturally
+// from the left); Arabic / Hebrew / other RTL scripts fall through to RTL.
+const directionFor = (text) => {
+  const s = String(text || '').replace(/^\s+/, '');
+  if (!s) return 'ltr';
+  const ch = s.charCodeAt(0);
+  // Arabic / Arabic Supplement / Arabic Extended-A / Presentation Forms.
+  if (
+    (ch >= 0x0590 && ch <= 0x08FF)
+    || (ch >= 0xFB1D && ch <= 0xFDFF)
+    || (ch >= 0xFE70 && ch <= 0xFEFF)
+  ) return 'rtl';
+  return 'ltr';
+};
+
 const emptyStudent = (name = '') => ({
   name: name || 'Student',
   age: undefined,
@@ -1252,8 +1269,14 @@ const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, se
           const items = shuffledByGroup[gi] || g.items || [];
           const qid = `letters.${level}.${g.id || gi}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
+          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
+          const dir = directionFor(g.title);
           return (
-            <div key={g.id || gi} className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+            <div
+              key={g.id || gi}
+              dir={dir}
+              className={`rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
+            >
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <div className="text-base font-bold text-emerald-900">{g.title}</div>
@@ -1378,8 +1401,14 @@ const ReadingWordsSlide = ({ student, onChange, onAnswer, diacritics, onToggleDi
         {ordered.map((g, gi) => {
           const qid = `words.${level}.${g.id || gi}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
+          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
+          const dir = directionFor(g.title);
           return (
-            <div key={g.id || gi} className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+            <div
+              key={g.id || gi}
+              dir={dir}
+              className={`rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
+            >
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <div className="text-base font-bold text-emerald-900">{g.title}</div>
@@ -1459,8 +1488,12 @@ const QuranSlide = ({ student, onAnswer, font, onChangeFont }) => (
       {QURAN_PASSAGES.map((p) => {
         const qid = `quran.${p.id}`;
         const answer = (student.answers || []).find((a) => a.questionId === qid);
+        const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
         return (
-          <div key={p.id} className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/60 to-white p-4">
+          <div
+            key={p.id}
+            className={`rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/60 to-white p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
+          >
             <div className="flex items-center justify-between mb-2">
               <div className="text-sm font-semibold text-emerald-900">{p.surah} <span className="text-emerald-700/70">· {p.range}</span></div>
               <VerdictRow
@@ -1504,8 +1537,14 @@ const TajweedTheorySlide = ({ student, onAnswer }) => (
         const qid = `tajweed.theory.${q.id}`;
         const answer = (student.answers || []).find((a) => a.questionId === qid);
         const chosenIdx = answer?.chosen?.[0] !== undefined ? Number(answer.chosen[0]) : null;
+        const answered = chosenIdx !== null;
+        const dir = directionFor(q.question);
         return (
-          <div key={q.id} className="rounded-2xl border border-emerald-100 bg-white/60 p-4">
+          <div
+            key={q.id}
+            dir={dir}
+            className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
+          >
             <div className="flex items-start justify-between gap-3 mb-2">
               <div className="font-medium text-emerald-900">{q.question}</div>
               <span className="text-[10px] uppercase tracking-wide text-emerald-700">{q.level}</span>
@@ -1551,8 +1590,14 @@ const TajweedPracticalSlide = ({ student, onAnswer }) => (
       {TAJWEED_PRACTICAL.map((q) => {
         const qid = `tajweed.practical.${q.id}`;
         const answer = (student.answers || []).find((a) => a.questionId === qid);
+        const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
+        const dir = directionFor(q.prompt);
         return (
-          <div key={q.id} className="rounded-2xl border border-emerald-100 bg-white/60 p-4">
+          <div
+            key={q.id}
+            dir={dir}
+            className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
+          >
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] uppercase tracking-wide text-emerald-700">{q.level}</span>
               <VerdictRow
@@ -1560,7 +1605,10 @@ const TajweedPracticalSlide = ({ student, onAnswer }) => (
                 onChange={(v) => onAnswer({ questionId: qid, section: 'tajweed-practical', level: q.level, prompt: q.prompt, expertVerdict: v })}
               />
             </div>
-            <div className="font-arabic-display text-2xl text-emerald-900 text-right leading-loose mb-1" dir="rtl">{q.prompt}</div>
+            <div
+              className={`font-arabic-display text-2xl text-emerald-900 leading-loose mb-1 ${dir === 'rtl' ? 'text-right' : 'text-left'}`}
+              dir={dir}
+            >{q.prompt}</div>
             <div className="text-xs text-emerald-700/80">Expects: {q.expects}</div>
             <textarea
               className="eval-input mt-2 text-sm min-h-[44px]"
@@ -1621,9 +1669,15 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
           const qid = `arabic.${skillKey}.${q.id}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
           const chosenIdx = answer?.chosen?.[0] !== undefined ? Number(answer.chosen[0]) : null;
+          const answered = chosenIdx !== null;
+          const dir = directionFor(q.prompt);
           return (
-            <div key={q.id} className="rounded-2xl border border-emerald-100 bg-white/60 p-4">
-              <div className="font-medium text-emerald-900 mb-2" dir="rtl">{q.prompt}</div>
+            <div
+              key={q.id}
+              dir={dir}
+              className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
+            >
+              <div className="font-medium text-emerald-900 mb-2" dir={dir}>{q.prompt}</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {q.options.map((opt, i) => {
                   const isChosen = chosenIdx === i;
@@ -1634,14 +1688,15 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
                       : isChosen ? 'bg-rose-50 border-rose-400 text-rose-800'
                       : 'bg-white/70 border-emerald-100')
                     : 'bg-white/70 border-emerald-100 hover:bg-emerald-50';
+                  const optDir = directionFor(opt);
                   return (
-                    <button key={i} type="button" dir="rtl"
+                    <button key={i} type="button" dir={optDir}
                       onClick={() => onAnswer({
                         questionId: qid, section: sectionFor, level,
                         prompt: q.prompt, chosen: [String(i)],
                         expertVerdict: i === q.correctIndex ? 'correct' : 'incorrect',
                       })}
-                      className={`text-right px-3 py-2 rounded-xl border text-sm ${cls}`}>{opt}</button>
+                      className={`${optDir === 'rtl' ? 'text-right' : 'text-left'} px-3 py-2 rounded-xl border text-sm ${cls}`}>{opt}</button>
                   );
                 })}
               </div>
@@ -1652,10 +1707,16 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
         {skill.type === 'expect' && items.map((q) => {
           const qid = `arabic.${skillKey}.${q.id}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
+          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
+          const dir = directionFor(q.prompt);
           return (
-            <div key={q.id} className="rounded-2xl border border-emerald-100 bg-white/60 p-4">
+            <div
+              key={q.id}
+              dir={dir}
+              className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
+            >
               <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="font-arabic-display text-xl text-emerald-900" dir="rtl">{q.prompt}</div>
+                <div className="font-arabic-display text-xl text-emerald-900" dir={dir}>{q.prompt}</div>
                 <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
               </div>
               <div className="text-xs text-emerald-700/80">Expected: {q.expected}</div>
@@ -1670,9 +1731,15 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
         {skill.type === 'passage' && items.map((q) => {
           const qid = `arabic.${skillKey}.${q.id}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
+          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
+          const dir = directionFor(q.passage);
           return (
-            <div key={q.id} className="rounded-2xl border border-emerald-100 bg-white/60 p-4">
-              <div className="font-arabic-display text-lg leading-loose text-emerald-900 mb-2" dir="rtl">{q.passage}</div>
+            <div
+              key={q.id}
+              dir={dir}
+              className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
+            >
+              <div className="font-arabic-display text-lg leading-loose text-emerald-900 mb-2" dir={dir}>{q.passage}</div>
               <ol className="list-decimal pl-5 text-sm text-emerald-700 mb-2 space-y-1">
                 {q.questions.map((qq, i) => <li key={i}>{qq}</li>)}
               </ol>
@@ -1686,10 +1753,16 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
         {skill.type === 'prompt' && items.map((q) => {
           const qid = `arabic.${skillKey}.${q.id}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
+          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
+          const dir = directionFor(q.prompt);
           return (
-            <div key={q.id} className="rounded-2xl border border-emerald-100 bg-white/60 p-4">
+            <div
+              key={q.id}
+              dir={dir}
+              className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
+            >
               <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="font-medium text-emerald-900">{q.prompt}</div>
+                <div className="font-medium text-emerald-900" dir={dir}>{q.prompt}</div>
                 <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
               </div>
               <textarea className="eval-input mt-2 text-sm min-h-[60px]"

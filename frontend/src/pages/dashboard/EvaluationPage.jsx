@@ -1050,15 +1050,15 @@ const WelcomeSlide = ({
 
         <div className="flex items-baseline justify-between px-2">
           <div>
-            <h3 className="font-thuluth text-emerald-900 text-2xl" dir="rtl">ماذا نختبر اليوم؟</h3>
-            <p className="font-display-en text-xs text-emerald-700/80 mt-0.5">
+            <h3 className="font-thuluth text-emerald-900 text-3xl" dir="rtl">ماذا نختبر اليوم؟</h3>
+            <p className="font-display-en text-sm text-emerald-800 mt-1 font-medium">
               <bdi>Tap subjects in the order you want to test them.</bdi>
             </p>
           </div>
           <span className="slide-progress-pill"><bdi>{selected.length} chosen</bdi></span>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5 mt-4 px-1 flex-1">
+        <div className="subject-grid">
           {allSections.filter((s) => s.testable).map((s) => {
             const order = selected.indexOf(s.key);
             const on = order >= 0;
@@ -1070,11 +1070,11 @@ const WelcomeSlide = ({
                 className={`subject-card ${on ? 'is-on' : ''}`}
               >
                 {on && <span className="order-pill">{toArabicDigits(order + 1)}</span>}
-                <div className="flex items-start gap-3">
+                <div className="flex items-start gap-3 h-full">
                   <div className="icon">{s.icon || '📘'}</div>
-                  <div className="min-w-0">
-                    <div className="font-display-en font-semibold text-emerald-900 truncate"><bdi>{s.title}</bdi></div>
-                    <div className="font-naskh text-emerald-700/85 text-sm truncate" dir="rtl">{s.ar}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="subj-title font-display-en font-bold text-emerald-900 truncate"><bdi>{s.title}</bdi></div>
+                    <div className="subj-ar font-naskh text-emerald-700 truncate" dir="rtl">{s.ar}</div>
                   </div>
                 </div>
               </button>
@@ -1234,8 +1234,8 @@ const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, se
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <div>
-          <h3 className="text-lg font-semibold text-emerald-900">Reading · Letters</h3>
-          <p className="text-sm text-emerald-700/80" dir="rtl">{catalog.description || 'حروف منثورة على لوحة ملوّنة — لكل حرف بطاقته الخاصة.'}</p>
+          <h3 className="text-xl font-bold text-emerald-900">Reading · Letters</h3>
+          <p className="text-base text-emerald-800" dir="rtl">{catalog.description || 'حروف منثورة على لوحة ملوّنة — لكل حرف بطاقته الخاصة.'}</p>
         </div>
         <div className="flex items-center gap-2">
           <DifficultyPicker value={level} onChange={(d) => onChange({ difficulty: { ...student.difficulty, reading: d } })} />
@@ -1256,11 +1256,11 @@ const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, se
           const qid = `letters.${level}.${g.id || gi}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
           return (
-            <div key={g.id || gi} className="rounded-2xl border border-emerald-100 bg-white/60 p-4">
-              <div className="flex items-center justify-between mb-2">
+            <div key={g.id || gi} className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
                 <div>
-                  <div className="text-sm font-semibold text-emerald-900">{g.title}</div>
-                  {g.note && <div className="text-xs text-emerald-700/70">{g.note}</div>}
+                  <div className="text-base font-bold text-emerald-900">{g.title}</div>
+                  {g.note && <div className="text-sm text-emerald-700">{g.note}</div>}
                 </div>
                 <VerdictRow
                   answer={answer}
@@ -1268,7 +1268,7 @@ const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, se
                 />
               </div>
 
-              <div className="flex flex-wrap gap-2" dir="rtl">
+              <div className="letter-row">
                 {items.map((ch, idx) => (
                   <span
                     key={`${ch}-${idx}`}
@@ -1358,8 +1358,8 @@ const ReadingWordsSlide = ({ student, onChange, onAnswer, diacritics, onToggleDi
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div>
-          <h3 className="text-lg font-semibold text-emerald-900">Reading · Words & Sentences</h3>
-          <p className="text-sm text-emerald-700/80">Noor Al-Bayan progression — diacritics, tanween, sukūn, shadda, sentences.</p>
+          <h3 className="text-xl font-bold text-emerald-900">Reading · Words & Sentences</h3>
+          <p className="text-base text-emerald-800">Noor Al-Bayan progression — diacritics, tanween, sukūn, shadda, sentences.</p>
         </div>
         <div className="flex items-center gap-2">
           <DifficultyPicker value={level} onChange={(d) => onChange({ difficulty: { ...student.difficulty, reading: d } })} />
@@ -1382,18 +1382,18 @@ const ReadingWordsSlide = ({ student, onChange, onAnswer, diacritics, onToggleDi
           const qid = `words.${level}.${g.id || gi}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
           return (
-            <div key={g.id || gi} className="rounded-2xl border border-emerald-100 bg-white/60 p-4">
-              <div className="flex items-center justify-between mb-2">
+            <div key={g.id || gi} className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
                 <div>
-                  <div className="text-sm font-semibold text-emerald-900">{g.title}</div>
-                  {g.note && <div className="text-xs text-emerald-700/70">{g.note}</div>}
+                  <div className="text-base font-bold text-emerald-900">{g.title}</div>
+                  {g.note && <div className="text-sm text-emerald-700">{g.note}</div>}
                 </div>
                 <VerdictRow
                   answer={answer}
                   onChange={(v) => onAnswer({ questionId: qid, section: 'reading-words', level, prompt: g.title, expertVerdict: v })}
                 />
               </div>
-              <div className="flex flex-wrap gap-2" dir="rtl">
+              <div className="letter-row row-word">
                 {(g.items || []).map((w, idx) => {
                   const text = diacritics ? w : stripDiacritics(w);
                   return (
@@ -1727,9 +1727,14 @@ const SECTION_LABELS = {
 const NEXT_LEVEL = { easy: 'medium', medium: 'advanced', advanced: 'advanced+' };
 
 const summarizeJourney = (answers = []) => {
+  // Only consider items the admin actually graded. Untouched questions
+  // are treated as "not asked" and excluded from the summary entirely.
+  const VALID = new Set(['correct', 'partial', 'incorrect', 'skipped']);
+  const graded = (answers || []).filter((a) => a && VALID.has(a.expertVerdict));
   const bySection = {};
-  answers.forEach((a) => {
-    if (!a.section || a.section === 'reading-letters' || a.section === 'reading-words' || a.section === 'quran-recitation'
+  graded.forEach((a) => {
+    if (!a.section) return;
+    if (a.section === 'reading-letters' || a.section === 'reading-words' || a.section === 'quran-recitation'
         || a.section === 'tajweed-theory' || a.section === 'tajweed-practical'
         || a.section.startsWith('arabic-')) {
       bySection[a.section] = bySection[a.section] || [];
@@ -1748,8 +1753,7 @@ const summarizeJourney = (answers = []) => {
     let deepest = null;
     LEVEL_ORDER.forEach((lv) => { if (passed[lv]) deepest = lv; });
     let nextPoint;
-    if (!deepest && (counts.easy + counts.medium + counts.advanced) === 0) nextPoint = 'easy'; // not tested → start easy
-    else if (!deepest) nextPoint = 'easy'; // tested but failed easy
+    if (!deepest) nextPoint = 'easy';
     else nextPoint = NEXT_LEVEL[deepest];
     out.push({ section: sec, deepest, nextPoint, total: list.length });
   });

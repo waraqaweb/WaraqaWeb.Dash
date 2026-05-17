@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import LessonStudio from '../../components/lessons/LessonStudio';
 import TestStudio from '../../components/lessons/TestStudio';
 import LessonStudioViewer from '../../components/lessons/LessonStudioViewer';
@@ -15,6 +16,7 @@ const ADD_LESSON_DRAFT_KEY = 'presenter:add-lesson-draft:v1';
 
 const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => {
   const { isAdmin } = useAuth();
+  const navigate = useNavigate();
   const [lessonsFolderId, setLessonsFolderId] = useState(null);
   const [lessons, setLessons] = useState([]);
   const [selectedLesson, setSelectedLesson] = useState(null);
@@ -590,13 +592,14 @@ const PresenterPage = ({ isActive, isPublic = false, allowedSubjects = [] }) => 
           </div>
           <div className="flex items-center gap-3">
             {isAdmin && (
-              <a
-                href="/dashboard/evaluation"
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard/evaluation')}
                 className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-1.5 text-xs font-semibold text-white shadow hover:from-emerald-700 hover:to-teal-700"
                 title="Open Live Evaluation"
               >
                 ✨ Live Evaluation
-              </a>
+              </button>
             )}
             <button
               type="button"

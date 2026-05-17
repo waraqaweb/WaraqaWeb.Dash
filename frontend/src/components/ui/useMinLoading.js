@@ -10,7 +10,11 @@ import { useEffect, useRef, useState } from 'react';
 const DEFAULT_DELAY_MS = 0;
 
 const useMinLoading = (loading, delayMs = DEFAULT_DELAY_MS) => {
-  const [showLoading, setShowLoading] = useState(false);
+  // Initialize synchronously so that on the very first render, when
+  // `loading` is already true and there is no delay, consumers (e.g.
+  // ProtectedRoute) see `showLoading=true` immediately instead of a
+  // single flash of `false` that can cause auth races / redirects.
+  const [showLoading, setShowLoading] = useState(() => !!loading && (Number(delayMs) || 0) <= 0);
   const timerRef = useRef(null);
 
   useEffect(() => {

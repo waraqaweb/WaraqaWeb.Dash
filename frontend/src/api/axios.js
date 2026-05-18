@@ -223,7 +223,7 @@ instance.interceptors.response.use(
 
     return response;
   },
-  (error) => {
+  async (error) => {
     const isCanceled = error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError';
     if (isCanceled) {
       error.isCanceled = true;
@@ -236,6 +236,26 @@ instance.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    // Transparent retry for transient gateway errors (typically during a deploy window
+    // when the backend container is being recreated). Only retry idempotent methods.
+    const transientStatus = error.response?.status;
+    const isTransientGateway = transientStatus === 502 || transientStatus === 503 || transientStatus === 504;
+    const cfg = error.config || {};
+    const methodSafe = ['get', 'head', 'options'].includes(String(cfg.method || '').toLowerCase());
+    if (isTransientGateway && methodSafe && !cfg.__noRetry) {
+      cfg.__retryCount = (cfg.__retryCount || 0) + 1;
+      if (cfg.__retryCount <= 4) {
+        const delay = Math.min(8000, 500 * Math.pow(2, cfg.__retryCount - 1));
+        await new Promise((r) => setTimeout(r, delay));
+        try {
+          return await instance.request(cfg);
+        } catch (e) {
+          // fall through to normal error handling on final failure
+          error = e;
+        }
+      }
+    }
+
     // Network / cache failures (no response) happen when the browser
     // fails to read from the HTTP cache/storage (service worker or disk)
     if (!error.response && error.request) {
@@ -245,8 +265,30 @@ instance.interceptors.response.use(
         return Promise.reject(error);
       }
 
+      // Retry transparent network failures too (deploy window / WS-only outages).
+      const cfg2 = error.config || {};
+      const methodSafe2 = ['get', 'head', 'options'].includes(String(cfg2.method || '').toLowerCase());
+      if (methodSafe2 && !cfg2.__noRetry) {
+        cfg2.__netRetryCount = (cfg2.__netRetryCount || 0) + 1;
+        if (cfg2.__netRetryCount <= 3) {
+          const delay = Math.min(6000, 500 * Math.pow(2, cfg2.__netRetryCount - 1));
+          await new Promise((r) => setTimeout(r, delay));
+          try {
+            return await instance.request(cfg2);
+          } catch (e) {
+            error = e;
+            if (error.response) {
+              // fall through to status-based handling below
+            } else {
+              error.isNetworkOrCache = true;
+              return Promise.reject(error);
+            }
+          }
+        }
+      }
+
       // Mark network/cache read failures so callers can handle them specifically
-      console.error('API Error: Network or cache failure:', error.message, {
+      console.warn('API Error: Network or cache failure:', error.message, {
         endpoint: error.config?.url,
         method: error.config?.method,
       });
@@ -280,6 +322,9 @@ instance.interceptors.response.use(
     if (!suppressErrorLog) {
       if (status === 400 || status === 409 || status === 422) {
         console.warn(`[API ${status}] ${method} ${endpoint}: ${message}`, extra);
+      } else if (status === 502 || status === 503 || status === 504) {
+        // Transient gateway errors after retries — log as warn, not error.
+        console.warn(`[API ${status}] ${method} ${endpoint}: ${message} (after retries)`, extra);
       } else {
         console.error(`[API ${status || 'ERR'}] ${method} ${endpoint}: ${message}`, extra);
       }

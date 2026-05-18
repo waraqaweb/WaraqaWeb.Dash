@@ -488,15 +488,21 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   useEffect(() => {
     if (!initialInvoice) return;
     const incomingId = initialInvoice?._id || invoiceId || null;
-    if (incomingId && seededInitialInvoiceIdRef.current === incomingId && invoice?._id === incomingId) {
-      return;
-    }
+    // Seed the modal from the parent's `initialInvoice` exactly ONCE per
+    // invoice id. After the user navigates to a sibling internally, the parent
+    // still passes the original invoice object as `initialInvoice` (modalState
+    // tracks the originally opened invoice). If we re-seeded on every render
+    // we'd snap back to that original; the seededInitialInvoiceIdRef guard
+    // prevents that, and `invoice?._id` is intentionally NOT in the dep array
+    // so sibling navigation does not retrigger this seed.
+    if (seededInitialInvoiceIdRef.current === incomingId) return;
 
     syncInvoiceState(initialInvoice);
     setResolvedInvoiceId(incomingId);
     seededInitialInvoiceIdRef.current = incomingId;
     setLoading(false);
-  }, [initialInvoice, invoiceId, syncInvoiceState, invoice?._id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialInvoice, invoiceId, syncInvoiceState]);
 
   useEffect(() => {
     if (!identifier) return;

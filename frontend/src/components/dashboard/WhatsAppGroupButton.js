@@ -101,14 +101,21 @@ export default function WhatsAppGroupButton({ classId }) {
   // QR code overlay
   if (status === 'qr' && qrImg) {
     return (
-      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-xs w-full text-center relative">
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+        <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full relative">
           <button onClick={dismiss} className="absolute top-2 right-2 text-gray-400 hover:text-gray-600">
             <X className="h-5 w-5" />
           </button>
-          <p className="text-sm font-medium text-gray-700 mb-3">Scan with WhatsApp</p>
-          <img src={qrImg} alt="WhatsApp QR" className="mx-auto w-56 h-56 rounded-lg" />
-          <p className="text-xs text-gray-400 mt-3">Waiting for scan…</p>
+          <p className="text-base font-semibold text-gray-800 mb-1 text-center">Link Waraqa to WhatsApp</p>
+          <p className="text-xs text-gray-500 mb-3 text-center">One-time setup so we can create groups for you.</p>
+          <img src={qrImg} alt="WhatsApp QR" className="mx-auto w-56 h-56 rounded-lg border" />
+          <ol className="mt-4 text-xs text-gray-600 list-decimal pl-5 space-y-1">
+            <li>Open <span className="font-medium">WhatsApp</span> on your phone.</li>
+            <li>Tap <span className="font-medium">Settings</span> (or the three dots menu on Android).</li>
+            <li>Tap <span className="font-medium">Linked Devices</span> → <span className="font-medium">Link a device</span>.</li>
+            <li>Point your phone&apos;s camera at this QR code.</li>
+          </ol>
+          <p className="text-xs text-gray-400 mt-3 text-center">Waiting for scan…</p>
         </div>
       </div>
     );

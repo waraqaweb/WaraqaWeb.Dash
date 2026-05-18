@@ -10,11 +10,18 @@
 import React from 'react';
 import CircleSpinner from './CircleSpinner';
 
-const LoadingSpinner = ({ size = 'md', text = 'Loading...', fullScreen = false }) => {
+const LoadingSpinner = ({ size = 'md', text = 'Loading...', fullScreen = false, compact = false }) => {
   if (!fullScreen) {
     const inlineSize = size === 'sm' ? 'sm' : size === 'lg' || size === 'xl' ? 'lg' : 'md';
+    // Reserve a stable vertical area so the spinner doesn't visually "jump"
+    // between renders (e.g. Suspense fallback → page-level loading state).
+    // Callers that explicitly want a tight inline indicator can opt out with
+    // `compact`.
+    const wrapperClasses = compact
+      ? 'flex flex-col items-center justify-center gap-3 p-4'
+      : 'flex flex-col items-center justify-center gap-3 px-4 py-10 min-h-[320px]';
     return (
-      <div className="flex flex-col items-center justify-center gap-3 p-4">
+      <div className={wrapperClasses}>
         <CircleSpinner size={inlineSize} />
         {text && <span className="text-sm text-muted-foreground font-medium">{text}</span>}
       </div>

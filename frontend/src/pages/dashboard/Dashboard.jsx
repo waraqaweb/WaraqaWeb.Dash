@@ -339,7 +339,7 @@ const Dashboard = () => {
       : [...mountedViews, activeView];
 
     return (
-      <Suspense fallback={<div className="flex min-h-[320px] items-center justify-center px-4 py-10"><LoadingSpinner /></div>}>
+      <Suspense fallback={<LoadingSpinner />}>
         {viewsToRender.map((viewKey) => (
           <div
             key={viewKey}

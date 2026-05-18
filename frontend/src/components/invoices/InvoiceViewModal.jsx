@@ -1955,8 +1955,16 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           extraIdentifiers: [sibling?._id, sibling?.invoiceSlug]
         });
         if (data?.invoice) {
-          setInvoice(data.invoice);
+          // Use syncInvoiceState (not bare setInvoice) so notes, coverage
+          // draft, invoice name parts and other derived state are refreshed
+          // for the sibling. Otherwise the classes table updates but the
+          // header/notes/coverage stay frozen on the original invoice.
+          syncInvoiceState(data.invoice);
           setResolvedInvoiceId(data.invoice._id);
+          // Keep the initial-seed guard in sync with the now-current invoice
+          // so the parent's stale `initialInvoice` prop cannot re-seed us
+          // back to the original.
+          seededInitialInvoiceIdRef.current = data.invoice._id;
         }
       } catch (err) {
         console.error('Failed to navigate to sibling invoice:', err);
@@ -1964,7 +1972,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
         setLoading(false);
       }
     })();
-  }, [fetchInvoiceByBestIdentifier]);
+  }, [fetchInvoiceByBestIdentifier, syncInvoiceState]);
 
   const handleCopyShareLink = useCallback(async () => {
     if (!invoice?.invoiceSlug) return;

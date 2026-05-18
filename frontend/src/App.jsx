@@ -411,6 +411,14 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/dashboard/class-change-requests"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      />
       {/* Removed /dashboard/reports and /dashboard/users routes to disable those pages */}
       <Route 
         path="/dashboard/settings" 

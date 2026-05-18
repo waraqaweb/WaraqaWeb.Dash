@@ -808,6 +808,35 @@ router.put('/requestsVisibility', authenticateToken, requireAdmin, async (req, r
   }
 });
 
+// --- Teacher class-change-requests feature flag ---
+// When enabled, teachers can submit pending requests to change future
+// occurrences of their classes (subject / description / duration / days).
+router.get('/teacherClassChangeRequestsEnabled', authenticateToken, async (req, res) => {
+  try {
+    const s = await Setting.findOne({ key: 'teacherClassChangeRequestsEnabled' }).lean();
+    const value = Boolean(s?.value);
+    return res.json({ success: true, setting: { key: 'teacherClassChangeRequestsEnabled', value } });
+  } catch (err) {
+    console.error('Failed to fetch teacherClassChangeRequestsEnabled', err);
+    return res.status(500).json({ message: 'Failed to fetch setting' });
+  }
+});
+
+router.put('/teacherClassChangeRequestsEnabled', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const value = Boolean(req.body?.value);
+    const s = await Setting.findOneAndUpdate(
+      { key: 'teacherClassChangeRequestsEnabled' },
+      { value, description: 'Allow teachers to submit pending class change requests' },
+      { upsert: true, new: true }
+    );
+    return res.json({ success: true, setting: s });
+  } catch (err) {
+    console.error('Failed to update teacherClassChangeRequestsEnabled', err);
+    return res.status(500).json({ message: 'Failed to update setting' });
+  }
+});
+
 router.get('/timezoneDstOverrides', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const value = await getNormalizedTimezoneDstOverrides();

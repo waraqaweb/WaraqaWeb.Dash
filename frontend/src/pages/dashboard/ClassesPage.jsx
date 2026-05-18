@@ -21,6 +21,7 @@ import BulkActionBar from '../../components/ui/BulkActionBar';
 import ExportExcelButton from '../../components/ui/ExportExcelButton';
 import { fetchAllForExport, mapClassRow, downloadExcel } from '../../utils/exportToExcel';
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
+import RequestClassChangeModal from "../../components/dashboard/RequestClassChangeModal";
 import CircleSpinner from "../../components/ui/CircleSpinner";
 import useMinLoading from "../../components/ui/useMinLoading";
 import CopyButton from "../../components/ui/CopyButton";
@@ -465,6 +466,10 @@ const ClassesPage = ({ isActive = true }) => {
   const [shareMode, setShareMode] = useState(isTeacherUser ? "teacher" : "admin");
   const [shareLoading, setShareLoading] = useState(false);
   const [shareMessage, setShareMessage] = useState("");
+  // Teacher class-change-request feature: gated by an admin setting.
+  const [classChangeReqEnabled, setClassChangeReqEnabled] = useState(false);
+  const [classChangeReqTarget, setClassChangeReqTarget] = useState(null);
+  const [classChangeReqToast, setClassChangeReqToast] = useState(null);
   const [availabilitySearchMode, setAvailabilitySearchMode] = useState("teacher");
   const [availabilitySearchSlots, setAvailabilitySearchSlots] = useState([
     { dayOfWeek: 1, startTime: "09:00", durationMinutes: 60 }
@@ -1053,6 +1058,22 @@ const ClassesPage = ({ isActive = true }) => {
       fetchTeacherAvailability(user._id);
     }
   }, [fetchTeacherAvailability, isTeacherUser, user?._id]);
+
+  // Fetch the class-change-request feature flag once when a teacher loads
+  // the page. Admins can also see/use it (so they can test the workflow).
+  useEffect(() => {
+    if (!isTeacherUser && !isAdminUser) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get('/class-change-requests/feature-status').catch(() => null);
+        if (!cancelled && res?.data?.enabled === true) {
+          setClassChangeReqEnabled(true);
+        }
+      } catch (_) { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isTeacherUser, isAdminUser]);
 
   useEffect(() => {
     setTargetTimezone(adminTimezone);
@@ -3442,6 +3463,17 @@ fetchClassesRef.current = fetchClasses;
                   </button>
                 )}
 
+                {/* Teacher: request a permanent class change (subject / duration / days / description) */}
+                {isTeacherUser && classChangeReqEnabled && classItem?.status === 'scheduled' && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setClassChangeReqTarget(classItem); }}
+                    className="icon-button icon-button--blue"
+                    title="Request a permanent change for future classes"
+                  >
+                    <Repeat className="h-4 w-4" />
+                  </button>
+                )}
+
                 {isAdminUser ? (
                   <>
                     <button
@@ -4827,6 +4859,20 @@ fetchClassesRef.current = fetchClasses;
       )}
       </React.Suspense>
 
+      {classChangeReqTarget && (
+        <RequestClassChangeModal
+          classItem={classChangeReqTarget}
+          onClose={() => setClassChangeReqTarget(null)}
+          onSuccess={() => setClassChangeReqToast({ type: 'success', message: 'Request sent to admin for approval.' })}
+        />
+      )}
+
+      {classChangeReqToast && (
+        <div className="fixed bottom-4 right-4 z-[60] rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white shadow-lg">
+          {classChangeReqToast.message}
+          <button onClick={() => setClassChangeReqToast(null)} className="ml-3 underline">Dismiss</button>
+        </div>
+      )}
 
     </div>
   );

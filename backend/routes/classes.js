@@ -4373,6 +4373,40 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
     }
     console.log("✅ Class saved with report and attendance");
 
+    // 🟦 Optional: propagate a subject change to FUTURE classes in the series.
+    // Triggered when the teacher (or admin) ticks "Apply to future classes too"
+    // on the class-report form. Past classes keep their original subject.
+    try {
+      if (
+        attendanceValue === "attended" &&
+        payload.applyToFutureClasses === true &&
+        typeof reportPayload.subject === "string" &&
+        reportPayload.subject.trim() &&
+        reportPayload.subject.trim() !== (classDoc.subject || "").trim()
+      ) {
+        const newSubject = reportPayload.subject.trim();
+        const seriesRoot = classDoc.parentRecurringClass || classDoc._id;
+        const cutoff = new Date(classDoc.scheduledDate || Date.now());
+
+        // Update the series root so newly-generated occurrences inherit it.
+        try { await Class.updateOne({ _id: seriesRoot }, { $set: { subject: newSubject } }); } catch (e) { /* ignore */ }
+
+        // Update future siblings that haven't been completed yet.
+        await Class.updateMany(
+          {
+            $or: [{ _id: seriesRoot }, { parentRecurringClass: seriesRoot }],
+            scheduledDate: { $gt: cutoff },
+            status: { $nin: ["attended", "missed_by_student", "absent", "cancelled", "cancelled_by_teacher", "cancelled_by_student", "no_show_both"] },
+            _id: { $ne: classDoc._id },
+          },
+          { $set: { subject: newSubject } }
+        );
+        console.log(`📚 Propagated subject "${newSubject}" to future classes in series ${seriesRoot}`);
+      }
+    } catch (subjErr) {
+      console.warn("⚠️ Failed to propagate subject to future classes:", subjErr.message);
+    }
+
     // ✅ Emit socket event
     try {
       const io = req.app.get("io");

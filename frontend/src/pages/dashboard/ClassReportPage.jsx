@@ -129,6 +129,12 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const [catalogSubjects, setCatalogSubjects] = useState(Array.isArray(subjects) ? subjects : []);
   const [catalogTopicsBySubject, setCatalogTopicsBySubject] = useState({});
 
+  // When the teacher picks a different subject than what is currently on the
+  // class, we prompt them at submit time: apply to this class only, or also
+  // propagate the new subject to future classes in the same series.
+  const [subjectScopePrompt, setSubjectScopePrompt] = useState(null); // { newSubject, currentSubject, pendingEvent }
+  const applyToFutureRef = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -468,6 +474,19 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   const handleSubmitReport = async (e) => {
     e.preventDefault();
     if (submitInFlightRef.current) return;
+
+    // If the teacher selected a subject that differs from the class's current
+    // subject, ask whether to apply just to this class or also to future
+    // classes in the series. We pause here and let the user pick before submit.
+    if (userRole === 'teacher' && classReport.attendance === 'attended' && !subjectScopePrompt) {
+      const chosen = (classReport.subject || '').trim();
+      const current = (classData?.subject || '').trim();
+      if (chosen && current && chosen !== current && applyToFutureRef.current === false) {
+        setSubjectScopePrompt({ newSubject: chosen, currentSubject: current });
+        return;
+      }
+    }
+
     setLoading(true);
     submitInFlightRef.current = true;
 
@@ -580,7 +599,10 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
       
 
-      const res = await api.put(`/classes/${derivedClassId}/report`, sanitizedPayload);
+      const res = await api.put(`/classes/${derivedClassId}/report`, {
+        ...sanitizedPayload,
+        applyToFutureClasses: applyToFutureRef.current === true,
+      });
 
       if (res.data.message) {
         clearDraft(derivedClassId);
@@ -1215,6 +1237,57 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
             message={showToast.message}
             onClose={() => setShowToast({ show: false })}
           />
+        )}
+
+        {/* Subject scope prompt — appears when teacher picks a subject that
+            differs from the class's current subject. */}
+        {subjectScopePrompt && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+              <div className="text-base font-semibold text-foreground">Subject changed</div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                You changed the subject from
+                {' '}<strong className="text-foreground">{subjectScopePrompt.currentSubject}</strong>{' '}
+                to
+                {' '}<strong className="text-foreground">{subjectScopePrompt.newSubject}</strong>.
+                Should we update future classes in this series too, or only this class?
+              </p>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  className="rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground hover:bg-gray-50"
+                  onClick={() => {
+                    applyToFutureRef.current = false;
+                    setSubjectScopePrompt(null);
+                    // Re-trigger submit with a synthetic event.
+                    handleSubmitReport({ preventDefault: () => {} });
+                  }}
+                >
+                  Only this class
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                  onClick={() => {
+                    applyToFutureRef.current = true;
+                    setSubjectScopePrompt(null);
+                    handleSubmitReport({ preventDefault: () => {} });
+                  }}
+                >
+                  Apply to future classes
+                </button>
+              </div>
+              <div className="mt-3 text-right">
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setSubjectScopePrompt(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

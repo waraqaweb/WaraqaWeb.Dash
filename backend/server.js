@@ -331,6 +331,8 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/invoices", invoiceRoutes);
 const classReportsRouter = require('./routes/classReports');
 app.use('/api/class-reports', classReportsRouter);
+const classChangeRequestsRouter = require('./routes/classChangeRequests');
+app.use('/api/class-change-requests', classChangeRequestsRouter);
 const settingsRouter = require('./routes/settings');
 app.use('/api/settings', settingsRouter);
 app.use('/api/settings/email', require('./routes/emailSettings'));

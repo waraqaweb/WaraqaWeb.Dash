@@ -256,6 +256,8 @@ const Settings = () => {
   const [savingPresenterAccess, setSavingPresenterAccess] = useState(false);
   const [requestsVisibility, setRequestsVisibility] = useState('all_users');
   const [savingRequestsVisibility, setSavingRequestsVisibility] = useState(false);
+  const [teacherClassChangeReqEnabled, setTeacherClassChangeReqEnabled] = useState(false);
+  const [savingTeacherClassChangeReq, setSavingTeacherClassChangeReq] = useState(false);
   const [dashboardDecorationEnabled, setDashboardDecorationEnabled] = useState(false);
   const [dashboardDecorationOffsetX, setDashboardDecorationOffsetX] = useState(0);
   const [dashboardDecorationOffsetY, setDashboardDecorationOffsetY] = useState(0);
@@ -386,6 +388,19 @@ const Settings = () => {
       }
     };
     fetchRequestsVisibility();
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const fetchTeacherClassChangeReq = async () => {
+      try {
+        const res = await api.get('/settings/teacherClassChangeRequestsEnabled').catch(() => null);
+        if (res?.data?.success) {
+          setTeacherClassChangeReqEnabled(Boolean(res.data.setting?.value));
+        }
+      } catch (_) { /* ignore */ }
+    };
+    fetchTeacherClassChangeReq();
   }, [user?.role]);
 
   useEffect(() => {
@@ -2012,6 +2027,41 @@ const Settings = () => {
                   </button>
                 </div>
               </div>
+            </div>
+            <div className="border-t border-border px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Teacher class change requests</div>
+                <div className="text-sm text-foreground">Allow teachers to request permanent changes to their classes (subject, duration, days, description). Each request is sent to an admin for approval.</div>
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={teacherClassChangeReqEnabled}
+                  onChange={(e) => setTeacherClassChangeReqEnabled(e.target.checked)}
+                />
+                <span>{teacherClassChangeReqEnabled ? 'Enabled' : 'Disabled'}</span>
+                <button
+                  type="button"
+                  disabled={savingTeacherClassChangeReq}
+                  onClick={async () => {
+                    try {
+                      setSavingTeacherClassChangeReq(true);
+                      const res = await api.put('/settings/teacherClassChangeRequestsEnabled', { value: teacherClassChangeReqEnabled });
+                      if (res.data?.success) {
+                        setToast({ type: 'success', message: 'Setting saved' });
+                      }
+                    } catch (err) {
+                      setToast({ type: 'error', message: err?.response?.data?.message || 'Failed to save' });
+                    } finally {
+                      setSavingTeacherClassChangeReq(false);
+                    }
+                  }}
+                  className={`text-xs px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-200 rounded ${savingTeacherClassChangeReq ? 'opacity-70' : ''}`}
+                >
+                  Save
+                </button>
+              </label>
             </div>
           </div>
         )}

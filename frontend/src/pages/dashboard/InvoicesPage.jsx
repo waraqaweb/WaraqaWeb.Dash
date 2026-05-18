@@ -59,14 +59,29 @@ const getInvoicePaymentTimestamp = (invoice) => {
   return new Date(paidSource || fallback).getTime();
 };
 
-// Sort key: invoiceSequence (higher = more recent) then first item/billing date
+// Recency key used for client-side ordering. Returns a millisecond timestamp
+// so that legacy invoices (which carry an integer `invoiceSequence` like 1591)
+// stay on the SAME scale as newer invoices where `invoiceSequence` is null and
+// only date fields are available. Mixing an integer sequence with a date scaled
+// by /1e13 caused legacy invoices to outrank newer ones and produced a
+// zig-zag order in search results — that's the bug being fixed here.
 const getInvoiceRecencyKey = (invoice) => {
   if (!invoice) return 0;
-  if (invoice.invoiceSequence != null) return invoice.invoiceSequence;
-  // Fallback: first item date or billingPeriod.startDate or createdAt
-  const firstItemDate = invoice.items?.[0]?.date;
-  const billStart = invoice.billingPeriod?.startDate;
-  return new Date(firstItemDate || billStart || invoice.createdAt || 0).getTime() / 1e13;
+  const candidates = [
+    invoice.billingPeriod?.startDate,
+    invoice.items?.[0]?.date,
+    invoice.invoiceDate,
+    invoice.createdAt,
+  ];
+  for (const c of candidates) {
+    if (!c) continue;
+    const t = new Date(c).getTime();
+    if (Number.isFinite(t) && t > 0) return t;
+  }
+  // No date info at all — fall back to sequence (always smaller than a real
+  // timestamp so these invoices sort at the bottom, which is fine).
+  const seq = Number(invoice.invoiceSequence);
+  return Number.isFinite(seq) ? seq : 0;
 };
 
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1411,6 +1426,13 @@ const InvoicesPage = ({ isActive = true }) => {
         const aPaid = isPaid(a);
         const bPaid = isPaid(b);
         if (aPaid !== bPaid) return aPaid ? 1 : -1;
+        // Search mode treats the result list as a per-guardian audit trail:
+        //   • unpaid group → newest first (most actionable on top)
+        //   • paid group → OLDEST first (chronological history reads top-to-bottom)
+        // The "all" tab keeps the legacy newest-first behavior for both groups.
+        if (searchMode && aPaid && bPaid) {
+          return getInvoiceRecencyKey(a) - getInvoiceRecencyKey(b);
+        }
         // Link tiebreak only matters for unpaid invoices (WA-ready surfacing).
         // For paid invoices and inside search results the user expects strict
         // recency order — newest first, oldest last — without the link split

@@ -503,17 +503,23 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     let cancelled = false;
     const isNewInvoiceSession = coverageInvoiceSessionRef.current !== identifier;
 
-    if (isNewInvoiceSession) {
-      coverageInvoiceSessionRef.current = identifier;
-      setCoverageStatus(null);
-      setResolvedInvoiceId(invoiceId || null);
+    // Only (re)fetch when the prop identifier changes (i.e. the parent opened a
+    // different invoice). Internal sibling navigation drives loading via
+    // `navigateToSibling` and must NOT trigger this effect — otherwise the
+    // recreated `fetchInvoiceByBestIdentifier` callback would re-run this effect,
+    // restore the original invoice from the cache (keyed by the unchanged prop
+    // identifier), and snap the view back, producing an infinite refetch loop.
+    if (!isNewInvoiceSession) return;
 
-      // Reset tracking flags only when opening a different invoice.
-      initialClassesFetchedRef.current = false;
-      userModifiedFiltersRef.current = false;
-      coverageEditingRef.current = false;
-      coverageDraftHoldUntilRef.current = 0;
-    }
+    coverageInvoiceSessionRef.current = identifier;
+    setCoverageStatus(null);
+    setResolvedInvoiceId(invoiceId || null);
+
+    // Reset tracking flags only when opening a different invoice.
+    initialClassesFetchedRef.current = false;
+    userModifiedFiltersRef.current = false;
+    coverageEditingRef.current = false;
+    coverageDraftHoldUntilRef.current = 0;
 
     const fetchInvoiceDetails = async () => {
       try {

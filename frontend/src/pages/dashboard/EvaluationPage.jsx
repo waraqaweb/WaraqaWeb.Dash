@@ -903,15 +903,15 @@ const WelcomeSlide = ({
   const StepChips = (
     <div className="welcome-steps">
       <span className={`welcome-step ${step === 'evaluator' ? 'is-on' : 'is-done'}`}>
-        <span className="num">١</span> <bdi>Meet evaluator</bdi>
+        <span className="num">1</span> <bdi>Meet evaluator</bdi>
       </span>
       <span className="welcome-step-sep" />
       <span className={`welcome-step ${step === 'student' ? 'is-on' : step === 'subjects' ? 'is-done' : ''}`}>
-        <span className="num">٢</span> <bdi>About you</bdi>
+        <span className="num">2</span> <bdi>About you</bdi>
       </span>
       <span className="welcome-step-sep" />
       <span className={`welcome-step ${step === 'subjects' ? 'is-on' : ''}`}>
-        <span className="num">٣</span> <bdi>Subjects</bdi>
+        <span className="num">3</span> <bdi>Subjects</bdi>
       </span>
     </div>
   );
@@ -951,7 +951,7 @@ const WelcomeSlide = ({
               ))}
               {introBullets.length === 0 && (
                 <div className="bio-bullet">
-                  <span className="dot">١</span>
+                  <span className="dot">1</span>
                   <span className="text font-display-en text-emerald-700/70 italic">
                     <bdi>Click "Edit bio" below to add introduction points.</bdi>
                   </span>
@@ -1322,11 +1322,19 @@ const useTileTesting = ({ items, qid, section, level, groupTitle, answers, onAns
 const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, setCustom, resetCustom }) => {
   const level = student.difficulty?.reading || 'easy';
   const catalog = READING_LETTERS[level] || { groups: [] };
-  const baseGroups = (catalog.groups || []).map((g) => ({ id: g.id, title: g.title, note: g.note, items: g.letters || g.items || [] }));
-  const groups = (custom && custom[level]) || baseGroups;
+  // Memoise groups so their identity is stable across re-renders (an answer click
+  // shouldn't visually re-shuffle the tiles).
+  const groups = useMemo(() => {
+    if (custom && custom[level]) return custom[level];
+    return (catalog.groups || []).map((g) => ({ id: g.id, title: g.title, note: g.note, items: g.letters || g.items || [] }));
+  }, [custom, level, catalog]);
   const [shuffleSeed, setShuffleSeed] = useState(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const shuffledByGroup = useMemo(() => groups.map((g) => shuffle(g.items || [])), [shuffleSeed, groups]);
+  // Shuffle once per (student, level, seed) — never on every parent re-render.
+  const shuffledByGroup = useMemo(
+    () => groups.map((g) => shuffle(g.items || [])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shuffleSeed, level, student._id, groups],
+  );
 
   const updateGroups = (next) => {
     const merged = { ...(custom || {}), [level]: next };
@@ -1614,10 +1622,13 @@ const GroupEditor = ({ group, index, total, onSave, onDelete, onMove }) => {
 const ReadingWordsSlide = ({ student, onChange, onAnswer, diacritics, onToggleDiacritics, editorOn, custom, setCustom, resetCustom }) => {
   const level = student.difficulty?.reading || 'easy';
   const fromCatalog = READING_WORDS.filter((w) => w.level === level);
-  const items = (custom && custom[level]) || fromCatalog;
-  const [shuffleSeed, setShuffleSeed] = useState(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const ordered = useMemo(() => shuffle(items), [shuffleSeed, items]);
+  // Keep lesson order stable — Noor Al-Bayan is a progressive curriculum, so the
+  // sequence of groups should follow the catalog's authored order, never shuffled.
+  const items = useMemo(
+    () => (custom && custom[level]) || fromCatalog,
+    [custom, level, fromCatalog],
+  );
+  const ordered = items;
 
   const updateItems = (next) => setCustom({ ...(custom || {}), [level]: next });
 
@@ -1632,9 +1643,6 @@ const ReadingWordsSlide = ({ student, onChange, onAnswer, diacritics, onToggleDi
           <DifficultyPicker value={level} onChange={(d) => onChange({ difficulty: { ...student.difficulty, reading: d } })} />
           <button type="button" onClick={onToggleDiacritics} className={`px-2 py-1 rounded-full text-xs border ${diacritics ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-white/70 text-emerald-800 border-emerald-200'}`}>
             ◌َ Diacritics
-          </button>
-          <button type="button" onClick={() => setShuffleSeed((x) => x + 1)} className="px-2 py-1 rounded-full border border-emerald-200 bg-white/70 text-xs text-emerald-800 inline-flex items-center gap-1">
-            <Shuffle className="h-3 w-3" /> Shuffle
           </button>
           {editorOn && (
             <button type="button" onClick={() => { if (window.confirm('Reset words for this level?')) resetCustom(); }} className="px-2 py-1 rounded-full border border-amber-300 bg-amber-50 text-xs text-amber-800 inline-flex items-center gap-1">

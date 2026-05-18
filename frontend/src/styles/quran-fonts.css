@@ -89,7 +89,8 @@
   min-height: 88px;
   padding: 14px 20px;
   border-radius: 18px;
-  font-family: 'Scheherazade New', 'Amiri Quran', serif;
+  font-family: 'Scheherazade New', 'Amiri Quran', 'Amiri', serif;
+  font-weight: 700;
   font-size: 3rem;
   line-height: 1;
   color: #fff;
@@ -134,13 +135,17 @@
 }
 .letter-tile-pending:hover { opacity: 0.7; }
 
-/* Tile as a real button — strip default styles */
+/* Tile as a real button — strip default button styles but KEEP the Arabic font
+   defined in `.letter-tile` above. */
 button.letter-tile {
   border: none;
   background-clip: padding-box;
-  font-family: inherit;
   cursor: pointer;
   appearance: none;
+  /* Bold, clear Naskh — matches the rest of the studio. */
+  font-family: 'Scheherazade New', 'Amiri Quran', 'Amiri', serif;
+  font-weight: 700;
+  color: #fff;
 }
 button.letter-tile:focus-visible {
   outline: 3px solid #0d9488;

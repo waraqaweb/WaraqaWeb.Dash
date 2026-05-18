@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Search, X, Filter } from 'lucide-react';
-import { useSearch } from '../../contexts/SearchContext';
+import { useSearch, useSearchInput } from '../../contexts/SearchContext';
 import api from '../../api/axios';
 import {
   TEACHER_SALARY_VIEW_KEY,
@@ -121,10 +121,10 @@ const filterOptions = {
 };
 
 const GlobalSearchBar = ({ activeView = 'default' }) => {
+  // Fast input value is intentionally kept out of the heavy SearchContext
+  // so typing does not trigger renders in pages like ClassesPage.
+  const { inputValue, setInputValue, clearSearch } = useSearchInput();
   const {
-    searchTerm,
-    setSearchTerm,
-    clearSearch,
     setIsSearchFocused,
     globalFilter,
     setGlobalFilter,
@@ -235,15 +235,6 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [clearSearch]);
 
-  // Debounced search (optional for future server-side search)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      // Future: trigger server-side search here
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
-
   return (
     <div className="relative w-80 max-w-md">
       <div className="flex items-center space-x-2">
@@ -253,8 +244,8 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
           <input
             ref={inputRef}
             type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => setIsSearchFocused(false)}
             placeholder={placeholder}
@@ -262,7 +253,7 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
                      focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent
                      placeholder:text-muted-foreground transition-all duration-200"
           />
-          {searchTerm && (
+          {inputValue && (
             <button
               onClick={clearSearch}
               className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary/30"
@@ -275,7 +266,7 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
 
         {/* Filter Button */}
         {hasFilters && (
-          <div className="relative filter-dropdown" padding="true" padding-left="20px">
+          <div className="relative filter-dropdown">
             <button
               onClick={() => setShowFilters(!showFilters)}
               className={`inline-flex items-center gap-1 rounded-md p-2 text-sm font-medium transition-colors ${
@@ -459,7 +450,7 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
       </div>
       
       {/* Search hint */}
-      {!searchTerm && currentFilters.length === 0 && (
+      {!inputValue && currentFilters.length === 0 && (
         <div className="absolute right-2 top-1/2 transform -translate-y-1/2 text-xs text-muted-foreground">
           <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-xs font-mono bg-muted-foreground/10 rounded">
             Ctrl+/

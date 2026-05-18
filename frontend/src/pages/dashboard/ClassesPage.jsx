@@ -1457,7 +1457,11 @@ const fetchClasses = useCallback(async () => {
     const isClientOnlyFilter = globalFilter === 'pending_report' || globalFilter === 'missed_report' || globalFilter === 'admin_extended';
     const fetchAllMode = searchMode || isClientOnlyFilter;
     const fetchPage = fetchAllMode ? 1 : currentPage;
-    const fetchLimit = fetchAllMode ? 500 : 30;
+    // In search mode keep the response single-page (no sequential pagination
+    // loop) — that loop was the main cause of 30+ second waits when a teacher
+    // had thousands of matching classes. 200 is plenty for the UI; if more
+    // exist the user can refine the search.
+    const fetchLimit = searchMode ? 200 : (isClientOnlyFilter ? 500 : 30);
     const cacheKey = makeCacheKey(
       'classes:list',
       user?._id,
@@ -1509,7 +1513,7 @@ const fetchClasses = useCallback(async () => {
     const controller = new AbortController();
     fetchClassesAbortRef.current = controller;
 
-    const cached = readCache(cacheKey, { deps: ['classes'] });
+    const cached = searchMode ? { hit: false } : readCache(cacheKey, { deps: ['classes'] });
     if (cached.hit && cached.value) {
       const cachedClasses = cached.value.classes || [];
       const cachedTotalPages = cached.value.totalPages || 1;
@@ -1587,7 +1591,7 @@ const fetchClasses = useCallback(async () => {
     const normalizedTotalPages = Number.isFinite(apiTotalPages) && apiTotalPages > 0 ? apiTotalPages : 1;
     let resolvedClasses = fetchedClasses;
 
-    if (fetchAllMode && normalizedTotalPages > 1) {
+    if (fetchAllMode && !searchMode && normalizedTotalPages > 1) {
       const pages = [];
       for (let page = 2; page <= normalizedTotalPages; page += 1) {
         pages.push(page);
@@ -1634,14 +1638,16 @@ const fetchClasses = useCallback(async () => {
     setTotalPages(fetchAllMode ? 1 : normalizedTotalPages);
     setError("");
 
-    writeCache(
-      cacheKey,
-      {
-        classes: resolvedClasses,
-        totalPages: fetchAllMode ? 1 : normalizedTotalPages,
-      },
-      { ttlMs: 5 * 60_000, deps: ['classes'] }
-    );
+    if (!searchMode) {
+      writeCache(
+        cacheKey,
+        {
+          classes: resolvedClasses,
+          totalPages: fetchAllMode ? 1 : normalizedTotalPages,
+        },
+        { ttlMs: 5 * 60_000, deps: ['classes'] }
+      );
+    }
     setLoadedClassTabs((prev) => ({ ...prev, [tabFilter]: true }));
   } catch (err) {
     const isCanceled = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';

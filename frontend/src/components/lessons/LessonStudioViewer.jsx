@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { purifyHtml } from '../../utils/purifyHtml';
 import {
   BookOpen,
   Search,
@@ -454,7 +453,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
     : [{ text: '—', mediaUrl: '' }];
   const hasBlocks = explanationBlocks.length > 0;
   const showObjective = Boolean(meta.objective);
-  const renderRichText = purifyHtml;
+  const renderRichText = (value) => ({ __html: value || '' });
   const objectiveList = useMemo(() => {
     if (!meta.objective) return [];
     if (Array.isArray(meta.objective)) return meta.objective.filter(Boolean).map(String);

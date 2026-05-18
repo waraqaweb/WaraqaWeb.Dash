@@ -20,6 +20,7 @@ const AnswerSchema = new mongoose.Schema({
       'reading-words',
       'reading-sentences',
       'quran-recitation',
+      'quran-memorization',
       'tajweed-theory',
       'tajweed-practical',
       'arabic-grammar',

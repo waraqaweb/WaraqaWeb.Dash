@@ -27,6 +27,7 @@ import {
   WEAKNESS_AREAS, FEEDBACK_QUESTIONS,
   ARABIC_SKILLS,
 } from '../../data/evaluationContent';
+import { SURAHS } from '../../data/surahs';
 import '../../styles/quran-fonts.css';
 import {
   ChevronRight, ChevronLeft, ChevronDown, Plus, Trash2, Copy, CheckCircle2,
@@ -45,10 +46,11 @@ const ALL_SECTIONS = [
   { key: 'student',           title: 'About the student',       ar: 'بياناتك',              icon: '🧑‍🎓', testable: false },
   { key: 'reading-letters',   title: 'Reading · Letters',       ar: 'قراءة · الحروف',        icon: '🔤', testable: true },
   { key: 'reading-words',     title: 'Reading · Words',         ar: 'قراءة · الكلمات',       icon: '📖', testable: true },
-  { key: 'quran-recitation',  title: 'Qur’an Recitation',       ar: 'تلاوة القرآن',          icon: '🕌', testable: true },
+  { key: 'quran-recitation',  title: 'Qur’an Recitation',       ar: 'تلاوة القرآن',          icon: '۝', testable: true },
+  { key: 'quran-memorization',title: 'Qur’an Memorization',     ar: 'تحفيظ القرآن',        icon: '📜', testable: true },
   { key: 'tajweed-theory',    title: 'Tajweed · Theory',        ar: 'تجويد · نظري',          icon: '🎓', testable: true },
   { key: 'tajweed-practical', title: 'Tajweed · Practical',     ar: 'تجويد · تطبيقي',        icon: '🎧', testable: true },
-  { key: 'arabic-skills',     title: 'Arabic Skills',           ar: 'مهارات العربية',        icon: '✍️', testable: true },
+  { key: 'arabic-skills',     title: 'Arabic Skills',           ar: 'مهارات العربية',        icon: '🌐', testable: true },
   { key: 'summary',           title: 'Summary & next steps',    ar: 'الخلاصة',               testable: false },
   { key: 'links',             title: 'Important links',         ar: 'روابط مهمة',            testable: false },
 ];
@@ -74,9 +76,11 @@ const TILE_GRADIENTS = [
   'linear-gradient(135deg,#a16207,#854d0e)',
 ];
 
-// 0..9 → ٠..٩
-const toArabicDigits = (input) =>
-  String(input).replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
+// Numbers in the evaluation studio are intentionally rendered with Latin
+// (Western) digits to keep them readable for international evaluators.
+// Earlier revisions converted to Arabic-Indic digits; the helper is kept as
+// an identity function so call-sites don't need to change.
+const toArabicDigits = (input) => String(input);
 
 const shuffle = (arr) => {
   const a = [...arr];
@@ -89,20 +93,25 @@ const shuffle = (arr) => {
 
 const stripDiacritics = (s) => String(s).replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '');
 
-// Pick a writing direction for a mixed-language prompt by looking at the
-// first strong-directional character. If the sentence starts with a Latin
-// letter / digit we lay the whole row LTR (so the question reads naturally
-// from the left); Arabic / Hebrew / other RTL scripts fall through to RTL.
+// Pick a writing direction for a mixed-language prompt by scanning for the
+// first character with strong directional class (Latin or Arabic / Hebrew).
+// Whitespace, digits, punctuation, brackets are skipped so a sentence that
+// begins with quotes or numbers like "1) كَتَبَ ..." still picks the
+// language of the first actual word. If the first word is English we lay
+// the whole row LTR; if it's Arabic we lay it RTL.
 const directionFor = (text) => {
-  const s = String(text || '').replace(/^\s+/, '');
-  if (!s) return 'ltr';
-  const ch = s.charCodeAt(0);
-  // Arabic / Arabic Supplement / Arabic Extended-A / Presentation Forms.
-  if (
-    (ch >= 0x0590 && ch <= 0x08FF)
-    || (ch >= 0xFB1D && ch <= 0xFDFF)
-    || (ch >= 0xFE70 && ch <= 0xFEFF)
-  ) return 'rtl';
+  const s = String(text || '');
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s.charCodeAt(i);
+    // Latin upper / lower → LTR
+    if ((ch >= 0x41 && ch <= 0x5A) || (ch >= 0x61 && ch <= 0x7A)) return 'ltr';
+    // Arabic / Arabic Supplement / Arabic Extended-A / Presentation Forms → RTL
+    if (
+      (ch >= 0x0590 && ch <= 0x08FF)
+      || (ch >= 0xFB1D && ch <= 0xFDFF)
+      || (ch >= 0xFE70 && ch <= 0xFEFF)
+    ) return 'rtl';
+  }
   return 'ltr';
 };
 
@@ -529,16 +538,47 @@ const EvaluationPage = ({ isActive = true }) => {
                     onAnswer={upsertAnswer}
                     font={quranFont}
                     onChangeFont={setQuranFont}
+                    editorOn={editorOn}
+                    custom={customContent.quran}
+                    setCustom={(p) => setCustom('quran', p)}
+                    resetCustom={() => resetCustom('quran')}
+                  />
+                )}
+                {section.key === 'quran-memorization' && (
+                  <QuranMemorizationSlide
+                    student={activeStudent}
+                    onAnswer={upsertAnswer}
                   />
                 )}
                 {section.key === 'tajweed-theory' && (
-                  <TajweedTheorySlide student={activeStudent} onAnswer={upsertAnswer} />
+                  <TajweedTheorySlide
+                    student={activeStudent}
+                    onAnswer={upsertAnswer}
+                    editorOn={editorOn}
+                    custom={customContent.tajweedTheory}
+                    setCustom={(p) => setCustom('tajweedTheory', p)}
+                    resetCustom={() => resetCustom('tajweedTheory')}
+                  />
                 )}
                 {section.key === 'tajweed-practical' && (
-                  <TajweedPracticalSlide student={activeStudent} onAnswer={upsertAnswer} />
+                  <TajweedPracticalSlide
+                    student={activeStudent}
+                    onAnswer={upsertAnswer}
+                    editorOn={editorOn}
+                    custom={customContent.tajweedPractical}
+                    setCustom={(p) => setCustom('tajweedPractical', p)}
+                    resetCustom={() => resetCustom('tajweedPractical')}
+                  />
                 )}
                 {section.key === 'arabic-skills' && (
-                  <ArabicSkillsSlide student={activeStudent} onAnswer={upsertAnswer} />
+                  <ArabicSkillsSlide
+                    student={activeStudent}
+                    onAnswer={upsertAnswer}
+                    editorOn={editorOn}
+                    custom={customContent.arabicSkills}
+                    setCustom={(p) => setCustom('arabicSkills', p)}
+                    resetCustom={() => resetCustom('arabicSkills')}
+                  />
                 )}
                 {section.key === 'summary' && (
                   <SummarySlide
@@ -1007,14 +1047,6 @@ const WelcomeSlide = ({
                 <input className="eval-input" placeholder="name@example.com" value={activeStudent.contactEmail || ''} onChange={(e) => onUpdateStudent({ contactEmail: e.target.value })} />
               </div>
               <div className="full">
-                <label className="eval-field-label">Subjects of interest · <span dir="rtl" className="font-naskh">المواد المرغوبة</span></label>
-                <input className="eval-input"
-                  placeholder="comma separated (e.g. Qur'an, Arabic, Tajweed)"
-                  value={(activeStudent.desiredSubjects || []).join(', ')}
-                  onChange={(e) => onUpdateStudent({ desiredSubjects: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-                />
-              </div>
-              <div className="full">
                 <label className="eval-field-label">Availability · <span dir="rtl" className="font-naskh">المواعيد المتاحة</span></label>
                 <textarea className="eval-input min-h-[52px]" value={activeStudent.availability || ''} onChange={(e) => onUpdateStudent({ availability: e.target.value })} />
               </div>
@@ -1084,13 +1116,9 @@ const WelcomeSlide = ({
                 className={`subject-card ${on ? 'is-on' : ''}`}
               >
                 {on && <span className="order-pill">{toArabicDigits(order + 1)}</span>}
-                <div className="flex items-start gap-3 h-full">
-                  <div className="icon">{s.icon || '📘'}</div>
-                  <div className="min-w-0 flex-1">
-                    <div className="subj-title font-display-en font-bold text-emerald-900 truncate"><bdi>{s.title}</bdi></div>
-                    <div className="subj-ar font-naskh text-emerald-700 truncate" dir="rtl">{s.ar}</div>
-                  </div>
-                </div>
+                <div className="subj-icon" aria-hidden="true">{s.icon || '📘'}</div>
+                <div className="subj-title font-display-en font-bold text-emerald-900"><bdi>{s.title}</bdi></div>
+                <div className="subj-ar font-naskh text-emerald-700" dir="rtl">{s.ar}</div>
               </button>
             );
           })}
@@ -1177,12 +1205,6 @@ const StudentSlide = ({ student, onChange }) => (
       <Field label="Name"><input className="eval-input" value={student.name || ''} onChange={(e) => onChange({ name: e.target.value })} /></Field>
       <Field label="Age"><input type="number" className="eval-input" value={student.age || ''} onChange={(e) => onChange({ age: Number(e.target.value) || undefined })} /></Field>
       <Field label="Contact email"><input className="eval-input" value={student.contactEmail || ''} onChange={(e) => onChange({ contactEmail: e.target.value })} /></Field>
-      <Field label="Subjects of interest (comma separated)">
-        <input className="eval-input"
-          value={(student.desiredSubjects || []).join(', ')}
-          onChange={(e) => onChange({ desiredSubjects: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-        />
-      </Field>
       <Field label="Availability" full>
         <textarea className="eval-input min-h-[60px]" value={student.availability || ''} onChange={(e) => onChange({ availability: e.target.value })} />
       </Field>
@@ -1331,6 +1353,123 @@ const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, se
   );
 };
 
+/* ─── Custom question helpers (Quran / Tajweed / Arabic Skills) ────────── */
+
+/**
+ * Shape of a `custom` payload used by every question slide (other than the
+ * Reading · Letters / Words slides which keep their own group-shaped editor):
+ *
+ *   {
+ *     added:   [ ...customItemsWithSchemaShape... ],   // appended after defaults
+ *     deleted: [ ...idsOfDefaultsToHide... ],
+ *   }
+ */
+const customAdded   = (c) => (c && Array.isArray(c.added))   ? c.added   : [];
+const customDeleted = (c) => (c && Array.isArray(c.deleted)) ? c.deleted : [];
+
+const mergeWithCustom = (defaults, custom) => {
+  const del = new Set(customDeleted(custom));
+  return [
+    ...defaults.filter((d) => !del.has(d.id)),
+    ...customAdded(custom),
+  ];
+};
+
+const addCustomItem = (custom, item) => ({
+  ...(custom || {}),
+  added: [...customAdded(custom), item],
+});
+const updateCustomItem = (custom, id, patch) => ({
+  ...(custom || {}),
+  added: customAdded(custom).map((it) => (it.id === id ? { ...it, ...patch } : it)),
+});
+const removeCustomItem = (custom, id, isDefault) => {
+  if (isDefault) {
+    return { ...(custom || {}), deleted: [...customDeleted(custom), id] };
+  }
+  return { ...(custom || {}), added: customAdded(custom).filter((it) => it.id !== id) };
+};
+
+const newCustomId = (prefix) => `${prefix}-c-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+/**
+ * Small inline editor used by the four "Add custom question" forms in
+ * QuranSlide, TajweedTheorySlide, TajweedPracticalSlide and ArabicSkillsSlide.
+ * It exposes a compact "+" floating panel matching the studio's amber editor
+ * theme so the admin can author their own items per slide.
+ */
+const CustomItemEditor = ({ item, onChange, onDelete, schema }) => {
+  // schema: 'mcq' | 'expect' | 'prompt' | 'passage' | 'quran'
+  return (
+    <div className="rounded-xl border border-amber-300 bg-amber-50/60 p-3 mt-2 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wide text-amber-800 font-semibold">Custom · {schema}</span>
+        <button type="button" onClick={onDelete} className="text-rose-700 inline-flex items-center gap-1 text-xs">
+          <Trash2 className="h-3 w-3" /> Delete
+        </button>
+      </div>
+      {schema === 'quran' ? (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <input className="eval-input text-sm" placeholder="Surah (e.g. Al-Fatihah)" value={item.surah || ''} onChange={(e) => onChange({ surah: e.target.value })} />
+            <input className="eval-input text-sm" placeholder="Range (e.g. 1–7)" value={item.range || ''} onChange={(e) => onChange({ range: e.target.value })} />
+          </div>
+          <textarea className="eval-input text-sm min-h-[60px] font-quran-uthmani text-lg" dir="rtl" placeholder="Verse text…" value={item.text || ''} onChange={(e) => onChange({ text: e.target.value, verses: [{ text: e.target.value }] })} />
+        </>
+      ) : (
+        <textarea className="eval-input text-sm min-h-[50px]" dir="auto" placeholder={schema === 'passage' ? 'Passage text…' : 'Question / prompt…'} value={(schema === 'passage' ? item.passage : item.prompt) || ''} onChange={(e) => onChange(schema === 'passage' ? { passage: e.target.value } : { prompt: e.target.value })} />
+      )}
+      {schema === 'mcq' && (
+        <div className="space-y-1">
+          {(item.options || ['', '', '', '']).map((opt, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input type="radio" name={`correct-${item.id}`} checked={Number(item.correctIndex) === i} onChange={() => onChange({ correctIndex: i })} />
+              <input className="eval-input text-sm flex-1" dir="auto" placeholder={`Option ${i + 1}`} value={opt} onChange={(e) => {
+                const opts = [...(item.options || ['', '', '', ''])];
+                opts[i] = e.target.value;
+                onChange({ options: opts });
+              }} />
+            </div>
+          ))}
+        </div>
+      )}
+      {schema === 'expect' && (
+        <input className="eval-input text-sm" dir="auto" placeholder="Expected answer (for evaluator reference)" value={item.expected || item.expects || ''} onChange={(e) => onChange({ expected: e.target.value, expects: e.target.value })} />
+      )}
+      {schema === 'passage' && (
+        <textarea className="eval-input text-sm min-h-[44px]" dir="auto" placeholder="One question per line" value={(item.questions || []).join('\n')} onChange={(e) => onChange({ questions: e.target.value.split('\n').filter(Boolean) })} />
+      )}
+    </div>
+  );
+};
+
+/**
+ * Toolbar shown at the top of the editable lists in non-Reading slides
+ * when the admin toggles "Edit questions" on the rail. Lets them add a
+ * new custom item matching the slide's schema and reset overrides.
+ */
+const CustomToolbar = ({ label, onAdd, onReset, canReset }) => (
+  <div className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/40 p-2 mb-3 flex items-center justify-between">
+    <span className="text-xs text-amber-800 font-semibold">{label}</span>
+    <div className="flex items-center gap-2">
+      <button type="button" onClick={onAdd} className="px-2.5 py-1 rounded-full bg-amber-600 text-white text-xs inline-flex items-center gap-1">
+        <Plus className="h-3 w-3" /> Add custom
+      </button>
+      {canReset && (
+        <button type="button" onClick={onReset} className="px-2.5 py-1 rounded-full border border-amber-400 bg-white/80 text-amber-800 text-xs inline-flex items-center gap-1">
+          <RefreshCw className="h-3 w-3" /> Reset
+        </button>
+      )}
+    </div>
+  </div>
+);
+
+const DeleteDefaultBtn = ({ onClick }) => (
+  <button type="button" onClick={onClick} title="Remove this question" className="text-rose-700/80 hover:text-rose-700 px-1.5 py-0.5 rounded text-[10px] inline-flex items-center gap-1">
+    <Trash2 className="h-3 w-3" /> Remove
+  </button>
+);
+
 const GroupEditor = ({ group, index, total, onSave, onDelete, onMove }) => {
   const [title, setTitle] = useState(group.title || '');
   const [items, setItems] = useState((group.items || []).join(' '));
@@ -1471,7 +1610,10 @@ const ReadingWordsSlide = ({ student, onChange, onAnswer, diacritics, onToggleDi
 
 /* ─── Qur'an recitation ───────────────────────────────────────────────── */
 
-const QuranSlide = ({ student, onAnswer, font, onChangeFont }) => (
+const QuranSlide = ({ student, onAnswer, font, onChangeFont, editorOn, custom, setCustom, resetCustom }) => {
+  const passages = mergeWithCustom(QURAN_PASSAGES, custom);
+  const defaultIds = new Set(QURAN_PASSAGES.map((p) => p.id));
+  return (
   <div>
     <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
       <div>
@@ -1484,11 +1626,21 @@ const QuranSlide = ({ student, onAnswer, font, onChangeFont }) => (
       </div>
     </div>
 
+    {editorOn && (
+      <CustomToolbar
+        label="Custom passages for this slide"
+        onAdd={() => setCustom(addCustomItem(custom, { id: newCustomId('q'), surah: 'New passage', range: '1–1', verses: [{ text: '﷽' }] }))}
+        onReset={resetCustom}
+        canReset={Boolean(custom)}
+      />
+    )}
+
     <div className="space-y-4">
-      {QURAN_PASSAGES.map((p) => {
+      {passages.map((p) => {
         const qid = `quran.${p.id}`;
         const answer = (student.answers || []).find((a) => a.questionId === qid);
         const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
+        const isDefault = defaultIds.has(p.id);
         return (
           <div
             key={p.id}
@@ -1496,10 +1648,13 @@ const QuranSlide = ({ student, onAnswer, font, onChangeFont }) => (
           >
             <div className="flex items-center justify-between mb-2">
               <div className="text-sm font-semibold text-emerald-900">{p.surah} <span className="text-emerald-700/70">· {p.range}</span></div>
-              <VerdictRow
-                answer={answer}
-                onChange={(v) => onAnswer({ questionId: qid, section: 'quran-recitation', level: 'na', prompt: `${p.surah} ${p.range}`, expertVerdict: v })}
-              />
+              <div className="flex items-center gap-2">
+                {editorOn && <DeleteDefaultBtn onClick={() => setCustom(removeCustomItem(custom, p.id, isDefault))} />}
+                <VerdictRow
+                  answer={answer}
+                  onChange={(v) => onAnswer({ questionId: qid, section: 'quran-recitation', level: 'na', prompt: `${p.surah} ${p.range}`, expertVerdict: v })}
+                />
+              </div>
             </div>
             <div
               dir="rtl"
@@ -1519,26 +1674,175 @@ const QuranSlide = ({ student, onAnswer, font, onChangeFont }) => (
                 prompt: `${p.surah} ${p.range}`, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value,
               })}
             />
+            {editorOn && !isDefault && (
+              <CustomItemEditor
+                item={p}
+                schema="quran"
+                onChange={(patch) => setCustom(updateCustomItem(custom, p.id, patch))}
+                onDelete={() => setCustom(removeCustomItem(custom, p.id, false))}
+              />
+            )}
           </div>
         );
       })}
     </div>
   </div>
-);
+  );
+};
+
+/* ─── Qur'an memorization ─────────────────────────────────────────────── */
+
+/**
+ * Searchable picker over the 114 surahs. The admin types a name (in Arabic
+ * or English transliteration) or a number, picks one, and the surah is added
+ * to the student's known-surahs list with an optional "starts from…" note.
+ *
+ * The answer is stored as a single record keyed `memorization.summary` with
+ * a structured `note` JSON so it round-trips through the existing answer
+ * pipeline without backend changes.
+ */
+const QuranMemorizationSlide = ({ student, onAnswer }) => {
+  const qid = 'memorization.summary';
+  const answer = (student.answers || []).find((a) => a.questionId === qid);
+  let stored = { surahs: [] };
+  try {
+    if (answer?.note) stored = JSON.parse(answer.note);
+    if (!Array.isArray(stored.surahs)) stored.surahs = [];
+  } catch {
+    stored = { surahs: [] };
+  }
+  const [picked, setPicked] = useState(stored);
+  const [search, setSearch] = useState('');
+
+  const persist = (next) => {
+    setPicked(next);
+    onAnswer({
+      questionId: qid,
+      section: 'quran-memorization',
+      level: 'na',
+      prompt: 'Qur’an memorization summary',
+      expertVerdict: next.surahs.length ? 'partial' : 'na',
+      note: JSON.stringify(next),
+    });
+  };
+
+  const term = search.trim().toLowerCase();
+  const results = !term ? [] : SURAHS.filter((s) => {
+    if (String(s.id) === term) return true;
+    if (s.en.toLowerCase().includes(term)) return true;
+    if (s.ar.includes(search.trim())) return true;
+    return false;
+  }).slice(0, 12);
+
+  const pickedSet = new Set(picked.surahs.map((s) => s.id));
+  const addSurah = (s) => {
+    if (pickedSet.has(s.id)) return;
+    persist({ ...picked, surahs: [...picked.surahs, { id: s.id, ar: s.ar, en: s.en, ayat: s.ayat, startsFrom: '' }] });
+    setSearch('');
+  };
+  const removeSurah = (id) => persist({ ...picked, surahs: picked.surahs.filter((s) => s.id !== id) });
+  const updateNote = (id, startsFrom) => persist({ ...picked, surahs: picked.surahs.map((s) => (s.id === id ? { ...s, startsFrom } : s)) });
+
+  return (
+    <div>
+      <div className="mb-3">
+        <h3 className="text-lg font-semibold text-emerald-900 inline-flex items-center gap-2">
+          <BookOpen className="h-5 w-5" /> Qur’an Memorization
+        </h3>
+        <p className="text-sm text-emerald-700/80" dir="rtl">اختر السور التي يحفظها الطالب وأضف ملاحظة عن نقطة البداية إن وُجدت.</p>
+      </div>
+
+      <div className="rounded-2xl border border-emerald-100 bg-white/60 p-4 mb-4">
+        <label className="eval-field-label">Search by surah name or number · <span dir="rtl" className="font-naskh">ابحث عن السورة</span></label>
+        <input
+          className="eval-input"
+          placeholder="e.g. Al-Fatihah, البقرة, 36 …"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {results.length > 0 && (
+          <div className="mt-2 rounded-xl border border-emerald-200 bg-white max-h-60 overflow-y-auto divide-y divide-emerald-50">
+            {results.map((s) => {
+              const already = pickedSet.has(s.id);
+              return (
+                <button key={s.id} type="button" onClick={() => addSurah(s)} disabled={already}
+                  className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-sm ${already ? 'opacity-50' : 'hover:bg-emerald-50'}`}
+                >
+                  <span className="flex items-center gap-3 min-w-0">
+                    <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold shrink-0">{s.id}</span>
+                    <span className="font-naskh text-emerald-900 text-base" dir="rtl">{s.ar}</span>
+                    <span className="text-emerald-700/80 text-xs">{s.en}</span>
+                  </span>
+                  <span className="text-[10px] text-emerald-700/70">{s.ayat} āyāt · {s.place}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {term && results.length === 0 && (
+          <div className="mt-2 text-xs text-emerald-700/70 italic">No matching surah.</div>
+        )}
+      </div>
+
+      <div className="mb-2 text-xs uppercase tracking-wide text-emerald-700/80 font-semibold">
+        Memorized surahs · {picked.surahs.length}
+      </div>
+
+      <div className="space-y-2">
+        {picked.surahs.length === 0 && (
+          <div className="text-sm text-emerald-700/70 italic">No surahs added yet.</div>
+        )}
+        {picked.surahs.map((s) => (
+          <div key={s.id} className="rounded-2xl border border-emerald-100 bg-white/60 p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <div className="flex items-center gap-3 sm:flex-1 min-w-0">
+              <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold shrink-0">{s.id}</span>
+              <div className="min-w-0">
+                <div className="font-naskh text-emerald-900 text-lg leading-tight" dir="rtl">{s.ar}</div>
+                <div className="text-xs text-emerald-700/80">{s.en} · {s.ayat} āyāt</div>
+              </div>
+            </div>
+            <input
+              className="eval-input text-sm sm:max-w-xs"
+              placeholder="Starts from ayah / page (optional)"
+              value={s.startsFrom || ''}
+              onChange={(e) => updateNote(s.id, e.target.value)}
+            />
+            <button type="button" onClick={() => removeSurah(s.id)}
+              className="text-rose-700/80 hover:text-rose-700 inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border border-rose-200 bg-white/70">
+              <Trash2 className="h-3 w-3" /> Remove
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 /* ─── Tajweed theory ───────────────────────────────────────────────────── */
 
-const TajweedTheorySlide = ({ student, onAnswer }) => (
+const TajweedTheorySlide = ({ student, onAnswer, editorOn, custom, setCustom, resetCustom }) => {
+  const items = mergeWithCustom(TAJWEED_THEORY, custom);
+  const defaultIds = new Set(TAJWEED_THEORY.map((q) => q.id));
+  return (
   <div>
     <h3 className="text-lg font-semibold text-emerald-900 mb-1">Tajweed · Theory</h3>
     <p className="text-sm text-emerald-700/80 mb-3">Multiple choice. The correct option is highlighted after picking.</p>
+    {editorOn && (
+      <CustomToolbar
+        label="Custom MCQ for Tajweed Theory"
+        onAdd={() => setCustom(addCustomItem(custom, { id: newCustomId('tt'), level: 'easy', question: 'New question', options: ['Option A', 'Option B', 'Option C', 'Option D'], correctIndex: 0 }))}
+        onReset={resetCustom}
+        canReset={Boolean(custom)}
+      />
+    )}
     <div className="space-y-3">
-      {TAJWEED_THEORY.map((q) => {
+      {items.map((q, idx) => {
         const qid = `tajweed.theory.${q.id}`;
         const answer = (student.answers || []).find((a) => a.questionId === qid);
         const chosenIdx = answer?.chosen?.[0] !== undefined ? Number(answer.chosen[0]) : null;
         const answered = chosenIdx !== null;
-        const dir = directionFor(q.question);
+        const dir = directionFor(q.question || q.prompt);
+        const isDefault = defaultIds.has(q.id);
         return (
           <div
             key={q.id}
@@ -1546,52 +1850,83 @@ const TajweedTheorySlide = ({ student, onAnswer }) => (
             className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
           >
             <div className="flex items-start justify-between gap-3 mb-2">
-              <div className="font-medium text-emerald-900">{q.question}</div>
-              <span className="text-[10px] uppercase tracking-wide text-emerald-700">{q.level}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] uppercase tracking-wide text-emerald-700/70 font-semibold mb-0.5">Question {idx + 1}</div>
+                <div className="font-medium text-emerald-900" dir="auto" style={{ textAlign: 'start' }}>{q.question || q.prompt}</div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[10px] uppercase tracking-wide text-emerald-700">{q.level}</span>
+                {editorOn && <DeleteDefaultBtn onClick={() => setCustom(removeCustomItem(custom, q.id, isDefault))} />}
+              </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {q.options.map((opt, i) => {
-                const isChosen = chosenIdx === i;
-                const isCorrect = i === q.correctIndex;
-                const revealed = chosenIdx !== null;
-                const cls = revealed
-                  ? (isCorrect ? 'bg-emerald-50 border-emerald-400 text-emerald-800'
-                    : isChosen ? 'bg-rose-50 border-rose-400 text-rose-800'
-                    : 'bg-white/70 border-emerald-100')
-                  : 'bg-white/70 border-emerald-100 hover:bg-emerald-50';
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => onAnswer({
-                      questionId: qid, section: 'tajweed-theory', level: q.level,
-                      prompt: q.question, chosen: [String(i)],
-                      expertVerdict: i === q.correctIndex ? 'correct' : 'incorrect',
-                    })}
-                    className={`text-left px-3 py-2 rounded-xl border text-sm ${cls}`}
-                  >{opt}</button>
-                );
-              })}
+            <div className="rounded-xl bg-emerald-50/40 p-2">
+              <div className="text-[10px] uppercase tracking-wide text-emerald-700/80 mb-1.5 font-semibold">Options</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {q.options.map((opt, i) => {
+                  const isChosen = chosenIdx === i;
+                  const isCorrect = i === q.correctIndex;
+                  const revealed = chosenIdx !== null;
+                  const cls = revealed
+                    ? (isCorrect ? 'bg-emerald-50 border-emerald-400 text-emerald-800'
+                      : isChosen ? 'bg-rose-50 border-rose-400 text-rose-800'
+                      : 'bg-white/70 border-emerald-100')
+                    : 'bg-white/70 border-emerald-100 hover:bg-emerald-50';
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      dir="auto"
+                      onClick={() => onAnswer({
+                        questionId: qid, section: 'tajweed-theory', level: q.level,
+                        prompt: q.question || q.prompt, chosen: [String(i)],
+                        expertVerdict: i === q.correctIndex ? 'correct' : 'incorrect',
+                      })}
+                      className={`text-left px-3 py-2 rounded-xl border text-sm ${cls}`}
+                    >{opt}</button>
+                  );
+                })}
+              </div>
             </div>
+            {editorOn && !isDefault && (
+              <CustomItemEditor
+                item={{ ...q, prompt: q.question }}
+                schema="mcq"
+                onChange={(patch) => setCustom(updateCustomItem(custom, q.id, { ...patch, question: patch.prompt || q.question }))}
+                onDelete={() => setCustom(removeCustomItem(custom, q.id, false))}
+              />
+            )}
           </div>
         );
       })}
     </div>
   </div>
-);
+  );
+};
 
 /* ─── Tajweed practical ────────────────────────────────────────────────── */
 
-const TajweedPracticalSlide = ({ student, onAnswer }) => (
+const TajweedPracticalSlide = ({ student, onAnswer, editorOn, custom, setCustom, resetCustom }) => {
+  const items = mergeWithCustom(TAJWEED_PRACTICAL, custom);
+  const defaultIds = new Set(TAJWEED_PRACTICAL.map((q) => q.id));
+  return (
   <div>
     <h3 className="text-lg font-semibold text-emerald-900 mb-1">Tajweed · Practical</h3>
     <p className="text-sm text-emerald-700/80 mb-3">Listen and assess each application.</p>
+    {editorOn && (
+      <CustomToolbar
+        label="Custom practical drills"
+        onAdd={() => setCustom(addCustomItem(custom, { id: newCustomId('tp'), level: 'easy', prompt: 'بسم الله الرحمن الرحيم', expects: 'Apply tajweed correctly' }))}
+        onReset={resetCustom}
+        canReset={Boolean(custom)}
+      />
+    )}
     <div className="space-y-3">
-      {TAJWEED_PRACTICAL.map((q) => {
+      {items.map((q) => {
         const qid = `tajweed.practical.${q.id}`;
         const answer = (student.answers || []).find((a) => a.questionId === qid);
         const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
         const dir = directionFor(q.prompt);
+        const isDefault = defaultIds.has(q.id);
         return (
           <div
             key={q.id}
@@ -1600,14 +1935,18 @@ const TajweedPracticalSlide = ({ student, onAnswer }) => (
           >
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] uppercase tracking-wide text-emerald-700">{q.level}</span>
-              <VerdictRow
-                answer={answer}
-                onChange={(v) => onAnswer({ questionId: qid, section: 'tajweed-practical', level: q.level, prompt: q.prompt, expertVerdict: v })}
-              />
+              <div className="flex items-center gap-2">
+                {editorOn && <DeleteDefaultBtn onClick={() => setCustom(removeCustomItem(custom, q.id, isDefault))} />}
+                <VerdictRow
+                  answer={answer}
+                  onChange={(v) => onAnswer({ questionId: qid, section: 'tajweed-practical', level: q.level, prompt: q.prompt, expertVerdict: v })}
+                />
+              </div>
             </div>
             <div
-              className={`font-arabic-display text-2xl text-emerald-900 leading-loose mb-1 ${dir === 'rtl' ? 'text-right' : 'text-left'}`}
-              dir={dir}
+              className="font-arabic-display text-2xl text-emerald-900 leading-loose mb-1"
+              dir="auto"
+              style={{ textAlign: 'start' }}
             >{q.prompt}</div>
             <div className="text-xs text-emerald-700/80">Expects: {q.expects}</div>
             <textarea
@@ -1619,20 +1958,35 @@ const TajweedPracticalSlide = ({ student, onAnswer }) => (
                 prompt: q.prompt, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value,
               })}
             />
+            {editorOn && !isDefault && (
+              <CustomItemEditor
+                item={q}
+                schema="expect"
+                onChange={(patch) => setCustom(updateCustomItem(custom, q.id, patch))}
+                onDelete={() => setCustom(removeCustomItem(custom, q.id, false))}
+              />
+            )}
           </div>
         );
       })}
     </div>
   </div>
-);
+  );
+};
 
 /* ─── Arabic skills ────────────────────────────────────────────────────── */
 
-const ArabicSkillsSlide = ({ student, onAnswer }) => {
+const ArabicSkillsSlide = ({ student, onAnswer, editorOn, custom, setCustom, resetCustom }) => {
   const [skillKey, setSkillKey] = useState('grammar');
   const [level, setLevel] = useState('easy');
   const skill = ARABIC_SKILLS.find((s) => s.key === skillKey) || ARABIC_SKILLS[0];
-  const items = skill.content?.[level] || [];
+  const defaultItems = skill.content?.[level] || [];
+  // Custom payload is namespaced by skill+level so admins can curate each pair.
+  const slotKey = `${skillKey}.${level}`;
+  const slotCustom = (custom && custom[slotKey]) || null;
+  const items = mergeWithCustom(defaultItems, slotCustom);
+  const defaultIds = new Set(defaultItems.map((q) => q.id));
+  const setSlot = (next) => setCustom({ ...(custom || {}), [slotKey]: next });
   const sectionFor = {
     grammar: 'arabic-grammar',
     vocab: 'arabic-vocab',
@@ -1640,6 +1994,16 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
     writing: 'arabic-writing',
     speaking: 'arabic-speaking',
   }[skillKey];
+
+  const addStub = () => {
+    const id = newCustomId(`${skillKey}-${level}`);
+    if (skill.type === 'mcq') {
+      return { id, prompt: 'New question', options: ['Option A', 'Option B', 'Option C', 'Option D'], correctIndex: 0 };
+    }
+    if (skill.type === 'expect') return { id, prompt: 'New prompt', expected: '' };
+    if (skill.type === 'passage') return { id, passage: 'النص…', questions: ['سؤال؟'] };
+    return { id, prompt: 'New prompt' };
+  };
 
   return (
     <div>
@@ -1660,55 +2024,87 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
         <DifficultyPicker value={level} onChange={setLevel} />
       </div>
 
+      {editorOn && (
+        <CustomToolbar
+          label={`Custom ${skill.label} · ${level}`}
+          onAdd={() => setSlot(addCustomItem(slotCustom, addStub()))}
+          onReset={() => {
+            const next = { ...(custom || {}) };
+            delete next[slotKey];
+            if (Object.keys(next).length === 0) resetCustom();
+            else setCustom(next);
+          }}
+          canReset={Boolean(slotCustom)}
+        />
+      )}
+
       <div className="space-y-3">
         {items.length === 0 && (
           <div className="text-sm text-emerald-700 italic">No items for this level yet.</div>
         )}
 
-        {skill.type === 'mcq' && items.map((q) => {
+        {skill.type === 'mcq' && items.map((q, idx) => {
           const qid = `arabic.${skillKey}.${q.id}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
           const chosenIdx = answer?.chosen?.[0] !== undefined ? Number(answer.chosen[0]) : null;
           const answered = chosenIdx !== null;
           const dir = directionFor(q.prompt);
+          const isDefault = defaultIds.has(q.id);
           return (
             <div
               key={q.id}
               dir={dir}
               className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
             >
-              <div className="font-medium text-emerald-900 mb-2" dir={dir}>{q.prompt}</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {q.options.map((opt, i) => {
-                  const isChosen = chosenIdx === i;
-                  const isCorrect = i === q.correctIndex;
-                  const revealed = chosenIdx !== null;
-                  const cls = revealed
-                    ? (isCorrect ? 'bg-emerald-50 border-emerald-400 text-emerald-800'
-                      : isChosen ? 'bg-rose-50 border-rose-400 text-rose-800'
-                      : 'bg-white/70 border-emerald-100')
-                    : 'bg-white/70 border-emerald-100 hover:bg-emerald-50';
-                  const optDir = directionFor(opt);
-                  return (
-                    <button key={i} type="button" dir={optDir}
-                      onClick={() => onAnswer({
-                        questionId: qid, section: sectionFor, level,
-                        prompt: q.prompt, chosen: [String(i)],
-                        expertVerdict: i === q.correctIndex ? 'correct' : 'incorrect',
-                      })}
-                      className={`${optDir === 'rtl' ? 'text-right' : 'text-left'} px-3 py-2 rounded-xl border text-sm ${cls}`}>{opt}</button>
-                  );
-                })}
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-emerald-700/70 font-semibold mb-0.5">Question {idx + 1}</div>
+                  <div className="font-medium text-emerald-900" dir="auto" style={{ textAlign: 'start' }}>{q.prompt}</div>
+                </div>
+                {editorOn && <DeleteDefaultBtn onClick={() => setSlot(removeCustomItem(slotCustom, q.id, isDefault))} />}
               </div>
+              <div className="rounded-xl bg-emerald-50/40 p-2">
+                <div className="text-[10px] uppercase tracking-wide text-emerald-700/80 mb-1.5 font-semibold">Options</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {q.options.map((opt, i) => {
+                    const isChosen = chosenIdx === i;
+                    const isCorrect = i === q.correctIndex;
+                    const revealed = chosenIdx !== null;
+                    const cls = revealed
+                      ? (isCorrect ? 'bg-emerald-50 border-emerald-400 text-emerald-800'
+                        : isChosen ? 'bg-rose-50 border-rose-400 text-rose-800'
+                        : 'bg-white/70 border-emerald-100')
+                      : 'bg-white/70 border-emerald-100 hover:bg-emerald-50';
+                    return (
+                      <button key={i} type="button" dir="auto"
+                        onClick={() => onAnswer({
+                          questionId: qid, section: sectionFor, level,
+                          prompt: q.prompt, chosen: [String(i)],
+                          expertVerdict: i === q.correctIndex ? 'correct' : 'incorrect',
+                        })}
+                        className={`text-left px-3 py-2 rounded-xl border text-sm ${cls}`}>{opt}</button>
+                    );
+                  })}
+                </div>
+              </div>
+              {editorOn && !isDefault && (
+                <CustomItemEditor
+                  item={q}
+                  schema="mcq"
+                  onChange={(patch) => setSlot(updateCustomItem(slotCustom, q.id, patch))}
+                  onDelete={() => setSlot(removeCustomItem(slotCustom, q.id, false))}
+                />
+              )}
             </div>
           );
         })}
 
-        {skill.type === 'expect' && items.map((q) => {
+        {skill.type === 'expect' && items.map((q, idx) => {
           const qid = `arabic.${skillKey}.${q.id}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
           const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
           const dir = directionFor(q.prompt);
+          const isDefault = defaultIds.has(q.id);
           return (
             <div
               key={q.id}
@@ -1716,45 +2112,67 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
               className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
             >
               <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="font-arabic-display text-xl text-emerald-900" dir={dir}>{q.prompt}</div>
-                <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-emerald-700/70 font-semibold mb-0.5">Question {idx + 1}</div>
+                  <div className="font-arabic-display text-xl text-emerald-900" dir="auto" style={{ textAlign: 'start' }}>{q.prompt}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {editorOn && <DeleteDefaultBtn onClick={() => setSlot(removeCustomItem(slotCustom, q.id, isDefault))} />}
+                  <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
+                </div>
               </div>
               <div className="text-xs text-emerald-700/80">Expected: {q.expected}</div>
               <textarea className="eval-input mt-2 text-sm min-h-[40px]"
                 placeholder="Student's answer / notes…"
                 value={answer?.note || ''}
                 onChange={(e) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value })} />
+              {editorOn && !isDefault && (
+                <CustomItemEditor item={q} schema="expect"
+                  onChange={(patch) => setSlot(updateCustomItem(slotCustom, q.id, patch))}
+                  onDelete={() => setSlot(removeCustomItem(slotCustom, q.id, false))} />
+              )}
             </div>
           );
         })}
 
-        {skill.type === 'passage' && items.map((q) => {
+        {skill.type === 'passage' && items.map((q, idx) => {
           const qid = `arabic.${skillKey}.${q.id}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
           const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
           const dir = directionFor(q.passage);
+          const isDefault = defaultIds.has(q.id);
           return (
             <div
               key={q.id}
               dir={dir}
               className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
             >
-              <div className="font-arabic-display text-lg leading-loose text-emerald-900 mb-2" dir={dir}>{q.passage}</div>
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="text-[11px] uppercase tracking-wide text-emerald-700/70 font-semibold">Passage {idx + 1}</div>
+                {editorOn && <DeleteDefaultBtn onClick={() => setSlot(removeCustomItem(slotCustom, q.id, isDefault))} />}
+              </div>
+              <div className="font-arabic-display text-lg leading-loose text-emerald-900 mb-2" dir="auto" style={{ textAlign: 'start' }}>{q.passage}</div>
               <ol className="list-decimal pl-5 text-sm text-emerald-700 mb-2 space-y-1">
-                {q.questions.map((qq, i) => <li key={i}>{qq}</li>)}
+                {q.questions.map((qq, i) => <li key={i} dir="auto">{qq}</li>)}
               </ol>
               <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.passage, expertVerdict: v })} />
               <textarea className="eval-input mt-2 text-sm min-h-[44px]" placeholder="What did the student get / miss?" value={answer?.note || ''}
                 onChange={(e) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.passage, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value })} />
+              {editorOn && !isDefault && (
+                <CustomItemEditor item={q} schema="passage"
+                  onChange={(patch) => setSlot(updateCustomItem(slotCustom, q.id, patch))}
+                  onDelete={() => setSlot(removeCustomItem(slotCustom, q.id, false))} />
+              )}
             </div>
           );
         })}
 
-        {skill.type === 'prompt' && items.map((q) => {
+        {skill.type === 'prompt' && items.map((q, idx) => {
           const qid = `arabic.${skillKey}.${q.id}`;
           const answer = (student.answers || []).find((a) => a.questionId === qid);
           const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
           const dir = directionFor(q.prompt);
+          const isDefault = defaultIds.has(q.id);
           return (
             <div
               key={q.id}
@@ -1762,13 +2180,24 @@ const ArabicSkillsSlide = ({ student, onAnswer }) => {
               className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
             >
               <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="font-medium text-emerald-900" dir={dir}>{q.prompt}</div>
-                <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-emerald-700/70 font-semibold mb-0.5">Prompt {idx + 1}</div>
+                  <div className="font-medium text-emerald-900" dir="auto" style={{ textAlign: 'start' }}>{q.prompt}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {editorOn && <DeleteDefaultBtn onClick={() => setSlot(removeCustomItem(slotCustom, q.id, isDefault))} />}
+                  <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
+                </div>
               </div>
               <textarea className="eval-input mt-2 text-sm min-h-[60px]"
                 placeholder={skillKey === 'writing' ? 'Transcribe what the student wrote…' : 'Notes on fluency, accuracy, vocabulary…'}
                 value={answer?.note || ''}
                 onChange={(e) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value })} />
+              {editorOn && !isDefault && (
+                <CustomItemEditor item={q} schema="prompt"
+                  onChange={(patch) => setSlot(updateCustomItem(slotCustom, q.id, patch))}
+                  onDelete={() => setSlot(removeCustomItem(slotCustom, q.id, false))} />
+              )}
             </div>
           );
         })}

@@ -384,6 +384,30 @@ export const ARABIC_GRAMMAR = {
       options: ['كِتَابٌ', 'الْكِتَابُ', 'كِتَابٍ'],
       correctIndex: 1,
     },
+    {
+      id: 'gram.e.4',
+      prompt: 'Identify the preposition (حرف الجر) in: ذَهَبْتُ إِلَى السُّوقِ',
+      options: ['ذَهَبْتُ', 'إِلَى', 'السُّوقِ'],
+      correctIndex: 1,
+    },
+    {
+      id: 'gram.e.5',
+      prompt: 'Which one is a pronoun (ضمير)?',
+      options: ['كِتَابٌ', 'أَنَا', 'يَكْتُبُ'],
+      correctIndex: 1,
+    },
+    {
+      id: 'gram.e.6',
+      prompt: 'Pick the dual form (مُثَنَّى) of: طَالِبٌ',
+      options: ['طُلَّابٌ', 'طَالِبَانِ', 'طَالِبَةٌ'],
+      correctIndex: 1,
+    },
+    {
+      id: 'gram.e.7',
+      prompt: 'Which sentence is a nominal sentence (جملة اسمية)?',
+      options: ['كَتَبَ الْوَلَدُ', 'الْوَلَدُ مُجْتَهِدٌ', 'لَا تَكْذِبْ'],
+      correctIndex: 1,
+    },
   ],
   medium: [
     {
@@ -410,6 +434,30 @@ export const ARABIC_GRAMMAR = {
       options: ['وَلَدٌ', 'بِنْتٌ', 'بَابٌ'],
       correctIndex: 1,
     },
+    {
+      id: 'gram.m.5',
+      prompt: 'Identify the مبتدأ in: الطَّالِبُ مُجْتَهِدٌ',
+      options: ['الطَّالِبُ', 'مُجْتَهِدٌ'],
+      correctIndex: 0,
+    },
+    {
+      id: 'gram.m.6',
+      prompt: 'Form the past tense (الماضي) of يَكْتُبُ for "he":',
+      options: ['كَتَبَ', 'يَكْتُبُ', 'اُكْتُبْ'],
+      correctIndex: 0,
+    },
+    {
+      id: 'gram.m.7',
+      prompt: 'Which particle makes the verb منصوب (subjunctive)?',
+      options: ['لَمْ', 'أَنْ', 'لَا النافية'],
+      correctIndex: 1,
+    },
+    {
+      id: 'gram.m.8',
+      prompt: 'Identify the إضافة (genitive construction) in: كِتَابُ الطَّالِبِ جَدِيدٌ',
+      options: ['كِتَابُ الطَّالِبِ', 'الطَّالِبِ جَدِيدٌ', 'كِتَابُ جَدِيدٌ'],
+      correctIndex: 0,
+    },
   ],
   advanced: [
     {
@@ -434,6 +482,30 @@ export const ARABIC_GRAMMAR = {
       id: 'gram.a.4',
       prompt: 'Form the present tense (مضارع) of: كَتَبَ for "I"',
       options: ['أَكْتُبُ', 'يَكْتُبُ', 'نَكْتُبُ'],
+      correctIndex: 0,
+    },
+    {
+      id: 'gram.a.5',
+      prompt: 'Identify the حال in: جَاءَ الطَّالِبُ مُسْرِعًا',
+      options: ['الطَّالِبُ', 'مُسْرِعًا', 'جَاءَ'],
+      correctIndex: 1,
+    },
+    {
+      id: 'gram.a.6',
+      prompt: 'In: كَانَ الْجَوُّ جَمِيلًا — what is the إعراب of جَمِيلًا ?',
+      options: ['اسم كان (مرفوع)', 'خبر كان (منصوب)', 'حال'],
+      correctIndex: 1,
+    },
+    {
+      id: 'gram.a.7',
+      prompt: 'Identify the مفعول مطلق in: ضَرَبْتُهُ ضَرْبًا شَدِيدًا',
+      options: ['ضَرْبًا', 'شَدِيدًا', 'ضَرَبْتُهُ'],
+      correctIndex: 0,
+    },
+    {
+      id: 'gram.a.8',
+      prompt: 'Convert to passive voice (مبني للمجهول): كَتَبَ الطَّالِبُ الدَّرْسَ',
+      options: ['كُتِبَ الدَّرْسُ', 'يَكْتُبُ الدَّرْسَ', 'كَاتِبٌ الدَّرْسَ'],
       correctIndex: 0,
     },
   ],

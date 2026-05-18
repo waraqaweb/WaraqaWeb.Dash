@@ -474,13 +474,19 @@
 .welcome-pane { min-width: 0; display: flex; flex-direction: column; }
 .subject-card {
   position: relative; overflow: hidden;
-  text-align: start;
+  text-align: center;
   border-radius: 18px;
-  padding: 14px 16px;
+  padding: 18px 16px;
   border: 2px solid rgba(16,185,129,0.18);
   background: rgba(255,255,255,0.85);
   transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 180px;
 }
 .subject-card:hover { transform: translateY(-2px); border-color: #34d399; box-shadow: 0 16px 28px -18px rgba(4,120,87,0.45); }
 .subject-card.is-on {
@@ -488,10 +494,14 @@
   background: linear-gradient(135deg, #ecfdf5, #ffffff);
   box-shadow: 0 18px 30px -18px rgba(5,150,105,0.55);
 }
-.subject-card .icon { font-size: 2.2rem; line-height: 1; }
-.subject-card { padding: 18px 18px; min-height: 116px; }
-.subject-card .subj-title { font-size: 1rem; }
-.subject-card .subj-ar    { font-size: 0.95rem; }
+.subject-card .subj-icon {
+  font-size: clamp(3rem, 5vw, 4.5rem);
+  line-height: 1;
+  filter: drop-shadow(0 6px 10px rgba(4, 120, 87, 0.18));
+  margin-bottom: 4px;
+}
+.subject-card .subj-title { font-size: 1.05rem; font-weight: 700; }
+.subject-card .subj-ar    { font-size: 1rem; }
 
 /* Subject grid inside welcome step 3 fills available height */
 .welcome-card.is-tall .subject-grid {

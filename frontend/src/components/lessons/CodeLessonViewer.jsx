@@ -251,7 +251,9 @@ const CodeLessonViewer = ({ lesson, onClose }) => {
                 </div>
                 <iframe
                   title="lesson-preview"
-                  sandbox="allow-scripts"
+                  sandbox="allow-scripts allow-same-origin"
+                  referrerPolicy="no-referrer"
+                  allow="clipboard-read; clipboard-write"
                   className="h-[520px] w-full bg-white"
                   srcDoc={previewHtml}
                 />

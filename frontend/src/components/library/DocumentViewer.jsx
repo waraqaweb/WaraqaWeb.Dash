@@ -1068,6 +1068,9 @@ const DocumentViewer = ({ item, onClose }) => {
                       title={`Preview of ${item.displayName}`}
                       className="h-full w-full"
                       onLoad={() => setInlineFrameLoaded(true)}
+                      sandbox="allow-same-origin allow-forms"
+                      referrerPolicy="no-referrer"
+                      allow="clipboard-read; clipboard-write"
                     />
                   </div>
                   {inlineError ? <p className="text-xs text-red-500">{inlineError}</p> : null}

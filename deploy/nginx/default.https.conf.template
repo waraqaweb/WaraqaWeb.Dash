@@ -94,6 +94,24 @@ server {
   add_header X-Frame-Options SAMEORIGIN always;
   add_header Referrer-Policy strict-origin-when-cross-origin always;
 
+  # Strict Content Security Policy (CSP)
+  add_header Content-Security-Policy "\
+    default-src 'self';\
+    script-src 'self' https://www.googletagmanager.com;\
+    style-src 'self' 'unsafe-inline';\
+    img-src 'self' data: https://www.googletagmanager.com;\
+    font-src 'self';\
+    connect-src 'self' wss://app.waraqaweb.com https://www.googletagmanager.com;\
+    frame-src https://www.googletagmanager.com;\
+    object-src 'none';\
+    base-uri 'self';\
+    form-action 'self';\
+    frame-ancestors 'self';\
+  " always;
+
+  # HTTP Strict Transport Security (HSTS)
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
   # Hard-block common scanning/probing paths
   location ~* ^/(?:\.env|\.git|\.hg|\.svn|\.DS_Store|\.ht|wp-admin|wp-login\.php|phpmyadmin|pma|adminer|vendor|cgi-bin) {
     return 444;

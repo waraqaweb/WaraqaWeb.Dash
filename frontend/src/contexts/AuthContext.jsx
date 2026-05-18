@@ -39,10 +39,30 @@ export const useAuth = () => {
 
 // api instance already configures baseURL and attaches token via interceptor
 
+// Cached user lets us hydrate optimistically on reload so a transient /auth/me
+// failure (e.g. backend restart during deploy) doesn't bounce the user to /login.
+const USER_CACHE_KEY = 'waraqa:cachedUser';
+const readCachedUser = () => {
+  try {
+    if (!localStorage.getItem('token')) return null;
+    const raw = localStorage.getItem(USER_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed._id && parsed.role) return parsed;
+  } catch (_) { /* ignore */ }
+  return null;
+};
+const writeCachedUser = (u) => {
+  try {
+    if (u && u._id) localStorage.setItem(USER_CACHE_KEY, JSON.stringify(u));
+    else localStorage.removeItem(USER_CACHE_KEY);
+  } catch (_) { /* ignore */ }
+};
+
 // Authentication Provider Component
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(() => readCachedUser());
+  const [loading, setLoading] = useState(() => !readCachedUser());
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [socket, setSocket] = useState(globalSocket); // Use global socket
   const hasCheckedAuthRef = useRef(false);
@@ -117,6 +137,7 @@ export const AuthProvider = ({ children }) => {
         const apiError = error?.response?.data?.error || error?.authErrorCode;
         if (status === 401 && (apiError === 'INVALID_TOKEN' || apiError === 'TOKEN_EXPIRED')) {
           try { localStorage.removeItem('token'); } catch (e) {}
+          try { localStorage.removeItem(USER_CACHE_KEY); } catch (e) {}
           try { window.sessionStorage?.removeItem(__entitySearchCacheUserScopeKey); } catch (e) {}
           setToken(null);
           setUser(null);
@@ -404,6 +425,7 @@ export const AuthProvider = ({ children }) => {
             
             if (isComponentMounted) {
               setUser(response.data.user);
+              writeCachedUser(response.data.user);
               setToken(savedToken);
 
               // Initialize socket ONLY ONCE
@@ -427,6 +449,8 @@ export const AuthProvider = ({ children }) => {
               console.error('Token verification failed - invalid/expired token:', error);
               if (isComponentMounted) {
                 localStorage.removeItem('token');
+                writeCachedUser(null);
+                setUser(null);
                 setToken(null);
               }
             } else {
@@ -443,8 +467,9 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    // Only run if we don't already have a user (and only once)
-    if (!user && !hasCheckedAuthRef.current) {
+    // Always verify the token once per mount so cached optimistic users get re-validated.
+    // checkAuth() itself handles the case where there is no saved token.
+    if (!hasCheckedAuthRef.current) {
       hasCheckedAuthRef.current = true;
       checkAuth();
     } else {
@@ -475,6 +500,7 @@ export const AuthProvider = ({ children }) => {
       
       // Update state
       setUser(userData);
+      writeCachedUser(userData);
       setToken(userToken);
 
       // Initialize socket ONLY ONCE
@@ -508,6 +534,7 @@ export const AuthProvider = ({ children }) => {
       
       // Update state
       setUser(userData);
+      writeCachedUser(userData);
       setToken(userToken);
       
       return { success: true, user: userData, role: userData.role };
@@ -549,6 +576,7 @@ export const AuthProvider = ({ children }) => {
       
       // Update state
       setUser(newUser);
+      writeCachedUser(newUser);
       setToken(userToken);
       
       return { success: true, user: newUser, role: newUser.role };
@@ -584,6 +612,7 @@ export const AuthProvider = ({ children }) => {
 
       localStorage.setItem('token', userToken);
       setUser(userData);
+      writeCachedUser(userData);
       setToken(userToken);
 
       return { success: true, user: userData, role: userData.role };
@@ -608,6 +637,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('token');
       localStorage.removeItem('originalAdminToken');
       localStorage.removeItem('originalAdminUser');
+      try { localStorage.removeItem(USER_CACHE_KEY); } catch (e) {}
       try { window.sessionStorage?.removeItem(__entitySearchCacheUserScopeKey); } catch (e) {}
       setUser(null);
       setToken(null);

@@ -15,6 +15,7 @@ import './App.css';
 import LoadingSpinner from './components/ui/LoadingSpinner';
 import useMinLoading from './components/ui/useMinLoading';
 import { trackPageView } from './utils/analytics';
+import useDocumentTitle from './hooks/useDocumentTitle';
 
 const LoginPage = React.lazy(() => import('./components/auth/LoginPage'));
 const AdminLoginPage = React.lazy(() => import('./components/auth/AdminLoginPage'));
@@ -114,6 +115,8 @@ const AppRoutes = () => {
   const { user, loading } = useAuth();
   const showAuthLoading = useMinLoading(loading);
   const location = useLocation();
+  // Keep the browser tab title in sync with the current route.
+  useDocumentTitle();
   // If we navigated to a modal route we save the previous location in state.background
   const background = location.state && location.state.background;
 

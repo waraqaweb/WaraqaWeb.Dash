@@ -1250,6 +1250,73 @@ const VerdictRow = ({ answer, onChange }) => (
   </div>
 );
 
+/* ─── Per-tile testing helpers (Reading · Letters / Words / Sentences) ──── */
+
+const tileVerdictClass = (v) => (
+  v === 'correct'   ? 'letter-tile-correct'   :
+  v === 'partial'   ? 'letter-tile-partial'   :
+  v === 'incorrect' ? 'letter-tile-incorrect' :
+  ''
+);
+
+/**
+ * Hook for tile-level testing inside Reading · Letters / Words slides.
+ * • Clicking a tile toggles it into a "tested / pending" state (dimmed, dashed amber).
+ * • Re-clicking removes it (back to default), or — if already graded — clears the
+ *   grade and puts the tile back into pending.
+ * • Section-level Correct/Partial/Incorrect button then bulk-applies that verdict
+ *   to ALL currently-pending tiles in that group and clears the pending set.
+ */
+const useTileTesting = ({ items, qid, section, level, groupTitle, answers, onAnswer }) => {
+  const [pending, setPending] = useState(() => new Set());
+
+  const itemQid = (idx) => `${qid}.t${idx}`;
+  const verdictOf = (idx) => {
+    const a = answers.find((x) => x.questionId === itemQid(idx));
+    const v = a?.expertVerdict;
+    return v && v !== 'na' ? v : null;
+  };
+
+  const togglePending = (idx) => {
+    const current = verdictOf(idx);
+    if (current) {
+      // Clear existing grade and queue for re-grading
+      onAnswer({ questionId: itemQid(idx), section, level, prompt: `${groupTitle} · ${items[idx]}`, expertVerdict: 'na' });
+      setPending((prev) => { const n = new Set(prev); n.add(idx); return n; });
+    } else {
+      setPending((prev) => {
+        const n = new Set(prev);
+        if (n.has(idx)) n.delete(idx); else n.add(idx);
+        return n;
+      });
+    }
+  };
+
+  const applyPending = (verdict) => {
+    if (!pending.size) return false;
+    pending.forEach((idx) => {
+      onAnswer({
+        questionId: itemQid(idx),
+        section,
+        level,
+        prompt: `${groupTitle} · ${items[idx]}`,
+        expertVerdict: verdict,
+      });
+    });
+    setPending(new Set());
+    return true;
+  };
+
+  const counts = useMemo(() => {
+    const c = { graded: 0, pending: pending.size, total: items.length };
+    items.forEach((_, idx) => { if (verdictOf(idx)) c.graded += 1; });
+    return c;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.length, pending, answers]);
+
+  return { pending, togglePending, verdictOf, applyPending, counts };
+};
+
 /* ─── Reading · Letters ────────────────────────────────────────────────── */
 
 const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, setCustom, resetCustom }) => {
@@ -1290,54 +1357,29 @@ const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, se
         {groups.map((g, gi) => {
           const items = shuffledByGroup[gi] || g.items || [];
           const qid = `letters.${level}.${g.id || gi}`;
-          const answer = (student.answers || []).find((a) => a.questionId === qid);
-          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
           const dir = directionFor(g.title);
           return (
-            <div
+            <LettersGroupCard
               key={g.id || gi}
+              group={g}
+              items={items}
+              qid={qid}
+              level={level}
+              section="reading-letters"
               dir={dir}
-              className={`rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-base font-bold text-emerald-900">{g.title}</div>
-                  {g.note && <div className="text-sm text-emerald-700">{g.note}</div>}
-                </div>
-                <VerdictRow
-                  answer={answer}
-                  onChange={(v) => onAnswer({ questionId: qid, section: 'reading-letters', level, prompt: g.title, expertVerdict: v })}
-                />
-              </div>
-
-              <div className="letter-row">
-                {items.map((ch, idx) => (
-                  <span
-                    key={`${ch}-${idx}`}
-                    className="letter-tile"
-                    style={{ background: TILE_GRADIENTS[(gi * 7 + idx) % TILE_GRADIENTS.length] }}
-                    title={ch}
-                  >
-                    {ch}
-                  </span>
-                ))}
-              </div>
-
-              {editorOn && (
-                <GroupEditor
-                  group={g}
-                  index={gi}
-                  total={groups.length}
-                  onSave={(next) => { const arr = [...groups]; arr[gi] = next; updateGroups(arr); }}
-                  onDelete={() => { const arr = groups.filter((_, i) => i !== gi); updateGroups(arr); }}
-                  onMove={(dir) => {
-                    const arr = [...groups]; const j = gi + dir;
-                    if (j < 0 || j >= arr.length) return;
-                    [arr[gi], arr[j]] = [arr[j], arr[gi]]; updateGroups(arr);
-                  }}
-                />
-              )}
-            </div>
+              gi={gi}
+              answers={student.answers || []}
+              onAnswer={onAnswer}
+              editorOn={editorOn}
+              onSave={(next) => { const arr = [...groups]; arr[gi] = next; updateGroups(arr); }}
+              onDelete={() => { const arr = groups.filter((_, i) => i !== gi); updateGroups(arr); }}
+              onMove={(dir2) => {
+                const arr = [...groups]; const j = gi + dir2;
+                if (j < 0 || j >= arr.length) return;
+                [arr[gi], arr[j]] = [arr[j], arr[gi]]; updateGroups(arr);
+              }}
+              total={groups.length}
+            />
           );
         })}
 
@@ -1349,6 +1391,72 @@ const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, se
           ><Plus className="h-4 w-4" /> Add group</button>
         )}
       </div>
+    </div>
+  );
+};
+
+const LettersGroupCard = ({ group: g, items, qid, level, section, dir, gi, answers, onAnswer, editorOn, onSave, onDelete, onMove, total }) => {
+  const tiles = useTileTesting({ items, qid, section, level, groupTitle: g.title, answers, onAnswer });
+  const allGraded = tiles.counts.total > 0 && tiles.counts.graded === tiles.counts.total && tiles.counts.pending === 0;
+  return (
+    <div
+      dir={dir}
+      className={`rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm transition-opacity ${allGraded ? 'opacity-70 hover:opacity-100' : ''}`}
+    >
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="text-base font-bold text-emerald-900 truncate">{g.title}</div>
+          {g.note && <div className="text-sm text-emerald-700">{g.note}</div>}
+          <div className="text-[11px] text-emerald-700/80 mt-1">
+            {tiles.counts.graded}/{tiles.counts.total} graded
+            {tiles.counts.pending > 0 && (
+              <span className="ml-2 text-amber-700 font-semibold">· {tiles.counts.pending} tested</span>
+            )}
+          </div>
+        </div>
+        <VerdictRow
+          answer={null}
+          onChange={(v) => {
+            const ok = tiles.applyPending(v);
+            if (!ok) showToast('Click the tiles you tested first');
+          }}
+        />
+      </div>
+
+      <div className="letter-row">
+        {items.map((ch, idx) => {
+          const v = tiles.verdictOf(idx);
+          const isPending = tiles.pending.has(idx);
+          const cls = [
+            'letter-tile',
+            v ? tileVerdictClass(v) : '',
+            isPending ? 'letter-tile-pending' : '',
+          ].filter(Boolean).join(' ');
+          return (
+            <button
+              key={`${ch}-${idx}`}
+              type="button"
+              onClick={() => tiles.togglePending(idx)}
+              className={cls}
+              style={{ background: TILE_GRADIENTS[(gi * 7 + idx) % TILE_GRADIENTS.length] }}
+              title={`${ch}${v ? ` · ${v}` : isPending ? ' · tested' : ''}`}
+            >
+              {ch}
+            </button>
+          );
+        })}
+      </div>
+
+      {editorOn && (
+        <GroupEditor
+          group={g}
+          index={gi}
+          total={total}
+          onSave={onSave}
+          onDelete={onDelete}
+          onMove={onMove}
+        />
+      )}
     </div>
   );
 };
@@ -1539,60 +1647,35 @@ const ReadingWordsSlide = ({ student, onChange, onAnswer, diacritics, onToggleDi
       <div className="space-y-4">
         {ordered.map((g, gi) => {
           const qid = `words.${level}.${g.id || gi}`;
-          const answer = (student.answers || []).find((a) => a.questionId === qid);
-          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
           const dir = directionFor(g.title);
           return (
-            <div
+            <WordsGroupCard
               key={g.id || gi}
+              group={g}
+              qid={qid}
+              level={level}
               dir={dir}
-              className={`rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-base font-bold text-emerald-900">{g.title}</div>
-                  {g.note && <div className="text-sm text-emerald-700">{g.note}</div>}
-                </div>
-                <VerdictRow
-                  answer={answer}
-                  onChange={(v) => onAnswer({ questionId: qid, section: 'reading-words', level, prompt: g.title, expertVerdict: v })}
-                />
-              </div>
-              <div className="letter-row row-word">
-                {(g.items || []).map((w, idx) => {
-                  const text = diacritics ? w : stripDiacritics(w);
-                  return (
-                    <span
-                      key={`${w}-${idx}`}
-                      className="letter-tile word"
-                      style={{ background: TILE_GRADIENTS[(gi * 5 + idx) % TILE_GRADIENTS.length] }}
-                    >{text}</span>
-                  );
-                })}
-              </div>
-
-              {editorOn && (
-                <GroupEditor
-                  group={g}
-                  index={gi}
-                  total={ordered.length}
-                  onSave={(next) => {
-                    const arr = [...items];
-                    const realIdx = arr.findIndex((x) => x.id === g.id);
-                    if (realIdx >= 0) arr[realIdx] = next;
-                    updateItems(arr);
-                  }}
-                  onDelete={() => updateItems(items.filter((x) => x.id !== g.id))}
-                  onMove={(dir) => {
-                    const arr = [...items];
-                    const i = arr.findIndex((x) => x.id === g.id);
-                    const j = i + dir;
-                    if (i < 0 || j < 0 || j >= arr.length) return;
-                    [arr[i], arr[j]] = [arr[j], arr[i]]; updateItems(arr);
-                  }}
-                />
-              )}
-            </div>
+              gi={gi}
+              diacritics={diacritics}
+              answers={student.answers || []}
+              onAnswer={onAnswer}
+              editorOn={editorOn}
+              total={ordered.length}
+              onSave={(next) => {
+                const arr = [...items];
+                const realIdx = arr.findIndex((x) => x.id === g.id);
+                if (realIdx >= 0) arr[realIdx] = next;
+                updateItems(arr);
+              }}
+              onDelete={() => updateItems(items.filter((x) => x.id !== g.id))}
+              onMove={(dir2) => {
+                const arr = [...items];
+                const i = arr.findIndex((x) => x.id === g.id);
+                const j = i + dir2;
+                if (i < 0 || j < 0 || j >= arr.length) return;
+                [arr[i], arr[j]] = [arr[j], arr[i]]; updateItems(arr);
+              }}
+            />
           );
         })}
 
@@ -1604,6 +1687,71 @@ const ReadingWordsSlide = ({ student, onChange, onAnswer, diacritics, onToggleDi
           ><Plus className="h-4 w-4" /> Add group</button>
         )}
       </div>
+    </div>
+  );
+};
+
+const WordsGroupCard = ({ group: g, qid, level, dir, gi, diacritics, answers, onAnswer, editorOn, total, onSave, onDelete, onMove }) => {
+  const rawItems = g.items || [];
+  const tiles = useTileTesting({ items: rawItems, qid, section: 'reading-words', level, groupTitle: g.title, answers, onAnswer });
+  const allGraded = tiles.counts.total > 0 && tiles.counts.graded === tiles.counts.total && tiles.counts.pending === 0;
+  return (
+    <div
+      dir={dir}
+      className={`rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm transition-opacity ${allGraded ? 'opacity-70 hover:opacity-100' : ''}`}
+    >
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="text-base font-bold text-emerald-900 truncate">{g.title}</div>
+          {g.note && <div className="text-sm text-emerald-700">{g.note}</div>}
+          <div className="text-[11px] text-emerald-700/80 mt-1">
+            {tiles.counts.graded}/{tiles.counts.total} graded
+            {tiles.counts.pending > 0 && (
+              <span className="ml-2 text-amber-700 font-semibold">· {tiles.counts.pending} tested</span>
+            )}
+          </div>
+        </div>
+        <VerdictRow
+          answer={null}
+          onChange={(v) => {
+            const ok = tiles.applyPending(v);
+            if (!ok) showToast('Click the tiles you tested first');
+          }}
+        />
+      </div>
+      <div className="letter-row row-word">
+        {rawItems.map((w, idx) => {
+          const text = diacritics ? w : stripDiacritics(w);
+          const v = tiles.verdictOf(idx);
+          const isPending = tiles.pending.has(idx);
+          const cls = [
+            'letter-tile word',
+            v ? tileVerdictClass(v) : '',
+            isPending ? 'letter-tile-pending' : '',
+          ].filter(Boolean).join(' ');
+          return (
+            <button
+              key={`${w}-${idx}`}
+              type="button"
+              onClick={() => tiles.togglePending(idx)}
+              className={cls}
+              style={{ background: TILE_GRADIENTS[(gi * 5 + idx) % TILE_GRADIENTS.length] }}
+              title={`${text}${v ? ` · ${v}` : isPending ? ' · tested' : ''}`}
+            >{text}</button>
+          );
+        })}
+      </div>
+
+      {editorOn && (
+        <GroupEditor
+          group={g}
+          index={gi}
+          total={total}
+          onSave={onSave}
+          onDelete={onDelete}
+          onMove={onMove}
+        />
+      )}
     </div>
   );
 };
@@ -2270,8 +2418,18 @@ const SummarySlide = ({ session, student, onChange, onSendFeedback }) => {
     return t;
   }, [student.answers]);
 
-  const [feedbackEmail, setFeedbackEmail] = useState(student.contactEmail || '');
+  const [feedbackEmail, setFeedbackEmail] = useState(
+    student.contactEmail || session?.students?.[0]?.contactEmail || ''
+  );
   const [feedbackLink, setFeedbackLink] = useState('');
+
+  // Re-default the email field when the active student changes (e.g. switching tabs).
+  // Falls back to the first student's contact email if the current one is empty —
+  // useful when multiple students share the same guardian email.
+  useEffect(() => {
+    setFeedbackEmail(student.contactEmail || session?.students?.[0]?.contactEmail || '');
+    setFeedbackLink('');
+  }, [student._id, student.contactEmail, session?.students]);
 
   const journey = useMemo(() => summarizeJourney(student.answers), [student.answers]);
 

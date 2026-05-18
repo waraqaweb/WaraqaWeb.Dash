@@ -124,6 +124,29 @@
 .letter-tile-incorrect { outline: 3px solid #f43f5e; outline-offset: 2px; }
 .letter-tile-partial   { outline: 3px solid #f59e0b; outline-offset: 2px; }
 
+/* Tested (clicked) but not yet graded — dimmed + dashed amber outline */
+.letter-tile-pending {
+  opacity: 0.45;
+  outline: 3px dashed #f59e0b;
+  outline-offset: 2px;
+  transform: scale(0.96);
+  filter: grayscale(0.3);
+}
+.letter-tile-pending:hover { opacity: 0.7; }
+
+/* Tile as a real button — strip default styles */
+button.letter-tile {
+  border: none;
+  background-clip: padding-box;
+  font-family: inherit;
+  cursor: pointer;
+  appearance: none;
+}
+button.letter-tile:focus-visible {
+  outline: 3px solid #0d9488;
+  outline-offset: 3px;
+}
+
 /* Stepper dot */
 .eval-step-dot {
   display: inline-flex; align-items: center; justify-content: center;

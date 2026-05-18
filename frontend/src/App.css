@@ -53,6 +53,41 @@ select,
   color: rgba(100, 116, 139, 0.6);
 }
 
+/* --------------------------------------------------------------------------
+   Modal overlay safety net
+   --------------------------------------------------------------------------
+   Most modals across the app use the pattern:
+     <div class="fixed inset-0 z-50 flex items-center justify-center …">
+       <div class="modal-content">…</div>
+     </div>
+   When the modal content is taller than the viewport (small laptops, zoomed
+   browsers, long forms like Reschedule Class, Create Class, Edit Student,
+   etc.) plain `items-center` centers the child relative to the overlay, which
+   means the TOP of the child gets clipped above the viewport and is
+   unreachable. We fix this globally by making every such overlay scrollable
+   and using `safe center` alignment so the browser falls back to `start`
+   alignment automatically when content overflows. This benefits every modal
+   without having to patch each call-site individually.
+*/
+.fixed.inset-0.flex.items-center.justify-center {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  /* `safe center` is supported in all modern evergreen browsers; older
+     engines simply ignore it and fall back to `center`, which is the
+     current (broken) behaviour — i.e. no regression. */
+  align-items: safe center;
+}
+
+/* Some overlays only specify `items-start` / `items-end` but still need to
+   scroll for tall content. */
+.fixed.inset-0.flex.items-start.justify-center,
+.fixed.inset-0.flex.items-end.justify-center {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
 
 
 @custom-variant dark (&:is(.dark *));

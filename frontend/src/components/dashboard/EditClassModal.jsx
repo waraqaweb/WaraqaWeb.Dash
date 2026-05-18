@@ -44,6 +44,7 @@ export default function EditClassModal({
   removeRecurrenceSlot,
   updateRecurrenceSlot,
   handleUpdateClass,
+  onForceSubmit,
   availabilityWarning,
   onDismissAvailabilityWarning,
   updateResult,
@@ -73,6 +74,12 @@ export default function EditClassModal({
   }, []);
   const [dstWarning, setDstWarning] = useState(null);
   const [msgCopied, setMsgCopied] = useState(false);
+  const [showSuggestedTimes, setShowSuggestedTimes] = useState(false);
+
+  // Hide suggested times by default whenever a new availability warning appears.
+  useEffect(() => {
+    setShowSuggestedTimes(false);
+  }, [availabilityWarning?.title, availabilityWarning?.details]);
   const fetchTeacherOptions = useCallback((term = '') => searchTeachers(term), []);
   const fetchTeacherById = useCallback((id) => getTeacherById(id), []);
   const fetchGuardianOptions = useCallback((term = '') => searchGuardians(term), []);
@@ -277,50 +284,9 @@ export default function EditClassModal({
             />
           )}
 
-          {/* Availability Warning */}
-          {availabilityWarning && (
-            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-yellow-900">
-                    {availabilityWarning.title || 'Teacher not available'}
-                  </div>
-                  {availabilityWarning.reason && (
-                    <div className="mt-1 text-xs text-yellow-900 whitespace-pre-wrap">
-                      {availabilityWarning.reason}
-                    </div>
-                  )}
-                  {availabilityWarning.details && (
-                    <div className="mt-2 text-xs text-yellow-800 whitespace-pre-wrap">
-                      {availabilityWarning.details}
-                    </div>
-                  )}
-                  {availabilityWarning.nearest && (
-                    <div className="mt-2 text-xs text-yellow-900">
-                      <span className="font-medium">Nearest available slot:</span>{' '}
-                      {availabilityWarning.nearest}
-                    </div>
-                  )}
-                  {Array.isArray(availabilityWarning.suggested) && availabilityWarning.suggested.length > 0 && (
-                    <div className="mt-2 text-xs text-yellow-900">
-                      <div className="font-medium">Other suggested slots:</div>
-                      <div className="mt-1 whitespace-pre-wrap">
-                        {availabilityWarning.suggested.slice(0, 3).map((s) => `• ${s}`).join('\n')}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onDismissAvailabilityWarning?.()}
-                  className="text-yellow-700 hover:text-yellow-900"
-                  aria-label="Dismiss availability warning"
-                >
-                  <XCircle className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-          )}
+          {/* Availability Warning is rendered at the BOTTOM of the form
+              (just above the submit row) so the user doesn't have to scroll
+              back up to read it after filling the form. See block below. */}
 
           {/* Current Timezone Display */}
           <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
@@ -707,6 +673,85 @@ export default function EditClassModal({
               />
             </div>
 
+
+            {/* Availability Warning (rendered near the submit button so the
+                user sees the issue right where they're acting). */}
+            {availabilityWarning && (
+              <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-yellow-900">
+                      {availabilityWarning.title || 'Teacher not available'}
+                    </div>
+                    {availabilityWarning.reason && (
+                      <div className="mt-1 text-xs text-yellow-900 whitespace-pre-wrap">
+                        {availabilityWarning.reason}
+                      </div>
+                    )}
+                    {availabilityWarning.details && (
+                      <div className="mt-2 text-xs text-yellow-800 whitespace-pre-wrap">
+                        {availabilityWarning.details}
+                      </div>
+                    )}
+                    {(availabilityWarning.nearest || (Array.isArray(availabilityWarning.suggested) && availabilityWarning.suggested.length > 0)) && (
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowSuggestedTimes((v) => !v)}
+                          className="text-xs font-medium text-yellow-900 underline underline-offset-2 hover:text-yellow-800"
+                        >
+                          {showSuggestedTimes ? 'Hide suggested times' : 'Show suggested times'}
+                        </button>
+                        {showSuggestedTimes && (
+                          <div className="mt-2 space-y-2">
+                            {availabilityWarning.nearest && (
+                              <div className="text-xs text-yellow-900">
+                                <span className="font-medium">Nearest available slot:</span>{' '}
+                                {availabilityWarning.nearest}
+                              </div>
+                            )}
+                            {Array.isArray(availabilityWarning.suggested) && availabilityWarning.suggested.length > 0 && (
+                              <div className="text-xs text-yellow-900">
+                                <div className="font-medium">Other suggested slots:</div>
+                                <div className="mt-1 whitespace-pre-wrap">
+                                  {availabilityWarning.suggested.slice(0, 3).map((s) => `• ${s}`).join('\n')}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {editClass?.isRecurring && onForceSubmit && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { onDismissAvailabilityWarning?.(); onForceSubmit(); }}
+                          className="px-3 py-1.5 text-xs font-medium text-white bg-yellow-600 rounded-md hover:bg-yellow-700"
+                        >
+                          Proceed anyway
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDismissAvailabilityWarning?.()}
+                          className="px-3 py-1.5 text-xs font-medium text-yellow-800 bg-white border border-yellow-300 rounded-md hover:bg-yellow-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onDismissAvailabilityWarning?.()}
+                    className="text-yellow-700 hover:text-yellow-900"
+                    aria-label="Dismiss availability warning"
+                  >
+                    <XCircle className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Actions */}
             <div className="flex items-center justify-between py-2">

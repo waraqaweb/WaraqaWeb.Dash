@@ -2461,7 +2461,7 @@ fetchClassesRef.current = fetchClasses;
     });
   };
 
-  const handleUpdateClass = async () => {
+  const handleUpdateClass = async ({ force = false } = {}) => {
     try {
       const updateData = {
         title: editClass.title,
@@ -2500,10 +2500,12 @@ fetchClassesRef.current = fetchClasses;
         updateData.duration = editClass.duration;
       }
 
-      // Client-side validation: ensure the selected teacher is available for each recurring slot
+      // Client-side validation: ensure the selected teacher is available for each
+      // recurring slot. Only runs for recurring "all" updates AND when the user
+      // hasn't explicitly chosen to override the warning ("Proceed anyway").
       try {
         const teacherIdToCheck = editClass.teacher;
-        if (teacherIdToCheck) {
+        if (!force && editUpdateScope === 'all' && editClass.isRecurring && teacherIdToCheck) {
           const availability = await fetchTeacherAvailability(teacherIdToCheck);
 
           const isDefault = availability?.isDefaultAvailability;
@@ -2781,9 +2783,19 @@ fetchClassesRef.current = fetchClasses;
   };
 
   const handleDeleteCountdownStart = useCallback((scope, classId, classPayload) => {
-    const baseMessage = deleteClass?.subject
-      ? `Deleting ${deleteClass.subject}`
-      : 'Deleting class';
+    // Build a short, glance-able label: "Deleting <student> · <Day HH:MM>"
+    // (the FAB + plus button sit at bottom-right, so the toast must be compact).
+    const studentName = deleteClass?.student?.studentName
+      || deleteClass?.studentName
+      || 'class';
+    let dayTime = '';
+    try {
+      const d = deleteClass?.scheduledDate ? new Date(deleteClass.scheduledDate) : null;
+      if (d && !Number.isNaN(d.getTime())) {
+        dayTime = d.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+      }
+    } catch (_) { /* ignore */ }
+    const baseMessage = `Deleting ${studentName}${dayTime ? ` · ${dayTime}` : ''}`;
 
     startDeleteCountdown({
       classId,
@@ -4725,6 +4737,7 @@ fetchClassesRef.current = fetchClasses;
         removeRecurrenceSlot={removeEditRecurrenceSlot}
         updateRecurrenceSlot={updateEditRecurrenceSlot}
         handleUpdateClass={handleUpdateClass}
+        onForceSubmit={() => handleUpdateClass({ force: true })}
         availabilityWarning={editAvailabilityWarning}
         onDismissAvailabilityWarning={() => setEditAvailabilityWarning(null)}
         updateResult={editUpdateResult}

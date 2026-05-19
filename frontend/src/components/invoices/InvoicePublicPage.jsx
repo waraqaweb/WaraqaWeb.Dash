@@ -170,9 +170,29 @@ const InvoicePublicPage = () => {
     financials = {},
     guardian,
     notes,
-    items = [],
+    items: rawItems = [],
     coverage
   } = invoice;
+
+  // Cancelled class statuses (must match backend and admin dashboard logic)
+  const CANCELLED_CLASS_STATUSES = new Set([
+    'cancelled',
+    'cancelled_by_teacher',
+    'cancelled_by_student',
+    'cancelled_by_guardian',
+    'cancelled_by_admin',
+    'cancelled_by_system',
+    'on_hold',
+    'pattern',
+    'no_show_both'
+  ]);
+
+  // Filter out cancelled classes
+  const items = rawItems.filter(
+    (item) => !CANCELLED_CLASS_STATUSES.has(
+      String(item.classStatus || item.attendanceStatus || '').trim().toLowerCase()
+    )
+  );
 
   const totalClasses = invoice?.counts?.lessonCount || items.length;
   const totalHours = invoice?.hours?.totalHoursRounded2 || invoice?.hours?.totalHours || 0;

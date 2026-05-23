@@ -571,33 +571,62 @@ function buildClassCreatedEmail({ recipient, classObj, student, role, lastTopic,
   return { subject: `New class — ${subj}`, html: baseEmailTemplate({ preheader: `New class: ${subj} on ${dateStr}`, body, icon: _ICONS.classCreated, branding }), text };
 }
 
-function buildClassCancelledEmail({ recipient, classObj, reason, branding }) {
+function _studentName(student) {
+  if (!student) return '';
+  if (typeof student === 'string') return student;
+  const fn = student.firstName || student.studentName || '';
+  const ln = student.lastName || '';
+  return `${fn} ${ln}`.trim();
+}
+
+function buildClassCancelledEmail({ recipient, classObj, student, role, reason, branding }) {
   const tz    = recipient.timezone || 'Africa/Cairo';
   const date  = classObj.scheduledDate ? formatInTimezone(classObj.scheduledDate, tz) : 'N/A';
   const subj  = classObj.courseName || classObj.subject || 'Class';
-  let rows = _infoRow('Subject', subj) + _infoRow('Scheduled Time', `${date} (${_tzLabel(tz)})`);
+  const dur   = classObj.durationMinutes ? `${classObj.durationMinutes} min` : '';
+  const sName = _studentName(student);
+  let rows = '';
+  if (sName) rows += _infoRow('Student', sName);
+  rows += _infoRow('Subject', subj);
+  rows += _infoRow('Scheduled Time', `${date} (${_tzLabel(tz)})`);
+  if (dur) rows += _infoRow('Duration', dur);
   if (reason) rows += _infoRow('Reason', reason);
+  const intro = role === 'teacher'
+    ? 'A class assigned to you has been <strong>cancelled</strong>.'
+    : 'The following class has been <strong>cancelled</strong>.';
   const body = `${_hi(recipient.firstName)}
-    <p style="margin:0 0 14px;color:#374151;">The following class has been <strong>cancelled</strong>.</p>
-    ${_card(_infoTable(rows))}
-    ${_alert('If you have questions, contact us via the dashboard.', '#fef2f2', '#ef4444', '#991b1b')}`;
-  const text = `Hi ${recipient.firstName || 'there'},\n\nClass cancelled.\nSubject: ${subj}\nScheduled: ${date} (${_tzLabel(tz)})\n${reason ? `Reason: ${reason}\n` : ''}`;
-  return { subject: `Class cancelled — ${subj}`, html: baseEmailTemplate({ preheader: `Cancelled: ${subj}`, body, icon: _ICONS.classCancelled, branding }), text };
+    <p style="margin:0 0 14px;color:#374151;">${intro}</p>
+    ${_card(`<h3 style=\"margin:0 0 10px;font-size:15px;color:#111827;\">Class Details</h3>${_infoTable(rows)}`)}
+    ${_alert('If you have questions or need to reschedule, please contact us via the dashboard.', '#fef2f2', '#ef4444', '#991b1b')}
+    ${_btn('Open Dashboard', _dashUrl())}`;
+  const text = `Hi ${recipient.firstName || 'there'},\n\nClass cancelled.\n${sName ? `Student: ${sName}\n` : ''}Subject: ${subj}\nScheduled: ${date} (${_tzLabel(tz)})\n${dur ? `Duration: ${dur}\n` : ''}${reason ? `Reason: ${reason}\n` : ''}`;
+  return { subject: `Class cancelled — ${subj}${sName ? ` (${sName})` : ''}`, html: baseEmailTemplate({ preheader: `Cancelled: ${subj} on ${date}`, body, icon: _ICONS.classCancelled, branding }), text };
 }
 
-function buildClassRescheduledEmail({ recipient, classObj, oldDate, branding }) {
+function buildClassRescheduledEmail({ recipient, classObj, student, role, oldDate, branding }) {
   const tz     = recipient.timezone || 'Africa/Cairo';
-  const oldStr = oldDate ? formatInTimezone(oldDate, tz) : 'N/A';
+  const oldStr = oldDate ? formatInTimezone(oldDate, tz) : null;
   const newStr = classObj.scheduledDate ? formatInTimezone(classObj.scheduledDate, tz) : 'TBD';
   const subj   = classObj.courseName || classObj.subject || 'Class';
-  const rows   = _infoRow('Subject', subj) +
-    _infoRow('Previous Time', `<s style="color:#9ca3af;">${oldStr}</s>`) +
-    _infoRow('New Time', `<strong style="color:${_B};">${newStr}</strong> (${_tzLabel(tz)})`);
+  const dur    = classObj.durationMinutes ? `${classObj.durationMinutes} min` : '';
+  const link   = classObj.meetingLink || classObj.link || '';
+  const sName  = _studentName(student);
+  let rows = '';
+  if (sName) rows += _infoRow('Student', sName);
+  rows += _infoRow('Subject', subj);
+  rows += _infoRow('Previous Time', oldStr ? `<s style="color:#9ca3af;">${oldStr} (${_tzLabel(tz)})</s>` : '<span style="color:#9ca3af;">Not recorded</span>');
+  rows += _infoRow('New Time', `<strong style="color:${_B};">${newStr}</strong> (${_tzLabel(tz)})`);
+  if (dur) rows += _infoRow('Duration', dur);
+  if (link) rows += _infoRow('Meeting Link', `<a href="${link}" style="color:${_B};">${link}</a>`);
+  const intro = role === 'teacher'
+    ? 'A class assigned to you has been <strong>rescheduled</strong>.'
+    : 'Your class has been <strong>rescheduled</strong>.';
   const body = `${_hi(recipient.firstName)}
-    <p style="margin:0 0 14px;color:#374151;">Your class has been <strong>rescheduled</strong>.</p>
-    ${_card(_infoTable(rows))}`;
-  const text = `Hi ${recipient.firstName || 'there'},\n\nClass rescheduled.\nSubject: ${subj}\nPrevious: ${oldStr}\nNew time: ${newStr} (${_tzLabel(tz)})`;
-  return { subject: `Class rescheduled — ${subj}`, html: baseEmailTemplate({ preheader: `Rescheduled to ${newStr}`, body, icon: _ICONS.classRescheduled, branding }), text };
+    <p style="margin:0 0 14px;color:#374151;">${intro}</p>
+    ${_card(`<h3 style=\"margin:0 0 10px;font-size:15px;color:#111827;\">Updated Class Details</h3>${_infoTable(rows)}`)}
+    ${link ? _btn('Join Class', link) : _btn('Open Dashboard', _dashUrl())}`;
+  const text = `Hi ${recipient.firstName || 'there'},\n\nClass rescheduled.\n${sName ? `Student: ${sName}\n` : ''}Subject: ${subj}\nPrevious: ${oldStr || 'Not recorded'}\nNew time: ${newStr} (${_tzLabel(tz)})${dur ? `\nDuration: ${dur}` : ''}${link ? `\nMeeting: ${link}` : ''}`;
+  return { subject: `Class rescheduled — ${subj}${sName ? ` (${sName})` : ''}`, html: baseEmailTemplate({ preheader: `Rescheduled to ${newStr}`, body, icon: _ICONS.classRescheduled, branding }), text };
 }
 
 function buildRegistrationWelcomeEmail({ user, branding }) {

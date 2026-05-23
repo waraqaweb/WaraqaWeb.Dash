@@ -105,8 +105,8 @@ async function buildTestTemplate(type, adminUser, branding) {
 
   const map = {
     classCreated:          () => buildClassCreatedEmail({ recipient, classObj, student, role: 'guardian', branding }),
-    classCancelled:        () => buildClassCancelledEmail({ recipient, classObj, reason: 'Teacher unavailable', branding }),
-    classRescheduled:      () => buildClassRescheduledEmail({ recipient, classObj, oldDate: now, branding }),
+    classCancelled:        () => buildClassCancelledEmail({ recipient, classObj, student, role: 'guardian', reason: 'Teacher unavailable', branding }),
+    classRescheduled:      () => buildClassRescheduledEmail({ recipient, classObj, student, role: 'guardian', oldDate: now, branding }),
     registration:          () => buildRegistrationWelcomeEmail({ user: { ...adminUser, role: 'guardian' }, branding }),
     newStudent:            () => buildNewStudentEmail({ guardian, student, branding }),
     studentDeleted:        () => buildStudentDeletedEmail({ guardian, student, branding }),

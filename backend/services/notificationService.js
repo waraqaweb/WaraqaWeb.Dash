@@ -226,10 +226,31 @@ async function notifyClassEvent({
       meetingLink: classObj.meetingLink,
       recurrence: classObj.recurrence || { type: 'none' },
     };
-    const studentPayload = {
-      firstName: classObj?.student?.studentName || classObj?.studentSnapshot?.studentName || classObj?.studentSnapshot?.firstName || '',
-      lastName: '',
+    // Resolve a real student name. Callers usually pass classObj.student as
+    // an ObjectId — look it up if so, falling back to any embedded snapshot
+    // so the email never shows a blank "Student:" row.
+    let studentPayload = {
+      firstName: classObj?.student?.firstName
+        || classObj?.student?.studentName
+        || classObj?.studentSnapshot?.studentName
+        || classObj?.studentSnapshot?.firstName
+        || '',
+      lastName: classObj?.student?.lastName || classObj?.studentSnapshot?.lastName || '',
     };
+    if (!studentPayload.firstName) {
+      try {
+        const studentRef = classObj?.student;
+        const studentRefId = studentRef && typeof studentRef === 'object' && studentRef._id ? studentRef._id : studentRef;
+        if (studentRefId) {
+          const Student = require('../models/Student');
+          const sDoc = await Student.findById(studentRefId).select('firstName lastName').lean();
+          if (sDoc) {
+            studentPayload.firstName = sDoc.firstName || '';
+            studentPayload.lastName  = sDoc.lastName  || '';
+          }
+        }
+      } catch (e) { /* non-fatal */ }
+    }
 
     // For reschedules we coalesce per (recipient, classFamily) so that
     // rescheduling 3 occurrences of the same recurring class back-to-back
@@ -288,6 +309,8 @@ async function notifyClassEvent({
         classObj: classPayload,
         student: studentPayload,
         role: 'teacher',
+        oldDate,
+        reason: extraMsg || undefined,
         branding,
       });
       await sendOrCoalesce({ to: teacherUserFull.email, tpl, userIdForRow: teacherId });
@@ -298,6 +321,8 @@ async function notifyClassEvent({
         classObj: classPayload,
         student: studentPayload,
         role: 'guardian',
+        oldDate,
+        reason: extraMsg || undefined,
         branding,
       });
       await sendOrCoalesce({ to: guardianUserFull.email, tpl, userIdForRow: guardianId });

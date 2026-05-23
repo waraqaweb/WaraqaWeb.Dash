@@ -207,18 +207,53 @@ const ProfileModal = ({ isOpen, onClose }) => {
 
             {/* Email preferences */}
             <div className="mt-4 border-t pt-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!emailPrefsExpanded && !emailPrefs && selectedUser?._id) {
-                    loadEmailPrefs(selectedUser._id);
-                  }
-                  setEmailPrefsExpanded(v => !v);
-                }}
-                className="text-sm font-medium text-gray-700 flex items-center gap-1"
-              >
-                Email Notifications {emailPrefsExpanded ? '▲' : '▼'}
-              </button>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!emailPrefsExpanded && !emailPrefs && selectedUser?._id) {
+                      loadEmailPrefs(selectedUser._id);
+                    }
+                    setEmailPrefsExpanded(v => !v);
+                  }}
+                  className="text-sm font-medium text-gray-700 flex items-center gap-1"
+                >
+                  Email Notifications {emailPrefsExpanded ? '▲' : '▼'}
+                </button>
+                {isAdmin && isAdmin() && selectedUser && selectedUser._id !== authUser?._id && (
+                  <button
+                    type="button"
+                    disabled={emailPrefsSaving}
+                    onClick={async () => {
+                      const isPaused = emailPrefs && emailPrefs.globalEnabled === false;
+                      const endpoint = isPaused ? 'email-resume' : 'email-pause';
+                      const confirmMsg = isPaused
+                        ? `Resume all emails for ${selectedUser.email}?`
+                        : `Pause ALL outgoing emails to ${selectedUser.email}? They will receive no notifications until resumed.`;
+                      if (!window.confirm(confirmMsg)) return;
+                      setEmailPrefsSaving(true);
+                      setEmailPrefsMsg(null);
+                      try {
+                        const res = await api.post(`/users/${selectedUser._id}/${endpoint}`, {});
+                        setEmailPrefs(res.data.emailPreferences || {});
+                        setEmailPrefsMsg(res.data.message || 'Updated');
+                      } catch (err) {
+                        setEmailPrefsMsg(err?.response?.data?.message || 'Action failed');
+                      } finally { setEmailPrefsSaving(false); }
+                    }}
+                    className={`px-2 py-1 text-xs rounded text-white ${emailPrefs && emailPrefs.globalEnabled === false ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} disabled:opacity-50`}
+                  >
+                    {emailPrefs && emailPrefs.globalEnabled === false ? 'Resume Emails' : 'Pause Emails'}
+                  </button>
+                )}
+              </div>
+              {emailPrefs && emailPrefs.globalEnabled === false && (emailPrefs.globalDisabledReason || emailPrefs.globalDisabledAt) && (
+                <div className="mt-1 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800">
+                  Paused
+                  {emailPrefs.globalDisabledAt ? ` on ${new Date(emailPrefs.globalDisabledAt).toLocaleString()}` : ''}
+                  {emailPrefs.globalDisabledReason ? ` — ${emailPrefs.globalDisabledReason}` : ''}
+                </div>
+              )}
               {emailPrefsExpanded && (
                 <div className="mt-2 space-y-1.5">
                   {emailPrefs === null ? (

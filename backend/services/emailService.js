@@ -123,7 +123,160 @@ async function enqueueEmail({ to, subject, html, text, type = 'other', userId, r
   }
 }
 
-const PRIORITY_GAP = { 1: 0, 2: 2000, 3: 5000 };
+/**
+ * Enqueue an email that is allowed to merge with another pending row sharing
+ * the same coalesceKey. If a pending row exists and its coalesceUntil window
+ * has not yet passed, we append the new content to its body, push scheduledAt
+ * forward (capped at coalesceUntil), and skip creating a new row. Otherwise a
+ * fresh row is created with a fresh coalesceUntil deadline.
+ *
+ * @param opts.coalesceKey  Unique per (recipient, conversation), e.g.
+ *                          `${userId}:classRescheduled:${classFamilyId}`.
+ * @param opts.delayMs      How long to delay first delivery so subsequent
+ *                          calls can fold in. 90s is a good default.
+ * @param opts.maxWindowMs  Hard cap on coalesceUntil from first enqueue (so
+ *                          a chatty admin can't postpone delivery forever).
+ * @param opts.merge        ({ existing, incoming }) => { subject, html, text }
+ *                          producing the merged email body. existing has
+ *                          { subject, html, text, coalesceCount }.
+ */
+async function enqueueCoalescedEmail({
+  to, subject, html, text, type = 'other', userId, relatedId, priority = 2,
+  coalesceKey, delayMs = 90 * 1000, maxWindowMs = 5 * 60 * 1000, merge,
+}) {
+  if (!coalesceKey) return enqueueEmail({ to, subject, html, text, type, userId, relatedId, priority });
+  try {
+    const now = Date.now();
+    const existing = await EmailQueue.findOne({
+      status: 'pending',
+      coalesceKey,
+      to,
+      coalesceUntil: { $gte: new Date(now) },
+    });
+    if (existing && typeof merge === 'function') {
+      const merged = merge({
+        existing: { subject: existing.subject, html: existing.html, text: existing.text, coalesceCount: existing.coalesceCount || 1 },
+        incoming: { subject, html, text },
+      });
+      existing.subject = merged.subject || existing.subject;
+      existing.html = merged.html || existing.html;
+      existing.text = merged.text || existing.text;
+      existing.coalesceCount = (existing.coalesceCount || 1) + 1;
+      // Push scheduledAt forward by delayMs but never past coalesceUntil so
+      // delivery still happens in a bounded amount of time.
+      const newScheduled = new Date(Math.min(now + delayMs, new Date(existing.coalesceUntil).getTime()));
+      existing.scheduledAt = newScheduled;
+      await existing.save();
+      return;
+    }
+    await EmailQueue.create({
+      to, subject, html, text, type, userId, relatedId, priority,
+      status: 'pending',
+      scheduledAt: new Date(now + delayMs),
+      coalesceKey,
+      coalesceUntil: new Date(now + maxWindowMs),
+      coalesceCount: 1,
+    });
+  } catch (e) {
+    console.error('[EmailService] Failed to enqueue coalesced email:', e.message);
+  }
+}
+
+// ─── Rate limits (tuned to stay below Gmail SMTP free-tier caps) ────────────
+// Gmail (gmail.com via App Password): 500/day, ~100/hr.
+// Google Workspace SMTP relay: 2000/day. We pick conservative figures that
+// work on the strictest tier so we never get the sender IP throttled.
+const RATE_LIMITS = {
+  perMinute: 12,   // ~1 every 5s
+  perHour:   80,   // safe under 100/hr Gmail cap
+  perDay:    400,  // safe under 500/day Gmail cap
+};
+const MIN_INTER_SEND_MS = 4000; // never send two messages closer than 4s
+
+// After this many consecutive permanent failures for one recipient, we flip
+// their `emailPreferences.globalEnabled` off so we stop hammering Gmail and
+// hurting our sender reputation. Admin can re-enable from the profile modal.
+const AUTO_PAUSE_FAILURE_THRESHOLD = 5;
+
+async function _countSentSince(sinceDate) {
+  try {
+    return await EmailLog.countDocuments({ status: 'sent', sentAt: { $gte: sinceDate } });
+  } catch {
+    return 0;
+  }
+}
+
+async function _isRateLimited() {
+  const now = Date.now();
+  const [minuteCount, hourCount, dayCount] = await Promise.all([
+    _countSentSince(new Date(now - 60 * 1000)),
+    _countSentSince(new Date(now - 60 * 60 * 1000)),
+    _countSentSince(new Date(now - 24 * 60 * 60 * 1000)),
+  ]);
+  if (minuteCount >= RATE_LIMITS.perMinute) return { limited: true, reason: 'per-minute' };
+  if (hourCount   >= RATE_LIMITS.perHour)   return { limited: true, reason: 'per-hour'   };
+  if (dayCount    >= RATE_LIMITS.perDay)    return { limited: true, reason: 'per-day'    };
+  return { limited: false };
+}
+
+function _isPermanentFailure(message) {
+  if (!message) return false;
+  const m = String(message).toLowerCase();
+  // Hard bounces / "stop trying" signals that should accelerate auto-pause.
+  return (
+    m.includes('550') ||
+    m.includes('553') ||
+    m.includes('554') ||
+    m.includes('does not exist') ||
+    m.includes('no such user') ||
+    m.includes('invalid recipient') ||
+    m.includes('mailbox full') ||
+    m.includes('inbox full') ||
+    m.includes('out of storage') ||
+    m.includes('4.2.2') ||
+    m.includes('5.2.2') ||
+    m.includes('5.1.1')
+  );
+}
+
+async function _bumpFailureAndMaybePause({ userId, recipient, errorMessage }) {
+  if (!userId) return;
+  try {
+    const User = require('../models/User');
+    const user = await User.findById(userId).select('emailPreferences email');
+    if (!user) return;
+    if (!user.emailPreferences) user.emailPreferences = {};
+    const next = (user.emailPreferences.recentFailureCount || 0) + 1;
+    user.emailPreferences.recentFailureCount = next;
+    if (
+      user.emailPreferences.globalEnabled !== false
+      && (next >= AUTO_PAUSE_FAILURE_THRESHOLD || _isPermanentFailure(errorMessage))
+    ) {
+      user.emailPreferences.globalEnabled = false;
+      user.emailPreferences.globalDisabledAt = new Date();
+      user.emailPreferences.globalDisabledReason =
+        `Auto-paused after delivery failure: ${String(errorMessage || 'unknown').slice(0, 200)}`;
+      console.warn(`[EmailService] Auto-paused emails for ${recipient || user.email} (${user._id}) — reason: ${user.emailPreferences.globalDisabledReason}`);
+    }
+    await user.save();
+  } catch (e) {
+    console.warn('[EmailService] Failed to record bounce on user:', e.message);
+  }
+}
+
+async function _resetFailureCount(userId) {
+  if (!userId) return;
+  try {
+    const User = require('../models/User');
+    await User.updateOne(
+      { _id: userId, 'emailPreferences.recentFailureCount': { $gt: 0 } },
+      { $set: { 'emailPreferences.recentFailureCount': 0 } }
+    );
+  } catch {
+    // non-fatal
+  }
+}
+
 let _lastSentAt  = 0;
 let _processing  = false;
 
@@ -131,6 +284,15 @@ async function processEmailQueue() {
   if (_processing) return;
   _processing = true;
   try {
+    // Enforce global rate limits up-front — if we're over any cap, do nothing
+    // this tick and let the queue drain on the next interval.
+    const limit = await _isRateLimited();
+    if (limit.limited) return;
+
+    // Enforce minimum spacing between sends in-process.
+    const elapsed = Date.now() - _lastSentAt;
+    if (elapsed < MIN_INTER_SEND_MS) return;
+
     const item = await EmailQueue.findOneAndUpdate(
       { status: 'pending', scheduledAt: { $lte: new Date() } },
       { status: 'processing' },
@@ -138,11 +300,25 @@ async function processEmailQueue() {
     );
     if (!item) return;
 
-    const gap     = PRIORITY_GAP[item.priority] ?? 2000;
-    const elapsed = Date.now() - _lastSentAt;
-    if (gap > 0 && elapsed < gap) {
-      await EmailQueue.updateOne({ _id: item._id }, { status: 'pending' });
-      return;
+    // If recipient was paused while this item was queued, skip and mark
+    // cancelled so it doesn't keep retrying.
+    if (item.userId) {
+      try {
+        const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
+        // We don't know the eventType here, but globalEnabled=false short-
+        // circuits regardless of event. Pass a benign key to trigger the
+        // master check.
+        const allowed = await shouldSendEmail(item.userId, item.type || 'other');
+        if (!allowed) {
+          item.status = 'cancelled';
+          item.error = 'Recipient has emails paused (globalEnabled=false).';
+          item.processedAt = new Date();
+          await item.save();
+          return;
+        }
+      } catch {
+        // fall through and attempt send
+      }
     }
 
     const attachments = item.attachments ? (() => { try { return JSON.parse(item.attachments); } catch { return undefined; } })() : undefined;
@@ -153,16 +329,22 @@ async function processEmailQueue() {
       item.processedAt = new Date();
       await item.save();
       await EmailLog.create({ to: item.to, subject: item.subject, type: item.type, status: 'sent', userId: item.userId, relatedId: item.relatedId, sentAt: new Date() });
+      await _resetFailureCount(item.userId);
     } catch (sendErr) {
       item.attempts = (item.attempts || 0) + 1;
-      if (item.attempts >= (item.maxAttempts || 3)) {
+      if (item.attempts >= (item.maxAttempts || 3) || _isPermanentFailure(sendErr.message)) {
         item.status = 'failed';
         item.error  = sendErr.message;
         await item.save();
         await EmailLog.create({ to: item.to, subject: item.subject, type: item.type, status: 'failed', userId: item.userId, relatedId: item.relatedId, error: sendErr.message });
+        await _bumpFailureAndMaybePause({ userId: item.userId, recipient: item.to, errorMessage: sendErr.message });
       } else {
+        // Soft failure — back off with exponential delay (10s, 40s, 90s …)
+        // so we don't tight-loop a struggling SMTP server.
+        const backoffMs = Math.min(60_000 * item.attempts, 5 * 60_000);
         item.status = 'pending';
         item.error  = sendErr.message;
+        item.scheduledAt = new Date(Date.now() + backoffMs);
         await item.save();
       }
       console.error(`[EmailService] Send failed (attempt ${item.attempts}):`, sendErr.message);
@@ -177,8 +359,12 @@ async function processEmailQueue() {
 let _queueInterval = null;
 function initEmailQueueProcessor() {
   if (_queueInterval) return;
-  _queueInterval = setInterval(processEmailQueue, 5000);
-  console.log('[EmailService] Email queue processor started');
+  // Tick frequently — the processor itself enforces per-minute / inter-send
+  // throttling, so a 2s tick just makes it react quickly when capacity opens
+  // up. Runs from server.js on boot so it keeps draining even if no admin
+  // is logged in.
+  _queueInterval = setInterval(processEmailQueue, 2000);
+  console.log('[EmailService] Email queue processor started (rate-limited)');
 }
 
 // ─── BASE HTML TEMPLATE ───────────────────────────────────────────────────────
@@ -871,6 +1057,7 @@ async function sendAdminInvoiceGenerationSummary(admin, summary) {
 module.exports = {
   sendMail,
   enqueueEmail,
+  enqueueCoalescedEmail,
   initEmailQueueProcessor,
   loadBrandingAndLogo,
   invalidateBrandingCache,

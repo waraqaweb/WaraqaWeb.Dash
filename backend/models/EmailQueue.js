@@ -21,10 +21,19 @@ const emailQueueSchema = new mongoose.Schema({
   attempts: { type: Number, default: 0 },
   maxAttempts: { type: Number, default: 3 },
   error: { type: String },
+  // Coalescing: if two enqueueEmail calls share the same coalesceKey AND the
+  // first one is still pending and not yet past its coalesceUntil deadline,
+  // the second one merges into the first (additional dates/lines appended to
+  // the existing HTML/text). Used to prevent firing multiple reschedule
+  // notifications to the same guardian within a few seconds.
+  coalesceKey: { type: String, default: null, index: true },
+  coalesceUntil: { type: Date, default: null },
+  coalesceCount: { type: Number, default: 1 },
 }, {
   timestamps: true
 });
 
 emailQueueSchema.index({ status: 1, priority: 1, scheduledAt: 1 });
+emailQueueSchema.index({ status: 1, coalesceKey: 1 });
 
 module.exports = mongoose.model('EmailQueue', emailQueueSchema);

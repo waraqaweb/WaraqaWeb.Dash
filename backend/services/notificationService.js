@@ -204,6 +204,7 @@ async function notifyClassEvent({
   try {
     const {
       enqueueEmail,
+      enqueueCoalescedEmail,
       buildClassCreatedEmail,
       buildClassCancelledEmail,
       buildClassRescheduledEmail,
@@ -230,6 +231,57 @@ async function notifyClassEvent({
       lastName: '',
     };
 
+    // For reschedules we coalesce per (recipient, classFamily) so that
+    // rescheduling 3 occurrences of the same recurring class back-to-back
+    // produces ONE consolidated email after a short delay instead of three
+    // separate ones. Inbox-friendly + protects sender reputation on free
+    // Gmail SMTP.
+    const classFamilyKey = String(
+      classObj.parentRecurringClass
+      || classObj.recurringSeriesId
+      || classObj._id
+      || _id
+    );
+
+    const sendOrCoalesce = async ({ to, tpl, userIdForRow }) => {
+      const baseArgs = {
+        to,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
+        type: eventEmailType,
+        userId: userIdForRow,
+        relatedId: _id,
+        priority: 2,
+      };
+      if (eventEmailType !== 'classRescheduled') {
+        return enqueueEmail(baseArgs);
+      }
+      // Build a date stamp that the merge step can append to the existing
+      // body so the consolidated email lists every affected date.
+      const tzForUser = (userIdForRow === teacherId ? teacherUserFull?.timezone : guardianUserFull?.timezone) || DEFAULT_TIMEZONE;
+      const newWhen = scheduledDate ? formatTimeInTimezone(scheduledDate, tzForUser, 'DD MMM YYYY hh:mm A') : 'TBD';
+      const subj = classObj?.subject ? classObj.subject : 'Class';
+      return enqueueCoalescedEmail({
+        ...baseArgs,
+        coalesceKey: `${String(userIdForRow)}:classRescheduled:${classFamilyKey}`,
+        delayMs: 90 * 1000,
+        maxWindowMs: 5 * 60 * 1000,
+        merge: ({ existing, incoming }) => {
+          const count = (existing.coalesceCount || 1) + 1;
+          // Append a small list row inside the existing HTML body, just
+          // before the closing card so the email stays one tidy table.
+          const extraLineHtml = `<div style="margin:6px 0 0;padding:8px 12px;border-left:3px solid #d1d5db;color:#374151;font-size:13px;">+ Also rescheduled to <strong>${newWhen}</strong></div>`;
+          const mergedHtml = existing.html.includes('</body>')
+            ? existing.html.replace('</body>', `${extraLineHtml}</body>`)
+            : `${existing.html}${extraLineHtml}`;
+          const mergedText = `${existing.text}\n+ Also rescheduled to ${newWhen}`;
+          const mergedSubject = `Class rescheduled — ${subj} (${count} updates)`;
+          return { subject: mergedSubject, html: mergedHtml, text: mergedText };
+        },
+      });
+    };
+
     if (teacherUserFull?.email && await shouldSendEmail(teacherId, eventEmailType)) {
       const tpl = await buildFn({
         recipient: teacherUserFull,
@@ -238,7 +290,7 @@ async function notifyClassEvent({
         role: 'teacher',
         branding,
       });
-      await enqueueEmail({ to: teacherUserFull.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: eventEmailType, userId: teacherId, relatedId: _id, priority: 2 });
+      await sendOrCoalesce({ to: teacherUserFull.email, tpl, userIdForRow: teacherId });
     }
     if (guardianUserFull?.email && await shouldSendEmail(guardianId, eventEmailType)) {
       const tpl = await buildFn({
@@ -248,7 +300,7 @@ async function notifyClassEvent({
         role: 'guardian',
         branding,
       });
-      await enqueueEmail({ to: guardianUserFull.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: eventEmailType, userId: guardianId, relatedId: _id, priority: 2 });
+      await sendOrCoalesce({ to: guardianUserFull.email, tpl, userIdForRow: guardianId });
     }
   } catch (e) {
     console.warn('[Email] class event email failed:', e.message);

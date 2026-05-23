@@ -3895,4 +3895,46 @@ router.put('/:id/email-preferences', authenticateToken, requireAdmin, async (req
   }
 });
 
+// Admin: 1-click pause / resume all emails for a single user. Used both
+// manually from the admin UI and automatically by the email queue processor
+// when a recipient has repeated bounces. Storing the reason + timestamp makes
+// it visible in the profile modal so admins know why mail stopped flowing.
+router.post('/:id/email-pause', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || 'Paused by admin').slice(0, 240);
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { $set: {
+        'emailPreferences.globalEnabled': false,
+        'emailPreferences.globalDisabledAt': new Date(),
+        'emailPreferences.globalDisabledReason': reason,
+      } },
+      { new: true }
+    ).select('emailPreferences email');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json({ message: `Emails paused for ${user.email}.`, emailPreferences: user.emailPreferences });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/:id/email-resume', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { $set: {
+        'emailPreferences.globalEnabled': true,
+        'emailPreferences.globalDisabledAt': null,
+        'emailPreferences.globalDisabledReason': '',
+        'emailPreferences.recentFailureCount': 0,
+      } },
+      { new: true }
+    ).select('emailPreferences email');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json({ message: `Emails resumed for ${user.email}.`, emailPreferences: user.emailPreferences });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

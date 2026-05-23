@@ -799,6 +799,12 @@ const userSchema = new mongoose.Schema({
   // Admin can also override this per-user from the profile edit modal.
   emailPreferences: {
     globalEnabled:           { type: Boolean, default: true },
+    // When globalEnabled is flipped off automatically (auto-pause due to
+    // repeated bounces / mailbox full / SMTP rejections) we record why and
+    // when so an admin can review and re-enable from the profile modal.
+    globalDisabledReason:    { type: String, default: '' },
+    globalDisabledAt:        { type: Date, default: null },
+    recentFailureCount:      { type: Number, default: 0 },
     classCreated:            { type: Boolean, default: true },
     classCancelled:          { type: Boolean, default: true },
     classRescheduled:        { type: Boolean, default: true },

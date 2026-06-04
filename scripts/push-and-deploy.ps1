@@ -734,11 +734,20 @@ try {
 		'chmod +x deploy/scripts/deploy.sh',
 		('./deploy/scripts/deploy.sh {0}' -f $DeployMode)
 	)
-	$remoteCommand = $remoteCommandLines -join '; '
+	# Join with newlines so the remote bash sees a real multi-line script.
+	$remoteCommand = $remoteCommandLines -join "`n"
+
+	# Windows PowerShell 5.1 corrupts native-command arguments that contain mixed
+	# single/double quotes, which previously truncated the remote command (deploy.sh
+	# never ran, yet ssh still exited 0). Base64-encode the script so the argument we
+	# hand to ssh.exe contains only safe characters, then decode + run it remotely.
+	$remoteCommandBytes = [System.Text.Encoding]::UTF8.GetBytes($remoteCommand)
+	$remoteCommandBase64 = [System.Convert]::ToBase64String($remoteCommandBytes)
+	$remoteInvocation = "echo $remoteCommandBase64 | base64 -d | bash"
 
 	$script:CurrentStep = 'running remote deploy over ssh'
 	Write-Step 'Running the server deploy over SSH'
-	$sshResult = Invoke-LoggedNative -FilePath 'ssh' -Arguments ($sshArguments + @("$RemoteUser@$RemoteHost", $remoteCommand))
+	$sshResult = Invoke-LoggedNative -FilePath 'ssh' -Arguments ($sshArguments + @("$RemoteUser@$RemoteHost", $remoteInvocation))
 	if ($sshResult.ExitCode -ne 0) {
 		throw 'Remote deploy failed after the push succeeded. Check the generated failure prompt and server logs.'
 	}

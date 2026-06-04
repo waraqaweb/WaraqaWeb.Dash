@@ -294,7 +294,9 @@ router.post('/:leadId/convert', authenticateToken, requireAdmin, async (req, res
       return res.status(409).json({ message: 'This email already belongs to a non-guardian account.' });
     }
 
+    let createdGuardianUser = false;
     if (!guardianUser) {
+      createdGuardianUser = true;
       const parsedName = splitName(getGuardianDisplayName(lead.personalInfo));
       guardianUser = new User({
         firstName: parsedName.firstName,
@@ -354,6 +356,10 @@ router.post('/:leadId/convert', authenticateToken, requireAdmin, async (req, res
       guardianUserId: guardianUser._id,
     };
     await lead.save();
+
+    if (createdGuardianUser) {
+      notificationService.notifyNewUser(guardianUser).catch(console.error);
+    }
 
     return res.json({
       message: 'Lead converted to guardian account.',

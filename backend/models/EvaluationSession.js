@@ -92,6 +92,7 @@ const StudentResultSchema = new mongoose.Schema({
       recommend: { type: Number, min: 1, max: 5 },
     },
     comment: { type: String, trim: true, maxlength: 2000 },
+    heardAboutUs: { type: String, trim: true, maxlength: 500 },
     notifiedAdmin: { type: Boolean, default: false },
   },
 }, { _id: true, timestamps: true });

@@ -1772,18 +1772,6 @@ router.post('/manual/guardian', authenticateToken, requireAdmin, async (req, res
       console.warn('Notification trigger failed', e.message);
     }
 
-    // ── Email: guardian invoice created ────────────────────────────────────
-    try {
-      const { enqueueEmail, buildGuardianInvoiceCreatedEmail, loadBrandingAndLogo } = require('../services/emailService');
-      const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
-      const guardianUser = invoice.guardian ? await require('../models/User').findById(invoice.guardian).select('email firstName timezone').lean() : null;
-      if (guardianUser?.email && await shouldSendEmail(invoice.guardian, 'invoiceCreated')) {
-        const branding = await loadBrandingAndLogo();
-        const tpl = await buildGuardianInvoiceCreatedEmail({ guardian: guardianUser, invoice, branding });
-        await enqueueEmail({ to: guardianUser.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: 'invoiceCreated', userId: invoice.guardian, relatedId: invoice._id, priority: 2 });
-      }
-    } catch (e) { console.warn('[Email] guardian invoice created email failed:', e.message); }
-
     try {
       const io = req.app.get('io');
       if (io) io.emit('invoice:created', { invoice: invoice.toObject({ virtuals: true }) });

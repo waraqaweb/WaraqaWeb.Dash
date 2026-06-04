@@ -452,7 +452,7 @@ const Dashboard = () => {
         {/* Main Content Area */}
         <main className="flex-1 overflow-auto bg-background pb-16 md:pb-0">
           <ImpersonationBanner />
-          <SystemVacationBanner />
+          {user?.role !== 'admin' ? <SystemVacationBanner /> : null}
           {renderContent()}
         </main>
       </div>

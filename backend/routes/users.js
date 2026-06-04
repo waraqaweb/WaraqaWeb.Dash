@@ -61,6 +61,173 @@ const normalizeDate = (value) => {
   return date.toISOString().slice(0, 10);
 };
 
+const normalizeStudentProfilePicture = (picture) => {
+  if (!picture) return null;
+  if (typeof picture === 'string') {
+    return {
+      url: picture,
+      publicId: null,
+      thumbnail: picture,
+      thumbnailPublicId: null,
+    };
+  }
+
+  const normalizedPicture = {
+    url: picture.url || picture.secure_url || null,
+    publicId: picture.publicId || picture.public_id || null,
+    thumbnail: picture.thumbnail || picture.thumb || picture.url || picture.secure_url || null,
+    thumbnailPublicId: picture.thumbnailPublicId || picture.thumbnail_public_id || picture.thumbPublicId || null,
+  };
+
+  if (!normalizedPicture.url && !normalizedPicture.publicId && !normalizedPicture.thumbnail && !normalizedPicture.thumbnailPublicId) {
+    return null;
+  }
+
+  return normalizedPicture;
+};
+
+const buildStudentProfilePictureFromUser = (user) => normalizeStudentProfilePicture({
+  url: user?.profilePicture || null,
+  publicId: user?.profilePicturePublicId || null,
+  thumbnail: user?.profilePictureThumbnail || user?.profilePicture || null,
+  thumbnailPublicId: user?.profilePictureThumbnailPublicId || null,
+});
+
+const applyUserProfilePictureFromStudentPicture = (user, picture) => {
+  const normalizedPicture = normalizeStudentProfilePicture(picture);
+  user.profilePicture = normalizedPicture?.url || null;
+  user.profilePicturePublicId = normalizedPicture?.publicId || null;
+  user.profilePictureThumbnail = normalizedPicture?.thumbnail || null;
+  user.profilePictureThumbnailPublicId = normalizedPicture?.thumbnailPublicId || null;
+};
+
+const collectUserProfilePicturePublicIds = (user) => [
+  user?.profilePicturePublicId,
+  user?.profilePictureThumbnailPublicId,
+].filter(Boolean);
+
+const collectStudentProfilePicturePublicIds = (studentOrPicture) => {
+  const picture = normalizeStudentProfilePicture(studentOrPicture?.profilePicture || studentOrPicture);
+  return [picture?.publicId, picture?.thumbnailPublicId].filter(Boolean);
+};
+
+const dedupeIds = (values = []) => Array.from(new Set(values.filter(Boolean)));
+
+const findEmbeddedStudentById = (guardian, studentId) => {
+  const students = guardian?.guardianInfo?.students;
+  if (!Array.isArray(students)) return null;
+  if (typeof students.id === 'function') {
+    return students.id(studentId) || null;
+  }
+  return students.find((student) => String(student?._id || '') === String(studentId)) || null;
+};
+
+const findSelfGuardianEmbeddedStudent = (guardian) => {
+  const students = guardian?.guardianInfo?.students;
+  if (!Array.isArray(students)) return null;
+  return students.find((student) => Boolean(student?.selfGuardian || student?.studentInfo?.selfGuardian)) || null;
+};
+
+const findStandaloneStudentForEmbeddedStudent = async ({ guardianId, embeddedStudent, studentId = null }) => {
+  const standaloneStudentId = embeddedStudent?.standaloneStudentId || embeddedStudent?.studentInfo?.standaloneStudentId;
+
+  if (standaloneStudentId) {
+    return Student.findById(standaloneStudentId);
+  }
+
+  if (embeddedStudent?.selfGuardian) {
+    return Student.findOne({ guardian: guardianId, selfGuardian: true });
+  }
+
+  if (studentId && mongoose.Types.ObjectId.isValid(studentId)) {
+    const standaloneStudent = await Student.findById(studentId);
+    if (standaloneStudent && String(standaloneStudent.guardian) === String(guardianId)) {
+      return standaloneStudent;
+    }
+  }
+
+  return null;
+};
+
+const resolveStudentPictureSyncTargets = async ({ guardian, studentId }) => {
+  const embeddedStudent = findEmbeddedStudentById(guardian, studentId);
+  let standaloneStudent = await findStandaloneStudentForEmbeddedStudent({
+    guardianId: guardian?._id,
+    embeddedStudent,
+    studentId,
+  });
+
+  const isSelfGuardian = Boolean(embeddedStudent?.selfGuardian || standaloneStudent?.selfGuardian);
+
+  if (isSelfGuardian && !standaloneStudent) {
+    standaloneStudent = await Student.findOne({ guardian: guardian?._id, selfGuardian: true });
+  }
+
+  return {
+    embeddedStudent,
+    standaloneStudent,
+    isSelfGuardian,
+    found: Boolean(embeddedStudent || standaloneStudent),
+  };
+};
+
+const persistResolvedStudentPictureSync = async ({ guardian, embeddedStudent, standaloneStudent, isSelfGuardian, picture }) => {
+  const normalizedPicture = normalizeStudentProfilePicture(picture);
+  let shouldSaveGuardian = false;
+
+  if (embeddedStudent) {
+    embeddedStudent.profilePicture = normalizedPicture;
+    shouldSaveGuardian = true;
+  }
+
+  if (isSelfGuardian) {
+    applyUserProfilePictureFromStudentPicture(guardian, normalizedPicture);
+    shouldSaveGuardian = true;
+  }
+
+  if (shouldSaveGuardian) {
+    await guardian.save();
+  }
+
+  if (standaloneStudent) {
+    standaloneStudent.profilePicture = normalizedPicture;
+    await standaloneStudent.save();
+  }
+
+  return embeddedStudent || standaloneStudent;
+};
+
+const syncSelfGuardianStudentPictureFromGuardian = async (guardian) => {
+  if (!guardian || guardian.role !== 'guardian') return { synced: false };
+
+  const embeddedStudent = findSelfGuardianEmbeddedStudent(guardian);
+  let standaloneStudent = await findStandaloneStudentForEmbeddedStudent({
+    guardianId: guardian._id,
+    embeddedStudent,
+  });
+
+  if (!standaloneStudent) {
+    standaloneStudent = await Student.findOne({ guardian: guardian._id, selfGuardian: true });
+  }
+
+  const picture = buildStudentProfilePictureFromUser(guardian);
+  let synced = false;
+
+  if (embeddedStudent) {
+    embeddedStudent.profilePicture = picture;
+    await guardian.save();
+    synced = true;
+  }
+
+  if (standaloneStudent) {
+    standaloneStudent.profilePicture = picture;
+    await standaloneStudent.save();
+    synced = true;
+  }
+
+  return { synced, embeddedStudent, standaloneStudent };
+};
+
 const UPCOMING_STUDENT_STATUS_EXCLUSIONS = [
   'cancelled_by_teacher',
   'cancelled_by_guardian',
@@ -1757,7 +1924,41 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
     // Remove sensitive fields that shouldn't be updated via this endpoint
     delete updates.password;
     delete updates.role;
-    delete updates.email;
+
+    if (updates.email !== undefined) {
+      if (req.user.role !== 'admin') {
+        delete updates.email;
+      } else {
+        const normalizedEmail = String(updates.email || '').trim().toLowerCase();
+        if (!normalizedEmail) {
+          return res.status(400).json({ message: 'Email is required' });
+        }
+        const emailPattern = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,})+$/;
+        if (!emailPattern.test(normalizedEmail)) {
+          return res.status(400).json({ message: 'Please enter a valid email' });
+        }
+
+        const duplicateEmailUser = await User.findOne({
+          email: normalizedEmail,
+          _id: { $ne: req.params.id },
+        }).select('_id role firstName lastName email');
+
+        if (duplicateEmailUser) {
+          return res.status(409).json({
+            message: 'That email is already in use by another account',
+            conflictUser: {
+              id: duplicateEmailUser._id,
+              role: duplicateEmailUser.role,
+              firstName: duplicateEmailUser.firstName,
+              lastName: duplicateEmailUser.lastName,
+              email: duplicateEmailUser.email,
+            },
+          });
+        }
+
+        updates.email = normalizedEmail;
+      }
+    }
 
     console.log('Backend updates after filtering:', updates);
     console.log('Backend bio after filtering:', updates.bio);
@@ -2849,6 +3050,8 @@ router.post('/:guardianId/students', [
       studentData.email = guardian.email;
       studentData.phone = guardian.phone;
       studentData.whatsapp = guardian.phone; // Default to guardian's phone
+      const guardianProfilePicture = buildStudentProfilePictureFromUser(guardian);
+      if (guardianProfilePicture) studentData.profilePicture = guardianProfilePicture;
       // Only override DOB if guardian has one; otherwise keep the submitted DOB (required for identity).
       if (guardian.dateOfBirth) studentData.dateOfBirth = guardian.dateOfBirth;
       if (guardian.gender) studentData.gender = guardian.gender;
@@ -2925,6 +3128,17 @@ router.post('/:guardianId/students', [
       }
     } catch (mirrorErr) {
       console.warn('Failed to mirror embedded student to standalone Student model', mirrorErr && mirrorErr.message);
+    }
+
+    try {
+      const notificationService = require('../services/notificationService');
+      await notificationService.notifyStudentCreated({
+        student: newStudent,
+        guardian: updatedGuardian,
+        createdBy: req.user,
+      });
+    } catch (notifyErr) {
+      console.warn('Student created notification failed', notifyErr && notifyErr.message);
     }
 
     res.status(201).json({
@@ -3328,44 +3542,31 @@ router.post('/:guardianId/students/:studentId/profile-picture', authenticateToke
     const guardian = await User.findById(guardianId);
     if (!guardian) return res.status(404).json({ message: 'Guardian not found' });
 
-    let updatedStudent = null;
-
-    // If student exists embedded in guardian, update that
-    if (guardian.guardianInfo && Array.isArray(guardian.guardianInfo.students)) {
-      const s = guardian.guardianInfo.students.id(studentId);
-      if (s) {
-        // Delete old images if public ids exist
-        try {
-          const toDelete = [];
-          if (s.profilePicturePublicId) toDelete.push(s.profilePicturePublicId);
-          if (s.profilePictureThumbnailPublicId) toDelete.push(s.profilePictureThumbnailPublicId);
-          if (toDelete.length) await deleteImage(toDelete);
-        } catch (dErr) { console.warn('Failed to delete old student images', dErr && dErr.message); }
-
-  s.profilePicture = { url: pictureUrl, publicId: picturePublicId, thumbnail: pictureThumb, thumbnailPublicId: pictureThumbPublicId };
-
-        await guardian.save();
-        updatedStudent = guardian.guardianInfo.students.id(studentId);
-        return res.json({ message: 'Student picture uploaded', student: updatedStudent });
-      }
+    const targets = await resolveStudentPictureSyncTargets({ guardian, studentId });
+    if (!targets.found) {
+      return res.status(404).json({ message: 'Student not found for this guardian' });
     }
 
-    // If not embedded, try standalone Student collection
-    const student = await Student.findById(studentId);
-    if (student && String(student.guardian) === String(guardianId)) {
-      try {
-        const toDelete = [];
-        if (student.profilePicture && student.profilePicture.publicId) toDelete.push(student.profilePicture.publicId);
-        if (student.profilePicture && student.profilePicture.thumbnailPublicId) toDelete.push(student.profilePicture.thumbnailPublicId);
-        if (toDelete.length) await deleteImage(toDelete);
-      } catch (dErr) { console.warn('Failed to delete old standalone student images', dErr && dErr.message); }
-
-  student.profilePicture = { url: pictureUrl, publicId: picturePublicId, thumbnail: pictureThumb, thumbnailPublicId: pictureThumbPublicId };
-      await student.save();
-      return res.json({ message: 'Student picture uploaded', student });
+    try {
+      const toDelete = dedupeIds([
+        ...collectStudentProfilePicturePublicIds(targets.embeddedStudent),
+        ...collectStudentProfilePicturePublicIds(targets.standaloneStudent),
+        ...(targets.isSelfGuardian ? collectUserProfilePicturePublicIds(guardian) : []),
+      ]);
+      if (toDelete.length) await deleteImage(toDelete);
+    } catch (dErr) {
+      console.warn('Failed to delete old student images', dErr && dErr.message);
     }
 
-    return res.status(404).json({ message: 'Student not found for this guardian' });
+    const updatedStudent = await persistResolvedStudentPictureSync({
+      guardian,
+      embeddedStudent: targets.embeddedStudent,
+      standaloneStudent: targets.standaloneStudent,
+      isSelfGuardian: targets.isSelfGuardian,
+      picture: { url: pictureUrl, publicId: picturePublicId, thumbnail: pictureThumb, thumbnailPublicId: pictureThumbPublicId },
+    });
+
+    return res.json({ message: 'Student picture uploaded', student: updatedStudent });
   } catch (error) {
     console.error('Upload student picture error:', error);
     res.status(500).json({ message: 'Failed to upload student picture', error: error.message });
@@ -3386,37 +3587,31 @@ router.delete('/:guardianId/students/:studentId/profile-picture', authenticateTo
     const guardian = await User.findById(guardianId);
     if (!guardian) return res.status(404).json({ message: 'Guardian not found' });
 
-    if (guardian.guardianInfo && Array.isArray(guardian.guardianInfo.students)) {
-      const s = guardian.guardianInfo.students.id(studentId);
-      if (s) {
-        try {
-          const toDelete = [];
-          if (s.profilePicturePublicId) toDelete.push(s.profilePicturePublicId);
-          if (s.profilePictureThumbnailPublicId) toDelete.push(s.profilePictureThumbnailPublicId);
-          if (toDelete.length) await deleteImage(toDelete);
-        } catch (dErr) { console.warn('Failed to delete old student images', dErr && dErr.message); }
-
-  s.profilePicture = null;
-        await guardian.save();
-        return res.json({ message: 'Student picture removed', student: guardian.guardianInfo.students.id(studentId) });
-      }
+    const targets = await resolveStudentPictureSyncTargets({ guardian, studentId });
+    if (!targets.found) {
+      return res.status(404).json({ message: 'Student not found for this guardian' });
     }
 
-    const student = await Student.findById(studentId);
-    if (student && String(student.guardian) === String(guardianId)) {
-      try {
-        const toDelete = [];
-        if (student.profilePicture && student.profilePicture.publicId) toDelete.push(student.profilePicture.publicId);
-        if (student.profilePicture && student.profilePicture.thumbnailPublicId) toDelete.push(student.profilePicture.thumbnailPublicId);
-        if (toDelete.length) await deleteImage(toDelete);
-      } catch (dErr) { console.warn('Failed to delete standalone student images', dErr && dErr.message); }
-
-  student.profilePicture = null;
-      await student.save();
-      return res.json({ message: 'Student picture removed', student });
+    try {
+      const toDelete = dedupeIds([
+        ...collectStudentProfilePicturePublicIds(targets.embeddedStudent),
+        ...collectStudentProfilePicturePublicIds(targets.standaloneStudent),
+        ...(targets.isSelfGuardian ? collectUserProfilePicturePublicIds(guardian) : []),
+      ]);
+      if (toDelete.length) await deleteImage(toDelete);
+    } catch (dErr) {
+      console.warn('Failed to delete old student images', dErr && dErr.message);
     }
 
-    return res.status(404).json({ message: 'Student not found for this guardian' });
+    const updatedStudent = await persistResolvedStudentPictureSync({
+      guardian,
+      embeddedStudent: targets.embeddedStudent,
+      standaloneStudent: targets.standaloneStudent,
+      isSelfGuardian: targets.isSelfGuardian,
+      picture: null,
+    });
+
+    return res.json({ message: 'Student picture removed', student: updatedStudent });
   } catch (error) {
     console.error('Delete student picture error:', error);
     res.status(500).json({ message: 'Failed to delete student picture', error: error.message });
@@ -3498,6 +3693,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   }
 
   const userId = userToDelete._id;
+  const deletedUserSnapshot = userToDelete.toObject();
 
   const runDelete = async (session = null) => {
     const withSession = (query) => (session ? query.session(session) : query);
@@ -3533,6 +3729,13 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       await runDelete(null);
     } finally {
       session.endSession();
+    }
+
+    try {
+      const notificationService = require('../services/notificationService');
+      await notificationService.notifyUserDeleted(deletedUserSnapshot, req.user);
+    } catch (notifyErr) {
+      console.warn('User deletion notification failed', notifyErr && notifyErr.message);
     }
 
     return res.json({
@@ -3788,15 +3991,18 @@ router.post('/:id/profile-picture', authenticateToken, upload.single('file'), as
     if (!user) return res.status(404).json({ message: 'User not found' });
 
     // If existing pictures exist and we have public IDs, remove them (best-effort)
-    if (user.profilePicturePublicId || user.profilePictureThumbnailPublicId) {
-      try {
-        const toDelete = [];
-        if (user.profilePicturePublicId) toDelete.push(user.profilePicturePublicId);
-        if (user.profilePictureThumbnailPublicId) toDelete.push(user.profilePictureThumbnailPublicId);
-        if (toDelete.length) await deleteImage(toDelete);
-      } catch (derr) {
-        console.warn('Failed to delete old profile pictures', derr.message || derr);
-      }
+    try {
+      const linkedStandaloneSelfGuardian = user.role === 'guardian'
+        ? await Student.findOne({ guardian: user._id, selfGuardian: true }).select('profilePicture')
+        : null;
+      const toDelete = dedupeIds([
+        ...collectUserProfilePicturePublicIds(user),
+        ...collectStudentProfilePicturePublicIds(findSelfGuardianEmbeddedStudent(user)),
+        ...collectStudentProfilePicturePublicIds(linkedStandaloneSelfGuardian),
+      ]);
+      if (toDelete.length) await deleteImage(toDelete);
+    } catch (derr) {
+      console.warn('Failed to delete old profile pictures', derr.message || derr);
     }
 
     user.profilePicture = profilePictureUrl;
@@ -3804,6 +4010,8 @@ router.post('/:id/profile-picture', authenticateToken, upload.single('file'), as
     user.profilePictureThumbnail = profilePictureThumbnail;
     user.profilePictureThumbnailPublicId = profilePictureThumbnailPublicId;
     await user.save();
+
+    await syncSelfGuardianStudentPictureFromGuardian(user);
 
     console.log('User updated with new profile picture');
 
@@ -3829,9 +4037,14 @@ router.delete('/:id/profile-picture', authenticateToken, async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    const toDelete = [];
-    if (user.profilePicturePublicId) toDelete.push(user.profilePicturePublicId);
-    if (user.profilePictureThumbnailPublicId) toDelete.push(user.profilePictureThumbnailPublicId);
+    const linkedStandaloneSelfGuardian = user.role === 'guardian'
+      ? await Student.findOne({ guardian: user._id, selfGuardian: true }).select('profilePicture')
+      : null;
+    const toDelete = dedupeIds([
+      ...collectUserProfilePicturePublicIds(user),
+      ...collectStudentProfilePicturePublicIds(findSelfGuardianEmbeddedStudent(user)),
+      ...collectStudentProfilePicturePublicIds(linkedStandaloneSelfGuardian),
+    ]);
     if (toDelete.length) await deleteImage(toDelete);
 
     user.profilePicture = null;
@@ -3839,6 +4052,8 @@ router.delete('/:id/profile-picture', authenticateToken, async (req, res) => {
     user.profilePictureThumbnail = null;
     user.profilePictureThumbnailPublicId = null;
     await user.save();
+
+    await syncSelfGuardianStudentPictureFromGuardian(user);
 
     res.json({ message: 'Profile picture removed', user: await User.findById(userId).select('-password') });
   } catch (error) {

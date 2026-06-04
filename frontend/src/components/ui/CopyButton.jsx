@@ -101,6 +101,7 @@ const CopyButton = ({
 
   return (
     <button
+      type="button"
       onClick={handleCopy}
       className={`
         ${getSizeClasses()}

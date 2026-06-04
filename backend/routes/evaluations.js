@@ -7,8 +7,9 @@
 const express = require('express');
 const EvaluationSession = require('../models/EvaluationSession');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const { sendMail } = require('../services/emailService');
+const { sendMail, loadBrandingAndLogo, baseEmailTemplate } = require('../services/emailService');
 const notificationService = require('../services/notificationService');
+const { upsertEvaluationFeedbackFromSessionStudent } = require('../services/evaluationFeedbackService');
 
 const router = express.Router();
 
@@ -123,19 +124,34 @@ router.post('/:id/students/:studentSubId/send-feedback', authenticateToken, requ
     if (!to) return res.status(400).json({ message: 'A recipient email is required' });
 
     if (!student.feedback) student.feedback = {};
-    if (!student.feedback.token) student.feedback.token = EvaluationSession.generateFeedbackToken();
+    if (student.feedback.submittedAt) {
+      return res.status(409).json({ message: 'Feedback has already been submitted for this student' });
+    }
+    student.feedback.token = EvaluationSession.generateFeedbackToken();
     student.feedback.sentTo = to;
     student.feedback.sentAt = new Date();
 
     const base = resolvePublicAppBaseUrl();
     const link = `${base}/dashboard/evaluation/feedback/${student.feedback.token}`;
     const subject = `How was your Waraqa evaluation, ${student.name}?`;
-    const html = `
-      <p>Assalāmu ʿalaykum ${student.name},</p>
-      <p>Thank you for joining your Waraqa evaluation today. We'd love a moment of your time to tell us how it went — it takes about 30 seconds.</p>
-      <p><a href="${link}" style="display:inline-block;background:#0f766e;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:600">Share your feedback</a></p>
-      <p style="font-size:12px;color:#6b7280">Or paste this link in your browser:<br/>${link}</p>
+    const branding = await loadBrandingAndLogo();
+    const sessionLabel = session.title ? `<strong>${session.title}</strong>` : 'your recent evaluation';
+    const body = `
+      <p style="margin:0 0 14px;font-size:15px;">Assalāmu ʿalaykum <strong>${student.name}</strong>,</p>
+      <p style="margin:0 0 14px;color:#374151;">Thank you for joining ${sessionLabel}. We'd appreciate a quick note on how it went. It should take less than a minute.</p>
+      <div style="background:#f8fafa;border:1px solid #d1e0de;border-radius:8px;padding:18px 20px;margin:14px 0;">
+        <p style="margin:0 0 10px;color:#111827;font-size:14px;font-weight:600;">Share your feedback</p>
+        <p style="margin:0;color:#4b5563;font-size:13px;">Your comments help us improve evaluation quality and follow-up for future students.</p>
+      </div>
+      <div style="text-align:center;margin:22px 0;"><a href="${link}" style="display:inline-block;background:#2C736C;color:white;text-decoration:none;padding:11px 30px;border-radius:6px;font-size:14px;font-weight:600;">Open Feedback Form</a></div>
+      <p style="font-size:12px;color:#6b7280;margin:12px 0 0;">If the button does not work, copy and paste this link into your browser:</p>
+      <p style="font-size:12px;color:#0f766e;word-break:break-all;margin:6px 0 0;">${link}</p>
     `;
+    const html = baseEmailTemplate({
+      preheader: `Share feedback for ${student.name}`,
+      body,
+      branding,
+    });
     const text = `Assalāmu ʿalaykum ${student.name},\n\nThank you for joining your Waraqa evaluation today. Please share quick feedback here:\n${link}`;
 
     try {
@@ -190,6 +206,11 @@ router.post('/feedback/:token', async (req, res) => {
       return Math.max(1, Math.min(5, Math.round(v)));
     };
 
+    const heardAboutUs = String(req.body?.heardAboutUs || '').trim().slice(0, 500);
+    if (!heardAboutUs) {
+      return res.status(400).json({ message: 'Please tell us how you heard about Waraqa' });
+    }
+
     const r = req.body?.ratings || {};
     student.feedback.ratings = {
       overall: clamp(r.overall),
@@ -199,9 +220,16 @@ router.post('/feedback/:token', async (req, res) => {
       recommend: clamp(r.recommend),
     };
     student.feedback.comment = String(req.body?.comment || '').slice(0, 2000);
+    student.feedback.heardAboutUs = heardAboutUs;
     student.feedback.submittedAt = new Date();
 
     await session.save();
+
+    const { feedback: hubFeedback } = await upsertEvaluationFeedbackFromSessionStudent({
+      session,
+      student,
+      markUnread: true,
+    });
 
     // Notify admin via socket (best effort).
     try {
@@ -213,6 +241,7 @@ router.post('/feedback/:token', async (req, res) => {
           ratings: student.feedback.ratings,
           comment: student.feedback.comment,
         });
+        io.to('admin').emit('feedback:new', { feedbackId: hubFeedback._id, type: 'evaluation' });
       }
     } catch (e) { /* noop */ }
 
@@ -226,14 +255,20 @@ router.post('/feedback/:token', async (req, res) => {
         message: `${summary}${student.feedback.comment ? ' — "' + student.feedback.comment.slice(0, 120) + '"' : ''}`,
         type: 'feedback',
         relatedTo: 'feedback',
-        relatedId: session._id,
-        actionLink: `/dashboard/evaluation?session=${session._id}`,
+        relatedId: hubFeedback._id,
+        actionLink: '/dashboard/feedbacks',
+        metadata: {
+          kind: 'evaluation_feedback_submitted',
+          feedbackId: String(hubFeedback._id),
+          evaluationSessionId: String(session._id),
+          evaluationStudentSubId: String(student._id),
+        },
       });
     } catch (e) {
       console.warn('[evaluations] notification persist failed', e?.message || e);
     }
 
-    res.json({ ok: true });
+    res.json({ ok: true, feedbackId: hubFeedback._id });
   } catch (err) {
     console.error('[evaluations] public feedback submit failed', err);
     res.status(500).json({ message: 'Failed to submit feedback' });

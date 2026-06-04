@@ -91,6 +91,97 @@ class ReportSubmissionService {
     }
   }
 
+  static async reconcileTrackingForReschedule(classDoc) {
+    if (!classDoc || classDoc.classReport?.submittedAt) {
+      return false;
+    }
+
+    if (!Array.isArray(classDoc.rescheduleHistory) || classDoc.rescheduleHistory.length === 0) {
+      return false;
+    }
+
+    const latestReschedule = classDoc.rescheduleHistory[classDoc.rescheduleHistory.length - 1];
+    const appliedAt = dayjs(latestReschedule?.rescheduledAt);
+    if (!appliedAt.isValid()) {
+      return false;
+    }
+
+    const classEndTime = dayjs(classDoc.scheduledDate).add(classDoc.duration, 'minutes');
+    const windowStart = classEndTime.isAfter(appliedAt) ? classEndTime : appliedAt;
+    const now = dayjs();
+    const reportStatus = classDoc.reportSubmission?.status || 'pending';
+    const hasAdminExtension = !!classDoc.reportSubmission?.adminExtension?.granted;
+    const hasUnreportedMarkers = !!classDoc.reportSubmission?.markedUnreportedAt || !!classDoc.reportSubmission?.markedUnreportedBy;
+    const settings = await this.getSubmissionSettings();
+    const expectedDeadline = windowStart.add(settings.teacherWindowHours, 'hours');
+    const currentDeadline = classDoc.reportSubmission?.teacherDeadline
+      ? dayjs(classDoc.reportSubmission.teacherDeadline)
+      : null;
+
+    if (now.isBefore(windowStart)) {
+      const shouldResetFutureWindow =
+        reportStatus !== 'pending' ||
+        hasAdminExtension ||
+        hasUnreportedMarkers ||
+        !!classDoc.reportSubmission?.teacherDeadline;
+
+      if (!shouldResetFutureWindow) {
+        return false;
+      }
+
+      await classDoc.resetReportSubmissionForReschedule(appliedAt.toDate());
+      await classDoc.save();
+      return true;
+    }
+
+    if (now.isBefore(expectedDeadline)) {
+      const shouldResetOpenWindow =
+        reportStatus !== 'open' ||
+        hasAdminExtension ||
+        hasUnreportedMarkers ||
+        !currentDeadline?.isValid() ||
+        !currentDeadline.isSame(expectedDeadline);
+
+      if (!shouldResetOpenWindow) {
+        return false;
+      }
+
+      if (!classDoc.reportSubmission) {
+        classDoc.reportSubmission = {};
+      }
+
+      classDoc.reportSubmission.status = 'open';
+      classDoc.reportSubmission.teacherDeadline = expectedDeadline.toDate();
+      classDoc.reportSubmission.adminExtension = {
+        granted: false,
+      };
+      classDoc.reportSubmission.markedUnreportedAt = undefined;
+      classDoc.reportSubmission.markedUnreportedBy = undefined;
+      classDoc.markModified('reportSubmission');
+      await classDoc.save();
+      return true;
+    }
+
+    if (hasAdminExtension) {
+      return false;
+    }
+
+    const shouldResetPastWindow =
+      reportStatus === 'pending' ||
+      reportStatus === 'unreported' ||
+      reportStatus === 'expired' ||
+      !currentDeadline?.isValid() ||
+      currentDeadline.isBefore(expectedDeadline);
+
+    if (!shouldResetPastWindow) {
+      return false;
+    }
+
+    await classDoc.resetReportSubmissionForReschedule(appliedAt.toDate());
+    await classDoc.save();
+    return true;
+  }
+
   /**
    * Check if a teacher can submit a report for a class
    */
@@ -116,6 +207,10 @@ class ReportSubmissionService {
       // Check if report already submitted
       if (classDoc.classReport?.submittedAt) {
         return { canSubmit: false, reason: 'Report already submitted', isSubmitted: true };
+      }
+
+      if (await this.reconcileTrackingForReschedule(classDoc)) {
+        return this.canTeacherSubmit(classId, userId);
       }
 
       // Check if marked as unreported
@@ -378,6 +473,10 @@ class ReportSubmissionService {
 
       if (!classDoc) {
         return { success: false, error: 'Class not found' };
+      }
+
+      if (await this.reconcileTrackingForReschedule(classDoc)) {
+        return this.getSubmissionStatus(classId);
       }
 
       const classEndTime = dayjs(classDoc.scheduledDate).add(classDoc.duration, 'minutes');

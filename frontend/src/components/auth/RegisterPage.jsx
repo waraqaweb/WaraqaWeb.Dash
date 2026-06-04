@@ -13,6 +13,7 @@ const RegisterPage = () => {
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
+    epithet: '',
     email: '',
     password: '',
     confirmPassword: '',
@@ -96,6 +97,7 @@ const RegisterPage = () => {
       const registrationData = {
         firstName: formData.firstName,
         lastName: formData.lastName,
+        epithet: formData.role === 'guardian' ? formData.epithet : '',
         email: formData.email,
         password: formData.password,
         confirmPassword: formData.confirmPassword,
@@ -225,6 +227,32 @@ const RegisterPage = () => {
                 )}
               </div>
             </div>
+
+            {formData.role === 'guardian' && (
+              <div>
+                <label htmlFor="epithet" className="block text-sm font-medium text-foreground mb-2">
+                  What do you love to be called? (Optional)
+                </label>
+                <input
+                  id="epithet"
+                  name="epithet"
+                  type="text"
+                  value={formData.epithet}
+                  onChange={handleChange}
+                  className={`w-full px-3 py-2 border rounded-md bg-input text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:border-transparent ${
+                    fieldErrors.epithet
+                      ? 'border-destructive/40 focus:ring-destructive/20'
+                      : 'border-border focus:ring-ring'
+                  }`}
+                  placeholder="Sister, brother, Mr, Mrs..."
+                />
+                {fieldErrors.epithet ? (
+                  <p className="mt-1 text-xs text-destructive">{fieldErrors.epithet}</p>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">We will use this in guardian-facing messages.</p>
+                )}
+              </div>
+            )}
 
             {/* Email Field */}
             <div>

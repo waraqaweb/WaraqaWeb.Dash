@@ -354,7 +354,13 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
     if (q) {
       const regex = new RegExp(q, 'i');
       // search in notes or match user/teacher names - do a lookup after
-      filter.$or = [ { notes: regex } ];
+      filter.$or = [
+        { notes: regex },
+        { submitterName: regex },
+        { submitterEmail: regex },
+        { heardAboutUs: regex },
+        { evaluationTitle: regex },
+      ];
     }
 
     const skip = (Number(page) - 1) * Number(limit);

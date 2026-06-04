@@ -163,7 +163,7 @@ const interpolateWhatsappTemplate = (template, recipient) => {
 const EMAIL_PREF_ROLE_EVENTS = {
   teacher: ['classCreated','classCancelled','classRescheduled','poorPerformance','monthlyReport','consecutiveAbsent','vacationApproved','vacationResumed','teacherReassigned','seriesCancelled','availabilityChanged','teacherInvoice'],
   guardian: ['classCreated','classCancelled','classRescheduled','invoiceCreated','invoiceSend','studentCreated','studentDeleted','vacationGuardianNotice','meetingScheduled'],
-  admin: ['invoiceCreated','monthlyAdminReport','systemAlert','registration','meetingScheduled'],
+  admin: ['invoiceCreated','monthlyAdminReport','systemAlert','registration','studentCreated','meetingScheduled'],
 };
 
 const EMAIL_PREF_LABELS = {

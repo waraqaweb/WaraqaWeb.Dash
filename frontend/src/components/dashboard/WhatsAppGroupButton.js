@@ -98,6 +98,22 @@ export default function WhatsAppGroupButton({ classId }) {
     setResult(null);
   };
 
+  const formatParticipantLabel = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return '';
+    if (normalized === 'teacher') return 'teacher';
+    if (normalized === 'student') return 'student';
+    if (normalized === 'guardian') return 'guardian';
+    return normalized.replace(/_/g, ' ');
+  };
+
+  const invitedSummary = Array.isArray(result?.invitedParticipants)
+    ? result.invitedParticipants.map(formatParticipantLabel).filter(Boolean).join(', ')
+    : '';
+  const missingSummary = Array.isArray(result?.missingParticipants)
+    ? result.missingParticipants.map(formatParticipantLabel).filter(Boolean).join(', ')
+    : '';
+
   // QR code overlay
   if (status === 'qr' && qrImg) {
     return (
@@ -107,7 +123,7 @@ export default function WhatsAppGroupButton({ classId }) {
             <X className="h-5 w-5" />
           </button>
           <p className="text-base font-semibold text-gray-800 mb-1 text-center">Link Waraqa to WhatsApp</p>
-          <p className="text-xs text-gray-500 mb-3 text-center">One-time setup so we can create groups for you.</p>
+          <p className="text-xs text-gray-500 mb-3 text-center">This QR is for WhatsApp Linked Devices. It links Waraqa first, then the actual group is created automatically.</p>
           <img src={qrImg} alt="WhatsApp QR" className="mx-auto w-56 h-56 rounded-lg border" />
           <ol className="mt-4 text-xs text-gray-600 list-decimal pl-5 space-y-1">
             <li>Open <span className="font-medium">WhatsApp</span> on your phone.</li>
@@ -115,6 +131,7 @@ export default function WhatsAppGroupButton({ classId }) {
             <li>Tap <span className="font-medium">Linked Devices</span> → <span className="font-medium">Link a device</span>.</li>
             <li>Point your phone&apos;s camera at this QR code.</li>
           </ol>
+          <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-center text-[11px] text-emerald-800">After the scan, Waraqa creates a group named like “Waraqa: Student Name” and invites the teacher plus the student or guardian when phone numbers are available.</p>
           <p className="text-xs text-gray-400 mt-3 text-center">Waiting for scan…</p>
         </div>
       </div>
@@ -124,15 +141,24 @@ export default function WhatsAppGroupButton({ classId }) {
   // Done state
   if (status === 'done' && result) {
     return (
-      <button
-        type="button"
-        onClick={dismiss}
-        className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md"
-        title={`Group "${result.groupName}" created`}
-      >
-        <CheckCircle2 className="h-4 w-4" />
-        Group created
-      </button>
+      <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">
+        <div className="flex items-center justify-between gap-2">
+          <div className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+            <CheckCircle2 className="h-4 w-4" />
+            Group created
+          </div>
+          <button type="button" onClick={dismiss} className="text-xs font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-900">
+            Close
+          </button>
+        </div>
+        <p className="mt-1 text-xs font-semibold">{result.groupName}</p>
+        {invitedSummary && (
+          <p className="mt-1 text-xs">Invited: {invitedSummary}</p>
+        )}
+        {missingSummary && (
+          <p className="mt-1 text-xs">Missing phone: {missingSummary}</p>
+        )}
+      </div>
     );
   }
 
@@ -146,7 +172,7 @@ export default function WhatsAppGroupButton({ classId }) {
         title={error || 'Failed'}
       >
         <MessageCircle className="h-4 w-4" />
-        Retry
+        Retry WhatsApp
       </button>
     );
   }
@@ -165,7 +191,7 @@ export default function WhatsAppGroupButton({ classId }) {
       ) : (
         <MessageCircle className="h-4 w-4" />
       )}
-      {status === 'creating' ? 'Creating…' : 'WA Group'}
+      {status === 'creating' ? 'Creating…' : 'Create WhatsApp group'}
     </button>
   );
 }

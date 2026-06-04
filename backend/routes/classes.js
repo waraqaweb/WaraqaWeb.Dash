@@ -2573,12 +2573,15 @@ router.post(
           });
         });
 
-        const recurringAvailabilityCheck = await ensureRecurringSlotsWithinAvailability(
-          teacher,
-          availabilitySlots,
-          tzUsed,
-          recurrenceDuration
-        );
+        const forceCreate = toBool(req.body.force) || req.user?.role === 'admin';
+        const recurringAvailabilityCheck = forceCreate
+          ? { ok: true }
+          : await ensureRecurringSlotsWithinAvailability(
+              teacher,
+              availabilitySlots,
+              tzUsed,
+              recurrenceDuration
+            );
 
         if (!recurringAvailabilityCheck.ok) {
           const slotInfo = recurringAvailabilityCheck.slot || {};
@@ -3050,6 +3053,7 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
           classObj: { ...classDoc.toObject(), ...updatePayload },
           eventType,
           actor: req.user,
+          extraMsg: typeof req.body.reason === 'string' ? req.body.reason.trim() : '',
           oldDate: prevScheduledDate
         }).catch(console.error);
       } catch (e) { console.warn("Notification trigger failed", e.message); }
@@ -3160,13 +3164,16 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
 
     const proposedRecurrenceDuration = Number(proposedRecurrence?.duration || proposedDuration || 60);
 
-    const recurringUpdateAvailability = await ensureRecurringSlotsWithinAvailability(
-      proposedTeacher?._id || proposedTeacher,
-      proposedSlots,
-      proposedDisplayTimezone || DEFAULT_TIMEZONE,
-      proposedRecurrenceDuration,
-      { excludeParentRecurringClassId: patternId }
-    );
+    const forceUpdate = toBool(updates.force) || req.user?.role === 'admin';
+    const recurringUpdateAvailability = forceUpdate
+      ? { ok: true }
+      : await ensureRecurringSlotsWithinAvailability(
+          proposedTeacher?._id || proposedTeacher,
+          proposedSlots,
+          proposedDisplayTimezone || DEFAULT_TIMEZONE,
+          proposedRecurrenceDuration,
+          { excludeParentRecurringClassId: patternId }
+        );
 
     if (!recurringUpdateAvailability.ok) {
       const slotInfo = recurringUpdateAvailability.slot || {};
@@ -3596,6 +3603,7 @@ router.put(
           classObj: populated,
           eventType: 'rescheduled',
           actor: req.user,
+          extraMsg: req.body.reason.trim(),
           oldDate: prevDate
         }).catch(console.error);
       } catch (e) {

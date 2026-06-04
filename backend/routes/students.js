@@ -12,6 +12,7 @@ const User = require('../models/User');
 const Student = require('../models/Student');
 const Class = require('../models/Class');
 const Guardian = require('../models/Guardian');
+const notificationService = require('../services/notificationService');
 const {
   authenticateToken,
   authorizeRoles,
@@ -19,6 +20,19 @@ const {
 } = require('../middleware/auth');
 
 const router = express.Router();
+
+const buildStudentProfilePictureFromGuardian = (guardian) => {
+  if (!guardian?.profilePicture && !guardian?.profilePicturePublicId && !guardian?.profilePictureThumbnail && !guardian?.profilePictureThumbnailPublicId) {
+    return undefined;
+  }
+
+  return {
+    url: guardian.profilePicture || null,
+    publicId: guardian.profilePicturePublicId || null,
+    thumbnail: guardian.profilePictureThumbnail || guardian.profilePicture || null,
+    thumbnailPublicId: guardian.profilePictureThumbnailPublicId || null,
+  };
+};
 
 /**
  * Get all students with pagination, search, and filtering
@@ -319,6 +333,7 @@ router.post('/', authenticateToken, [
         notes: notes || '',
         hoursRemaining: typeof hoursRemaining === 'number' ? hoursRemaining : 0,
         isActive: typeof isActive === 'boolean' ? isActive : true,
+        profilePicture: buildStudentProfilePictureFromGuardian(guardian),
       });
 
       await student.save();
@@ -331,6 +346,16 @@ router.post('/', authenticateToken, [
       );
 
       await mirrorStandaloneToEmbedded(student);
+
+      try {
+        await notificationService.notifyStudentCreated({
+          student,
+          guardian,
+          createdBy: req.user,
+        });
+      } catch (notifyErr) {
+        console.warn('Student created notification failed', notifyErr && notifyErr.message);
+      }
 
       res.status(201).json({
         message: 'Successfully enrolled yourself as a student',
@@ -370,6 +395,16 @@ router.post('/', authenticateToken, [
       );
 
       await mirrorStandaloneToEmbedded(student);
+
+      try {
+        await notificationService.notifyStudentCreated({
+          student,
+          guardian,
+          createdBy: req.user,
+        });
+      } catch (notifyErr) {
+        console.warn('Student created notification failed', notifyErr && notifyErr.message);
+      }
 
       res.status(201).json({
         message: 'Student created successfully',

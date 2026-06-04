@@ -11,6 +11,89 @@ const MEETING_TYPE_LABELS = {
   [MEETING_TYPES.TEACHER_SYNC]: 'Teacher Sync'
 };
 
+const formatDisplayName = (person, fallback = 'User') => {
+  if (!person) return fallback;
+  const fullName = `${person?.firstName || ''} ${person?.lastName || ''}`.trim();
+  return fullName || person?.fullName || person?.email || fallback;
+};
+
+const buildAdminUserActionLink = (user) => {
+  const search = user?.email ? `?search=${encodeURIComponent(user.email)}` : '';
+  if (user?.role === 'guardian') return `/dashboard/guardians${search}`;
+  if (user?.role === 'teacher') return `/dashboard/teachers${search}`;
+  if (user?.role === 'student') return `/dashboard/students${search}`;
+  return '/dashboard';
+};
+
+const buildAdminStudentActionLink = (student, guardian) => {
+  const searchValue = student?.email || `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || guardian?.email || '';
+  return searchValue ? `/dashboard/students?search=${encodeURIComponent(searchValue)}` : '/dashboard/students';
+};
+
+async function notifyAdminsLifecycle({
+  title,
+  message,
+  type = 'info',
+  relatedTo = 'profile',
+  relatedId = null,
+  metadata,
+  actionLink,
+  emailPreferenceKey = null,
+  emailType = 'systemAlert',
+  emailBuilder = null,
+}) {
+  const admins = await User.find({ role: 'admin', isActive: true })
+    .select('firstName lastName email role timezone guardianInfo.epithet emailPreferences')
+    .lean();
+  if (!admins.length) return { success: false, reason: 'no_admins', results: [] };
+
+  const branding = emailBuilder ? await emailService.loadBrandingAndLogo() : null;
+  const { shouldSendEmail } = emailPreferenceKey ? require('../utils/emailPreferenceCheck') : { shouldSendEmail: null };
+  const results = [];
+
+  for (const admin of admins) {
+    try {
+      await createNotification({
+        userId: admin._id,
+        title,
+        message,
+        type,
+        relatedTo,
+        relatedId,
+        metadata,
+        actionLink,
+      });
+
+      let emailQueued = false;
+      if (emailBuilder && admin.email) {
+        // Respect the admin's email preference for this lifecycle event before queueing a branded email.
+        const canSend = emailPreferenceKey ? await shouldSendEmail(admin._id, emailPreferenceKey) : true;
+        if (canSend) {
+          const tpl = emailBuilder({ admin, branding });
+          await emailService.enqueueEmail({
+            to: admin.email,
+            subject: tpl.subject,
+            html: tpl.html,
+            text: tpl.text,
+            type: emailType,
+            userId: admin._id,
+            relatedId: relatedId ? String(relatedId) : undefined,
+            priority: 2,
+          });
+          emailQueued = true;
+        }
+      }
+
+      results.push({ adminId: admin._id, email: admin.email, inApp: true, emailQueued });
+    } catch (error) {
+      console.error(`[NotificationService] Failed lifecycle notify for admin ${admin.email || admin._id}:`, error.message);
+      results.push({ adminId: admin._id, email: admin.email, inApp: false, emailQueued: false, error: error.message });
+    }
+  }
+
+  return { success: true, results };
+}
+
 const normalizeObjectId = (value) => {
   if (!value) return null;
   if (value instanceof mongoose.Types.ObjectId) return value;
@@ -59,26 +142,25 @@ async function notifySystem({ title, message, type, role = null, related = {} })
 
 // --- USER EVENTS ---
 async function notifyNewUser(user) {
-  // Notify admin(s)
-  await notifyRole({
-    role: 'admin',
+  const userName = formatDisplayName(user, 'New user');
+  await notifyAdminsLifecycle({
     title: 'New user registered',
-    message: `${user.fullName || user.email} created an account.`,
+    message: `${userName} created a ${user.role || 'user'} account.`,
     type: 'user',
-    related: {
-      relatedTo: 'user',
-      relatedId: user._id,
-      metadata: {
-        kind: 'new_user',
-        userId: String(user._id),
-        email: user.email || '',
-        role: user.role || ''
-      },
-      actionLink: user.email
-        ? `/dashboard/users?search=${encodeURIComponent(user.email)}`
-        : '/dashboard/users'
-    }
+    relatedTo: 'profile',
+    relatedId: user._id,
+    metadata: {
+      kind: 'new_user',
+      userId: String(user._id),
+      email: user.email || '',
+      role: user.role || '',
+    },
+    actionLink: buildAdminUserActionLink(user),
+    emailPreferenceKey: 'registration',
+    emailType: 'systemAlert',
+    emailBuilder: ({ admin, branding }) => emailService.buildAdminNewUserEmail({ admin, newUser: user, branding }),
   });
+
   // Notify user with onboarding tips
   await module.exports.createNotification({
     userId: user._id,
@@ -103,12 +185,108 @@ async function notifyProfileIncomplete(user) {
   });
 }
 
+async function notifyUserDeleted(user, deletedBy = null) {
+  if (!user?._id) return { success: false, reason: 'invalid_user' };
+
+  const userName = formatDisplayName(user, 'User');
+  return notifyAdminsLifecycle({
+    title: 'User deleted',
+    message: `${userName} (${user.role || 'user'}) was deleted from the platform.`,
+    type: 'warning',
+    relatedTo: 'profile',
+    relatedId: user._id,
+    metadata: {
+      kind: 'user_deleted',
+      userId: String(user._id),
+      email: user.email || '',
+      role: user.role || '',
+    },
+    actionLink: buildAdminUserActionLink(user),
+    emailPreferenceKey: 'systemAlert',
+    emailType: 'systemAlert',
+    emailBuilder: ({ admin, branding }) => emailService.buildAdminUserDeletedEmail({ admin, deletedUser: user, deletedBy, branding }),
+  });
+}
+
+async function notifyStudentCreated({ student, guardian, createdBy = null }) {
+  if (!student || !guardian?._id) return { success: false, reason: 'invalid_student_or_guardian' };
+
+  const guardianName = formatDisplayName(guardian, 'Guardian');
+  const studentName = `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || 'Student';
+  const relatedId = student?._id || guardian?._id;
+  const actionLink = buildAdminStudentActionLink(student, guardian);
+
+  await createNotification({
+    userId: guardian._id,
+    title: 'Student added',
+    message: `${studentName} has been added to your account.`,
+    type: 'success',
+    relatedTo: 'profile',
+    relatedId,
+    actionLink: '/dashboard/students',
+    metadata: {
+      kind: 'student_created',
+      studentId: student?._id ? String(student._id) : null,
+      guardianId: String(guardian._id),
+    },
+  });
+
+  try {
+    const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
+    if (guardian.email && await shouldSendEmail(guardian._id, 'studentCreated')) {
+      const branding = await emailService.loadBrandingAndLogo();
+      const tpl = emailService.buildNewStudentEmail({ guardian, student, branding });
+      await emailService.enqueueEmail({
+        to: guardian.email,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
+        type: 'studentCreated',
+        userId: guardian._id,
+        relatedId: relatedId ? String(relatedId) : undefined,
+        priority: 2,
+      });
+    }
+  } catch (error) {
+    console.warn('[NotificationService] Failed to queue guardian new-student email:', error.message);
+  }
+
+  return notifyAdminsLifecycle({
+    title: 'New student added',
+    message: `${studentName} was added under guardian ${guardianName}.`,
+    type: 'user',
+    relatedTo: 'profile',
+    relatedId,
+    metadata: {
+      kind: 'student_created',
+      studentId: student?._id ? String(student._id) : null,
+      guardianId: String(guardian._id),
+      guardianEmail: guardian.email || '',
+      studentEmail: student.email || '',
+      grade: student.grade || '',
+      school: student.school || '',
+      language: student.language || '',
+      timezone: student.timezone || '',
+      subjects: Array.isArray(student.subjects) ? student.subjects : [],
+    },
+    actionLink,
+    emailPreferenceKey: 'studentCreated',
+    emailType: 'studentCreated',
+    emailBuilder: ({ admin, branding }) => emailService.buildAdminStudentCreatedEmail({ admin, guardian, student, createdBy, branding }),
+  });
+}
+
 // --- CLASS EVENTS ---
 async function notifyClassEvent({
   classObj, eventType, actor, extraMsg = '', oldDate = null
 }) {
   // eventType: 'added', 'cancelled', 'rescheduled', 'time_changed'
   const { teacher, student, _id, scheduledDate } = classObj;
+  const isRecurringSeries = Boolean(
+    classObj?.isRecurring
+    || classObj?.status === 'pattern'
+    || (Array.isArray(classObj?.recurrenceDetails) && classObj.recurrenceDetails.length)
+  );
 
   const teacherId = normalizeObjectId(teacher);
   const guardianId = normalizeObjectId(student?.guardianId || student);
@@ -213,18 +391,22 @@ async function notifyClassEvent({
     const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
     const eventEmailType = eventType === 'added' ? 'classCreated' : eventType === 'cancelled' ? 'classCancelled' : eventType === 'rescheduled' ? 'classRescheduled' : null;
     if (!eventEmailType) return; // time_changed: no dedicated email
+    if (eventType === 'added' && !isRecurringSeries) return;
     const buildFn = eventType === 'added' ? buildClassCreatedEmail : eventType === 'cancelled' ? buildClassCancelledEmail : buildClassRescheduledEmail;
 
-    const teacherUserFull = teacherId ? await User.findById(teacherId).select('email firstName lastName timezone').lean() : null;
-    const guardianUserFull = guardianId ? await User.findById(guardianId).select('email firstName timezone').lean() : null;
+    const teacherUserFull = teacherId ? await User.findById(teacherId).select('email firstName lastName timezone guardianInfo.epithet').lean() : null;
+    const guardianUserFull = guardianId ? await User.findById(guardianId).select('email firstName lastName timezone guardianInfo.epithet').lean() : null;
 
     const branding = await loadBrandingAndLogo();
+    const normalizedReason = String(extraMsg || '').replace(/^Note:\s*/i, '').trim();
     const classPayload = {
       subject: classObj.subject,
       scheduledDate: classObj.scheduledDate,
       durationMinutes: classObj.duration,
       meetingLink: classObj.meetingLink,
       recurrence: classObj.recurrence || { type: 'none' },
+      recurrenceDetails: Array.isArray(classObj.recurrenceDetails) ? classObj.recurrenceDetails : [],
+      isRecurring: isRecurringSeries,
     };
     // Resolve a real student name. Callers usually pass classObj.student as
     // an ObjectId — look it up if so, falling back to any embedded snapshot
@@ -308,9 +490,10 @@ async function notifyClassEvent({
         recipient: teacherUserFull,
         classObj: classPayload,
         student: studentPayload,
+        teacher: teacherUserFull,
         role: 'teacher',
         oldDate,
-        reason: extraMsg || undefined,
+        reason: normalizedReason || undefined,
         branding,
       });
       await sendOrCoalesce({ to: teacherUserFull.email, tpl, userIdForRow: teacherId });
@@ -320,9 +503,10 @@ async function notifyClassEvent({
         recipient: guardianUserFull,
         classObj: classPayload,
         student: studentPayload,
+        teacher: teacherUserFull,
         role: 'guardian',
         oldDate,
-        reason: extraMsg || undefined,
+        reason: normalizedReason || undefined,
         branding,
       });
       await sendOrCoalesce({ to: guardianUserFull.email, tpl, userIdForRow: guardianId });
@@ -336,6 +520,7 @@ async function notifyClassEvent({
 async function notifyInvoiceEvent({ invoice, eventType }) {
   // eventType: 'created', 'paid', 'reminder'
   let title, message;
+  const guardianId = normalizeObjectId(invoice?.guardian || invoice?.user);
   switch (eventType) {
     case 'created':
       title = 'Invoice created';
@@ -353,14 +538,40 @@ async function notifyInvoiceEvent({ invoice, eventType }) {
       title = 'Invoice updated';
       message = 'There’s an update to your invoice.';
   }
-  await module.exports.createNotification({
-    userId: invoice.user,
-    title,
-    message,
-    type: 'invoice',
-    relatedTo: 'invoice',
-    relatedId: invoice._id
-  });
+
+  if (guardianId) {
+    await module.exports.createNotification({
+      userId: guardianId,
+      title,
+      message,
+      type: 'invoice',
+      relatedTo: 'invoice',
+      relatedId: invoice._id
+    });
+  }
+
+  if (eventType === 'created' && guardianId) {
+    try {
+      const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
+      const guardian = await User.findById(guardianId).select('email firstName lastName timezone guardianInfo.epithet').lean();
+      if (guardian?.email && await shouldSendEmail(guardianId, 'invoiceCreated')) {
+        const branding = await emailService.loadBrandingAndLogo();
+        const tpl = emailService.buildGuardianInvoiceCreatedEmail({ guardian, invoice, branding });
+        await emailService.enqueueEmail({
+          to: guardian.email,
+          subject: tpl.subject,
+          html: tpl.html,
+          text: tpl.text,
+          type: 'invoiceCreated',
+          userId: guardianId,
+          relatedId: invoice._id,
+          priority: 2,
+        });
+      }
+    } catch (error) {
+      console.warn('[NotificationService] Failed to enqueue invoice created email:', error.message);
+    }
+  }
 }
 
 // --- FEEDBACK EVENTS ---
@@ -732,8 +943,8 @@ async function notifyPaymentReceived(teacherId, invoice) {
           type: 'payment',
           relatedTo: 'teacher_payment',
           relatedTeacherInvoice: invoice._id,
-          title: `Payment Received - Invoice #${invoice.invoiceNumber}`,
-          message: `Payment of ${invoice.netAmountEGP.toFixed(2)} EGP for ${getMonthName(invoice.month)} ${invoice.year} has been processed successfully.`,
+          title: `Payment Sent - Invoice #${invoice.invoiceNumber}`,
+          message: `Payment of ${invoice.netAmountEGP.toFixed(2)} EGP for ${getMonthName(invoice.month)} ${invoice.year} has been sent successfully.`,
           actionRequired: false,
           actionLink: `/teacher/salary?invoice=${invoice._id}`,
           metadata: {
@@ -1103,6 +1314,8 @@ module.exports = {
   notifyRole,
   notifySystem,
   notifyNewUser,
+  notifyUserDeleted,
+  notifyStudentCreated,
   notifyProfileIncomplete,
   notifyClassEvent,
   notifyInvoiceEvent,

@@ -3,7 +3,14 @@ const router = express.Router();
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const SystemVacation = require('../models/SystemVacation');
 const Class = require('../models/Class');
+const User = require('../models/User');
 const systemVacationService = require('../services/systemVacationService');
+const {
+  loadBrandingAndLogo,
+  buildSystemVacationNoticeEmail,
+  enqueueEmail,
+} = require('../services/emailService');
+const { getGlobalSwitches } = require('../utils/emailPreferenceCheck');
 
 const buildAffectedClassesQuery = (startDate, endDate) => ({
   scheduledDate: {
@@ -20,6 +27,38 @@ const buildImpactClassesQuery = (startDate, endDate) => ({
   },
   status: { $in: ['scheduled', 'in_progress', 'on_hold'] },
 });
+
+const SYSTEM_VACATION_EMAIL_AUDIENCES = {
+  guardians: {
+    key: 'guardians',
+    label: 'guardians',
+    query: { role: 'guardian', isActive: true },
+  },
+  teachers: {
+    key: 'teachers',
+    label: 'teachers',
+    query: { role: 'teacher', isActive: true },
+  },
+  all: {
+    key: 'all',
+    label: 'all active users',
+    query: { role: { $in: ['guardian', 'teacher'] }, isActive: true },
+  },
+};
+
+function getSystemVacationEmailAudience(audience) {
+  const normalized = String(audience || 'all').trim().toLowerCase();
+  return SYSTEM_VACATION_EMAIL_AUDIENCES[normalized] || null;
+}
+
+function canReceiveVacationBroadcastEmail(user, switches) {
+  if (!user || !switches?.masterEnabled) return false;
+  if (user.role === 'teacher' && switches.enableTeachers === false) return false;
+  if (user.role === 'guardian' && switches.enableGuardians === false) return false;
+  if (user.role === 'admin' && switches.enableAdmins === false) return false;
+  if (user?.emailPreferences?.globalEnabled === false) return false;
+  return true;
+}
 
 // Create a system vacation (admin only)
 router.post('/', requireAuth, requireAdmin, async (req, res) => {
@@ -305,6 +344,80 @@ router.post('/:id/end', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error ending system vacation:', err);
     res.status(500).json({ message: err.message || 'Failed to end system vacation' });
+  }
+});
+
+// Send branded system-vacation notice emails (admin only)
+router.post('/:id/send-email', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const audienceConfig = getSystemVacationEmailAudience(req.body?.audience);
+    if (!audienceConfig) {
+      return res.status(400).json({ message: 'Invalid audience. Use guardians, teachers, or all.' });
+    }
+
+    const systemVacation = await SystemVacation.findById(id).lean();
+    if (!systemVacation) {
+      return res.status(404).json({ message: 'System vacation not found' });
+    }
+
+    const recipients = await User.find(audienceConfig.query)
+      .select('firstName lastName email role timezone guardianInfo.epithet emailPreferences.globalEnabled')
+      .lean();
+
+    const branding = await loadBrandingAndLogo();
+    const switches = await getGlobalSwitches();
+    let queued = 0;
+    let skippedNoEmail = 0;
+    let skippedByPreferences = 0;
+
+    for (const recipient of recipients) {
+      const email = String(recipient?.email || '').trim().toLowerCase();
+      if (!email) {
+        skippedNoEmail += 1;
+        continue;
+      }
+
+      if (!canReceiveVacationBroadcastEmail(recipient, switches)) {
+        skippedByPreferences += 1;
+        continue;
+      }
+
+      const tpl = buildSystemVacationNoticeEmail({
+        recipient,
+        vacation: systemVacation,
+        branding,
+      });
+
+      // Enqueue instead of sending inline so vacation broadcasts use the shared email delivery pipeline.
+      await enqueueEmail({
+        to: email,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
+        type: 'systemVacationNotice',
+        userId: recipient._id,
+        relatedId: systemVacation._id,
+        priority: 2,
+      });
+
+      queued += 1;
+    }
+
+    return res.json({
+      message: `Queued ${queued} vacation email${queued === 1 ? '' : 's'} for ${audienceConfig.label}.`,
+      audience: audienceConfig.key,
+      queued,
+      stats: {
+        totalCandidates: recipients.length,
+        queued,
+        skippedNoEmail,
+        skippedByPreferences,
+      },
+    });
+  } catch (err) {
+    console.error('Error sending system vacation emails:', err);
+    return res.status(500).json({ message: 'Failed to queue system vacation emails' });
   }
 });
 

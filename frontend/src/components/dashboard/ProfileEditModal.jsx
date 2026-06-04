@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { bumpDomainVersion } from '../../utils/sessionCache';
 import TimezoneSelector from '../ui/TimezoneSelector';
 import QualificationsEditor from '../ui/QualificationsEditor';
 import TeacherAvailabilityConfig from './TeacherAvailabilityConfig';
@@ -629,7 +630,11 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
         }
       }
 
-  await api.put(`/users/${targetUser._id}`, payload);
+    await api.put(`/users/${targetUser._id}`, payload);
+    bumpDomainVersion('users');
+    if (form.role === 'guardian') bumpDomainVersion('guardians');
+    if (form.role === 'teacher') bumpDomainVersion('teachers');
+    if (form.role === 'student') bumpDomainVersion('students');
       if (onSaved) onSaved();
       onClose && onClose();
       try { alert('Profile saved successfully'); } catch (e) {}

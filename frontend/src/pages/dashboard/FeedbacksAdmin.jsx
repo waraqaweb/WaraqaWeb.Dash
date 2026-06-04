@@ -27,11 +27,13 @@ const TEXT_FIELDS = [
   { key: 'message', label: 'Message' },
   { key: 'followUpNotes', label: 'Follow-up notes' },
   { key: 'adminNotes', label: 'Admin notes' },
+  { key: 'heardAboutUs', label: 'How they heard about us' },
 ];
 
 const TYPE_STYLES = {
   monthly: 'border-border bg-muted/30 text-foreground',
   first_class: 'border-border bg-muted/30 text-foreground',
+  evaluation: 'border-emerald-200 bg-emerald-50 text-emerald-800',
 };
 
 const formatTypeLabel = (value = '') => {
@@ -53,21 +55,22 @@ const collectMetrics = (feedback = {}) => {
   const metrics = [];
   const seen = new Set();
 
-  const pushMetric = (label, value) => {
+  const pushMetric = (label, value, max = 10) => {
     if (value == null) return;
     const numeric = Number(value);
     if (Number.isNaN(numeric)) return;
     const key = label.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
-    metrics.push({ label, value: numeric });
+    metrics.push({ label, value: numeric, max });
   };
 
-  METRIC_FIELDS.forEach((field) => pushMetric(field.label, feedback[field.key]));
+  METRIC_FIELDS.forEach((field) => pushMetric(field.label, feedback[field.key], 10));
 
   if (feedback.metrics && typeof feedback.metrics === 'object') {
+    const dynamicMax = feedback.type === 'evaluation' ? 5 : 10;
     Object.entries(feedback.metrics).forEach(([key, value]) => {
-      pushMetric(humanizeKey(key), value);
+      pushMetric(humanizeKey(key), value, dynamicMax);
     });
   }
 
@@ -79,7 +82,10 @@ const collectNotes = (feedback = {}) =>
     .map((field) => {
       const raw = feedback[field.key];
       if (!raw || !String(raw).trim()) return null;
-      return { label: field.label, text: String(raw).trim() };
+      const label = field.key === 'notes' && feedback.type === 'evaluation'
+        ? 'Evaluation feedback'
+        : field.label;
+      return { label, text: String(raw).trim() };
     })
     .filter(Boolean);
 
@@ -91,18 +97,21 @@ const collectMetaChips = (feedback = {}) => {
   if (studentName) chips.push({ label: `Student ${studentName}` });
   if (feedback.scheduledDate) chips.push({ label: `Class on ${formatDateDDMMMYYYY(feedback.scheduledDate)}` });
   if (feedback.promptMonth) chips.push({ label: `Month ${feedback.promptMonth}` });
+  if (feedback.evaluationTitle) chips.push({ label: feedback.evaluationTitle });
   return chips;
 };
 
-const getGuardianName = (feedback = {}) => {
+const getSubmitterName = (feedback = {}) => {
   const first = feedback.user?.firstName || '';
   const last = feedback.user?.lastName || '';
   const name = `${first} ${last}`.trim();
-  return name || 'Guardian';
+  return name || feedback.submitterName || feedback.submitterEmail || 'Feedback sender';
 };
 
+const getSubmitterEmail = (feedback = {}) => feedback.user?.email || feedback.submitterEmail || '';
+
 const getGuardianInitials = (feedback = {}) => {
-  const name = getGuardianName(feedback).split(' ');
+  const name = getSubmitterName(feedback).split(' ');
   const letters = name.filter(Boolean).map((part) => part[0]);
   return letters.slice(0, 2).join('').toUpperCase() || 'G';
 };
@@ -114,8 +123,10 @@ const getTeacherName = (feedback = {}) => {
   return name || '';
 };
 
-const StarRating = ({ value = 0 }) => {
-  const normalized = Math.max(0, Math.min(5, Math.round((Number(value) || 0) / 2)));
+const StarRating = ({ value = 0, max = 10 }) => {
+  const numericValue = Number(value) || 0;
+  const safeMax = Number(max) > 0 ? Number(max) : 10;
+  const normalized = Math.max(0, Math.min(5, Math.round((numericValue / safeMax) * 5)));
   return (
     <div className="flex items-center gap-0.5">
       {Array.from({ length: 5 }).map((_, idx) => (
@@ -133,21 +144,22 @@ const StarRating = ({ value = 0 }) => {
   );
 };
 
-const MetricTile = ({ label, value }) => {
+const MetricTile = ({ label, value, max = 10 }) => {
   const safeValue = Math.round((Number(value) || 0) * 10) / 10;
-  const percentage = Math.max(0, Math.min(100, (Number(value) || 0) * 10));
+  const safeMax = Number(max) > 0 ? Number(max) : 10;
+  const percentage = Math.max(0, Math.min(100, ((Number(value) || 0) / safeMax) * 100));
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
       <div className="mt-1 flex items-baseline gap-1.5">
         <span className="text-2xl font-semibold text-foreground">{safeValue}</span>
-        <span className="text-sm text-muted-foreground">/ 10</span>
+        <span className="text-sm text-muted-foreground">/ {safeMax}</span>
       </div>
       <div className="mt-3 flex items-center gap-3">
         <div className="h-1.5 flex-1 rounded-full bg-muted">
           <div className="h-full rounded-full bg-primary" style={{ width: `${percentage}%` }} />
         </div>
-        <StarRating value={value} />
+        <StarRating value={value} max={safeMax} />
       </div>
     </div>
   );
@@ -350,16 +362,22 @@ const FeedbacksAdmin = () => {
     if (searchTerm && searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       result = result.filter((feedback) => {
-        const userName = feedback.user ? `${feedback.user.firstName} ${feedback.user.lastName}`.toLowerCase() : '';
+        const userName = getSubmitterName(feedback).toLowerCase();
+        const userEmail = getSubmitterEmail(feedback).toLowerCase();
         const className = feedback.class ? (feedback.class.name || '').toLowerCase() : '';
         const message = (feedback.notes || feedback.message || '').toLowerCase();
+        const heardAboutUs = (feedback.heardAboutUs || '').toLowerCase();
+        const evaluationTitle = (feedback.evaluationTitle || '').toLowerCase();
         const type = (feedback.type || '').toLowerCase();
         const date = (formatDateDDMMMYYYY(feedback.createdAt) || '').toLowerCase();
 
         return (
           userName.includes(term) ||
+          userEmail.includes(term) ||
           className.includes(term) ||
           message.includes(term) ||
+          heardAboutUs.includes(term) ||
+          evaluationTitle.includes(term) ||
           type.includes(term) ||
           date.includes(term) ||
           String(feedback._id).includes(term)
@@ -434,7 +452,7 @@ const FeedbacksAdmin = () => {
           <div className="flex flex-wrap items-start gap-6">
             <div className="flex min-w-[220px] flex-1 flex-col gap-2">
               <h1 className="text-xl font-semibold text-foreground">Feedbacks</h1>
-              <p className="text-sm text-muted-foreground">Guardian feedback and ratings overview.</p>
+              <p className="text-sm text-muted-foreground">Guardian, student, and evaluation feedback overview.</p>
               
             </div>
             <div className="flex flex-wrap gap-4">
@@ -478,7 +496,7 @@ const FeedbacksAdmin = () => {
                 value={q}
                 onChange={handleQueryChange}
                 className="w-full rounded-md border border-border bg-input px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground"
-                placeholder="Search guardians, teachers, classes, or IDs"
+                placeholder="Search submitters, emails, feedback, or IDs"
               />
               <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">
                 <SearchIcon className="h-4 w-4" />
@@ -504,6 +522,8 @@ const FeedbacksAdmin = () => {
             <div className="space-y-4">
               {filteredFeedbacks.map((f) => {
                 const isRead = !!(f.read ?? f.isRead);
+                const submitterName = getSubmitterName(f);
+                const submitterEmail = getSubmitterEmail(f);
                 const teacherName = getTeacherName(f);
                 const metrics = collectMetrics(f);
                 const notes = collectNotes(f);
@@ -520,7 +540,7 @@ const FeedbacksAdmin = () => {
                       </div>
                       <div className="min-w-[220px] flex-1 space-y-1">
                         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                          <span className="text-base font-semibold text-foreground">{getGuardianName(f)}</span>
+                          <span className="text-base font-semibold text-foreground">{submitterName}</span>
                           {teacherName && (
                             <>
                               <span className="text-muted-foreground/40" aria-hidden="true">|</span>
@@ -534,6 +554,7 @@ const FeedbacksAdmin = () => {
                             </>
                           )}
                         </div>
+                        {submitterEmail && <p className="text-xs text-muted-foreground">{submitterEmail}</p>}
                         <p className="text-xs text-muted-foreground">{formatDateTime(f.createdAt)}</p>
                       </div>
                       <div className="flex flex-col items-end gap-2">
@@ -582,7 +603,7 @@ const FeedbacksAdmin = () => {
                     {metrics.length > 0 && (
                       <div className="mt-4 grid gap-3 sm:grid-cols-2">
                         {metrics.map((metric) => (
-                          <MetricTile key={`${f._id}-${metric.label}`} label={metric.label} value={metric.value} />
+                          <MetricTile key={`${f._id}-${metric.label}`} label={metric.label} value={metric.value} max={metric.max} />
                         ))}
                       </div>
                     )}

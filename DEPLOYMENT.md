@@ -1,5 +1,49 @@
 ## Waraqa deployment runbook (DigitalOcean)
 
+### Local one-command deploy
+
+From `E:\waraqa`, run:
+
+```powershell
+.\scripts\push-and-deploy.ps1 -WhatChanged "brief summary of what changed"
+```
+
+Optional examples:
+
+```powershell
+.\scripts\push-and-deploy.ps1 -WhatChanged "fix class modal spacing"
+.\scripts\push-and-deploy.ps1 -WhatChanged "deploy invoice changes" -ChangeNumber 42
+.\scripts\push-and-deploy.ps1 -WhatChanged "backend-only hotfix" -SkipLocalBuild
+.\scripts\push-and-deploy.ps1 -WhatChanged "force full rebuild" -DeployMode all
+.\scripts\push-and-deploy.ps1 -WhatChanged "deploy with explicit SSH key" -SshKeyPath "$env:USERPROFILE\.ssh\id_ed25519_waraqa"
+```
+
+What it does:
+
+- stages all local edits with `git add -A`
+- runs `node --check` on changed backend `.js/.mjs/.cjs` files
+- runs `npm --prefix frontend run build` unless `-SkipLocalBuild` is used
+- creates a numbered commit with your summary and a UTC timestamp
+- pushes `HEAD` directly to `origin/main` by default
+- SSHes to the droplet and runs `deploy/scripts/deploy.sh auto`
+
+```powershell
+git status
+git add -A
+git commit -m "public invoice included cancelled classes"
+git push origin main
+```
+
+On the droplet:
+
+```bash
+cd /opt/waraqa
+chmod +x deploy/scripts/deploy.sh
+deploy/scripts/deploy.sh backend
+deploy/scripts/deploy.sh frontend
+deploy/scripts/deploy.sh auto
+```
+
 ### Server
 
 - Droplet IP: 159.89.40.84
@@ -32,7 +76,7 @@ Run in PowerShell from C:\waraqa:
 ```powershell
 git status
 git add -A
-git commit -m "first review issues"
+git commit -m "public invoice included cancelled classes"
 git push origin main
 ```
 
@@ -238,6 +282,8 @@ On the droplet:
 ```bash
 cd /opt/waraqa
 chmod +x deploy/scripts/deploy.sh
+deploy/scripts/deploy.sh backend
+deploy/scripts/deploy.sh frontend
 deploy/scripts/deploy.sh auto
 ```
 

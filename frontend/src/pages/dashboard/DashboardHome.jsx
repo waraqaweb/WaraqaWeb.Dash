@@ -26,6 +26,7 @@ import StatCard from '../../components/dashboard/widgets/StatCard';
 import NextClassCard from '../../components/dashboard/widgets/NextClassCard';
 import PendingReportsList from '../../components/dashboard/widgets/PendingReportsList';
 import FirstClassReminder from '../../components/dashboard/widgets/FirstClassReminder';
+import SystemVacationBanner from '../../components/ui/SystemVacationBanner';
 import DashboardDecoration from '../../components/dashboard/widgets/DashboardDecoration';
 import useDomainRefresh from '../../hooks/useDomainRefresh';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
@@ -714,6 +715,7 @@ const DashboardHome = ({ isActive = true }) => {
   const [activeFirstPrompt, setActiveFirstPrompt] = useState(null);
   const [activeMonthlyPrompt, setActiveMonthlyPrompt] = useState(null);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [welcomeDismissedThisSession, setWelcomeDismissedThisSession] = useState(false);
   const [showGuardianFollowUpModal, setShowGuardianFollowUpModal] = useState(false);
   const [guardianBookingSuccess, setGuardianBookingSuccess] = useState(null);
   const [showTeacherSyncModal, setShowTeacherSyncModal] = useState(false);
@@ -784,6 +786,23 @@ const DashboardHome = ({ isActive = true }) => {
       return false;
     }
   }, [user]);
+
+  const guardianStudentCount = React.useMemo(() => {
+    const data = stats.data || {};
+    if (Array.isArray(data.myChildren)) return data.myChildren.length;
+    const numericCount = Number(data.myChildren || 0);
+    return Number.isFinite(numericCount) ? numericCount : 0;
+  }, [stats.data]);
+
+  const guardianNeedsStudentOnboarding = React.useMemo(() => (
+    Boolean(typeof isGuardian === 'function' && isGuardian())
+    && !stats.loading
+    && guardianStudentCount === 0
+  ), [guardianStudentCount, isGuardian, stats.loading]);
+
+  useEffect(() => {
+    setWelcomeDismissedThisSession(false);
+  }, [guardianNeedsStudentOnboarding, user?._id]);
 
   useEffect(() => {
     try {
@@ -858,7 +877,11 @@ const DashboardHome = ({ isActive = true }) => {
   // Welcome modal: show once for new users
   useEffect(() => {
     try {
-      if (!user) return;
+      if (!user || welcomeDismissedThisSession) return;
+      if (guardianNeedsStudentOnboarding) {
+        setShowWelcome(true);
+        return;
+      }
       const key = `welcome_shown_v1_${user._id || 'anon'}`;
       const already = localStorage.getItem(key) === 'true';
       if (already) return;
@@ -871,7 +894,13 @@ const DashboardHome = ({ isActive = true }) => {
     } catch (e) {
       console.warn('Welcome modal check failed', e);
     }
-  }, [user]);
+  }, [guardianNeedsStudentOnboarding, user, welcomeDismissedThisSession]);
+
+  useEffect(() => {
+    if (!guardianNeedsStudentOnboarding && showWelcome && !isFirstVisit) {
+      setShowWelcome(false);
+    }
+  }, [guardianNeedsStudentOnboarding, isFirstVisit, showWelcome]);
 
   // Close modals when user navigates back (popstate)
   useEffect(() => {
@@ -2100,7 +2129,9 @@ const DashboardHome = ({ isActive = true }) => {
   });
 
   return (
-    <div className="p-3 sm:p-4">
+    <>
+      {isAdmin() ? <SystemVacationBanner /> : null}
+      <div className="p-3 sm:p-4">
       <DashboardDecoration
         enabled={decorationConfig.enabled}
         offsetX={decorationConfig.offsetX}
@@ -2172,27 +2203,47 @@ const DashboardHome = ({ isActive = true }) => {
       {/* Welcome modal (one-time) */}
       {showWelcome && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black opacity-40" onClick={() => { setShowWelcome(false); }}></div>
+          <div className="absolute inset-0 bg-black opacity-40" onClick={() => { setShowWelcome(false); setWelcomeDismissedThisSession(true); }}></div>
           <div className="bg-white rounded-lg shadow-xl max-w-xl w-[calc(100%-2rem)] max-h-[85vh] overflow-y-auto p-5 sm:p-6 z-10" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
             <div className="flex items-start gap-4">
               <div className="flex-1">
                 <h3 id="welcome-title" className="text-2xl font-bold">Welcome to Waraqa platform{user?.firstName ? `, ${user.firstName}` : ''}!</h3>
-                <p className="text-sm text-muted-foreground mt-2">We're delighted to have you with us. <br />
-                Please complete your profile, then add your student(s) on the Students. This helps us personalize your experience and get classes scheduled faster. <br />
-
+                <p className="text-sm text-muted-foreground mt-2">
+                  {guardianNeedsStudentOnboarding
+                    ? 'Please complete your profile, then open Students to add your first student. This prompt will keep appearing until your first student is added so you always know where to go.'
+                    : `We're delighted to have you with us. Please complete your profile, then add your student(s) on Students so classes and notifications can be set up faster.`}
                 </p>
 
-                <div className="mt-4 flex items-center gap-3">
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                   <button
                     onClick={() => {
-                      try { localStorage.setItem(`welcome_shown_v1_${user._id || 'anon'}`, 'true'); } catch(e){}
+                      if (!guardianNeedsStudentOnboarding) {
+                        try { localStorage.setItem(`welcome_shown_v1_${user._id || 'anon'}`, 'true'); } catch(e){}
+                      }
                       setShowWelcome(false);
+                      setWelcomeDismissedThisSession(true);
                       navigate('/dashboard/profile');
                     }}
                     className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-semibold hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-primary/30"
                   >Complete your profile</button>
+                  {guardianNeedsStudentOnboarding && (
+                    <button
+                      onClick={() => {
+                        setShowWelcome(false);
+                        setWelcomeDismissedThisSession(true);
+                        navigate('/dashboard/students');
+                      }}
+                      className="px-4 py-2 rounded-md border border-primary/20 bg-primary/10 text-primary font-semibold hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    >Add first student</button>
+                  )}
                   <button
-                    onClick={() => { try { localStorage.setItem(`welcome_shown_v1_${user._id || 'anon'}`, 'true'); } catch(e){} setShowWelcome(false); }}
+                    onClick={() => {
+                      if (!guardianNeedsStudentOnboarding) {
+                        try { localStorage.setItem(`welcome_shown_v1_${user._id || 'anon'}`, 'true'); } catch(e){}
+                      }
+                      setShowWelcome(false);
+                      setWelcomeDismissedThisSession(true);
+                    }}
                     className="px-4 py-2 rounded-md border border-border bg-muted text-foreground hover:opacity-90"
                   >Maybe later</button>
                 </div>
@@ -2264,7 +2315,8 @@ const DashboardHome = ({ isActive = true }) => {
           onClose={() => setFeedbackToast((prev) => ({ ...prev, show: false }))}
         />
       )}
-    </div>
+      </div>
+    </>
   );
 };
 

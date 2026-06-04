@@ -6,6 +6,7 @@
  */
 
 import React, { useState } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import { SearchProvider } from '../../contexts/SearchContext';
 import { DeleteActionCountdownProvider, useDeleteActionCountdown } from '../../contexts/DeleteActionCountdownContext';
 import Sidebar from './Sidebar';
@@ -58,6 +59,7 @@ const DeleteActionCountdownHost = () => {
 };
 
 const DashboardLayoutShell = ({ children, activeView = null, pageTitle }) => {
+  const { user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const toggleSidebar = () => {
@@ -125,7 +127,7 @@ const DashboardLayoutShell = ({ children, activeView = null, pageTitle }) => {
         <ImpersonationBanner />
 
         {/* System Vacation Banner */}
-        <SystemVacationBanner />
+        {user?.role !== 'admin' ? <SystemVacationBanner /> : null}
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto bg-background">

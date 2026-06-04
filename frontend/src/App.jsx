@@ -44,6 +44,10 @@ const SalaryEditModal = React.lazy(() => import('./pages/dashboard/salaries/Sala
 const SalaryCreateModal = React.lazy(() => import('./pages/dashboard/salaries/SalaryCreateModal'));
 const TeacherSalaryDashboard = React.lazy(() => import('./pages/teacher/SalaryDashboard'));
 const PresenterPublicPage = React.lazy(() => import('./pages/PresenterPublicPage'));
+const RegisterStudentPage = React.lazy(() => import('./pages/dashboard/RegisterStudentPage'));
+const RegisterTeacherPage = React.lazy(() => import('./pages/dashboard/RegisterTeacherPage'));
+const MeetingsEvaluationPage = React.lazy(() => import('./pages/public/MeetingsEvaluationPage'));
+const LegacyDataPage = React.lazy(() => import('./pages/dashboard/LegacyDataPage'));
 
 /**
  * Protected Route Component
@@ -248,7 +252,12 @@ const AppRoutes = () => {
 
       <Route
         path="/register-student"
-        element={<PublicStudentRegistrationPage />}
+        element={<RegisterStudentPage />}
+      />
+
+      <Route
+        path="/dashboard/register-student"
+        element={<RegisterStudentPage />}
       />
 
       <Route
@@ -257,13 +266,18 @@ const AppRoutes = () => {
       />
 
       <Route
-        path="/register-teacher"
-        element={<PublicTeacherContractPage />}
+        path="/dashboard/register-teacher"
+        element={<RegisterTeacherPage />}
       />
 
       <Route
         path="/interactive-learning"
         element={<PresenterPublicPage />}
+      />
+
+      <Route
+        path="/dashboard/public/meetings/evaluation"
+        element={<MeetingsEvaluationPage />}
       />
 
       {/* Protected routes */}

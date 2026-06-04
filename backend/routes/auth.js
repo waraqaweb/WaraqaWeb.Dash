@@ -96,6 +96,11 @@ router.post(
     body("role")
       .isIn(["teacher", "guardian"])
       .withMessage("Please choose an account type: Teacher or Guardian."),
+    body("epithet")
+      .optional()
+      .trim()
+      .isLength({ max: 40 })
+      .withMessage("Epithet must be 40 characters or fewer."),
     body("phone")
       .optional()
       .trim()
@@ -137,6 +142,7 @@ router.post(
         email,
         password,
         role,
+        epithet,
         phone,
         timezone,
         gender,
@@ -166,6 +172,13 @@ router.post(
         gender: gender || "male",
         dateOfBirth: dateOfBirth || null,
         isActive: true,
+        ...(role === 'guardian' && String(epithet || '').trim()
+          ? {
+              guardianInfo: {
+                epithet: String(epithet).trim(),
+              },
+            }
+          : {}),
       });
 
       await user.save(); // Password will be hashed by the pre('save') hook here
@@ -187,7 +200,7 @@ router.post(
         if (canSend && user.email) {
           const branding = await loadBrandingAndLogo();
           const tpl = await buildRegistrationWelcomeEmail({ user, branding });
-          await enqueueEmail({ to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: 'registration', userId: user._id, priority: 2 });
+          await enqueueEmail({ to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text, type: 'registrationWelcome', userId: user._id, priority: 2 });
         }
       } catch (e) { console.warn('[Email] registration welcome failed:', e.message); }
 

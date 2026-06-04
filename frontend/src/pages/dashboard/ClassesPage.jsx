@@ -20,6 +20,11 @@ import useBulkSelect from '../../hooks/useBulkSelect';
 import BulkActionBar from '../../components/ui/BulkActionBar';
 import ExportExcelButton from '../../components/ui/ExportExcelButton';
 import { fetchAllForExport, mapClassRow, downloadExcel } from '../../utils/exportToExcel';
+import {
+  getStudentMessageName,
+  getTeacherMessageLabel,
+  getTimezoneHeadingLabel,
+} from '../../utils/classMessageFormatting';
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import RequestClassChangeModal from "../../components/dashboard/RequestClassChangeModal";
 import CircleSpinner from "../../components/ui/CircleSpinner";
@@ -629,13 +634,35 @@ const ClassesPage = ({ isActive = true }) => {
   }, [fetchSeriesScannerList]);
 
   const formatAlternativeSlot = (alt) => {
+    const tz = alt?.timezone ? ` · ${alt.timezone.replace(/_/g, ' ')}` : '';
+
+    // Preferred: backend provides startLocal/endLocal as 'YYYY-MM-DD HH:mm'
+    const startLocal = typeof alt?.startLocal === 'string' ? alt.startLocal : '';
+    const endLocal = typeof alt?.endLocal === 'string' ? alt.endLocal : '';
+    if (startLocal) {
+      const [startDate, startTime = ''] = startLocal.split(' ');
+      const [, endTime = ''] = (endLocal || '').split(' ');
+      let dateLabel = startDate;
+      try {
+        const d = startDate ? new Date(`${startDate}T00:00:00`) : null;
+        if (d && !Number.isNaN(d.getTime())) {
+          dateLabel = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        }
+      } catch (e) { /* keep raw */ }
+      const range = endTime ? `${startTime}–${endTime}` : startTime;
+      return `${dateLabel} · ${range}${tz}`;
+    }
+
     const start = alt?.startDateTime || alt?.start || alt?.startTime;
     const end = alt?.endDateTime || alt?.end || alt?.endTime;
-    const startLabel = alt?.startLocal || (start ? new Date(start).toLocaleString() : '');
-    const endLabel = alt?.endLocal || (end ? new Date(end).toLocaleString() : '');
-    if (!startLabel && !endLabel) return '';
-    const tz = alt?.timezone ? ` (${alt.timezone})` : '';
-    return `${startLabel}${endLabel ? ` – ${endLabel}` : ''}${tz}`;
+    if (!start && !end) return '';
+    const fmt = (v) => {
+      if (!v) return '';
+      const d = new Date(v);
+      if (Number.isNaN(d.getTime())) return String(v);
+      return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    };
+    return `${fmt(start)}${end ? ` – ${fmt(end)}` : ''}${tz}`;
   };
 
   const buildAvailabilityWarningFromApi = (data = {}) => {
@@ -2244,7 +2271,8 @@ fetchClassesRef.current = fetchClasses;
         timezone: newClass.timezone,
         meetingLink: newClass.meetingLink,
         isRecurring: newClass.isRecurring,
-        overrideDuplicateSeries: options.overrideDuplicateSeries || false
+        overrideDuplicateSeries: options.overrideDuplicateSeries || false,
+        force: options.force === true,
       };
 
       if (newClass.isRecurring) {
@@ -2303,6 +2331,15 @@ fetchClassesRef.current = fetchClasses;
           code: 'duplicate',
           message: err.response?.data?.message || 'Duplicate recurring series detected.',
           duplicateSeries: duplicateInfo || null
+        };
+      }
+
+      if (err.response?.status === 400 && err.response?.data?.availabilityError) {
+        return {
+          success: false,
+          code: 'availability',
+          message: err.response?.data?.message || 'Teacher not available',
+          data: err.response.data
         };
       }
 
@@ -2462,10 +2499,13 @@ fetchClassesRef.current = fetchClasses;
           const lastSlot = (prev.recurrenceDetails || [])[prev.recurrenceDetails.length - 1] || {};
           const lastDay = Number.isInteger(Number(lastSlot.dayOfWeek)) ? Number(lastSlot.dayOfWeek) : 1;
           const nextDay = (lastDay + 1) % 7;
+          const inheritedDuration = Number.isFinite(Number(lastSlot.duration))
+            ? Number(lastSlot.duration)
+            : (Number.isFinite(Number(prev.duration)) ? Number(prev.duration) : 60);
           return {
             dayOfWeek: nextDay,
             time: lastSlot.time || "18:00",
-            duration: 30,
+            duration: inheritedDuration,
             timezone: lastSlot.timezone || prev.timezone || adminTimezone
           };
         })()
@@ -2489,6 +2529,7 @@ fetchClassesRef.current = fetchClasses;
   };
 
   const handleUpdateClass = async ({ force = false } = {}) => {
+    let adminAvailabilityReminder = '';
     try {
       const updateData = {
         title: editClass.title,
@@ -2501,7 +2542,8 @@ fetchClassesRef.current = fetchClasses;
         isRecurring: editClass.isRecurring,
         generationPeriodMonths: editClass.generationPeriodMonths,
         guardianRate: editClass.guardianRate,
-        teacherPremium: editClass.teacherPremium
+        teacherPremium: editClass.teacherPremium,
+        force: force === true
       };
 
       if (editUpdateScope === 'all' && editClass.isRecurring) {
@@ -2659,14 +2701,25 @@ fetchClassesRef.current = fetchClasses;
                 return `• ${dayName}: not available`;
               });
 
-              setEditAvailabilityWarning({
-                title: 'Teacher not available for one or more recurring slots',
-                reason: '',
-                details: lines.join('\n'),
-                nearest: nearestLabel,
-                suggested: [],
-              });
-              return;
+              const reminderSummary = nearestLabel
+                ? `Selected recurring slots are outside the teacher availability. Nearest available slot: ${nearestLabel}.`
+                : 'Selected recurring slots are outside the teacher availability.';
+
+              if (isAdminUser) {
+                adminAvailabilityReminder = reminderSummary;
+                force = true;
+                updateData.force = true;
+              } else {
+                setEditAvailabilityWarning({
+                  title: 'Teacher not available for one or more recurring slots',
+                  reason: '',
+                  details: lines.join('\n'),
+                  nearest: nearestLabel,
+                  suggested: [],
+                });
+                return;
+              }
+
             }
           }
         }
@@ -2684,19 +2737,23 @@ fetchClassesRef.current = fetchClasses;
         if (teacherChanged) {
           // Build "resuming classes with new teacher" message
           const newTeacher = teachers.find(t => String(t._id) === String(editClass.teacher));
-          const newTeacherFirstName = newTeacher?.firstName || newTeacher?.name?.split(' ')[0] || 'the new teacher';
-          const studentFirstName = (editClass.student?.studentName || '').split(' ')[0] || 'the student';
+          const teacherLabel = getTeacherMessageLabel(newTeacher, 'teacher');
+          const studentDisplayName = getStudentMessageName({
+            student: editClass.student,
+            fallback: 'student',
+          });
           const tz = editClass.timezone || adminTimezone;
-          const tzLabel = tz.replace(/_/g, ' ');
+          const timezoneHeading = getTimezoneHeadingLabel(tz, 'Class');
 
           const dayNamesList = DAY_NAMES;
 
           const parts = [
             'Assalamu Alaykum,',
             '',
-            `This is to inform you that ${studentFirstName}'s classes will be resuming with a new teacher, ${newTeacherFirstName}, Inshaa Allah.`,
+            `This is to inform you that ${studentDisplayName}'s classes will be resuming with ${teacherLabel}, Inshaa Allah.`,
             '',
             'Class Schedule:',
+            timezoneHeading,
           ];
 
           if (editClass.isRecurring && Array.isArray(editClass.recurrenceDetails) && editClass.recurrenceDetails.length) {
@@ -2718,7 +2775,6 @@ fetchClassesRef.current = fetchClasses;
             parts.push(`${m.format('dddd D MMMM')} at ${m.format('hh:mm A')} (${editClass.duration || 60} min)`);
           }
 
-          parts.push(`Timezone: ${tzLabel}`);
           parts.push('');
 
           if (editClass.meetingLink) {
@@ -2737,7 +2793,11 @@ fetchClassesRef.current = fetchClasses;
           teacherChangeMsg = parts.join('\n').replace(/\n{3,}/g, '\n\n').trim();
         }
 
-        setEditUpdateResult(teacherChangeMsg ? { message: 'Class updated — teacher changed.', teacherChangeMsg } : null);
+        setEditUpdateResult(teacherChangeMsg ? {
+          message: 'Class updated — teacher changed.',
+          teacherChangeMsg,
+          availabilityReminder: adminAvailabilityReminder,
+        } : null);
         if (!teacherChangeMsg) {
           setShowEditModal(false);
           setEditClass(null);
@@ -2747,7 +2807,10 @@ fetchClassesRef.current = fetchClasses;
         setEditAvailabilityWarning(null);
         await fetchClasses();
         if (!teacherChangeMsg) {
-          alert("Class updated successfully!");
+          const successAlert = adminAvailabilityReminder
+            ? `Class updated successfully!\n\nReminder: ${adminAvailabilityReminder}`
+            : 'Class updated successfully!';
+          alert(successAlert);
         }
       }
     } catch (err) {

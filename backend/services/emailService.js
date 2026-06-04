@@ -182,6 +182,14 @@ async function enqueueCoalescedEmail({
   }
 }
 
+async function createEmailLogSafe(entry, context = 'email log') {
+  try {
+    await EmailLog.create(entry);
+  } catch (error) {
+    console.warn(`[EmailService] Failed to record ${context}:`, error.message);
+  }
+}
+
 // ─── Rate limits (tuned to stay below Gmail SMTP free-tier caps) ────────────
 // Gmail (gmail.com via App Password): 500/day, ~100/hr.
 // Google Workspace SMTP relay: 2000/day. We pick conservative figures that
@@ -276,7 +284,6 @@ async function _resetFailureCount(userId) {
     // non-fatal
   }
 }
-
 let _lastSentAt  = 0;
 let _processing  = false;
 
@@ -324,20 +331,14 @@ async function processEmailQueue() {
     const attachments = item.attachments ? (() => { try { return JSON.parse(item.attachments); } catch { return undefined; } })() : undefined;
     try {
       await sendMail({ to: item.to, subject: item.subject, html: item.html, text: item.text, attachments });
-      _lastSentAt     = Date.now();
-      item.status     = 'sent';
-      item.processedAt = new Date();
-      await item.save();
-      await EmailLog.create({ to: item.to, subject: item.subject, type: item.type, status: 'sent', userId: item.userId, relatedId: item.relatedId, sentAt: new Date() });
-      await _resetFailureCount(item.userId);
     } catch (sendErr) {
       item.attempts = (item.attempts || 0) + 1;
       if (item.attempts >= (item.maxAttempts || 3) || _isPermanentFailure(sendErr.message)) {
         item.status = 'failed';
         item.error  = sendErr.message;
         await item.save();
-        await EmailLog.create({ to: item.to, subject: item.subject, type: item.type, status: 'failed', userId: item.userId, relatedId: item.relatedId, error: sendErr.message });
-        await _bumpFailureAndMaybePause({ userId: item.userId, recipient: item.to, errorMessage: sendErr.message });
+        await createEmailLogSafe({ to: item.to, subject: item.subject, type: item.type, status: 'failed', userId: item.userId, relatedId: item.relatedId, error: sendErr.message }, `failed email log for ${item._id}`);
+  await _bumpFailureAndMaybePause({ userId: item.userId, recipient: item.to, errorMessage: sendErr.message });
       } else {
         // Soft failure — back off with exponential delay (10s, 40s, 90s …)
         // so we don't tight-loop a struggling SMTP server.
@@ -348,7 +349,16 @@ async function processEmailQueue() {
         await item.save();
       }
       console.error(`[EmailService] Send failed (attempt ${item.attempts}):`, sendErr.message);
+      return;
     }
+
+    _lastSentAt      = Date.now();
+    item.status      = 'sent';
+    item.processedAt = new Date();
+    item.error       = undefined;
+    await item.save();
+    await createEmailLogSafe({ to: item.to, subject: item.subject, type: item.type, status: 'sent', userId: item.userId, relatedId: item.relatedId, sentAt: new Date() }, `sent email log for ${item._id}`);
+    await _resetFailureCount(item.userId);
   } catch (e) {
     console.error('[EmailService] Queue processor error:', e.message);
   } finally {
@@ -469,11 +479,103 @@ function _btn(label, url) {
 function _alert(msg, bg = '#fffbeb', border = '#f59e0b', txt = '#92400e') {
   return `<div style="background:${bg};border-left:4px solid ${border};border-radius:4px;padding:12px 14px;margin:14px 0;font-size:13px;color:${txt};">${msg}</div>`;
 }
-function _hi(firstName) {
-  return `<p style="margin:0 0 14px;font-size:15px;">Hi <strong>${firstName || 'there'}</strong>,</p>`;
+function formatRecipientEpithet(epithet) {
+  const normalized = String(epithet || '').trim().toLowerCase();
+  if (!normalized || normalized === 'none') return '';
+
+  const map = {
+    mr: 'Mr',
+    mister: 'Mr',
+    mrs: 'Mrs',
+    missus: 'Mrs',
+    ms: 'Ms',
+    miss: 'Ms',
+    brother: 'Brother',
+    bro: 'Brother',
+    sister: 'Sister',
+    sis: 'Sister',
+  };
+
+  return map[normalized] || String(epithet || '').trim();
+}
+
+function formatPersonName(person, { includeLastName = false, fallback = 'there' } = {}) {
+  if (!person) return fallback;
+  if (typeof person === 'string') return person || fallback;
+
+  const epithet = formatRecipientEpithet(person?.guardianInfo?.epithet || person?.epithet);
+  const parts = [
+    epithet,
+    person?.firstName || '',
+    includeLastName ? (person?.lastName || '') : '',
+  ].filter(Boolean);
+
+  return parts.join(' ').trim() || fallback;
+}
+
+function escapeHtml(value = '') {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatMultilineHtml(value = '') {
+  return escapeHtml(value).replace(/\r?\n/g, '<br/>');
+}
+
+function _hi(person) {
+  return `<p style="margin:0 0 14px;font-size:15px;">Hi <strong>${formatPersonName(person)}</strong>,</p>`;
 }
 
 // ─── Timezone helpers ─────────────────────────────────────────────────────────
+const _DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function describeRecurrence(classObj = {}) {
+  const recurrence = classObj?.recurrence || {};
+  const rawFrequency = recurrence?.type || recurrence?.frequency || '';
+  const frequency = String(rawFrequency || '').trim().toLowerCase();
+  const detailDays = Array.isArray(classObj?.recurrenceDetails)
+    ? classObj.recurrenceDetails.map((slot) => Number(slot?.dayOfWeek)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    : [];
+  const recurrenceDays = Array.isArray(recurrence?.daysOfWeek)
+    ? recurrence.daysOfWeek.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    : [];
+  const uniqueDays = Array.from(new Set([...detailDays, ...recurrenceDays]));
+  const dayLabel = uniqueDays.length
+    ? uniqueDays.map((day) => _DAY_NAMES[day]).filter(Boolean).join(', ')
+    : '';
+  const interval = Number(recurrence?.interval || 1);
+
+  if (!classObj?.isRecurring && !uniqueDays.length && !frequency) {
+    return '';
+  }
+
+  if ((frequency === 'weekly' || !frequency) && dayLabel) {
+    return interval > 1 ? `Every ${interval} weeks on ${dayLabel}` : `Weekly on ${dayLabel}`;
+  }
+  if (frequency === 'daily') {
+    return interval > 1 ? `Every ${interval} days` : 'Daily';
+  }
+  if (frequency === 'monthly') {
+    return interval > 1 ? `Every ${interval} months` : 'Monthly';
+  }
+  if (frequency === 'yearly') {
+    return interval > 1 ? `Every ${interval} years` : 'Yearly';
+  }
+  if (frequency === 'biweekly') {
+    return dayLabel ? `Every 2 weeks on ${dayLabel}` : 'Every 2 weeks';
+  }
+  if (frequency) {
+    const label = frequency.charAt(0).toUpperCase() + frequency.slice(1);
+    return dayLabel ? `${label} on ${dayLabel}` : label;
+  }
+
+  return dayLabel ? `Weekly on ${dayLabel}` : '';
+}
+
 function formatInTimezone(date, tz) {
   try {
     const d = new Date(date);
@@ -549,26 +651,27 @@ function buildClassCreatedEmail({ recipient, classObj, student, role, lastTopic,
   const dateStr = classObj.scheduledDate ? formatInTimezone(classObj.scheduledDate, tz) : 'TBD';
   const subj    = classObj.courseName || classObj.subject || 'New Class';
   const dur     = classObj.durationMinutes ? `${classObj.durationMinutes} min` : '';
-  const recur   = classObj.recurrence?.type && classObj.recurrence.type !== 'none' ? `Every ${classObj.recurrence.type}` : 'Single session';
+  const recur   = describeRecurrence(classObj);
+  const isSeries = !!recur;
   const link    = classObj.meetingLink || classObj.link || '';
 
   let rows  = _infoRow('Student', student?.firstName ? `${student.firstName} ${student.lastName || ''}`.trim() : 'N/A');
   rows     += _infoRow('Subject', subj);
   rows     += _infoRow('Date & Time', `${dateStr} (${_tzLabel(tz)})`);
   if (dur)  rows += _infoRow('Duration', dur);
-  rows           += _infoRow('Recurrence', recur);
+  if (recur) rows += _infoRow('Recurrence', recur);
   if (link) rows += _infoRow('Meeting Link', `<a href="${link}" style="color:${_B};">${link}</a>`);
   if (role === 'teacher' && lastTopic) rows += _infoRow('Student\'s Last Topic', lastTopic);
 
-  const body = `${_hi(recipient.firstName)}
-    <p style="margin:0 0 14px;color:#374151;">A new class has been scheduled${role === 'teacher' ? ' and assigned to you' : ''}.</p>
+  const body = `${_hi(recipient)}
+    <p style="margin:0 0 14px;color:#374151;">${isSeries ? 'A new recurring class series has been scheduled' : 'A new class has been scheduled'}${role === 'teacher' ? ' and assigned to you' : ''}.</p>
     ${_card(`<h3 style="margin:0 0 10px;font-size:15px;color:#111827;">Class Details</h3>${_infoTable(rows)}`)}
     ${role === 'teacher' && lastTopic ? _alert(`<strong>Context:</strong> Student's last covered topic: <em>${lastTopic}</em>`) : ''}
     ${link ? _btn('Join Class', link) : _btn('View Dashboard', _dashUrl())}`;
 
-  const text = `Hi ${recipient.firstName || 'there'},\n\nNew class scheduled.\nStudent: ${student?.firstName || 'N/A'}\nSubject: ${subj}\nDate: ${dateStr} (${_tzLabel(tz)})\n${dur ? `Duration: ${dur}\n` : ''}${link ? `Meeting: ${link}\n` : ''}${role === 'teacher' && lastTopic ? `Last topic: ${lastTopic}\n` : ''}`;
+  const text = `Hi ${formatPersonName(recipient)},\n\n${isSeries ? 'New class series scheduled.' : 'New class scheduled.'}\nStudent: ${student?.firstName || 'N/A'}\nSubject: ${subj}\nDate: ${dateStr} (${_tzLabel(tz)})\n${dur ? `Duration: ${dur}\n` : ''}${recur ? `Recurrence: ${recur}\n` : ''}${link ? `Meeting: ${link}\n` : ''}${role === 'teacher' && lastTopic ? `Last topic: ${lastTopic}\n` : ''}`;
 
-  return { subject: `New class — ${subj}`, html: baseEmailTemplate({ preheader: `New class: ${subj} on ${dateStr}`, body, icon: _ICONS.classCreated, branding }), text };
+  return { subject: `${isSeries ? 'New class series' : 'New class'} — ${subj}`, html: baseEmailTemplate({ preheader: `${isSeries ? 'New class series' : 'New class'}: ${subj} on ${dateStr}`, body, icon: _ICONS.classCreated, branding }), text };
 }
 
 function _studentName(student) {
@@ -594,16 +697,16 @@ function buildClassCancelledEmail({ recipient, classObj, student, role, reason, 
   const intro = role === 'teacher'
     ? 'A class assigned to you has been <strong>cancelled</strong>.'
     : 'The following class has been <strong>cancelled</strong>.';
-  const body = `${_hi(recipient.firstName)}
+  const body = `${_hi(recipient)}
     <p style="margin:0 0 14px;color:#374151;">${intro}</p>
     ${_card(`<h3 style=\"margin:0 0 10px;font-size:15px;color:#111827;\">Class Details</h3>${_infoTable(rows)}`)}
     ${_alert('If you have questions or need to reschedule, please contact us via the dashboard.', '#fef2f2', '#ef4444', '#991b1b')}
     ${_btn('Open Dashboard', _dashUrl())}`;
-  const text = `Hi ${recipient.firstName || 'there'},\n\nClass cancelled.\n${sName ? `Student: ${sName}\n` : ''}Subject: ${subj}\nScheduled: ${date} (${_tzLabel(tz)})\n${dur ? `Duration: ${dur}\n` : ''}${reason ? `Reason: ${reason}\n` : ''}`;
+  const text = `Hi ${formatPersonName(recipient)},\n\nClass cancelled.\n${sName ? `Student: ${sName}\n` : ''}Subject: ${subj}\nScheduled: ${date} (${_tzLabel(tz)})\n${dur ? `Duration: ${dur}\n` : ''}${reason ? `Reason: ${reason}\n` : ''}`;
   return { subject: `Class cancelled — ${subj}${sName ? ` (${sName})` : ''}`, html: baseEmailTemplate({ preheader: `Cancelled: ${subj} on ${date}`, body, icon: _ICONS.classCancelled, branding }), text };
 }
 
-function buildClassRescheduledEmail({ recipient, classObj, student, role, oldDate, branding }) {
+function buildClassRescheduledEmail({ recipient, classObj, oldDate, teacher, student, role, reason, branding }) {
   const tz     = recipient.timezone || 'Africa/Cairo';
   const oldStr = oldDate ? formatInTimezone(oldDate, tz) : null;
   const newStr = classObj.scheduledDate ? formatInTimezone(classObj.scheduledDate, tz) : 'TBD';
@@ -611,21 +714,25 @@ function buildClassRescheduledEmail({ recipient, classObj, student, role, oldDat
   const dur    = classObj.durationMinutes ? `${classObj.durationMinutes} min` : '';
   const link   = classObj.meetingLink || classObj.link || '';
   const sName  = _studentName(student);
+  const teacherName = teacher ? formatPersonName(teacher, { includeLastName: true, fallback: 'Teacher' }) : '';
   let rows = '';
   if (sName) rows += _infoRow('Student', sName);
+  if (teacherName && role !== 'teacher') rows += _infoRow('Teacher', teacherName);
   rows += _infoRow('Subject', subj);
   rows += _infoRow('Previous Time', oldStr ? `<s style="color:#9ca3af;">${oldStr} (${_tzLabel(tz)})</s>` : '<span style="color:#9ca3af;">Not recorded</span>');
   rows += _infoRow('New Time', `<strong style="color:${_B};">${newStr}</strong> (${_tzLabel(tz)})`);
   if (dur) rows += _infoRow('Duration', dur);
   if (link) rows += _infoRow('Meeting Link', `<a href="${link}" style="color:${_B};">${link}</a>`);
+  if (reason) rows += _infoRow('Reason', reason);
   const intro = role === 'teacher'
     ? 'A class assigned to you has been <strong>rescheduled</strong>.'
     : 'Your class has been <strong>rescheduled</strong>.';
-  const body = `${_hi(recipient.firstName)}
+  const body = `${_hi(recipient)}
     <p style="margin:0 0 14px;color:#374151;">${intro}</p>
     ${_card(`<h3 style=\"margin:0 0 10px;font-size:15px;color:#111827;\">Updated Class Details</h3>${_infoTable(rows)}`)}
     ${link ? _btn('Join Class', link) : _btn('Open Dashboard', _dashUrl())}`;
-  const text = `Hi ${recipient.firstName || 'there'},\n\nClass rescheduled.\n${sName ? `Student: ${sName}\n` : ''}Subject: ${subj}\nPrevious: ${oldStr || 'Not recorded'}\nNew time: ${newStr} (${_tzLabel(tz)})${dur ? `\nDuration: ${dur}` : ''}${link ? `\nMeeting: ${link}` : ''}`;
+  const textTeacherLine = teacherName && role !== 'teacher' ? `Teacher: ${teacherName}\n` : '';
+  const text = `Hi ${formatPersonName(recipient)},\n\nClass rescheduled.\n${sName ? `Student: ${sName}\n` : ''}${textTeacherLine}Subject: ${subj}\nPrevious: ${oldStr || 'Not recorded'}\nNew time: ${newStr} (${_tzLabel(tz)})${dur ? `\nDuration: ${dur}` : ''}${link ? `\nMeeting: ${link}` : ''}${reason ? `\nReason: ${reason}` : ''}`;
   return { subject: `Class rescheduled — ${subj}${sName ? ` (${sName})` : ''}`, html: baseEmailTemplate({ preheader: `Rescheduled to ${newStr}`, body, icon: _ICONS.classRescheduled, branding }), text };
 }
 
@@ -634,45 +741,99 @@ function buildRegistrationWelcomeEmail({ user, branding }) {
   const hint = user.role === 'teacher'
     ? 'Complete your profile and add your available hours so students can be scheduled with you.'
     : 'Log in to view your students\' classes, reports, and invoices.';
-  const body = `${_hi(user.firstName)}
+  const body = `${_hi(user)}
     <p style="margin:0 0 14px;color:#374151;">Welcome to <strong>${branding.title || 'Waraqa'}</strong>! Your account is ready as a <strong>${role}</strong>.</p>
     <p style="margin:0 0 14px;color:#374151;">${hint}</p>
     ${_btn('Go to Dashboard', _dashUrl())}`;
-  const text = `Welcome to ${branding.title || 'Waraqa'}, ${user.firstName || 'there'}! Your account is ready.\n\nDashboard: ${_dashUrl()}`;
+  const text = `Welcome to ${branding.title || 'Waraqa'}, ${formatPersonName(user)}! Your account is ready.\n\nDashboard: ${_dashUrl()}`;
   return { subject: `Welcome to ${branding.title || 'Waraqa'}`, html: baseEmailTemplate({ preheader: 'Your account is ready', body, icon: _ICONS.registration, branding }), text };
 }
 
 function buildNewStudentEmail({ guardian, student, branding }) {
   let rows = _infoRow('Name', `${student.firstName} ${student.lastName || ''}`.trim());
   if (student.grade) rows += _infoRow('Grade', student.grade);
-  const body = `${_hi(guardian.firstName)}
+  const body = `${_hi(guardian)}
     <p style="margin:0 0 14px;color:#374151;">A new student has been added to your account.</p>
     ${_card(_infoTable(rows))}
     ${_btn('View Dashboard', _dashUrl())}`;
-  const text = `Hi ${guardian.firstName || 'there'},\n\nStudent ${student.firstName} ${student.lastName || ''} has been added to your account.`;
+  const text = `Hi ${formatPersonName(guardian)},\n\nStudent ${student.firstName} ${student.lastName || ''} has been added to your account.`;
   return { subject: `New student added — ${student.firstName}`, html: baseEmailTemplate({ preheader: `Student ${student.firstName} added`, body, icon: _ICONS.registration, branding }), text };
 }
 
 function buildStudentDeletedEmail({ guardian, student, branding }) {
-  const body = `${_hi(guardian.firstName)}
+  const body = `${_hi(guardian)}
     <p style="margin:0 0 14px;color:#374151;">Student <strong>${student.firstName} ${student.lastName || ''}</strong> has been removed from your account.</p>
     ${_alert('If this was not expected, please contact an administrator immediately.', '#fef2f2', '#ef4444', '#991b1b')}`;
-  const text = `Hi ${guardian.firstName || 'there'},\n\nStudent ${student.firstName} has been removed from your account.`;
+  const text = `Hi ${formatPersonName(guardian)},\n\nStudent ${student.firstName} has been removed from your account.`;
   return { subject: `Student removed — ${student.firstName}`, html: baseEmailTemplate({ preheader: `Student removed: ${student.firstName}`, body, icon: _ICONS.alert, branding }), text };
 }
 
 function buildAdminNewUserEmail({ admin, newUser, branding }) {
   const role = newUser.role || 'user';
+  const dashboardPath = role === 'teacher'
+    ? '/teachers'
+    : role === 'guardian'
+      ? '/guardians'
+      : '/settings';
   let rows = _infoRow('Name', `${newUser.firstName} ${newUser.lastName || ''}`.trim()) +
     _infoRow('Email', newUser.email) +
     _infoRow('Role', role.charAt(0).toUpperCase() + role.slice(1)) +
     _infoRow('Joined', _dateOnly(newUser.createdAt || new Date()));
-  const body = `${_hi(admin.firstName)}
+  const body = `${_hi(admin)}
     <p style="margin:0 0 14px;color:#374151;">A new <strong>${role}</strong> has registered.</p>
     ${_card(_infoTable(rows))}
-    ${_btn('View Users', _dashUrl('/users'))}`;
+    ${_btn('Open Dashboard', _dashUrl(dashboardPath))}`;
   const text = `New ${role} registered: ${newUser.firstName} ${newUser.lastName || ''} (${newUser.email})`;
   return { subject: `New ${role} registered`, html: baseEmailTemplate({ preheader: `New ${role}: ${newUser.firstName}`, body, icon: _ICONS.registration, branding }), text };
+}
+
+function buildAdminUserDeletedEmail({ admin, deletedUser, deletedBy, branding }) {
+  const role = String(deletedUser?.role || 'user').trim() || 'user';
+  const deletedByName = formatPersonName(deletedBy, { includeLastName: true, fallback: 'An administrator' });
+  const dashboardPath = role === 'teacher'
+    ? '/teachers'
+    : role === 'guardian'
+      ? '/guardians'
+      : '/settings';
+  let rows = _infoRow('Name', `${deletedUser?.firstName || ''} ${deletedUser?.lastName || ''}`.trim() || 'Unknown user') +
+    _infoRow('Email', deletedUser?.email || '—') +
+    _infoRow('Role', role.charAt(0).toUpperCase() + role.slice(1)) +
+    _infoRow('Deleted by', _escapeHtml(deletedByName));
+  if (deletedUser?.phone) rows += _infoRow('Phone', deletedUser.phone);
+  const body = `${_hi(admin)}
+    <p style="margin:0 0 14px;color:#374151;">A user account has been deleted from the platform.</p>
+    ${_card(_infoTable(rows))}
+    ${_btn('Open Dashboard', _dashUrl(dashboardPath))}`;
+  const text = (`User deleted: ${deletedUser?.firstName || ''} ${deletedUser?.lastName || ''}`.trim() + ` (${deletedUser?.email || 'no email'})\nDeleted by: ${deletedByName}`).trim();
+  return { subject: `User deleted — ${deletedUser?.firstName || deletedUser?.email || 'Account'}`, html: baseEmailTemplate({ preheader: `Deleted ${role} account`, body, icon: _ICONS.alert, branding }), text };
+}
+
+function buildAdminStudentCreatedEmail({ admin, guardian, student, createdBy, branding }) {
+  const guardianName = formatPersonName(guardian, { includeLastName: true, fallback: 'Guardian' });
+  const studentName = `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || 'Student';
+  const createdByName = formatPersonName(createdBy, { includeLastName: true, fallback: 'Account owner' });
+  let rows = _infoRow('Student', _escapeHtml(studentName)) +
+    _infoRow('Guardian', _escapeHtml(guardianName)) +
+    _infoRow('Added by', _escapeHtml(createdByName));
+  if (guardian?.email) rows += _infoRow('Guardian Email', _escapeHtml(guardian.email));
+  if (student?.email) rows += _infoRow('Student Email', _escapeHtml(student.email));
+  if (student?.phone) rows += _infoRow('Phone', _escapeHtml(student.phone));
+  if (student?.whatsapp) rows += _infoRow('WhatsApp', _escapeHtml(student.whatsapp));
+  if (student?.dateOfBirth) rows += _infoRow('Date of Birth', _escapeHtml(_dateOnly(student.dateOfBirth, student?.timezone || guardian?.timezone)));
+  if (student?.gender) rows += _infoRow('Gender', _escapeHtml(String(student.gender).charAt(0).toUpperCase() + String(student.gender).slice(1)));
+  if (student?.grade) rows += _infoRow('Grade', _escapeHtml(student.grade));
+  if (student?.school) rows += _infoRow('School', _escapeHtml(student.school));
+  if (student?.language) rows += _infoRow('Language', _escapeHtml(student.language));
+  if (student?.timezone) rows += _infoRow('Timezone', _escapeHtml(_tzLabel(student.timezone)));
+  if (Array.isArray(student?.subjects) && student.subjects.length) rows += _infoRow('Subjects', _escapeHtml(student.subjects.join(', ')));
+  if (student?.learningPreferences) rows += _infoRow('Learning Preferences', _escapeHtml(student.learningPreferences));
+  if (student?.evaluationSummary) rows += _infoRow('Evaluation Summary', _escapeHtml(student.evaluationSummary));
+  const body = `${_hi(admin)}
+    <p style="margin:0 0 14px;color:#374151;">A new student has been added with the submitted details below.</p>
+    ${_card(_infoTable(rows))}
+    ${_btn('Open Students', _dashUrl('/students'))}`;
+  const text = `Student created: ${studentName}\nGuardian: ${guardianName}${guardian?.email ? ` (${guardian.email})` : ''}${student?.grade ? `\nGrade: ${student.grade}` : ''}${student?.school ? `\nSchool: ${student.school}` : ''}`;
+  return { subject: `New student added — ${student?.firstName || 'Student'}`, html: baseEmailTemplate({ preheader: `New student: ${student?.firstName || 'Student'}`, body, icon: _ICONS.registration, branding }), text };
 }
 
 function buildPoorPerformanceEmail({ guardian, student, classObj, teacherNote, performanceRating, branding }) {
@@ -682,20 +843,21 @@ function buildPoorPerformanceEmail({ guardian, student, classObj, teacherNote, p
   const stars = '★'.repeat(performanceRating || 1) + '☆'.repeat(Math.max(0, 5 - (performanceRating || 1)));
   let rows = _infoRow('Subject', subj) + _infoRow('Date', date) + _infoRow('Rating', `<span style="color:#f59e0b;">${stars}</span>`);
   const noteHtml = teacherNote ? `<div style="margin-top:10px;padding:10px 12px;background:white;border-radius:6px;border:1px solid #e5e7eb;font-size:13px;color:#374151;font-style:italic;">"${teacherNote}"<br><span style="font-size:11px;color:#9ca3af;">— Teacher</span></div>` : '';
-  const body = `${_hi(guardian.firstName)}
+  const body = `${_hi(guardian)}
     <p style="margin:0 0 14px;color:#374151;">A recent class for <strong>${student?.firstName || 'your student'}</strong> had a lower performance rating.</p>
     ${_card(_infoTable(rows) + noteHtml)}
     ${_alert('Please consider reaching out to the teacher via the dashboard if you have concerns.', '#fffbeb', '#f59e0b', '#92400e')}`;
-  const text = `Hi ${guardian.firstName || 'there'},\n\nPerformance update for ${student?.firstName || 'your student'}.\nSubject: ${subj}\nDate: ${date}\n${teacherNote ? `Teacher note: "${teacherNote}"\n` : ''}`;
+  const text = `Hi ${formatPersonName(guardian)},\n\nPerformance update for ${student?.firstName || 'your student'}.\nSubject: ${subj}\nDate: ${date}\n${teacherNote ? `Teacher note: "${teacherNote}"\n` : ''}`;
   return { subject: `Performance update — ${student?.firstName || 'Student'}`, html: baseEmailTemplate({ preheader: `Performance update for ${student?.firstName}`, body, icon: _ICONS.performance, branding }), text };
 }
 
 function buildConsecutiveAbsentEmail({ guardian, student, teacher, branding }) {
-  const body = `${_hi(guardian.firstName)}
-    <p style="margin:0 0 14px;color:#374151;"><strong>${student?.firstName || 'Your student'}</strong> has missed <strong>two consecutive classes</strong> with teacher <strong>${teacher?.firstName || 'their teacher'}</strong>.</p>
+  const teacherName = formatPersonName(teacher, { includeLastName: true, fallback: 'their teacher' });
+  const body = `${_hi(guardian)}
+    <p style="margin:0 0 14px;color:#374151;"><strong>${student?.firstName || 'Your student'}</strong> has missed <strong>two consecutive classes</strong> with teacher <strong>${teacherName}</strong>.</p>
     ${_alert('<strong>Action needed?</strong> If the absence is planned (illness, travel), no action is required. Otherwise, contact the teacher via the dashboard.', '#eff6ff', '#3b82f6', '#1e40af')}
     <p style="font-size:12px;color:#9ca3af;margin:10px 0 0;">Based on submitted attendance reports. May take up to 24h to reflect actual sessions.</p>`;
-  const text = `Hi ${guardian.firstName || 'there'},\n\n${student?.firstName || 'Your student'} has missed 2 consecutive classes with ${teacher?.firstName || 'their teacher'}. Please log in if unexpected.`;
+  const text = `Hi ${formatPersonName(guardian)},\n\n${student?.firstName || 'Your student'} has missed 2 consecutive classes with ${teacherName}. Please log in if unexpected.`;
   return { subject: `Consecutive absences — ${student?.firstName || 'Student'}`, html: baseEmailTemplate({ preheader: `${student?.firstName} missed 2 classes in a row`, body, icon: _ICONS.absent, branding }), text };
 }
 
@@ -710,7 +872,7 @@ function buildMonthlyStudentReportEmail({ guardian, reportData, branding }) {
     <td style="padding:8px;font-size:13px;text-align:center;">${(s.totalHours || 0).toFixed(1)}h</td>
     <td style="padding:8px;font-size:13px;text-align:center;">${s.avgPerformance != null ? `${s.avgPerformance.toFixed(1)}/5` : '—'}</td>
   </tr>`).join('');
-  const body = `${_hi(guardian.firstName)}
+  const body = `${_hi(guardian)}
     <p style="margin:0 0 14px;color:#374151;">Monthly learning summary for <strong>${label}</strong>.</p>
     <div style="overflow-x:auto;">
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:12px;">
@@ -725,7 +887,7 @@ function buildMonthlyStudentReportEmail({ guardian, reportData, branding }) {
       </table>
     </div>
     ${_btn('View Full Reports', _dashUrl())}`;
-  const text = `Hi ${guardian.firstName || 'there'},\n\nMonthly report ${label}:\n${students.map(s=>`- ${s.studentName}: ${s.attendedCount ?? 0} attended, ${s.absentCount ?? 0} absent`).join('\n')}`;
+  const text = `Hi ${formatPersonName(guardian)},\n\nMonthly report ${label}:\n${students.map(s=>`- ${s.studentName}: ${s.attendedCount ?? 0} attended, ${s.absentCount ?? 0} absent`).join('\n')}`;
   return { subject: `Monthly report — ${label}`, html: baseEmailTemplate({ preheader: `Learning summary: ${label}`, body, icon: _ICONS.report, branding }), text };
 }
 
@@ -739,12 +901,12 @@ function buildGuardianInvoiceCreatedEmail({ guardian, invoice, branding }) {
   let rows = _infoRow('Invoice #', invoice.invoiceNumber || invoice._id);
   if (period) rows += _infoRow('Period', period);
   rows += _infoRow('Amount Due', amount);
-  const body = `${_hi(guardian.firstName)}
+  const body = `${_hi(guardian)}
     <p style="margin:0 0 14px;color:#374151;">A new invoice has been created for your account.</p>
     ${_card(_infoTable(rows))}
     ${_alert('Payment instructions (PayPal link) will be sent soon by your administrator.', '#eff6ff', '#3b82f6', '#1e40af')}
     ${_btn('Open Invoice', invoiceLink)}`;
-  const text = `Hi ${guardian.firstName || 'there'},\n\nNew invoice created.\nInvoice: ${invoice.invoiceNumber || ''}\n${period ? `Period: ${period}\n` : ''}Amount: ${amount}\n\nPayment instructions will follow.`;
+  const text = `Hi ${formatPersonName(guardian)},\n\nNew invoice created.\nInvoice: ${invoice.invoiceNumber || ''}\n${period ? `Period: ${period}\n` : ''}Amount: ${amount}\n\nPayment instructions will follow.`;
   return { subject: `New invoice — ${period || invoice.invoiceNumber || 'details inside'}`, html: baseEmailTemplate({ preheader: `Invoice: ${amount}`, body, icon: _ICONS.invoice, branding }), text };
 }
 
@@ -753,7 +915,7 @@ function buildAdminNewInvoiceEmail({ admin, invoice, guardian, branding }) {
   let rows = _infoRow('Guardian', `${guardian?.firstName || ''} ${guardian?.lastName || ''}`.trim()) +
     _infoRow('Invoice #', invoice.invoiceNumber || invoice._id);
   if (period) rows += _infoRow('Period', period);
-  const body = `${_hi(admin.firstName)}
+  const body = `${_hi(admin)}
     <p style="margin:0 0 14px;color:#374151;">A new invoice was created for guardian <strong>${guardian?.firstName || ''}</strong>.</p>
     ${_card(_infoTable(rows))}
     ${_btn('View Invoices', _dashUrl('/invoices'))}`;
@@ -771,14 +933,14 @@ function buildMeetingScheduledEmail({ recipient, meeting, calendarLink, icsConte
     _infoRow('Type', meeting.type || meeting.meetingType || 'Meeting') +
     (link ? _infoRow('Meeting Link', `<a href="${link}" style="color:${_B};">${link}</a>`) : '');
   const calBtn = calendarLink ? `<p style="text-align:center;margin:12px 0;"><a href="${calendarLink}" style="color:${_B};font-size:13px;">+ Add to Google Calendar</a></p>` : '';
-  const body = `${_hi(recipient.firstName)}
+  const body = `${_hi(recipient)}
     <p style="margin:0 0 14px;color:#374151;">A meeting has been scheduled for you.</p>
     ${_card(_infoTable(rows))}
     ${calBtn}
     ${link ? _btn('Join Meeting', link) : ''}
     ${icsContent ? `<p style="font-size:12px;color:#9ca3af;text-align:center;">An .ics calendar file is attached.</p>` : ''}`;
   const attachments = icsContent ? [{ filename: 'meeting.ics', content: icsContent, contentType: 'text/calendar' }] : undefined;
-  const text = `Hi ${recipient.firstName || 'there'},\n\nMeeting scheduled.\nDate: ${date} (${_tzLabel(tz)})\n${dur ? `Duration: ${dur}\n` : ''}${link ? `Link: ${link}\n` : ''}${calendarLink ? `Add to calendar: ${calendarLink}\n` : ''}`;
+  const text = `Hi ${formatPersonName(recipient)},\n\nMeeting scheduled.\nDate: ${date} (${_tzLabel(tz)})\n${dur ? `Duration: ${dur}\n` : ''}${link ? `Link: ${link}\n` : ''}${calendarLink ? `Add to calendar: ${calendarLink}\n` : ''}`;
   return { subject: `Meeting scheduled — ${date}`, html: baseEmailTemplate({ preheader: `Meeting on ${date}`, body, icon: _ICONS.meeting, branding }), text, attachments };
 }
 
@@ -787,11 +949,11 @@ function buildVacationApprovedEmail({ teacher, vacation, branding }) {
   const from = vacation.startDate ? _dateOnly(vacation.startDate, tz) : 'N/A';
   const to   = vacation.endDate   ? _dateOnly(vacation.endDate, tz)   : 'N/A';
   const rows = _infoRow('Start', from) + _infoRow('End', to) + _infoRow('Status', '<span style="color:#16a34a;">✓ Approved</span>');
-  const body = `${_hi(teacher.firstName)}
+  const body = `${_hi(teacher)}
     <p style="margin:0 0 14px;color:#374151;">Your vacation request has been <strong style="color:#16a34a;">approved</strong>.</p>
     ${_card(_infoTable(rows))}
     ${_alert('Classes during this period will be managed by your administrator.', '#f0fdf4', '#22c55e', '#14532d')}`;
-  const text = `Hi ${teacher.firstName || 'there'},\n\nVacation approved: ${from} to ${to}.`;
+  const text = `Hi ${formatPersonName(teacher)},\n\nVacation approved: ${from} to ${to}.`;
   return { subject: 'Vacation approved', html: baseEmailTemplate({ preheader: `Vacation approved: ${from}–${to}`, body, icon: _ICONS.vacation, branding }), text };
 }
 
@@ -799,14 +961,43 @@ function buildVacationGuardianNoticeEmail({ guardian, teacher, vacation, brandin
   const tz   = guardian.timezone || 'Africa/Cairo';
   const from = vacation.startDate ? _dateOnly(vacation.startDate, tz) : 'N/A';
   const to   = vacation.endDate   ? _dateOnly(vacation.endDate, tz)   : 'N/A';
-  const tName = `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim();
+  const tName = formatPersonName(teacher, { includeLastName: true, fallback: 'Teacher' });
   const rows  = _infoRow('Teacher', tName) + _infoRow('Absence Start', from) + _infoRow('Absence End', to);
-  const body = `${_hi(guardian.firstName)}
+  const body = `${_hi(guardian)}
     <p style="margin:0 0 14px;color:#374151;">Teacher <strong>${tName}</strong> will be on leave. Classes may be affected during this period.</p>
     ${_card(_infoTable(rows))}
     ${_alert('Your administrator will notify you about any rescheduling.', '#fffbeb', '#f59e0b', '#92400e')}`;
-  const text = `Hi ${guardian.firstName || 'there'},\n\nTeacher ${tName} will be on leave from ${from} to ${to}. Classes may be affected.`;
+  const text = `Hi ${formatPersonName(guardian)},\n\nTeacher ${tName} will be on leave from ${from} to ${to}. Classes may be affected.`;
   return { subject: `Teacher absence — ${tName}`, html: baseEmailTemplate({ preheader: `Teacher absent: ${from}–${to}`, body, icon: _ICONS.vacation, branding }), text };
+}
+
+function buildSystemVacationNoticeEmail({ recipient, vacation, branding }) {
+  const tz = recipient?.timezone || vacation?.timezone || 'Africa/Cairo';
+  const title = String(vacation?.name || 'System vacation').trim() || 'System vacation';
+  const messageBody = String(vacation?.message || '').trim();
+  const start = vacation?.startDate ? formatInTimezone(vacation.startDate, tz) : 'N/A';
+  const end = vacation?.endDate ? formatInTimezone(vacation.endDate, tz) : 'N/A';
+  const timezoneLabel = _tzLabel(tz);
+  const rows =
+    _infoRow('Vacation', escapeHtml(title)) +
+    _infoRow('Begins', start) +
+    _infoRow('Ends', end) +
+    _infoRow('Timezone', timezoneLabel);
+  const messageCard = messageBody
+    ? _card(`<div style="font-size:14px;line-height:1.7;color:#374151;">${formatMultilineHtml(messageBody)}</div>`)
+    : '';
+  const body = `${_hi(recipient)}
+    <p style="margin:0 0 14px;color:#374151;">A system vacation notice has been shared for your account.</p>
+    ${messageCard}
+    ${_card(_infoTable(rows))}
+    ${_alert(`These dates are shown in your timezone (${timezoneLabel}).`, '#eff6ff', '#3b82f6', '#1e3a8a')}
+    ${_btn('Open Vacation Management', _dashUrl('/vacations'))}`;
+  const text = `Hi ${formatPersonName(recipient)},\n\n${title}\n\n${messageBody ? `${messageBody}\n\n` : ''}Begins: ${start}\nEnds: ${end}\nTimezone: ${timezoneLabel}\n\nOpen dashboard: ${_dashUrl('/vacations')}`;
+  return {
+    subject: `Vacation notice — ${title}`,
+    html: baseEmailTemplate({ preheader: `${title}: ${_dateOnly(vacation?.startDate, tz)}–${_dateOnly(vacation?.endDate, tz)}`, body, icon: _ICONS.vacation, branding }),
+    text,
+  };
 }
 
 function buildTeacherReassignedEmail({ teacher, classObj, student, lastTopic, branding }) {
@@ -814,26 +1005,27 @@ function buildTeacherReassignedEmail({ teacher, classObj, student, lastTopic, br
   const sName = student ? `${student.firstName} ${student.lastName || ''}`.trim() : 'N/A';
   let rows = _infoRow('Student', sName) + _infoRow('Subject', subj);
   if (lastTopic) rows += _infoRow('Last Topic Covered', lastTopic);
-  const body = `${_hi(teacher.firstName)}
+  const body = `${_hi(teacher)}
     <p style="margin:0 0 14px;color:#374151;">You have been assigned to teach <strong>${sName}</strong> in <strong>${subj}</strong>.</p>
     ${_card(_infoTable(rows))}
     ${lastTopic ? _alert(`<strong>Previous progress:</strong> Student's last covered topic: <em>${lastTopic}</em>`, '#eff6ff', '#3b82f6', '#1e40af') : ''}
     ${_btn('View Dashboard', _dashUrl())}`;
-  const text = `Hi ${teacher.firstName || 'there'},\n\nAssigned to ${sName} for ${subj}.\n${lastTopic ? `Last topic: ${lastTopic}\n` : ''}`;
+  const text = `Hi ${formatPersonName(teacher)},\n\nAssigned to ${sName} for ${subj}.\n${lastTopic ? `Last topic: ${lastTopic}\n` : ''}`;
   return { subject: `New assignment — ${sName}`, html: baseEmailTemplate({ preheader: `Assigned: ${sName} – ${subj}`, body, icon: _ICONS.reassigned, branding }), text };
 }
 
 function buildSeriesCancelledEmail({ recipient, teacher, student, subject, branding }) {
-  const body = `${_hi(recipient.firstName)}
-    <p style="margin:0 0 14px;color:#374151;">All upcoming classes for <strong>${student?.firstName || 'a student'}</strong> with teacher <strong>${teacher?.firstName || 'their teacher'}</strong> (${subject || 'the subject'}) have been cancelled.</p>
+  const teacherName = formatPersonName(teacher, { includeLastName: true, fallback: 'their teacher' });
+  const body = `${_hi(recipient)}
+    <p style="margin:0 0 14px;color:#374151;">All upcoming classes for <strong>${student?.firstName || 'a student'}</strong> with teacher <strong>${teacherName}</strong> (${subject || 'the subject'}) have been cancelled.</p>
     ${_alert('Contact your administrator if you believe this is an error.', '#fef2f2', '#ef4444', '#991b1b')}`;
-  const text = `Hi ${recipient.firstName || 'there'},\n\nAll classes for ${student?.firstName || 'student'} with ${teacher?.firstName || 'their teacher'} (${subject || ''}) have been cancelled.`;
+  const text = `Hi ${formatPersonName(recipient)},\n\nAll classes for ${student?.firstName || 'student'} with ${teacherName} (${subject || ''}) have been cancelled.`;
   return { subject: `Classes cancelled — ${student?.firstName || 'Student'}`, html: baseEmailTemplate({ preheader: `All classes cancelled for ${student?.firstName}`, body, icon: _ICONS.seriesCancelled, branding }), text };
 }
 
 function buildAvailabilityChangedEmail({ admin, teacher, branding }) {
-  const tName = `${teacher?.firstName || ''} ${teacher?.lastName || ''}`.trim();
-  const body  = `${_hi(admin.firstName)}
+  const tName = formatPersonName(teacher, { includeLastName: true, fallback: 'Teacher' });
+  const body  = `${_hi(admin)}
     <p style="margin:0 0 14px;color:#374151;">Teacher <strong>${tName}</strong> has updated their available hours.</p>
     ${_btn('Review Availability', _dashUrl('/teachers'))}`;
   const text = `Teacher ${tName} updated their availability.`;
@@ -852,12 +1044,12 @@ function buildTeacherInvoiceEmail({ teacher, invoice, isMonthly, branding }) {
   const targetUrl = invoice?.shareToken
     ? `${resolvePublicAppBaseUrl()}/dashboard/teacher-salary/shared/${invoice.shareToken}`
     : _dashUrl('/salaries');
-  const body = `${_hi(teacher.firstName)}
+  const body = `${_hi(teacher)}
     <p style="margin:0 0 14px;color:#374151;">Your salary invoice${pStr ? ` for <strong>${pStr}</strong>` : ''} is ready.</p>
     ${_card(_infoTable(rows))}
     ${isMonthly ? _alert('Payment will be sent before the <strong>6th of this month</strong>.', '#f0fdf4', '#22c55e', '#14532d') : ''}
     ${_btn('Open Invoice', targetUrl)}`;
-  const text = `Hi ${teacher.firstName || 'there'},\n\nInvoice ready${pStr ? ` for ${pStr}` : ''}.\nTotal: ${total}\n${isMonthly ? 'Payment before the 6th.\n' : ''}`;
+  const text = `Hi ${formatPersonName(teacher)},\n\nInvoice ready${pStr ? ` for ${pStr}` : ''}.\nTotal: ${total}\n${isMonthly ? 'Payment before the 6th.\n' : ''}`;
   return { subject: `Invoice ready${pStr ? ` — ${pStr}` : ''}`, html: baseEmailTemplate({ preheader: `Invoice: ${total}`, body, icon: _ICONS.invoice, branding }), text };
 }
 
@@ -888,7 +1080,7 @@ function buildAdminMonthlyReportEmail({ admin, reportData, branding }) {
       <td style="padding:7px 8px;font-size:13px;text-align:center;">${s.attendedCount ?? 0}</td>
       <td style="padding:7px 8px;font-size:13px;text-align:center;">${s.avgPerformance != null ? `${s.avgPerformance.toFixed(1)}/5` : '—'}</td>
     </tr>`).join('');
-  const body = `${_hi(admin.firstName)}
+  const body = `${_hi(admin)}
     <p style="margin:0 0 14px;color:#374151;">Monthly dashboard report for <strong>${label}</strong>.</p>
     <table width="100%" cellpadding="6" cellspacing="6" style="border-collapse:separate;margin:12px 0;">
       <tr>${kpi('Classes Held',        d(stats.classesHeld ?? 0,        prevStats.classesHeld))}
@@ -912,7 +1104,7 @@ function buildAdminMonthlyReportEmail({ admin, reportData, branding }) {
 }
 
 function buildSystemAlertEmail({ admin, message, error, branding }) {
-  const body = `${_hi(admin.firstName)}
+  const body = `${_hi(admin)}
     ${_alert(`<strong>System Alert:</strong> ${message}`, '#fef2f2', '#ef4444', '#991b1b')}
     ${error ? `<pre style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:11px;overflow:auto;max-height:240px;color:#374151;">${String(error).slice(0,1500)}</pre>` : ''}
     <p style="font-size:12px;color:#6b7280;">Timestamp: ${new Date().toISOString()}</p>`;
@@ -943,15 +1135,15 @@ async function sendPaymentReceived(teacher, invoice) {
     const pStr  = pd ? pd.toLocaleString('en-US', { month: 'long', year: 'numeric' }) : '';
     const total = invoice.netAmountEGP != null ? `${Number(invoice.netAmountEGP).toFixed(2)} EGP` : '';
     const rows  = _infoRow('Invoice #', invoice.invoiceNumber || '—') + (pStr ? _infoRow('Period', pStr) : '') + _infoRow('Amount Paid', total);
-    const body  = `${_hi(teacher.firstName)}<p style="margin:0 0 14px;">Payment for invoice <strong>#${invoice.invoiceNumber || ''}</strong> has been processed.</p>${_card(_infoTable(rows))}`;
-    const html  = baseEmailTemplate({ preheader: `Payment received: ${total}`, body, branding });
-    const subj  = `Payment received${pStr ? ` — ${pStr}` : ''}`;
+    const body  = `${_hi(teacher)}<p style="margin:0 0 14px;">Payment for invoice <strong>#${invoice.invoiceNumber || ''}</strong> has been sent.</p>${_card(_infoTable(rows))}`;
+    const html  = baseEmailTemplate({ preheader: `Payment sent: ${total}`, body, branding });
+    const subj  = `Payment sent${pStr ? ` — ${pStr}` : ''}`;
     await sendMail({ to: teacher.email, subject: subj, html });
     await EmailLog.create({ to: teacher.email, subject: subj, type: 'paymentReceived', status: 'sent', userId: teacher._id, sentAt: new Date() });
-    console.log(`[EmailService] Payment received email sent to ${teacher.email}`);
+    console.log(`[EmailService] Payment sent email sent to ${teacher.email}`);
     return { sent: true };
   } catch (error) {
-    console.error('[EmailService] Failed to send payment received email:', error.message);
+    console.error('[EmailService] Failed to send payment sent email:', error.message);
     return { sent: false, error: error.message };
   }
 }
@@ -960,7 +1152,7 @@ async function sendBonusAdded(teacher, invoice, bonus) {
   try {
     const branding = await loadBrandingAndLogo();
     const rows = _infoRow('Type', bonus.source) + _infoRow('Amount', `$${bonus.amountUSD?.toFixed(2)} USD`) + _infoRow('Reason', bonus.reason || '—');
-    const body = `${_hi(teacher.firstName)}<p style="margin:0 0 14px;">A <strong>${bonus.source}</strong> bonus of <strong>$${bonus.amountUSD?.toFixed(2)}</strong> was added to invoice #${invoice.invoiceNumber}.</p>${_card(_infoTable(rows))}`;
+    const body = `${_hi(teacher)}<p style="margin:0 0 14px;">A <strong>${bonus.source}</strong> bonus of <strong>$${bonus.amountUSD?.toFixed(2)}</strong> was added to invoice #${invoice.invoiceNumber}.</p>${_card(_infoTable(rows))}`;
     const html = baseEmailTemplate({ preheader: `Bonus: $${bonus.amountUSD?.toFixed(2)}`, body, branding });
     const subj = `Bonus added — invoice #${invoice.invoiceNumber}`;
     await sendMail({ to: teacher.email, subject: subj, html });
@@ -1059,7 +1251,7 @@ async function sendAdminInvoiceGenerationSummary(admin, summary) {
 
     // ── Assemble body ─────────────────────────────────────────────────────────
     const body =
-      `${_hi(admin.firstName)}` +
+      `${_hi(admin)}` +
       `<p style="margin:0 0 14px;">Here is the automatic salary invoice generation report${hasPeriod ? ` for <strong>${monthLabel}</strong>` : ''}.</p>` +
       _card(_infoTable(countRows) + (financialRows ? '<hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">' + _infoTable(financialRows) : '')) +
       teacherTable +
@@ -1105,6 +1297,8 @@ module.exports = {
   buildNewStudentEmail,
   buildStudentDeletedEmail,
   buildAdminNewUserEmail,
+  buildAdminUserDeletedEmail,
+  buildAdminStudentCreatedEmail,
   buildPoorPerformanceEmail,
   buildConsecutiveAbsentEmail,
   buildMonthlyStudentReportEmail,
@@ -1113,6 +1307,7 @@ module.exports = {
   buildMeetingScheduledEmail,
   buildVacationApprovedEmail,
   buildVacationGuardianNoticeEmail,
+  buildSystemVacationNoticeEmail,
   buildTeacherReassignedEmail,
   buildSeriesCancelledEmail,
   buildAvailabilityChangedEmail,

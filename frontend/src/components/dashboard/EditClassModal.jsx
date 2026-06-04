@@ -29,6 +29,21 @@ const adjustDurationByStep = (rawValue, direction = 1, step = 10) => {
   return Math.max(1, Math.round(next));
 };
 const CLASS_TYPE_OPTIONS = ['One on one', 'Group classes', 'Public lecture'];
+const sectionCardClass = 'rounded-[20px] border border-slate-200/80 bg-slate-50/85 p-3.5 shadow-[0_8px_24px_rgba(15,23,42,0.05)] sm:rounded-2xl md:p-5';
+const sectionTitleClass = 'text-sm font-semibold tracking-tight text-slate-900';
+const sectionDescriptionClass = 'mt-1 text-[11px] leading-5 text-slate-500 sm:text-xs';
+const fieldLabelClass = 'mb-1.5 block text-[13px] font-semibold text-slate-700 sm:text-sm';
+const textInputClass = 'w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100 sm:px-3.5';
+const subtleHelpClass = 'mt-1 text-[11px] leading-5 text-slate-500';
+const pillClass = 'inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm sm:px-3 sm:text-xs';
+const secondaryButtonClass = 'inline-flex w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 sm:w-auto';
+const primaryButtonClass = 'inline-flex w-full items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-primary/20 transition hover:bg-primary/90 sm:w-auto';
+const toggleGroupClass = 'grid grid-cols-2 gap-1.5 rounded-2xl border border-slate-200 bg-slate-100/80 p-1.5';
+const getToggleButtonClass = (active) => (
+  active
+    ? 'rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm ring-1 ring-slate-200 transition'
+    : 'rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-white/70 hover:text-slate-900'
+);
 
 export default function EditClassModal({
   isOpen,
@@ -230,24 +245,40 @@ export default function EditClassModal({
     : CLASS_TYPE_OPTIONS;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-card rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
-        <div className="p-6">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+      <div className="relative h-[100dvh] w-full max-w-4xl max-h-[100dvh] overflow-y-auto overscroll-contain rounded-none border border-white/70 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.24)] sm:max-h-[92vh] sm:rounded-[28px]" style={{ WebkitOverflowScrolling: 'touch' }}>
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_top_left,rgba(125,211,252,0.35),transparent_45%),radial-gradient(circle_at_top_right,rgba(196,181,253,0.22),transparent_40%)]" />
+        <div className="relative p-3.5 md:p-6">
           {/* Header */}
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-gray-900">Edit {modalHeading}</h2>
-            <button onClick={handleClose} className="text-gray-400 hover:text-gray-600">
-              <XCircle className="h-6 w-6" />
-            </button>
+          <div className="mb-5 overflow-hidden rounded-[20px] border border-slate-200/80 bg-gradient-to-r from-sky-50 via-white to-violet-50 px-4 py-4 shadow-sm sm:mb-6 sm:rounded-[24px] sm:px-5 sm:py-5">
+            <div className="flex items-start justify-between gap-3 sm:gap-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-sky-700 sm:text-[11px]">Class Editor</p>
+                <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Edit {modalHeading}</h2>
+                <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-600 sm:text-sm sm:leading-6">
+                  Adjust participants, schedule, and communication details without losing context.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className={pillClass}>{editClass.isRecurring ? 'Recurring schedule' : 'Single session'}</span>
+                  <span className={pillClass}>{editClass.timezone || user?.timezone || DEFAULT_TIMEZONE}</span>
+                </div>
+              </div>
+              <button type="button" onClick={handleClose} className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/80 text-slate-500 shadow-sm transition hover:text-slate-900 hover:shadow-md">
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           {/* Teacher change result banner */}
           {updateResult?.teacherChangeMsg && (
-            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-md">
+            <div className="mb-4 rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-emerald-50 p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-emerald-800">{updateResult.message}</p>
-                  <pre className="mt-2 text-xs text-emerald-700 whitespace-pre-wrap font-sans leading-relaxed">{updateResult.teacherChangeMsg}</pre>
+                  <p className="text-sm font-semibold text-emerald-900">{updateResult.message}</p>
+                  {updateResult.availabilityReminder && (
+                    <p className="mt-2 text-xs leading-relaxed text-emerald-800">Reminder: {updateResult.availabilityReminder}</p>
+                  )}
+                  <pre className="mt-2 whitespace-pre-wrap rounded-xl border border-emerald-200/80 bg-white/70 px-3 py-2 font-sans text-xs leading-relaxed text-emerald-800">{updateResult.teacherChangeMsg}</pre>
                 </div>
                 <button
                   type="button"
@@ -256,7 +287,7 @@ export default function EditClassModal({
                     setMsgCopied(true);
                     setTimeout(() => setMsgCopied(false), 2000);
                   }}
-                  className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                  className="shrink-0 inline-flex items-center gap-1 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50"
                   title="Copy message"
                 >
                   {msgCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -267,7 +298,7 @@ export default function EditClassModal({
                 <button
                   type="button"
                   onClick={() => onDismissUpdateResult?.()}
-                  className="text-xs text-emerald-600 hover:text-emerald-800 underline"
+                  className="text-xs font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-900"
                 >
                   Close
                 </button>
@@ -289,15 +320,15 @@ export default function EditClassModal({
               back up to read it after filling the form. See block below. */}
 
           {/* Current Timezone Display */}
-          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+          <div className="mb-4 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 via-white to-sky-50 p-4 shadow-sm">
             <div className="flex items-center space-x-2">
-              <Clock className="h-4 w-4 text-blue-600" />
-              <span className="text-sm font-medium text-blue-800">
+              <Clock className="h-4 w-4 text-sky-600" />
+              <span className="text-sm font-semibold text-sky-900">
                 Current Timezone: {getCurrentTimezoneDisplay()}
               </span>
             </div>
             {timePreview && (
-              <div className="mt-2 text-xs text-blue-700 space-y-1">
+              <div className="mt-3 space-y-1 text-xs text-sky-800">
                 {timePreview.showStudentTime && (
                   <div>Student time: {timePreview.student.displayTime}</div>
                 )}
@@ -309,15 +340,15 @@ export default function EditClassModal({
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-6">
             {/* Class Type Tabs (moved to top) */}
-            <div className="rounded-lg bg-gray-100 p-1 inline-flex w-full">
+            <div className={toggleGroupClass}>
               <button
                 type="button"
                 role="tab"
                 aria-selected={!!editClass.isRecurring}
                 onClick={() => setEditClass((prev) => ({ ...prev, isRecurring: true }))}
-                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${editClass.isRecurring ? 'bg-primary text-white' : 'text-gray-700 hover:bg-white'}`}
+                className={`text-center ${getToggleButtonClass(!!editClass.isRecurring)}`}
               >
                 Recurring Classes
               </button>
@@ -326,7 +357,7 @@ export default function EditClassModal({
                 role="tab"
                 aria-selected={!editClass.isRecurring}
                 onClick={() => setEditClass((prev) => ({ ...prev, isRecurring: false }))}
-                className={`flex-1 text-sm font-medium py-2 px-3 rounded-md transition text-center ${!editClass.isRecurring ? 'bg-primary text-white' : 'text-gray-700 hover:bg-white'}`}
+                className={`text-center ${getToggleButtonClass(!editClass.isRecurring)}`}
               >
                 Single Class
               </button>
@@ -334,48 +365,62 @@ export default function EditClassModal({
 
             
             {/* Participants */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <SearchSelect
-                label="Teacher *"
-                placeholder="Search teachers..."
-                value={editClass.teacher || ''}
-                onChange={handleTeacherSelect}
-                fetchOptions={fetchTeacherOptions}
-                fetchById={fetchTeacherById}
-                helperText=""
-                required
-              />
+            <div className={sectionCardClass}>
+              <div className="mb-4">
+                <h3 className={sectionTitleClass}>Participants</h3>
+                <p className={sectionDescriptionClass}>Update teacher and student assignments here before changing the schedule.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <SearchSelect
+                  label="Teacher *"
+                  placeholder="Search teachers..."
+                  value={editClass.teacher || ''}
+                  onChange={handleTeacherSelect}
+                  fetchOptions={fetchTeacherOptions}
+                  fetchById={fetchTeacherById}
+                  helperText=""
+                  required
+                />
 
-              <SearchSelect
-                label="Guardian *"
-                placeholder="Search guardians..."
-                value={editClass.student?.guardianId || ''}
-                onChange={handleGuardianSelect}
-                fetchOptions={fetchGuardianOptions}
-                fetchById={fetchGuardianById}
-                helperText=""
-                required
-              />
+                <SearchSelect
+                  label="Guardian *"
+                  placeholder="Search guardians..."
+                  value={editClass.student?.guardianId || ''}
+                  onChange={handleGuardianSelect}
+                  fetchOptions={fetchGuardianOptions}
+                  fetchById={fetchGuardianById}
+                  helperText=""
+                  required
+                />
 
-              <SearchSelect
-                label="Student *"
-                placeholder="Search students..."
-                value={editClass.student?.studentId || ''}
-                onChange={handleStudentSelect}
-                fetchOptions={fetchStudentOptions}
-                fetchById={fetchStudentById}
-                helperText={editClass.student?.guardianId ? 'Filtered by guardian' : ''}
-                required
-              />
+                <SearchSelect
+                  label="Student *"
+                  placeholder="Search students..."
+                  value={editClass.student?.studentId || ''}
+                  onChange={handleStudentSelect}
+                  fetchOptions={fetchStudentOptions}
+                  fetchById={fetchStudentById}
+                  helperText={editClass.student?.guardianId ? 'Filtered by guardian' : ''}
+                  required
+                />
+              </div>
             </div>
 
             {/* (Tabs moved to top) */}
 
             {/* Single Class Fields */}
             {!editClass.isRecurring && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+              <div className={sectionCardClass}>
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className={sectionTitleClass}>Schedule</h3>
+                    <p className={sectionDescriptionClass}>Choose the new date, time, and duration for this single class.</p>
+                  </div>
+                  <span className={pillClass}>One session</span>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <label className={fieldLabelClass}>
                     Date & Time *
                   </label>
                   <input
@@ -399,13 +444,13 @@ export default function EditClassModal({
                         scheduledDate: utcDate ? utcDate.toISOString() : '',
                       }));
                     }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
+                    className={textInputClass}
                   />
 
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <div>
+                    <label className={fieldLabelClass}>
                     Duration (min) *
                   </label>
                   <input
@@ -432,21 +477,27 @@ export default function EditClassModal({
                       }
                     }}
                     inputMode="numeric"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
+                    className={textInputClass}
                     placeholder="Minutes"
                   />
                 </div>
+              </div>
               </div>
             )}
 
             {/* Recurring Class Fields - group months, day, time, duration in one row group */}
             {editClass.isRecurring && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Weekly Schedule</label>
+              <div className={sectionCardClass}>
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className={sectionTitleClass}>Weekly schedule</h3>
+                    <p className={sectionDescriptionClass}>Refine the recurring pattern, generation window, and slot durations before saving.</p>
+                  </div>
+                  <span className={pillClass}>Series update</span>
+                </div>
 
                   {/* Header: Months | Day | Time | Duration | Actions */}
-                  <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 text-xs font-medium text-gray-600 mb-2">
+                  <div className="mb-2 hidden gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 md:grid md:grid-cols-[1fr_1fr_1fr_1fr_auto]">
                     <div className="min-w-0">Months</div>
                     <div className="min-w-0">Day</div>
                     <div className="min-w-0">Time</div>
@@ -455,8 +506,9 @@ export default function EditClassModal({
                   </div>
 
                   {(editClass.recurrenceDetails || []).map((slot, index) => (
-                    <div key={index} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 items-center mb-2 min-w-0">
+                    <div key={index} className="mb-2 grid grid-cols-1 items-center gap-3 rounded-[18px] border border-slate-200 bg-white p-3 shadow-sm sm:rounded-2xl md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:gap-2">
                       <div className="min-w-0">
+                        <div className="md:hidden mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Months</div>
                         {index === 0 ? (
                           <select
                             value={editClass.generationPeriodMonths || 2}
@@ -466,7 +518,7 @@ export default function EditClassModal({
                                 generationPeriodMonths: parseInt(e.target.value),
                               }))
                             }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
+                            className={textInputClass}
                           >
                             <option value={1}>1 month</option>
                             <option value={2}>2 months</option>
@@ -474,15 +526,16 @@ export default function EditClassModal({
                             <option value={6}>6 months</option>
                           </select>
                         ) : (
-                          <div />
+                          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-400">Same as first row</div>
                         )}
                       </div>
 
                       <div className="min-w-0">
+                        <div className="md:hidden mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Day</div>
                         <select
                           value={slot.dayOfWeek}
                           onChange={(e) => updateRecurrenceSlot(index, 'dayOfWeek', parseInt(e.target.value))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
+                          className={`${textInputClass} truncate whitespace-nowrap`}
                         >
                           {dayNames.map((day, i) => (
                             <option key={i} value={i}>{day}</option>
@@ -491,6 +544,7 @@ export default function EditClassModal({
                       </div>
 
                       <div className="min-w-0">
+                        <div className="md:hidden mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Time</div>
                         <TimeInput
                           value={slot.time}
                           onChange={(e) => updateRecurrenceSlot(index, 'time', e.target.value)}
@@ -498,6 +552,7 @@ export default function EditClassModal({
                       </div>
 
                       <div className="min-w-0">
+                        <div className="md:hidden mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Duration</div>
                         <input
                           type="number"
                           min="1"
@@ -513,17 +568,17 @@ export default function EditClassModal({
                             }
                           }}
                           inputMode="numeric"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary truncate whitespace-nowrap"
+                          className={`${textInputClass} truncate whitespace-nowrap`}
                           placeholder="Minutes"
                         />
                       </div>
 
-                      <div className="min-w-0 flex items-center justify-center w-8 md:w-6 flex-shrink-0">
+                      <div className="min-w-0 flex w-full flex-shrink-0 items-end justify-end md:w-6 md:items-center md:justify-center">
                         {(editClass.recurrenceDetails || []).length > 1 && (
                           <button
                             type="button"
                             onClick={() => removeRecurrenceSlot(index)}
-                            className="p-0 text-red-600 hover:bg-red-50 rounded-md"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-red-600 transition hover:bg-red-50"
                             aria-label="Remove time slot"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -537,24 +592,28 @@ export default function EditClassModal({
                     <button
                       type="button"
                       onClick={() => addRecurrenceSlot()}
-                      className="flex items-center space-x-2 px-3 py-2 text-sm text-primary border border-primary rounded-md hover:bg-primary hover:text-white transition-colors"
+                      className="inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-white px-3.5 py-2.5 text-sm font-semibold text-primary shadow-sm transition hover:border-primary hover:bg-primary hover:text-white"
                     >
                       <Plus className="h-4 w-4" />
                       <span>Add Slot</span>
                     </button>
                   </div>
-                </div>
               </div>
             )}
             {/* Basic Info */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className={sectionCardClass}>
+              <div className="mb-4">
+                <h3 className={sectionTitleClass}>Class details</h3>
+                <p className={sectionDescriptionClass}>Update subject, billing overrides, timezone, and supporting notes here.</p>
+              </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Class Type *</label>
+                <label className={fieldLabelClass}>Class Type *</label>
                 <select
                   required
                   value={editClass.title || 'One on one'}
                   onChange={(e) => setEditClass((prev) => ({ ...prev, title: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
+                  className={textInputClass}
                 >
                   {classTypeOptions.map((opt) => (
                     <option key={opt} value={opt}>{opt}</option>
@@ -563,7 +622,7 @@ export default function EditClassModal({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className={fieldLabelClass}>
                   Subject *
                 </label>
                 <SearchSelect
@@ -585,13 +644,13 @@ export default function EditClassModal({
             </div>
 
             {/* Rate Overrides (optional) */}
-            <details className="border border-gray-200 rounded-md" open={editClass.guardianRate != null || editClass.teacherPremium != null}>
-              <summary className="px-3 py-2 text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 select-none">
+            <details className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white/80 shadow-sm" open={editClass.guardianRate != null || editClass.teacherPremium != null}>
+              <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-white/70">
                 Rate Overrides (optional)
               </summary>
-              <div className="px-3 pb-3 pt-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 px-4 pb-4 pt-2 md:grid-cols-2">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                     Guardian Rate ($/hr)
                   </label>
                   <input
@@ -605,13 +664,13 @@ export default function EditClassModal({
                         guardianRate: e.target.value === '' ? null : Number(e.target.value),
                       }))
                     }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
+                    className={textInputClass}
                     placeholder="Default"
                   />
-                  <p className="mt-0.5 text-[11px] text-gray-400">Leave empty for default</p>
+                  <p className={subtleHelpClass}>Leave empty for default</p>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                     Teacher Premium ($/hr)
                   </label>
                   <input
@@ -625,18 +684,18 @@ export default function EditClassModal({
                         teacherPremium: e.target.value === '' ? null : Number(e.target.value),
                       }))
                     }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
+                    className={textInputClass}
                     placeholder="No premium"
                   />
-                  <p className="mt-0.5 text-[11px] text-gray-400">Extra $/hr for teacher</p>
+                  <p className={subtleHelpClass}>Extra $/hr for teacher</p>
                 </div>
               </div>
             </details>
 
             {/* Additional Fields */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className={fieldLabelClass}>
                   Timezone * 
                 </label>
                 <TimezoneSelector
@@ -650,46 +709,47 @@ export default function EditClassModal({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Meeting Link</label>
+                <label className={fieldLabelClass}>Meeting Link</label>
                 <input
                   type="url"
                   value={editClass.meetingLink || ""}
                   onChange={(e) => setEditClass((prev) => ({ ...prev, meetingLink: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
+                  className={textInputClass}
                   placeholder="Paste link..."
                 />
               </div>
             </div>
             
             {/* Description */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <div className="mt-4">
+              <label className={fieldLabelClass}>Description</label>
               <textarea
                 value={editClass.description || ""}
                 onChange={(e) => setEditClass((prev) => ({ ...prev, description: e.target.value }))}
-                rows={1}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary"
+                rows={2}
+                className={`${textInputClass} min-h-[72px] resize-y`}
                 placeholder="Optional notes..."
               />
+            </div>
             </div>
 
 
             {/* Availability Warning (rendered near the submit button so the
                 user sees the issue right where they're acting). */}
             {availabilityWarning && (
-              <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+              <div className="rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-amber-50 p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-yellow-900">
+                    <div className="text-sm font-semibold text-amber-950">
                       {availabilityWarning.title || 'Teacher not available'}
                     </div>
                     {availabilityWarning.reason && (
-                      <div className="mt-1 text-xs text-yellow-900 whitespace-pre-wrap">
+                      <div className="mt-1 text-xs text-amber-900 whitespace-pre-wrap">
                         {availabilityWarning.reason}
                       </div>
                     )}
                     {availabilityWarning.details && (
-                      <div className="mt-2 text-xs text-yellow-800 whitespace-pre-wrap">
+                      <div className="mt-2 whitespace-pre-wrap rounded-xl border border-amber-200/80 bg-white/70 px-3 py-2 text-xs leading-5 text-amber-900">
                         {availabilityWarning.details}
                       </div>
                     )}
@@ -698,22 +758,22 @@ export default function EditClassModal({
                         <button
                           type="button"
                           onClick={() => setShowSuggestedTimes((v) => !v)}
-                          className="text-xs font-medium text-yellow-900 underline underline-offset-2 hover:text-yellow-800"
+                          className="text-xs font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-800"
                         >
                           {showSuggestedTimes ? 'Hide suggested times' : 'Show suggested times'}
                         </button>
                         {showSuggestedTimes && (
                           <div className="mt-2 space-y-2">
                             {availabilityWarning.nearest && (
-                              <div className="text-xs text-yellow-900">
+                              <div className="text-xs text-amber-950">
                                 <span className="font-medium">Nearest available slot:</span>{' '}
                                 {availabilityWarning.nearest}
                               </div>
                             )}
                             {Array.isArray(availabilityWarning.suggested) && availabilityWarning.suggested.length > 0 && (
-                              <div className="text-xs text-yellow-900">
+                              <div className="text-xs text-amber-950">
                                 <div className="font-medium">Other suggested slots:</div>
-                                <div className="mt-1 whitespace-pre-wrap">
+                                <div className="mt-1 whitespace-pre-wrap rounded-xl border border-amber-200/80 bg-white/70 px-3 py-2 leading-5">
                                   {availabilityWarning.suggested.slice(0, 3).map((s) => `• ${s}`).join('\n')}
                                 </div>
                               </div>
@@ -727,14 +787,14 @@ export default function EditClassModal({
                         <button
                           type="button"
                           onClick={() => { onDismissAvailabilityWarning?.(); onForceSubmit(); }}
-                          className="px-3 py-1.5 text-xs font-medium text-white bg-yellow-600 rounded-md hover:bg-yellow-700"
+                          className="inline-flex items-center justify-center rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700"
                         >
                           Proceed anyway
                         </button>
                         <button
                           type="button"
                           onClick={() => onDismissAvailabilityWarning?.()}
-                          className="px-3 py-1.5 text-xs font-medium text-yellow-800 bg-white border border-yellow-300 rounded-md hover:bg-yellow-50"
+                          className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-3.5 py-2 text-xs font-semibold text-amber-900 transition hover:bg-amber-50"
                         >
                           Cancel
                         </button>
@@ -744,7 +804,7 @@ export default function EditClassModal({
                   <button
                     type="button"
                     onClick={() => onDismissAvailabilityWarning?.()}
-                    className="text-yellow-700 hover:text-yellow-900"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-amber-700 transition hover:bg-white/70 hover:text-amber-900"
                     aria-label="Dismiss availability warning"
                   >
                     <XCircle className="h-5 w-5" />
@@ -754,21 +814,21 @@ export default function EditClassModal({
             )}
 
             {/* Actions */}
-            <div className="flex items-center justify-between py-2">
+            <div className="sticky bottom-0 z-10 -mx-3.5 mt-2 flex flex-col gap-3 border-t border-slate-200/80 bg-white/95 px-3.5 py-3.5 backdrop-blur sm:-mx-6 sm:px-6 sm:py-4 md:flex-row md:items-center md:justify-between">
               {editClass._id && (
                 <WhatsAppGroupButton classId={editClass._id} />
               )}
-              <div className="flex items-center space-x-3 ml-auto">
+              <div className="ml-auto flex flex-col gap-3 sm:flex-row sm:items-center sm:space-x-3 sm:gap-0">
               <button
                 type="button"
                 onClick={handleClose}
-                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                className={secondaryButtonClass}
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-3 py-1.5 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90"
+                className={primaryButtonClass}
               >
                 {editClass.isRecurring ? "Update Recurring Classes" : "Update Class"}
               </button>

@@ -1426,12 +1426,9 @@ const InvoicesPage = ({ isActive = true }) => {
         const aPaid = isPaid(a);
         const bPaid = isPaid(b);
         if (aPaid !== bPaid) return aPaid ? 1 : -1;
-        // Search mode treats the result list as a per-guardian audit trail:
-        //   • unpaid group → newest first (most actionable on top)
-        //   • paid group → OLDEST first (chronological history reads top-to-bottom)
-        // The "all" tab keeps the legacy newest-first behavior for both groups.
+        // Search mode and 'All' tab: paid group → NEWEST first (most recent at top)
         if (searchMode && aPaid && bPaid) {
-          return getInvoiceRecencyKey(a) - getInvoiceRecencyKey(b);
+          return getInvoiceRecencyKey(b) - getInvoiceRecencyKey(a);
         }
         // Link tiebreak only matters for unpaid invoices (WA-ready surfacing).
         // For paid invoices and inside search results the user expects strict

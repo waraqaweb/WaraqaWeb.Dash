@@ -10,6 +10,7 @@ import {
   User, 
   Users, 
   Globe, 
+  Mail,
   Send,
   CheckCircle, 
   XCircle, 
@@ -33,12 +34,12 @@ const VACATION_TITLE_FONT = '"Aref Ruqaa", "Amiri", Georgia, serif';
 const VACATION_BODY_FONT = '"Noto Naskh Arabic", "Inter", "Segoe UI", sans-serif';
 const VACATION_LABEL_FONT = '"Noto Kufi Arabic", "Open Sans", "Segoe UI", sans-serif';
 const VACATION_WHATSAPP_COPY = {
-  title: 'Waraqa Vacation Notice',
-  decorativeLine: '۞ ┈---┈┈ ✦ ---┈┈┈ ۞',
+  titlePrefix: 'Waraqa',
+  titleSuffix: 'Notice',
   greetingPrefix: 'Assalamu Alaikum',
   beginsLabel: 'Begins',
   endsLabel: 'Ends',
-  timezoneNote: 'This is in your timezone.',
+  thanksLabel: 'Thank you',
 };
 
 const normalizeWhatsappPhone = (value) => String(value || '').replace(/\D+/g, '');
@@ -73,6 +74,8 @@ const formatRecipientEpithet = (epithet) => {
 
   return map[normalized] || String(epithet || '').trim();
 };
+
+const formatWhatsappTimezoneLabel = (timezone) => String(timezone || '').trim().replace(/_/g, ' ');
 
 const VacationManagementPage = () => {
   const { user } = useAuth();
@@ -129,6 +132,7 @@ const VacationManagementPage = () => {
   const [whatsappDraftReport, setWhatsappDraftReport] = useState(null);
   const [whatsappDraftSession, setWhatsappDraftSession] = useState(null);
   const [visibleWhatsappReportVacationId, setVisibleWhatsappReportVacationId] = useState(null);
+  const [sendingVacationEmail, setSendingVacationEmail] = useState(null);
   const whatsappDraftWindowRef = useRef(null);
   const whatsappDraftTimerRef = useRef(null);
   const whatsappDraftSessionRef = useRef(null);
@@ -655,26 +659,36 @@ const VacationManagementPage = () => {
 
   const buildVacationWhatsappMessage = useCallback((vacation, recipient) => {
     const recipientTimezone = recipient?.timezone || vacation?.timezone || userTimezone;
+    const recipientTimezoneLabel = formatWhatsappTimezoneLabel(recipientTimezone) || 'your local';
     const epithet = formatRecipientEpithet(recipient?.epithet);
     const greetingName = `${epithet ? `${epithet} ` : ''}${recipient?.firstName || ''}`.trim()
       || `${recipient?.firstName || ''} ${recipient?.lastName || ''}`.trim()
       || 'there';
-    const startLabel = formatDateTimeForTimezone(vacation.startDate, recipientTimezone, true);
-    const endLabel = formatDateTimeForTimezone(vacation.endDate, recipientTimezone, true);
+    const startLabel = formatDateTimeForTimezone(vacation.startDate, recipientTimezone, false);
+    const endLabel = formatDateTimeForTimezone(vacation.endDate, recipientTimezone, false);
     const messageBody = String(vacation.message || '').trim();
+    const title = `${VACATION_WHATSAPP_COPY.titlePrefix}${vacation?.name ? ` ${vacation.name}` : ''} ${VACATION_WHATSAPP_COPY.titleSuffix}`.replace(/\s+/g, ' ').trim();
 
-    return [
-      VACATION_WHATSAPP_COPY.title,
-      VACATION_WHATSAPP_COPY.decorativeLine,
+    const lines = [
+      title,
       '',
       `${VACATION_WHATSAPP_COPY.greetingPrefix} ${greetingName},`,
       '',
-      `${vacation.name}`,
-      messageBody,
+    ];
+
+    if (messageBody) {
+      lines.push(messageBody, '');
+    }
+
+    lines.push(
       `${VACATION_WHATSAPP_COPY.beginsLabel}: ${startLabel}`,
       `${VACATION_WHATSAPP_COPY.endsLabel}: ${endLabel}`,
-      VACATION_WHATSAPP_COPY.timezoneNote,
-    ].filter(Boolean).join('\n');
+      `This is in ${recipientTimezoneLabel} timezone.`,
+      '',
+      VACATION_WHATSAPP_COPY.thanksLabel,
+    );
+
+    return lines.join('\n');
   }, [formatDateTimeForTimezone, userTimezone]);
 
   const fetchWhatsappRecipients = useCallback(async (audience) => {
@@ -712,6 +726,28 @@ const VacationManagementPage = () => {
     return queue.map((entry, entryIndex) => (
       entryIndex === index ? { ...entry, status } : entry
     ));
+  }, []);
+
+  const syncVacationWhatsappProgress = useCallback((session) => {
+    if (!session) {
+      setWhatsappDraftProgress(null);
+      return;
+    }
+
+    const recipients = Array.isArray(session.recipients) ? session.recipients : [];
+    const currentRecipient = session.currentRecipient || null;
+    const recipientName = currentRecipient
+      ? `${currentRecipient.firstName || ''} ${currentRecipient.lastName || ''}`.trim() || 'Unknown recipient'
+      : '';
+
+    setWhatsappDraftProgress({
+      vacationId: session?.vacationId || null,
+      audience: session?.audience || 'all',
+      current: currentRecipient ? ((session.currentIndex || 0) + 1) : Math.min(recipients.length, Number(session.currentIndex || 0)),
+      total: recipients.length,
+      name: recipientName,
+      paused: Boolean(session?.paused),
+    });
   }, []);
 
   const finalizeVacationWhatsappSession = useCallback((session) => {
@@ -803,6 +839,10 @@ const VacationManagementPage = () => {
     });
 
     clearVacationWhatsappTimer();
+    if (session?.paused) {
+      return true;
+    }
+
     whatsappDraftTimerRef.current = setTimeout(() => {
       const currentSession = whatsappDraftSessionRef.current;
       if (!currentSession) return;
@@ -824,6 +864,9 @@ const VacationManagementPage = () => {
 
     const recipients = Array.isArray(session.recipients) ? session.recipients : [];
     const nextFailed = [...(session.failed || [])];
+    const nextQueue = Array.isArray(session?.queue)
+      ? session.queue.map((entry) => ({ ...entry }))
+      : [];
     let nextIndex = startIndex;
 
     while (nextIndex < recipients.length) {
@@ -838,6 +881,9 @@ const VacationManagementPage = () => {
           role: recipient?.role || 'unknown',
           reason: validation.reason,
         });
+        if (nextQueue[nextIndex]) {
+          nextQueue[nextIndex] = { ...nextQueue[nextIndex], status: 'not_sent' };
+        }
         nextIndex += 1;
         continue;
       }
@@ -848,19 +894,14 @@ const VacationManagementPage = () => {
         currentIndex: nextIndex,
         currentRecipient: recipient,
         draftOpenedForIndex: null,
-        queue: Array.isArray(session?.queue) ? session.queue : [],
+        queue: nextQueue,
+        paused: Boolean(session?.paused),
       };
 
       setWhatsappDraftSession(nextSession);
-      setWhatsappDraftProgress({
-        vacationId: session?.vacationId || null,
-        audience: session?.audience || 'all',
-        current: nextIndex + 1,
-        total: recipients.length,
-        name: recipientName,
-      });
+      syncVacationWhatsappProgress(nextSession);
 
-      if (autoOpenCurrent) {
+      if (autoOpenCurrent && !nextSession.paused) {
         openVacationWhatsappDraftForRecipient(nextSession, recipient, nextIndex);
       }
       return;
@@ -869,11 +910,12 @@ const VacationManagementPage = () => {
     finalizeVacationWhatsappSession({
       ...session,
       failed: nextFailed,
+      queue: nextQueue,
       currentIndex: recipients.length,
       currentRecipient: null,
       draftOpenedForIndex: null,
     });
-  }, [finalizeVacationWhatsappSession, openVacationWhatsappDraftForRecipient]);
+  }, [finalizeVacationWhatsappSession, openVacationWhatsappDraftForRecipient, syncVacationWhatsappProgress]);
 
   useEffect(() => {
     advanceVacationWhatsappSessionRef.current = advanceVacationWhatsappSession;
@@ -925,8 +967,55 @@ const VacationManagementPage = () => {
       nextSession.queue = updateQueueStatus(nextSession, whatsappDraftSession.currentIndex, 'not_sent');
     }
 
-    advanceVacationWhatsappSession(nextSession, (whatsappDraftSession.currentIndex || 0) + 1, true);
+    advanceVacationWhatsappSession(nextSession, (whatsappDraftSession.currentIndex || 0) + 1, !nextSession.paused);
   }, [advanceVacationWhatsappSession, clearVacationWhatsappTimer, finalizeVacationWhatsappSession, updateQueueStatus, whatsappDraftSession]);
+
+  const pauseVacationWhatsappSession = useCallback(() => {
+    const currentSession = whatsappDraftSessionRef.current;
+    if (!currentSession) return;
+
+    clearVacationWhatsappTimer();
+    const nextSession = { ...currentSession, paused: true };
+    setWhatsappDraftSession(nextSession);
+    syncVacationWhatsappProgress(nextSession);
+  }, [clearVacationWhatsappTimer, syncVacationWhatsappProgress]);
+
+  const resumeVacationWhatsappSession = useCallback(() => {
+    const currentSession = whatsappDraftSessionRef.current;
+    if (!currentSession) return;
+
+    const nextSession = { ...currentSession, paused: false };
+    advanceVacationWhatsappSession(nextSession, currentSession.currentIndex || 0, true);
+  }, [advanceVacationWhatsappSession]);
+
+  const stopVacationWhatsappSession = useCallback(() => {
+    const currentSession = whatsappDraftSessionRef.current;
+    if (!currentSession) return;
+
+    clearVacationWhatsappTimer();
+
+    const queue = Array.isArray(currentSession.queue) ? currentSession.queue : [];
+    const extraFailures = queue
+      .filter((entry) => !['sent', 'not_sent'].includes(String(entry.status || 'pending')))
+      .map((entry, index) => ({
+        id: entry.id || `stopped-${index}`,
+        name: entry.name || 'Unknown recipient',
+        role: entry.role || 'unknown',
+        reason: 'Stopped by admin',
+      }));
+
+    finalizeVacationWhatsappSession({
+      ...currentSession,
+      failed: [...(currentSession.failed || []), ...extraFailures],
+      currentRecipient: null,
+      draftOpenedForIndex: null,
+      queue: queue.map((entry) => (
+        ['sent', 'not_sent'].includes(String(entry.status || 'pending'))
+          ? entry
+          : { ...entry, status: 'stopped' }
+      )),
+    });
+  }, [clearVacationWhatsappTimer, finalizeVacationWhatsappSession]);
 
   const reopenCurrentVacationWhatsappDraft = useCallback(() => {
     if (!whatsappDraftSession?.currentRecipient) return;
@@ -983,6 +1072,7 @@ const VacationManagementPage = () => {
       current: 0,
       total: 0,
       name: '',
+      paused: false,
     });
 
     try {
@@ -1009,6 +1099,7 @@ const VacationManagementPage = () => {
         currentIndex: 0,
         currentRecipient: null,
         draftOpenedForIndex: null,
+        paused: false,
         queue: recipients.map((recipient) => ({
           id: recipient.id,
           name: `${recipient.firstName || ''} ${recipient.lastName || ''}`.trim() || 'Unknown recipient',
@@ -1047,6 +1138,30 @@ const VacationManagementPage = () => {
       // progress stays active until the operator finishes the in-app send session
     }
   }, [advanceVacationWhatsappSession, fetchWhatsappRecipients, finalizeVacationWhatsappSession, openVacationWhatsappDraftForRecipient, openVacationWhatsappWindow]);
+
+  const handleSendVacationEmail = useCallback(async (vacation, audience) => {
+    if (!vacation?._id) {
+      alert('This vacation is missing a valid id.');
+      return;
+    }
+
+    setSendingVacationEmail({ vacationId: vacation._id, audience });
+    try {
+      const res = await api.post(`/system-vacations/${vacation._id}/send-email`, { audience });
+      const stats = res?.data?.stats || {};
+      alert([
+        res?.data?.message || 'Vacation emails queued.',
+        `Queued: ${stats.queued || 0}`,
+        `Skipped (missing email): ${stats.skippedMissingEmail || 0}`,
+        `Skipped (email disabled): ${stats.skippedDisabled || 0}`,
+      ].join('\n'));
+    } catch (err) {
+      console.error('Error sending vacation emails:', err);
+      alert(err?.response?.data?.message || 'Failed to queue vacation emails');
+    } finally {
+      setSendingVacationEmail(null);
+    }
+  }, []);
 
   const filteredIndividualVacations = individualVacations.filter(vacation => {
     const teacherFirst = vacation.user?.firstName || vacation.teacher?.firstName || '';
@@ -1481,11 +1596,15 @@ const VacationManagementPage = () => {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="font-semibold">
-                Sending WhatsApp one by one for {whatsappDraftProgress.current}/{whatsappDraftProgress.total || 0}
+                {whatsappDraftProgress.paused
+                  ? 'WhatsApp sending paused'
+                  : `Sending WhatsApp one by one for ${whatsappDraftProgress.current}/${whatsappDraftProgress.total || 0}`}
                 {whatsappDraftProgress.name ? ` • ${whatsappDraftProgress.name}` : ''}
               </div>
               <div className="mt-1 text-blue-800">
-                One reusable WhatsApp tab is used for the full run. Each opened draft waits 3 seconds, then the next recipient opens automatically unless you click Sent or Not sent first.
+                {whatsappDraftProgress.paused
+                  ? 'The current run is paused. Resume to continue, or stop to end this run.'
+                  : 'One reusable WhatsApp tab is used for the full run. Each opened draft waits 3 seconds, then the next recipient opens automatically unless you click Sent or Not sent first.'}
               </div>
             </div>
             {whatsappDraftSession?.currentRecipient && (
@@ -1497,6 +1616,23 @@ const VacationManagementPage = () => {
                 >
                   Reopen draft
                 </button>
+                {whatsappDraftSession?.paused ? (
+                  <button
+                    type="button"
+                    onClick={resumeVacationWhatsappSession}
+                    className="rounded-lg border border-emerald-300 bg-emerald-600 px-3 py-2 font-medium text-white hover:bg-emerald-700"
+                  >
+                    Resume
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={pauseVacationWhatsappSession}
+                    className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 font-medium text-slate-800 hover:bg-slate-200"
+                  >
+                    Pause
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => markVacationWhatsappRecipient(true)}
@@ -1511,6 +1647,13 @@ const VacationManagementPage = () => {
                 >
                   Not sent
                 </button>
+                <button
+                  type="button"
+                  onClick={stopVacationWhatsappSession}
+                  className="rounded-lg border border-red-300 bg-red-600 px-3 py-2 font-medium text-white hover:bg-red-700"
+                >
+                  Stop
+                </button>
               </div>
             )}
           </div>
@@ -1524,6 +1667,8 @@ const VacationManagementPage = () => {
                   ? 'border-green-200 bg-green-50 text-green-800'
                   : status === 'not_sent'
                     ? 'border-orange-200 bg-orange-50 text-orange-800'
+                    : status === 'stopped'
+                      ? 'border-slate-300 bg-slate-100 text-slate-800'
                     : status === 'opened'
                       ? 'border-blue-200 bg-blue-100 text-blue-900'
                       : 'border-slate-200 bg-white text-slate-700';
@@ -1629,7 +1774,7 @@ const VacationManagementPage = () => {
                         className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Send className="h-4 w-4" />
-                        Send to guardians
+                        WhatsApp guardians
                       </button>
                       <button
                         type="button"
@@ -1638,7 +1783,7 @@ const VacationManagementPage = () => {
                         className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Send className="h-4 w-4" />
-                        Send to teachers
+                        WhatsApp teachers
                       </button>
                       <button
                         type="button"
@@ -1647,7 +1792,7 @@ const VacationManagementPage = () => {
                         className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Users className="h-4 w-4" />
-                        Send to all active users
+                        WhatsApp all active users
                       </button>
                       <button
                         type="button"
@@ -1656,6 +1801,35 @@ const VacationManagementPage = () => {
                       >
                         <Eye className="h-4 w-4" />
                         {String(visibleWhatsappReportVacationId) === String(vacation._id) ? 'Hide last WhatsApp run' : 'Show last WhatsApp run'}
+                      </button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSendVacationEmail(vacation, 'guardians')}
+                        disabled={Boolean(sendingVacationEmail)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Mail className="h-4 w-4" />
+                        {sendingVacationEmail?.vacationId === vacation._id && sendingVacationEmail?.audience === 'guardians' ? 'Queueing email...' : 'Email guardians'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSendVacationEmail(vacation, 'teachers')}
+                        disabled={Boolean(sendingVacationEmail)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Mail className="h-4 w-4" />
+                        {sendingVacationEmail?.vacationId === vacation._id && sendingVacationEmail?.audience === 'teachers' ? 'Queueing email...' : 'Email teachers'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSendVacationEmail(vacation, 'all')}
+                        disabled={Boolean(sendingVacationEmail)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Users className="h-4 w-4" />
+                        {sendingVacationEmail?.vacationId === vacation._id && sendingVacationEmail?.audience === 'all' ? 'Queueing email...' : 'Email all active users'}
                       </button>
                     </div>
                     {renderVacationWhatsappReport(vacation)}

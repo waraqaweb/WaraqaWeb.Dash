@@ -29,6 +29,7 @@
  */
 
 const mongoose = require("mongoose");
+const Setting = require("./Setting");
 const {
   extractParticipantIds,
   refreshParticipantsFromSchedule,
@@ -1043,15 +1044,65 @@ classSchema.methods.cancelClass = function(reason, cancelledBy, cancelledByRole 
   return this.save();
 };
 
+async function getTeacherReportWindowHours() {
+  try {
+    const teacherWindowSetting = await Setting.findOne({ key: 'teacher_report_window_hours' })
+      .select('value')
+      .lean();
+    const hours = Number(teacherWindowSetting?.value);
+    return Number.isFinite(hours) && hours > 0 ? hours : 72;
+  } catch (err) {
+    console.error('Error fetching teacher report window setting:', err);
+    return 72;
+  }
+}
+
+classSchema.methods.resetReportSubmissionForReschedule = async function(appliedAt = new Date()) {
+  if (this.classReport?.submittedAt) {
+    return;
+  }
+
+  const effectiveAt = appliedAt instanceof Date && !Number.isNaN(appliedAt.getTime())
+    ? appliedAt
+    : new Date();
+  const durationMinutes = Number(this.duration || 0);
+  const classEndTime = new Date(this.scheduledDate.getTime() + (durationMinutes * 60000));
+
+  if (!this.reportSubmission) {
+    this.reportSubmission = {};
+  }
+
+  this.reportSubmission.adminExtension = {
+    granted: false,
+  };
+  this.reportSubmission.markedUnreportedAt = undefined;
+  this.reportSubmission.markedUnreportedBy = undefined;
+
+  if (classEndTime.getTime() <= effectiveAt.getTime()) {
+    const teacherWindowHours = await getTeacherReportWindowHours();
+    this.reportSubmission.status = 'open';
+    this.reportSubmission.teacherDeadline = new Date(
+      effectiveAt.getTime() + (teacherWindowHours * 60 * 60 * 1000)
+    );
+  } else {
+    this.reportSubmission.status = 'pending';
+    this.reportSubmission.teacherDeadline = undefined;
+  }
+
+  this.markModified('reportSubmission');
+};
+
 // Method to reschedule class
-classSchema.methods.reschedule = function(newDate, reason, rescheduledBy) {
+classSchema.methods.reschedule = async function(newDate, reason, rescheduledBy) {
   const oldDate = this.scheduledDate;
+  const rescheduledAt = new Date();
   
   this.scheduledDate = newDate;
   this.lastModifiedBy = rescheduledBy;
   this.status = 'scheduled'; // Reset status when rescheduled
   this.pendingReschedule = undefined;
   this.markModified('pendingReschedule');
+  await this.resetReportSubmissionForReschedule(rescheduledAt);
   
   // Add to reschedule history
   if (!this.rescheduleHistory) {
@@ -1063,7 +1114,7 @@ classSchema.methods.reschedule = function(newDate, reason, rescheduledBy) {
     newDate,
     reason,
     rescheduledBy,
-    rescheduledAt: new Date()
+    rescheduledAt
   });
   
   return this.save();

@@ -43,25 +43,39 @@ router.post('/create-group', async (req, res) => {
     if (!cls) return res.status(404).json({ error: 'Class not found' });
 
     // Resolve teacher & guardian phone numbers
-    const [teacher, guardian] = await Promise.all([
-      cls.teacher ? User.findById(cls.teacher).select('phone name').lean() : null,
-      cls.student?.guardianId ? User.findById(cls.student.guardianId).select('phone name guardianInfo.students').lean() : null,
+    const [teacher, guardian, studentUser] = await Promise.all([
+      cls.teacher ? User.findById(cls.teacher).select('phone firstName lastName').lean() : null,
+      cls.student?.guardianId ? User.findById(cls.student.guardianId).select('phone firstName lastName guardianInfo.students').lean() : null,
+      cls.student?.studentId ? User.findOne({ _id: cls.student.studentId, role: 'student' }).select('phone whatsapp firstName lastName').lean() : null,
     ]);
 
     const teacherPhone = teacher?.phone || null;
     const guardianPhone = guardian?.phone || null;
+    let embeddedStudent = null;
+    if (guardian?.guardianInfo?.students && cls.student?.studentId) {
+      embeddedStudent = guardian.guardianInfo.students.find(
+        (student) => String(student._id) === String(cls.student.studentId)
+      ) || null;
+    }
+    const studentPhone = studentUser?.whatsapp || studentUser?.phone || embeddedStudent?.whatsapp || embeddedStudent?.phone || null;
 
     // Resolve student name from guardian's embedded students
     let studentName = cls.student?.studentName || 'Student';
-    if (guardian?.guardianInfo?.students && cls.student?.studentId) {
-      const sub = guardian.guardianInfo.students.find(
-        (s) => String(s._id) === String(cls.student.studentId)
-      );
-      if (sub?.name) studentName = sub.name;
+    if (embeddedStudent) {
+      studentName = `${embeddedStudent.firstName || ''} ${embeddedStudent.lastName || ''}`.trim() || studentName;
+    } else if (studentUser) {
+      studentName = `${studentUser.firstName || ''} ${studentUser.lastName || ''}`.trim() || studentName;
     }
 
-    const result = await whatsapp.createGroup({ teacherPhone, guardianPhone, studentName });
-    res.json(result);
+    const result = await whatsapp.createGroup({ teacherPhone, guardianPhone, studentPhone, studentName });
+    res.json({
+      ...result,
+      participantPreview: {
+        teacher: Boolean(teacherPhone),
+        student: Boolean(studentPhone),
+        guardian: Boolean(guardianPhone),
+      },
+    });
   } catch (err) {
     console.error('[WhatsApp] create-group error:', err.message);
     res.status(500).json({ error: err.message });

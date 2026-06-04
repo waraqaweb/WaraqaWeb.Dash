@@ -28,6 +28,7 @@ const PublicEvaluationFeedbackPage = () => {
   const [state, setState] = useState({ loading: true, error: null, studentName: '', alreadySubmitted: false });
   const [ratings, setRatings] = useState({});
   const [comment, setComment] = useState('');
+  const [heardAboutUs, setHeardAboutUs] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
 
@@ -44,14 +45,17 @@ const PublicEvaluationFeedbackPage = () => {
     return () => { cancel = true; };
   }, [token]);
 
-  const canSubmit = useMemo(() => FEEDBACK_QUESTIONS.every((q) => ratings[q.key]), [ratings]);
+  const canSubmit = useMemo(
+    () => FEEDBACK_QUESTIONS.every((q) => ratings[q.key]) && heardAboutUs.trim().length > 0,
+    [ratings, heardAboutUs]
+  );
 
   const submit = async (e) => {
     e.preventDefault();
     if (!canSubmit || submitting) return;
     setSubmitting(true);
     try {
-      await api.post(`/evaluations/feedback/${token}`, { ratings, comment });
+      await api.post(`/evaluations/feedback/${token}`, { ratings, comment, heardAboutUs });
       setDone(true);
     } catch (err) {
       setState((s) => ({ ...s, error: err?.response?.data?.message || 'Failed to submit feedback' }));
@@ -107,6 +111,19 @@ const PublicEvaluationFeedbackPage = () => {
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               placeholder="Optional"
+            />
+          </div>
+          <div className="mt-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-medium mb-1">How did you hear about Waraqa?</div>
+              <div className="text-xs text-gray-500">Required</div>
+            </div>
+            <input
+              className="w-full border border-gray-300 rounded p-2 text-sm"
+              value={heardAboutUs}
+              onChange={(e) => setHeardAboutUs(e.target.value)}
+              placeholder="Friend, WhatsApp, Instagram, Google, school, teacher recommendation..."
+              maxLength={500}
             />
           </div>
           <button

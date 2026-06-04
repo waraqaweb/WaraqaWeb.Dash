@@ -121,7 +121,7 @@ async function getQr() {
  * Create a WhatsApp group named "Waraqa: <studentName>"
  * with teacher, guardian, and the two fixed admin numbers.
  */
-async function createGroup({ teacherPhone, guardianPhone, studentName }) {
+async function createGroup({ teacherPhone, guardianPhone, studentPhone, studentName }) {
   if (!isReady || !client) throw new Error('WhatsApp not connected. Scan QR first.');
 
   resetIdleTimer();
@@ -129,8 +129,21 @@ async function createGroup({ teacherPhone, guardianPhone, studentName }) {
   const groupName = `Waraqa: ${studentName}`;
 
   const participants = new Set();
-  if (teacherPhone) participants.add(formatPhone(teacherPhone) + '@c.us');
-  if (guardianPhone) participants.add(formatPhone(guardianPhone) + '@c.us');
+  const invitedParticipants = [];
+  const missingParticipants = [];
+  const addParticipant = (role, phone) => {
+    const formattedPhone = formatPhone(phone);
+    if (!formattedPhone) {
+      missingParticipants.push(role);
+      return;
+    }
+    participants.add(`${formattedPhone}@c.us`);
+    invitedParticipants.push(role);
+  };
+
+  addParticipant('teacher', teacherPhone);
+  addParticipant('student', studentPhone);
+  addParticipant('guardian', guardianPhone);
   ADMIN_NUMBERS.forEach((n) => participants.add(n + '@c.us'));
 
   const arr = [...participants];
@@ -140,7 +153,9 @@ async function createGroup({ teacherPhone, guardianPhone, studentName }) {
   return {
     groupName,
     groupId: result.gid?._serialized || result.gid || null,
-    participantsInvited: arr.length
+    participantsInvited: arr.length,
+    invitedParticipants,
+    missingParticipants,
   };
 }
 

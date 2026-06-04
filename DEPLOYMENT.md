@@ -23,9 +23,20 @@ What it does:
 - stages all local edits with `git add -A`
 - runs `node --check` on changed backend `.js/.mjs/.cjs` files
 - runs `npm --prefix frontend run build` unless `-SkipLocalBuild` is used
+- fetches `origin/main` before creating the deploy commit
+- rebases with `git pull --rebase --autostash` when the branch is only behind `origin/main`
+- stops early if the branch already has unpublished or diverged commits, so it does not replay stale deploy commits on top of newer remote history
 - creates a numbered commit with your summary and a UTC timestamp
 - pushes `HEAD` directly to `origin/main` by default
 - SSHes to the droplet and runs `deploy/scripts/deploy.sh auto`
+
+If it fails:
+
+- it writes a full failure report to `.git/waraqa-deploy-diagnostics/last-deploy-error.md`
+- it writes a Copilot-ready repair prompt to `.git/waraqa-deploy-diagnostics/last-deploy-copilot-prompt.txt`
+- it copies that repair prompt to the clipboard when possible
+- it prints the prompt to the terminal so you can paste it into Copilot Chat and press Enter
+- it includes local-only and remote-only commit lists in that report so diverged-history failures are obvious
 
 ```powershell
 git status

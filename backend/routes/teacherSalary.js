@@ -81,6 +81,137 @@ function recomputeFinancials(invoice, computedTotalHours) {
   };
 }
 
+/**
+ * Refresh an in-memory invoice's `exchangeRateSnapshot` and EGP totals from the latest
+ * MonthlyExchangeRates entry for its (month, year). Used so admins always see the live
+ * rate on unpaid invoices without waiting for the rate-update cascade.
+ *
+ * - No-op for `paid` or `archived` invoices (their rate is locked at payment time).
+ * - No-op when the admin set an explicit `overrides.exchangeRate`.
+ * - No-op when the live rate matches the snapshot.
+ * - Does NOT save to DB; only mutates the passed object (Mongoose doc or lean plain object).
+ *
+ * Returns the same `invoice` reference for chaining.
+ */
+async function refreshLiveExchangeRate(invoice) {
+  if (!invoice) return invoice;
+  const status = invoice.status;
+  if (status === 'paid' || status === 'archived') return invoice;
+  if (invoice.overrides && invoice.overrides.exchangeRate != null) return invoice;
+
+  const month = invoice.month;
+  const year = invoice.year;
+  if (!month || !year) return invoice;
+
+  const live = await MonthlyExchangeRates.findOne({ month, year }).lean();
+  if (!live) return invoice;
+
+  const liveRate = Number(live.rate);
+  const currentRate = Number(invoice.exchangeRateSnapshot?.rate || 0);
+  if (!Number.isFinite(liveRate) || liveRate <= 0) return invoice;
+  if (Math.abs(liveRate - currentRate) < 0.0001) return invoice;
+
+  const round = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+  invoice.exchangeRateSnapshot = {
+    ...(invoice.exchangeRateSnapshot || {}),
+    rate: liveRate,
+    source: live.source || invoice.exchangeRateSnapshot?.source,
+    setBy: live.setBy || invoice.exchangeRateSnapshot?.setBy,
+    setAt: live.setAt || invoice.exchangeRateSnapshot?.setAt,
+  };
+
+  const grossUSD = Number(invoice.grossAmountUSD || 0);
+  const bonusesUSD = Number(invoice.bonusesUSD || 0);
+  const extrasUSD = Number(invoice.extrasUSD || 0);
+  const totalUSD = Number(invoice.totalUSD || (grossUSD + bonusesUSD + extrasUSD));
+
+  invoice.grossAmountEGP = round(grossUSD * liveRate);
+  invoice.bonusesEGP = round(bonusesUSD * liveRate);
+  invoice.extrasEGP = round(extrasUSD * liveRate);
+  invoice.totalEGP = round(totalUSD * liveRate);
+
+  const fee = invoice.transferFeeSnapshot || {};
+  let transferFeeEGP = 0;
+  if (fee.model === 'flat') transferFeeEGP = round(Number(fee.value || 0));
+  else if (fee.model === 'percentage') transferFeeEGP = round(invoice.totalEGP * Number(fee.value || 0) / 100);
+  invoice.transferFeeEGP = transferFeeEGP;
+
+  invoice.netAmountEGP = round(Math.max(0, invoice.totalEGP - transferFeeEGP));
+
+  if (typeof invoice.markModified === 'function') {
+    invoice.markModified('exchangeRateSnapshot');
+  }
+
+  return invoice;
+}
+
+/**
+ * Bulk-refresh a list of (lean) invoices using the latest MonthlyExchangeRates entries.
+ * Single round-trip to fetch all relevant period rates, then patches each invoice in place.
+ */
+async function refreshLiveExchangeRateBulk(invoices = []) {
+  if (!Array.isArray(invoices) || invoices.length === 0) return invoices;
+
+  const periodKeys = new Set();
+  for (const inv of invoices) {
+    if (!inv) continue;
+    if (inv.status === 'paid' || inv.status === 'archived') continue;
+    if (inv.overrides && inv.overrides.exchangeRate != null) continue;
+    if (inv.month && inv.year) periodKeys.add(`${inv.year}-${inv.month}`);
+  }
+  if (periodKeys.size === 0) return invoices;
+
+  const periods = Array.from(periodKeys).map(k => {
+    const [y, m] = k.split('-').map(Number);
+    return { year: y, month: m };
+  });
+
+  const rates = await MonthlyExchangeRates.find({ $or: periods }).lean();
+  const rateMap = new Map(rates.map(r => [`${r.year}-${r.month}`, r]));
+
+  const round = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+  for (const inv of invoices) {
+    if (!inv || inv.status === 'paid' || inv.status === 'archived') continue;
+    if (inv.overrides && inv.overrides.exchangeRate != null) continue;
+    const live = rateMap.get(`${inv.year}-${inv.month}`);
+    if (!live) continue;
+    const liveRate = Number(live.rate);
+    const currentRate = Number(inv.exchangeRateSnapshot?.rate || 0);
+    if (!Number.isFinite(liveRate) || liveRate <= 0) continue;
+    if (Math.abs(liveRate - currentRate) < 0.0001) continue;
+
+    inv.exchangeRateSnapshot = {
+      ...(inv.exchangeRateSnapshot || {}),
+      rate: liveRate,
+      source: live.source || inv.exchangeRateSnapshot?.source,
+      setBy: live.setBy || inv.exchangeRateSnapshot?.setBy,
+      setAt: live.setAt || inv.exchangeRateSnapshot?.setAt,
+    };
+
+    const grossUSD = Number(inv.grossAmountUSD || 0);
+    const bonusesUSD = Number(inv.bonusesUSD || 0);
+    const extrasUSD = Number(inv.extrasUSD || 0);
+    const totalUSD = Number(inv.totalUSD || (grossUSD + bonusesUSD + extrasUSD));
+
+    inv.grossAmountEGP = round(grossUSD * liveRate);
+    inv.bonusesEGP = round(bonusesUSD * liveRate);
+    inv.extrasEGP = round(extrasUSD * liveRate);
+    inv.totalEGP = round(totalUSD * liveRate);
+
+    const fee = inv.transferFeeSnapshot || {};
+    let transferFeeEGP = 0;
+    if (fee.model === 'flat') transferFeeEGP = round(Number(fee.value || 0));
+    else if (fee.model === 'percentage') transferFeeEGP = round(inv.totalEGP * Number(fee.value || 0) / 100);
+    inv.transferFeeEGP = transferFeeEGP;
+
+    inv.netAmountEGP = round(Math.max(0, inv.totalEGP - transferFeeEGP));
+  }
+
+  return invoices;
+}
+
 const getPreviousPeriod = (month, year) => {
   if (!month || !year) return null;
   let prevMonth = Number(month) - 1;
@@ -345,6 +476,8 @@ router.get('/admin/invoices', authenticateToken, requireAdmin, async (req, res) 
       TeacherInvoice.countDocuments(query)
     ]);
 
+    await refreshLiveExchangeRateBulk(invoices);
+
     res.json({
       success: true,
       invoices,
@@ -414,6 +547,9 @@ router.get('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, r
 
     // Recompute totalHours from actual linked classes to catch any discrepancy
     const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
+
+    // Pull the latest exchange rate for unpaid invoices before recomputing.
+    await refreshLiveExchangeRate(invoice);
 
     // Recompute financial fields if hours changed
     const corrected = recomputeFinancials(invoice, computedTotalHours);
@@ -1447,6 +1583,9 @@ router.get('/teacher/invoices/:id', authenticateToken, requireTeacher, async (re
     // Recompute totalHours from actual linked classes
     const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
 
+    // Pull the latest exchange rate for unpaid invoices before recomputing.
+    await refreshLiveExchangeRate(invoice);
+
     // Recompute financial fields if hours changed
     const corrected = recomputeFinancials(invoice, computedTotalHours);
 
@@ -1506,6 +1645,9 @@ router.get('/teacher/invoices/:id/pdf', authenticateToken, requireTeacher, async
       return res.status(400).json({ error: 'Draft invoices cannot be downloaded' });
     }
 
+    // Refresh live exchange rate for unpaid invoices before rendering the PDF.
+    await refreshLiveExchangeRate(invoice);
+
     // Generate PDF
     const pdfDoc = teacherInvoicePDFService.generateInvoicePDF(invoice);
 
@@ -1534,6 +1676,9 @@ router.get('/admin/invoices/:id/pdf', authenticateToken, requireAdmin, async (re
     if (!invoice) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
+
+    // Refresh live exchange rate for unpaid invoices before rendering the PDF.
+    await refreshLiveExchangeRate(invoice);
 
     // Generate PDF
     const pdfDoc = teacherInvoicePDFService.generateInvoicePDF(invoice);
@@ -1587,6 +1732,9 @@ router.get('/shared/:token', async (req, res) => {
     }));
 
     const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
+
+    // Pull the latest exchange rate for unpaid invoices before recomputing.
+    await refreshLiveExchangeRate(inv);
 
     // Recompute financial fields if hours changed
     const corrected = recomputeFinancials(inv, computedTotalHours);

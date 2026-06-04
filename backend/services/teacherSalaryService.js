@@ -212,6 +212,11 @@ class TeacherSalaryService {
 
       console.log(`[aggregateTeacherHours] Found ${classes.length} countable classes`);
 
+      // Full-month hours across ALL countable classes (before excluding already-billed ones).
+      // Used to determine the rate tier so an early/partial invoice doesn't get billed at
+      // a lower tier than the teacher's full monthly volume warrants.
+      const fullMonthHours = classes.reduce((sum, cls) => sum + (Number(cls.duration || 0) / 60), 0);
+
       const { availableClasses, excludedIds } = await this.filterAlreadyBilledClasses(classes);
       if (excludedIds.length > 0) {
         console.log(`[aggregateTeacherHours] Skipping ${excludedIds.length} classes already billed in other invoices`);
@@ -227,6 +232,7 @@ class TeacherSalaryService {
 
       return {
         totalHours: Math.round(totalHours * 1000) / 1000, // Round to 3 decimals
+        fullMonthHours: Math.round(fullMonthHours * 1000) / 1000,
         classIds,
         classes: availableClasses,
         meta: {
@@ -408,7 +414,12 @@ class TeacherSalaryService {
       }
 
       // Aggregate hours
-      const { totalHours, classIds, classes } = await this.aggregateTeacherHours(teacherId, month, year);
+      const { totalHours, fullMonthHours, classIds, classes } = await this.aggregateTeacherHours(teacherId, month, year);
+
+      // Rate tier is based on the teacher's FULL monthly volume (including classes already
+      // billed in an earlier same-month invoice). Otherwise, a partial/remaining invoice
+      // would land in a lower tier than the teacher's true monthly hours warrant.
+      const tierHours = Math.max(Number(fullMonthHours || 0), Number(totalHours || 0));
 
       const parsedSnapshot = Number(monthlyHoursSnapshot);
       const snapshotHours = Number.isFinite(parsedSnapshot)
@@ -431,8 +442,8 @@ class TeacherSalaryService {
 
       invoiceHours = Math.round(invoiceHours * 1000) / 1000;
 
-      // Get rate information
-      const rateInfo = await this.getTeacherRate(teacher, totalHours);
+      // Get rate information (tier determined by full-month hours, not just billable hours)
+      const rateInfo = await this.getTeacherRate(teacher, tierHours);
 
       // Get exchange rate
       const exchangeRateInfo = await this.getExchangeRate(month, year);
@@ -693,7 +704,7 @@ class TeacherSalaryService {
           });
 
           // Aggregate hours for this teacher
-          const { totalHours, classes, meta } = await this.aggregateTeacherHours(teacher._id, month, year);
+          const { totalHours, fullMonthHours, classes, meta } = await this.aggregateTeacherHours(teacher._id, month, year);
 
           if (existing) {
             if (!dryRun && existing.status !== 'paid') {
@@ -750,13 +761,35 @@ class TeacherSalaryService {
 
                     existing.classIds.push(...newClassIds);
                     existing.totalHours += addedHours;
-                    existing.totalUSD = (existing.totalHours * existing.rateSnapshot.rate).toFixed(2);
-                    
-                    // Recalculate EGP
-                    const exchangeRate = await MonthlyExchangeRates.getRateForMonth(month, year);
-                    existing.totalEGP = (existing.totalUSD * exchangeRate.rate).toFixed(2);
-                    existing.netEGP = existing.totalEGP; // Will be recalculated if there are fees
-                    
+
+                    // Re-evaluate the rate tier against the teacher's full monthly volume so
+                    // an early partial invoice gets bumped up to the correct tier once the rest
+                    // of the month's classes are appended. Skip when a custom rate override is
+                    // locked in.
+                    if (existing.rateSnapshot?.partition !== 'custom') {
+                      try {
+                        const tierHours = Math.max(
+                          Number(fullMonthHours || 0),
+                          Number(existing.totalHours || 0)
+                        );
+                        const refreshedRate = await this.getTeacherRate(teacher, tierHours);
+                        if (refreshedRate && Number.isFinite(Number(refreshedRate.rate))) {
+                          existing.rateSnapshot = {
+                            partition: refreshedRate.partition,
+                            rate: refreshedRate.rate,
+                            effectiveFrom: existing.rateSnapshot?.effectiveFrom || new Date(),
+                            description: refreshedRate.description
+                          };
+                        }
+                      } catch (rateErr) {
+                        console.warn('[generateMonthlyInvoices] Failed to refresh rate tier on existing invoice:', rateErr?.message || rateErr);
+                      }
+                    }
+
+                    // Use the canonical recompute path (handles bonuses, extras, transfer fee
+                    // and EGP conversion using the live exchange-rate snapshot).
+                    existing.calculateAmounts();
+
                     await existing.save();
 
                     await this.markClassesAsBilled(newClassIds, existing._id);

@@ -747,24 +747,45 @@ try {
 		'FRONTEND_IMAGE_REPO=ghcr.io/waraqaweb/waraqa-frontend',
 		'git fetch origin "$DEPLOY_BRANCH" >/dev/null 2>&1 || true',
 		'TARGET_SHA="$(git rev-parse "origin/$DEPLOY_BRANCH")"',
+		'TARGET_IMAGE="$FRONTEND_IMAGE_REPO:$TARGET_SHA"',
 		'echo "[deploy] target sha: $TARGET_SHA (mode: $DEPLOY_MODE)"',
+		# Deploy is "satisfied" only when the RUNNING frontend container is the GHCR
+		# image for this exact commit. Checking git HEAD alone is NOT enough: a local
+		# build can leave HEAD correct while the container still serves a stale image.
+		'running_is_target() { local fid img; fid="$(docker ps --filter name=frontend --format "{{.ID}}" | head -n1)"; img="$(docker inspect --format "{{.Config.Image}}" "$fid" 2>/dev/null || true)"; [ "$img" = "$TARGET_IMAGE" ]; }',
 		'deploy_ok=0',
-		'for attempt in 1 2 3 4 5 6; do',
-		'  for i in $(seq 1 180); do [ -d /tmp/waraqa-deploy.lock ] || break; if [ "$i" = "1" ]; then echo "[deploy] another deploy is in progress (likely the CI auto-deploy from this push); waiting..."; fi; sleep 5; done',
-		'  git fetch origin "$DEPLOY_BRANCH" >/dev/null 2>&1 || true',
-		'  TARGET_SHA="$(git rev-parse "origin/$DEPLOY_BRANCH")"',
-		'  if [ "$DEPLOY_MODE" = "pull" ]; then',
-		'    fid="$(docker ps --filter name=frontend --format "{{.ID}}" | head -n1)"',
-		'    running_img="$(docker inspect --format "{{.Config.Image}}" "$fid" 2>/dev/null || true)"',
-		'    if [ "$(git rev-parse HEAD)" = "$TARGET_SHA" ] && [ "$running_img" = "$FRONTEND_IMAGE_REPO:$TARGET_SHA" ]; then echo "[deploy] server already running image $TARGET_SHA; deploy satisfied by the concurrent run."; deploy_ok=1; break; fi',
-		'    if ! docker manifest inspect "$FRONTEND_IMAGE_REPO:$TARGET_SHA" >/dev/null 2>&1; then echo "[deploy] GHCR image for $TARGET_SHA is not published yet; waiting for the image build to finish..."; sleep 15; continue; fi',
-		'    if DEPLOY_IMAGE_TAG="$TARGET_SHA" TARGET_REF="$TARGET_SHA" ./deploy/scripts/deploy.sh pull; then deploy_ok=1; break; fi',
-		'  else',
-		'    if [ "$(git rev-parse HEAD)" = "$TARGET_SHA" ]; then echo "[deploy] server already at origin/$DEPLOY_BRANCH; deploy satisfied by the concurrent run."; deploy_ok=1; break; fi',
-		'    if ./deploy/scripts/deploy.sh "$DEPLOY_MODE"; then deploy_ok=1; break; fi',
+		'if [ "$DEPLOY_MODE" = "pull" ]; then',
+		# Phase 1: wait (up to ~15m) for the CI build to publish this commit''s image,
+		# or for the CI auto-deploy (triggered by this same push) to finish on its own.
+		'  for w in $(seq 1 90); do',
+		'    if running_is_target; then echo "[deploy] server already running image $TARGET_SHA; deploy satisfied by the concurrent CI run."; deploy_ok=1; break; fi',
+		'    if docker manifest inspect "$TARGET_IMAGE" >/dev/null 2>&1; then echo "[deploy] GHCR image $TARGET_SHA is published; proceeding to pull."; break; fi',
+		'    if [ "$w" = "1" ]; then echo "[deploy] waiting for the CI image build to publish $TARGET_SHA (up to ~15m)..."; fi',
+		'    sleep 10',
+		'  done',
+		# Phase 2: pull the GHCR image for this commit, retrying on lock races with
+		# the concurrent CI deploy. Re-check "satisfied" each round so we never do a
+		# redundant force-recreate if CI already deployed this exact image.
+		'  if [ "$deploy_ok" != "1" ]; then',
+		'    for attempt in 1 2 3 4 5 6; do',
+		'      for i in $(seq 1 180); do [ -d /tmp/waraqa-deploy.lock ] || break; if [ "$i" = "1" ]; then echo "[deploy] another deploy is in progress (likely the CI auto-deploy from this push); waiting..."; fi; sleep 5; done',
+		'      if running_is_target; then echo "[deploy] server already running image $TARGET_SHA; deploy satisfied by the concurrent CI run."; deploy_ok=1; break; fi',
+		'      if ! docker manifest inspect "$TARGET_IMAGE" >/dev/null 2>&1; then echo "[deploy] image $TARGET_SHA still not published; waiting..."; sleep 15; continue; fi',
+		'      if DEPLOY_IMAGE_TAG="$TARGET_SHA" TARGET_REF="$TARGET_SHA" ./deploy/scripts/deploy.sh pull; then deploy_ok=1; break; fi',
+		'      echo "[deploy] pull attempt $attempt did not complete (lock race with CI); retrying..."; sleep 5',
+		'    done',
 		'  fi',
-		'  echo "[deploy] deploy attempt $attempt did not complete (lock race or image not ready yet); retrying..."; sleep 5',
-		'done',
+		'else',
+		# Legacy local-build modes (auto/all/no-build): not the production path, but
+		# kept for manual overrides. Wait for any in-progress deploy, then build.
+		'  for attempt in 1 2 3; do',
+		'    for i in $(seq 1 180); do [ -d /tmp/waraqa-deploy.lock ] || break; if [ "$i" = "1" ]; then echo "[deploy] another deploy is in progress; waiting..."; fi; sleep 5; done',
+		'    git fetch origin "$DEPLOY_BRANCH" >/dev/null 2>&1 || true',
+		'    if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$DEPLOY_BRANCH")" ]; then echo "[deploy] server already at origin/$DEPLOY_BRANCH; deploy satisfied by the concurrent run."; deploy_ok=1; break; fi',
+		'    if ./deploy/scripts/deploy.sh "$DEPLOY_MODE"; then deploy_ok=1; break; fi',
+		'    echo "[deploy] deploy attempt $attempt did not complete (lock race); retrying..."; sleep 5',
+		'  done',
+		'fi',
 		'if [ "$deploy_ok" != "1" ]; then echo "[deploy] ERROR: deploy did not complete after multiple attempts."; exit 1; fi'
 	)
 	# Join with newlines so the remote bash sees a real multi-line script.

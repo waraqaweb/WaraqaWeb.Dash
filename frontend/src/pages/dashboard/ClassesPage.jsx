@@ -2371,10 +2371,6 @@ fetchClassesRef.current = fetchClasses;
   const res = await api.get(`/classes/${cls._id}`);
       const fullClass = res.data.class;
 
-      if (fullClass.student?.guardianId) {
-        await fetchStudentsForEditModal(fullClass.student.guardianId._id || fullClass.student.guardianId);
-      }
-
       const classTimezone = fullClass.timezone || adminTimezone;
       const rawPatternSlots = Array.isArray(fullClass.recurrenceDetails)
         ? fullClass.recurrenceDetails
@@ -2447,6 +2443,15 @@ fetchClassesRef.current = fetchClasses;
       setShowEditModal(true);
       // Default update scope: if editing a recurring series, assume user wants to update the whole series
       setEditUpdateScope(fullClass.isRecurring ? 'all' : 'single');
+
+      // Load the guardian's students in the background so the modal opens
+      // immediately instead of waiting on a second sequential request.
+      const guardianForStudents = fullClass.student?.guardianId?._id || fullClass.student?.guardianId;
+      if (guardianForStudents) {
+        fetchStudentsForEditModal(guardianForStudents);
+      } else {
+        setEditStudents([]);
+      }
     } catch (err) {
       console.error("Failed to fetch class details for edit:", err);
       alert("Failed to load class details for editing");
@@ -4305,7 +4310,7 @@ fetchClassesRef.current = fetchClasses;
         <FABCluster
           isAdmin={isAdminUser}
           isTeacher={isTeacherUser}
-          onCreate={() => navigate('/classes/create', { state: { background: location } })}
+          onCreate={() => { resetNewClassForm(); setShowCreateModal(true); }}
           onShare={() => handleOpenShareModal()}
           onSeriesScanner={() => setShowSeriesScanner(true)}
           onMeetingAvailability={() => navigate('/dashboard/availability?source=classes')}

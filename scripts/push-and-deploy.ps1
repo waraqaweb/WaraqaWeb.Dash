@@ -114,6 +114,8 @@ function Set-FileUtf8NoBom {
 		[string]$Path,
 
 		[Parameter(Mandatory = $true)]
+		[AllowEmptyString()]
+		[AllowEmptyCollection()]
 		[string[]]$Lines
 	)
 
@@ -693,6 +695,7 @@ try {
 		$commitBody += '- (empty deploy commit)'
 	}
 
+	$script:CurrentStep = 'writing commit message'
 	Set-FileUtf8NoBom -Path $script:CommitMessageFile -Lines $commitBody
 
 	$script:CurrentStep = 'creating git commit'
@@ -708,7 +711,8 @@ try {
 	$script:CurrentStep = 'reading new commit sha'
 	$script:CommitSha = Get-CommandOutput -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -FailureMessage 'Failed to read the new commit SHA.'
 
-	Sync-LocalCommitWithRemote -BranchName $Branch
+	# The branch was already reconciled with origin via Sync-BranchBeforeDeploy
+	# (run before staging/committing). After committing we only need to push.
 	Push-WithRetry -BranchName $Branch
 
 	$sshArguments = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20')

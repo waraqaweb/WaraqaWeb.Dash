@@ -344,6 +344,14 @@ export default function CreateClassModal({
   const [selectedStudentOption, setSelectedStudentOption] = useState(null);
   const duplicateActionRef = useRef(null);
 
+  // Use local state if no external state is provided (standalone mode)
+  // NOTE: Never rely on Function#toString() for behavior; prod builds can minify it.
+  // These MUST be declared before any effect/dependency-array that reads them,
+  // otherwise the render-time dependency array hits a temporal dead zone.
+  const isStandalone = typeof setNewClass !== 'function';
+  const currentNewClass = isStandalone ? localNewClass : newClass;
+  const currentSetNewClass = isStandalone ? setLocalNewClass : setNewClass;
+
   // Session draft persistence for the create-class form so the user can
   // navigate away (e.g. to peek a teacher schedule) and return without
   // losing typed input. Scoped to the browser session.
@@ -414,12 +422,6 @@ export default function CreateClassModal({
     } catch (e) { /* ignore quota */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, JSON.stringify(currentNewClass || {})]);
-  
-  // Use local state if no external state is provided (standalone mode)
-  // NOTE: Never rely on Function#toString() for behavior; prod builds can minify it.
-  const isStandalone = typeof setNewClass !== 'function';
-  const currentNewClass = isStandalone ? localNewClass : newClass;
-  const currentSetNewClass = isStandalone ? setLocalNewClass : setNewClass;
 
   // Ensure we always have a default class type
   useEffect(() => {

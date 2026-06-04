@@ -5,8 +5,13 @@ param(
 
 	[int]$ChangeNumber,
 
-	[ValidateSet('auto', 'all', 'no-build')]
-	[string]$DeployMode = 'auto',
+	# 'pull' is the production model: deploy the CI-built GHCR image for this exact
+	# commit (matches .github/workflows/deploy-droplet.yml). The local-build modes
+	# ('auto'/'all'/'no-build') use docker-compose.yml images and must NOT be used
+	# for normal prod deploys — doing so switches prod onto locally-built images and
+	# can serve a stale bundle if the local image is older than the GHCR one.
+	[ValidateSet('pull', 'auto', 'all', 'no-build')]
+	[string]$DeployMode = 'pull',
 
 	[string]$Branch = 'main',
 
@@ -739,13 +744,26 @@ try {
 		# retrying if it loses a race for the lock. This keeps the script idempotent.
 		('DEPLOY_BRANCH={0}' -f (ConvertTo-BashLiteral $Branch)),
 		('DEPLOY_MODE={0}' -f (ConvertTo-BashLiteral $DeployMode)),
+		'FRONTEND_IMAGE_REPO=ghcr.io/waraqaweb/waraqa-frontend',
+		'git fetch origin "$DEPLOY_BRANCH" >/dev/null 2>&1 || true',
+		'TARGET_SHA="$(git rev-parse "origin/$DEPLOY_BRANCH")"',
+		'echo "[deploy] target sha: $TARGET_SHA (mode: $DEPLOY_MODE)"',
 		'deploy_ok=0',
-		'for attempt in 1 2 3; do',
+		'for attempt in 1 2 3 4 5 6; do',
 		'  for i in $(seq 1 180); do [ -d /tmp/waraqa-deploy.lock ] || break; if [ "$i" = "1" ]; then echo "[deploy] another deploy is in progress (likely the CI auto-deploy from this push); waiting..."; fi; sleep 5; done',
 		'  git fetch origin "$DEPLOY_BRANCH" >/dev/null 2>&1 || true',
-		'  if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$DEPLOY_BRANCH")" ]; then echo "[deploy] server already at origin/$DEPLOY_BRANCH; deploy satisfied by the concurrent run."; deploy_ok=1; break; fi',
-		'  if ./deploy/scripts/deploy.sh "$DEPLOY_MODE"; then deploy_ok=1; break; fi',
-		'  echo "[deploy] deploy attempt $attempt did not complete (likely lost a race for the lock); retrying..."; sleep 5',
+		'  TARGET_SHA="$(git rev-parse "origin/$DEPLOY_BRANCH")"',
+		'  if [ "$DEPLOY_MODE" = "pull" ]; then',
+		'    fid="$(docker ps --filter name=frontend --format "{{.ID}}" | head -n1)"',
+		'    running_img="$(docker inspect --format "{{.Config.Image}}" "$fid" 2>/dev/null || true)"',
+		'    if [ "$(git rev-parse HEAD)" = "$TARGET_SHA" ] && [ "$running_img" = "$FRONTEND_IMAGE_REPO:$TARGET_SHA" ]; then echo "[deploy] server already running image $TARGET_SHA; deploy satisfied by the concurrent run."; deploy_ok=1; break; fi',
+		'    if ! docker manifest inspect "$FRONTEND_IMAGE_REPO:$TARGET_SHA" >/dev/null 2>&1; then echo "[deploy] GHCR image for $TARGET_SHA is not published yet; waiting for the image build to finish..."; sleep 15; continue; fi',
+		'    if DEPLOY_IMAGE_TAG="$TARGET_SHA" TARGET_REF="$TARGET_SHA" ./deploy/scripts/deploy.sh pull; then deploy_ok=1; break; fi',
+		'  else',
+		'    if [ "$(git rev-parse HEAD)" = "$TARGET_SHA" ]; then echo "[deploy] server already at origin/$DEPLOY_BRANCH; deploy satisfied by the concurrent run."; deploy_ok=1; break; fi',
+		'    if ./deploy/scripts/deploy.sh "$DEPLOY_MODE"; then deploy_ok=1; break; fi',
+		'  fi',
+		'  echo "[deploy] deploy attempt $attempt did not complete (lock race or image not ready yet); retrying..."; sleep 5',
 		'done',
 		'if [ "$deploy_ok" != "1" ]; then echo "[deploy] ERROR: deploy did not complete after multiple attempts."; exit 1; fi'
 	)

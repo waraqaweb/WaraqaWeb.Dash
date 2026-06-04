@@ -235,4 +235,14 @@ compose exec -T backend sh -lc '
   du -sh "/data/library-uploads" || true;
 '
 
+# Reclaim disk so the droplet does not fill up over time. Per-commit GHCR image
+# tags accumulate quickly (~2.5GB each), so a dangling-only prune ("-f" without
+# "-a") is NOT enough — it leaves the old *tagged* images behind. Use "-af" to
+# drop unused tagged images while keeping a 48h rollback window, plus build cache.
+# Never prune volumes here (mongo data + library assets live in volumes).
+echo "[deploy] Reclaiming disk: pruning unused images/build cache older than 48h..."
+docker image prune -af --filter "until=48h" >/dev/null 2>&1 || true
+docker builder prune -f --filter "until=48h" >/dev/null 2>&1 || true
+df -h / | tail -1 || true
+
 echo "[deploy] done: $NEW_SHA"

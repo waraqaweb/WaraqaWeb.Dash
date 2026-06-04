@@ -158,6 +158,8 @@ const ALWAYS_INCLUDED_CLASS_STATUSES = new Set(['attended', 'missed_by_student']
 const FUTURE_ELIGIBLE_STATUSES = new Set(['scheduled', 'in_progress', 'completed']);
 const DEFAULT_DYNAMIC_LOOKAHEAD_MONTHS = 6;
 const MAX_DYNAMIC_CLASS_RESULTS = 400;
+// Matches the frontend's fallback (ClassesPage "Pending report") and reportSubmissionService.calculateTeacherDeadline default.
+const DEFAULT_TEACHER_REPORT_WINDOW_HOURS = 72;
 
 const normalizeStatusValue = (value) => (typeof value === 'string' ? value.trim().toLowerCase() : '');
 
@@ -357,15 +359,40 @@ const isAdminExtensionActive = (reportSubmission = {}, now = new Date()) => {
 };
 
 const isSubmissionWindowActive = (cls, now) => {
-  const allowance = ensureDate(cls?.reportSubmissionAllowance || cls?.reportSubmission?.teacherDeadline);
-  if (allowance && now <= allowance) {
-    return true;
-  }
+  const rs = cls?.reportSubmission || {};
+
+  // Admin extension takes precedence over everything else.
+  if (isAdminExtensionActive(rs, now)) return true;
+
+  // Explicit "closed" marker — window has been finalized.
+  if (rs.status === 'unreported') return false;
+
+  const allowance = ensureDate(cls?.reportSubmissionAllowance || rs.teacherDeadline);
+  if (allowance && now <= allowance) return true;
+
   if (cls?.reportSubmissionExtendedUntil) {
     const extended = ensureDate(cls.reportSubmissionExtendedUntil);
     if (extended && now <= extended) return true;
   }
-  return isAdminExtensionActive(cls?.reportSubmission, now);
+
+  // Fallback when report tracking hasn't been initialized yet (e.g. cron not yet run):
+  // mirror the frontend's classEnd + 72h heuristic so guardian invoices include past
+  // classes still labelled "Pending report" in the UI.
+  if (!allowance) {
+    const scheduledDate = ensureDate(cls?.scheduledDate || cls?.dateTime);
+    if (scheduledDate) {
+      const durationMin = Math.max(0, Number(cls?.duration || 0));
+      const classEndMs = scheduledDate.getTime() + durationMin * 60 * 1000;
+      const fallbackDeadlineMs = classEndMs + DEFAULT_TEACHER_REPORT_WINDOW_HOURS * 60 * 60 * 1000;
+      if (now.getTime() <= fallbackDeadlineMs) return true;
+    }
+    // No allowance stored, but tracking lifecycle says window is still open.
+    if (rs.status === 'open' || rs.status === 'admin_extended' || rs.status === 'pending') {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 /**
@@ -3244,6 +3271,49 @@ class InvoiceService {
           .limit(MAX_DYNAMIC_CLASS_RESULTS)
           .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId guardianRate')
           .lean();
+      }
+
+      // Fold in stranded past classes — unbilled, still-eligible classes scheduled
+      // BEFORE billingStart that haven't been picked up by another live invoice.
+      // Without this, classes the guardian invoice missed at creation time (e.g.
+      // because their report window hadn't initialized) stay invisible to syncs
+      // even after the fix to eligibility.
+      if (isUnpaid && billingStart) {
+        const strandedQuery = {
+          'student.guardianId': guardianId,
+          'student.studentId': { $in: studentIds },
+          hidden: { $ne: true },
+          status: { $nin: [...NOT_ELIGIBLE_STATUSES] },
+          paidByGuardian: { $ne: true },
+          scheduledDate: { $lt: billingStart }
+        };
+        if (excludedObjectIds.length) {
+          strandedQuery._id = { $nin: excludedObjectIds };
+        }
+
+        const strandedDocs = await Class.find(strandedQuery)
+          .sort({ scheduledDate: 1 })
+          .limit(MAX_DYNAMIC_CLASS_RESULTS)
+          .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId guardianRate')
+          .lean();
+
+        if (Array.isArray(strandedDocs) && strandedDocs.length) {
+          const nowForStranded = new Date();
+          const seen = new Set((classDocs || []).map((cls) => cls?._id && cls._id.toString()).filter(Boolean));
+          for (const cls of strandedDocs) {
+            if (!cls?._id) continue;
+            const strId = cls._id.toString();
+            if (seen.has(strId)) continue;
+            const enriched = {
+              ...cls,
+              reportSubmissionAllowance: ensureDate(cls?.reportSubmission?.teacherDeadline),
+              reportSubmissionExtendedUntil: ensureDate(cls?.reportSubmission?.adminExtension?.expiresAt)
+            };
+            if (!isClassEligibleForDynamicInvoice(enriched, nowForStranded)) continue;
+            classDocs.push(cls);
+            seen.add(strId);
+          }
+        }
       }
 
       // Ensure classes already present on the invoice remain candidates even if they

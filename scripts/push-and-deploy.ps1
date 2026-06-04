@@ -732,7 +732,22 @@ try {
 		('echo "[deploy] change #{0}"' -f $script:DeployNumber),
 		'echo "[deploy] note: ${DEPLOY_NOTE}"',
 		'chmod +x deploy/scripts/deploy.sh',
-		('./deploy/scripts/deploy.sh {0}' -f $DeployMode)
+		# Pushing to the branch also triggers the GitHub Actions auto-deploy, so a
+		# CI deploy may already be running (holding /tmp/waraqa-deploy.lock). Wait for
+		# any in-progress deploy to finish, and if the server is already at the target
+		# commit (the CI deploy handled it) skip our own run. Otherwise run deploy.sh,
+		# retrying if it loses a race for the lock. This keeps the script idempotent.
+		('DEPLOY_BRANCH={0}' -f (ConvertTo-BashLiteral $Branch)),
+		('DEPLOY_MODE={0}' -f (ConvertTo-BashLiteral $DeployMode)),
+		'deploy_ok=0',
+		'for attempt in 1 2 3; do',
+		'  for i in $(seq 1 180); do [ -d /tmp/waraqa-deploy.lock ] || break; if [ "$i" = "1" ]; then echo "[deploy] another deploy is in progress (likely the CI auto-deploy from this push); waiting..."; fi; sleep 5; done',
+		'  git fetch origin "$DEPLOY_BRANCH" >/dev/null 2>&1 || true',
+		'  if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$DEPLOY_BRANCH")" ]; then echo "[deploy] server already at origin/$DEPLOY_BRANCH; deploy satisfied by the concurrent run."; deploy_ok=1; break; fi',
+		'  if ./deploy/scripts/deploy.sh "$DEPLOY_MODE"; then deploy_ok=1; break; fi',
+		'  echo "[deploy] deploy attempt $attempt did not complete (likely lost a race for the lock); retrying..."; sleep 5',
+		'done',
+		'if [ "$deploy_ok" != "1" ]; then echo "[deploy] ERROR: deploy did not complete after multiple attempts."; exit 1; fi'
 	)
 	# Join with newlines so the remote bash sees a real multi-line script.
 	$remoteCommand = $remoteCommandLines -join "`n"

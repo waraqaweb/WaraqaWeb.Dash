@@ -3041,9 +3041,57 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), async (req, res) =
       // This ensures onClassStateChanged is called for duration/status changes,
       // which updates guardian hours and invoice item snapshots.
       const prevScheduledDate = classDoc.scheduledDate;
+      const prevSubject = classDoc.subject;
       Object.assign(classDoc, updatePayload);
       await classDoc.save();
       const updated = classDoc.toObject();
+
+      // Cascade subject rename to the rest of the recurring series so future generations
+      // and other sibling instances stay aligned. Skip when admin explicitly opts out.
+      try {
+        const newSubject = typeof updates.subject === 'string' ? updates.subject.trim() : null;
+        const cascadeFlag = updates.cascadeSubjectToSeries;
+        const cascadeOptOut = cascadeFlag === false || cascadeFlag === 'false';
+        if (newSubject && newSubject !== (prevSubject || '').trim() && classDoc.parentRecurringClass && !cascadeOptOut) {
+          const patternId = classDoc.parentRecurringClass;
+          await Class.findByIdAndUpdate(patternId, { $set: { subject: newSubject } });
+          await Class.updateMany(
+            {
+              _id: { $ne: classDoc._id },
+              parentRecurringClass: patternId,
+              status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian', 'cancelled_by_system'] },
+            },
+            { $set: { subject: newSubject } }
+          );
+
+          // Refresh descriptions on any affected unpaid invoices for this guardian/student.
+          try {
+            const guardianId = classDoc.student?.guardianId;
+            const studentId = classDoc.student?.studentId;
+            if (guardianId && studentId) {
+              const InvoiceModel = require('../models/Invoice');
+              const InvoiceService = require('../services/invoiceService');
+              const affected = await InvoiceModel.find({
+                guardian: guardianId,
+                'items.student': studentId,
+                status: { $in: ['draft', 'pending', 'sent', 'overdue'] },
+                deleted: { $ne: true },
+              }).select('_id');
+              for (const inv of affected) {
+                await InvoiceService.syncUnpaidInvoiceItems(inv._id, {
+                  adminUserId: req.user._id,
+                  note: 'Refreshed item descriptions after series subject rename',
+                  cleanupDuplicates: false,
+                });
+              }
+            }
+          } catch (invSyncErr) {
+            console.warn('Series subject invoice resync failed:', invSyncErr?.message || invSyncErr);
+          }
+        }
+      } catch (cascadeErr) {
+        console.warn('Series subject cascade failed:', cascadeErr?.message || cascadeErr);
+      }
 
       // Notification trigger: class rescheduled or time changed
       try {

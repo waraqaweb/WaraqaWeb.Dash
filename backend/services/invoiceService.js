@@ -2547,7 +2547,7 @@ class InvoiceService {
           studentSnapshot: existingItem?.studentSnapshot || resolveStudentSnapshotFromClass(cls),
           teacher: cls.teacher || existingItem?.teacher || null,
           teacherSnapshot: existingItem?.teacherSnapshot || null,
-          description: existingItem?.description || cls.subject || 'Class session',
+          description: cls.subject || existingItem?.description || 'Class session',
           date: cls.scheduledDate || existingItem?.date || new Date(),
           duration: minutes,
           rate,
@@ -3460,7 +3460,7 @@ class InvoiceService {
             ? { _id: teacherDoc._id, firstName: teacherDoc.firstName, lastName: teacherDoc.lastName }
             : (existingItem?.teacher || cls.teacher || null),
           teacherSnapshot,
-          description: existingItem?.description || cls.subject || 'Class session',
+          description: cls.subject || existingItem?.description || 'Class session',
           date: cls.scheduledDate || existingItem?.date,
           duration: minutes,
           rate: hourlyRate,
@@ -3565,7 +3565,7 @@ class InvoiceService {
         }
       });
 
-      // Re-price existing items whose rate has changed (e.g. cls.guardianRate set after invoice creation)
+      // Re-price/refresh existing items whose rate or class subject has drifted.
       const rateUpdateItemIds = [];
       const rateUpdateItems = [];
       desiredByClass.forEach((desired, key) => {
@@ -3573,14 +3573,19 @@ class InvoiceService {
         if (!current) return; // will be added below
         const desiredRate = Number(desired.rate || 0);
         const currentRate = Number(current.rate || 0);
-        if (desiredRate > 0 && Math.abs(desiredRate - currentRate) > 0.001) {
-          // Remove old, re-add with corrected rate
+        const rateChanged = desiredRate > 0 && Math.abs(desiredRate - currentRate) > 0.001;
+        const desiredDescription = (desired.description || desired.class?.subject || '').trim();
+        const currentDescription = (current.description || '').trim();
+        const descriptionChanged = Boolean(desiredDescription) && desiredDescription !== currentDescription;
+        if (rateChanged || descriptionChanged) {
+          // Remove old, re-add with corrected rate and/or refreshed description
           if (current._id) rateUpdateItemIds.push(String(current._id));
           const cls = desired.class || {};
           const classId = normalizeClassId(cls?._id || desired.class || desired.lessonId || key);
           const classObjectId = toObjectId(classId) || classId;
           const minutes = Number(desired.duration || cls?.duration || 0) || 0;
-          const amount = Math.round(((minutes / 60) * desiredRate) * 100) / 100;
+          const effectiveRate = rateChanged ? desiredRate : (currentRate || desiredRate);
+          const amount = Math.round(((minutes / 60) * effectiveRate) * 100) / 100;
           rateUpdateItems.push({
             lessonId: String(classId || ''),
             class: classObjectId,
@@ -3588,10 +3593,10 @@ class InvoiceService {
             studentSnapshot: desired.studentSnapshot || current.studentSnapshot || resolveStudentSnapshotFromClass(cls),
             teacher: desired.teacher?._id || desired.teacher || current.teacher || null,
             teacherSnapshot: desired.teacherSnapshot || current.teacherSnapshot || null,
-            description: desired.description || current.description || cls?.subject || 'Class session',
+            description: desiredDescription || current.description || cls?.subject || 'Class session',
             date: desired.date || current.date || cls?.scheduledDate || null,
             duration: minutes,
-            rate: desiredRate,
+            rate: effectiveRate,
             amount,
             attended: Boolean(desired.attended || current.attended),
             status: desired.status || current.status || 'scheduled'

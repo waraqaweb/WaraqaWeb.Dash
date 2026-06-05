@@ -126,59 +126,95 @@ export const READING_LETTERS = {
   },
 };
 
-// Words progression — same lesson order as letters, but with example words
-// the student must read aloud. Each entry maps to one Noor Al-Bayan lesson.
+// Words progression — grouped by concept so related examples (all tanwīn
+// variants together, all medd letters together, lām qamariyyah + shamsiyyah
+// in one panel, etc.) sit side by side instead of being split across lessons.
 export const READING_WORDS = [
-  // ── Easy · Lessons 1-7 ───────────────────────────────────────────────────
-  { id: 'wL2-fatha', level: 'easy', title: 'L2 · 3-letter words · fatḥah only',
+  // ── Easy · basics ────────────────────────────────────────────────────────
+  { id: 'wB1-fatha', level: 'easy', title: 'L1 · 3-letter words · fatḥah',
     items: ['كَتَبَ','ذَهَبَ','فَتَحَ','رَسَمَ','جَلَسَ','شَرِبَ'] },
-  { id: 'wL3-kasra', level: 'easy', title: 'L3 · fatḥah + kasrah',
-    items: ['كَتِفَ','عَلِمَ','سَمِعَ','شَرِبَ','لَعِبَ'] },
-  { id: 'wL4-damma', level: 'easy', title: 'L4 · fatḥah + kasrah + ḍammah',
-    items: ['كَتُبَ','سَهُلَ','كَرُمَ','حَسُنَ','صَدُقَ'] },
-  { id: 'wL5-medd-alif', level: 'easy', title: 'L5 · medd · alif',
-    items: ['قَالَ','بَابٌ → بَابَا','مَالٌ → مَالَا','نَامَ','نَارٌ → نَارَا'] },
-  { id: 'wL5-medd-waw',  level: 'easy', title: 'L5 · medd · wāw',
-    items: ['نُورٌ','يَقُولُ','مُؤْمِنُونَ','يَكْتُبُونَ'] },
-  { id: 'wL5-medd-yaa',  level: 'easy', title: 'L5 · medd · yāʾ',
-    items: ['فِيلٌ','سَعِيدٌ','كَرِيمٌ','مُؤْمِنِينَ'] },
-  { id: 'wL6-tanween-f', level: 'easy', title: 'L6 · tanwīn fatḥah',
-    items: ['كِتَابًا','وَلَدًا','بَابًا','مَطَرًا'] },
-  { id: 'wL6-tanween-k', level: 'easy', title: 'L6 · tanwīn kasrah',
-    items: ['كِتَابٍ','وَلَدٍ','بَابٍ','بَيْتٍ'] },
-  { id: 'wL6-tanween-d', level: 'easy', title: 'L6 · tanwīn ḍammah',
-    items: ['كِتَابٌ','وَلَدٌ','بَابٌ','بَيْتٌ'] },
-  { id: 'wL7-sukoon',    level: 'easy', title: 'L7 · sukūn',
-    items: ['اكْتُبْ','اقْرَأْ','يَجْلِسْ','مَكْتَبْ','يَنْصُرْ'] },
+  { id: 'wB2-diac', level: 'easy', title: 'L2 · Mixed short vowels · fatḥah · kasrah · ḍammah',
+    items: ['عَلِمَ','سَمِعَ','لَعِبَ','كَتُبَ','حَسُنَ','كَرُمَ','صَدُقَ'] },
+  { id: 'wB3-medd-all', level: 'easy', title: 'L3 · Medd letters · ا · و · ي (all three together)',
+    note: 'Long vowels — extend each medd for two counts.',
+    items: ['قَالَ','نَامَ','بَابَا','مَالَا','نُورٌ','يَقُولُ','مُؤْمِنُونَ','فِيلٌ','سَعِيدٌ','كَرِيمٌ','مُؤْمِنِينَ'] },
+  { id: 'wB4-tanween-all', level: 'easy', title: 'L4 · Tanwīn · all three (ـً · ـٍ · ـٌ together)',
+    note: 'Tanwīn fatḥah, kasrah and ḍammah side by side.',
+    items: ['كِتَابًا','كِتَابٍ','كِتَابٌ','وَلَدًا','وَلَدٍ','وَلَدٌ','بَابًا','بَابٍ','بَابٌ','بَيْتًا','بَيْتٍ','بَيْتٌ','مَطَرًا','مَطَرٍ','مَطَرٌ'] },
+  { id: 'wB5-sukoon', level: 'easy', title: 'L5 · Sukūn',
+    items: ['اكْتُبْ','اقْرَأْ','يَجْلِسْ','يَنْصُرْ','مَكْتَبْ'] },
 
-  // ── Medium · Lessons 8-13 ────────────────────────────────────────────────
-  { id: 'wL8-lam-qamari',    level: 'medium', title: 'L8 · Lām Qamariyyah (voiced)',
-    items: ['الْقَمَرُ','الْكِتَابُ','الْبَيْتُ','الْعَالَمِينَ','الْفَجْرُ'] },
-  { id: 'wL9-stop',          level: 'medium', title: 'L9 · Stopping with sukūn',
-    items: ['ذَهَبَ → ذَهَبْ','كَتَبَ → كَتَبْ','شَرِبَ → شَرِبْ','جَلَسَ → جَلَسْ'] },
-  { id: 'wL10-shadda',       level: 'medium', title: 'L10 · Shaddah with different diacritics',
-    items: ['مُحَمَّدٌ','سَلَّمَ','كَرَّرَ','حَدَّثَ','رَبِّ','رَبُّ'] },
-  { id: 'wL11-shadda-medd',  level: 'medium', title: 'L11 · Shaddah + diacritic + medd',
+  // ── Medium · word features ───────────────────────────────────────────────
+  { id: 'wM1-lam-all',  level: 'medium', title: 'M1 · Lām al-taʿrīf · qamariyyah + shamsiyyah (together)',
+    note: 'Voiced lām with the 14 qamariyya letters · silent lām (shaddah on the next) with the 14 shamsiyya letters.',
+    items: [
+      // Qamariyyah (voiced lām)
+      'الْقَمَرُ','الْكِتَابُ','الْبَيْتُ','الْفَجْرُ','الْعَالَمِينَ','الْكَوْثَرُ','الْحَمْدُ',
+      // Shamsiyyah (silent lām, shaddah on next)
+      'الشَّمْسُ','النَّجْمُ','الرَّحْمَٰنُ','التِّينُ','الزَّيْتُونُ','الصَّلَاةُ','الدِّينُ','اللَّيْلُ',
+    ] },
+  { id: 'wM2-shadda', level: 'medium', title: 'M2 · Shaddah with different diacritics',
+    note: 'Shaddah doubles the letter (sākin + mutaḥarrik).',
+    items: ['مُحَمَّدٌ','سَلَّمَ','كَرَّرَ','حَدَّثَ','رَبِّ','رَبُّ','رَبَّ'] },
+  { id: 'wM3-shadda-medd', level: 'medium', title: 'M3 · Shaddah + medd',
     items: ['رَبَّانَا','عَلَّمْنَا','كَرَّمَا','حَدَّثُوا','مُؤَدِّبِي'] },
-  { id: 'wL12-similar',      level: 'medium', title: 'L12 · Similar letters in words',
+  { id: 'wM4-similar', level: 'medium', title: 'M4 · Similar letters in words',
     items: ['بَتَّ / تَبَّ','ثَبَتَ / تَبِثَ','حَجَّ / جَحَدَ','ذَهَبَ / دَهَبَ','سَرَّ / صَرَّ'] },
-  { id: 'wL13-lam-qamari-r', level: 'medium', title: 'L13 · Lām Qamariyyah review',
-    items: ['الْأَرْضُ','الْعِلْمُ','الْحَقُّ','الْكِتَابُ','الْهُدَى','الْيَوْمُ'] },
 
-  // ── Advanced · Lessons 14-19 ─────────────────────────────────────────────
-  { id: 'wL14-lam-shamsi',    level: 'advanced', title: 'L14 · Lām Shamsiyyah (silent)',
-    items: ['الشَّمْسُ','النَّجْمُ','الرَّحْمَٰنُ','التِّينُ','الزَّيْتُونُ','الصَّلَاةُ'] },
-  { id: 'wL15-stop-tanween',  level: 'advanced', title: 'L15 · Stopping on tanwīn & circled tāʾ',
-    items: ['كَرِيمًا → كَرِيمَا','وَلَدٍ → وَلَدْ','بَيْتٌ → بَيْتْ','مَدْرَسَةٌ → مَدْرَسَهْ','جَنَّةٍ → جَنَّهْ'] },
-  { id: 'wL16-shadda-tanween',level: 'advanced', title: 'L16 · Shaddah + tanwīn',
-    items: ['حَقًّا','مَرَّةً','صَفٍّ','مَحَلٍّ','حُبًّا'] },
-  { id: 'wL17-stop-qalqalah', level: 'advanced', title: 'L17 · Stop on qalqalah / ghunnah',
-    items: ['الْحَقّ','يَجِدْ','يَكْتُبْ','يَقْطَعْ','ثُمَّ','أُمّ','مِنْ','عَنْ'] },
-  { id: 'wL18-double-sakin',  level: 'advanced', title: 'L18 · Two sākin letters in a row',
-    items: ['قُلِ ادْعُوا','وَلَمْ يَكُنْ','أَنِ اعْبُدُوا','إِنِ امْرُؤٌ'] },
-  { id: 'wL19-syllables',     level: 'advanced', title: 'L19 · Word divided into syllables',
-    items: ['مَدْ-رَ-سَة','مُعَلِّ-مٌ','مُسْ-تَ-قِيمْ','الْ-حَمْ-دُ','رَ-بِّ الْ-عَا-لَ-مِينْ'] },
-  { id: 'wL20-sentence',      level: 'advanced', title: 'Reading short sentences',
+  // ── Advanced · Qurʾānic features + stopping + iltiqāʾ ────────────────────
+  { id: 'wA1-small-letters', level: 'advanced', title: 'A1 · Small Qurʾānic letters · alif · yāʾ · wāw',
+    note: 'Super-script (dagger) letters used in the muṣḥaf — read as long vowels.',
+    items: [
+      // small alif (dagger alif)
+      'الرَّحْمَٰنُ','ذَٰلِكَ','هَٰذَا','إِلَٰهٌ','يَٰأَيُّهَا',
+      // small yāʾ
+      'إِبْرَٰهِۧمَ',
+      // small wāw
+      'دَاوُۥدَ','أُولُوا',
+    ] },
+  { id: 'wA2-shadda-tanween', level: 'advanced', title: 'A2 · Shaddah + tanwīn',
+    items: ['حَقًّا','مَرَّةً','صَفٍّ','مَحَلٍّ','حُبًّا','رَبٌّ'] },
+  { id: 'wA3-stopping', level: 'advanced', title: 'A3 · Stopping rules · how to stop on the word ending',
+    note: 'Apply the stopping rule to the ending and only pronounce the rest.',
+    items: [
+      // sukūn on last letter
+      'كَتَبَ → كَتَبْ',
+      // tāʾ marbūṭah → hāʾ sākin
+      'مَدْرَسَةٌ → مَدْرَسَهْ',
+      'جَنَّةٍ → جَنَّهْ',
+      // tanwīn fatḥah → alif
+      'كَرِيمًا → كَرِيمَا',
+      // tanwīn kasrah / ḍammah → sukūn
+      'وَلَدٍ → وَلَدْ',
+      'بَيْتٌ → بَيْتْ',
+      // qalqalah letters (ق ط ب ج د) — bounce on stop
+      'يَجِدْ (qalqalah · د)',
+      'الْحَقّ (qalqalah · shaddah + ق)',
+      'يَقْطَعْ (qalqalah · ط)',
+      // word ending with nūn / mīm + shaddah — hold the ghunnah
+      'ثُمَّ → ثُمّْ',
+      'أُمّ → أُمّْ',
+      'إِنَّ → إِنّْ',
+      // stopping on a shaddah without ghunnah
+      'مَسَّ → مَسّْ',
+    ] },
+  { id: 'wA4-iltiqa', level: 'advanced', title: 'A4 · Iltiqāʾ al-sākinayn · three types',
+    note: '① tanwīn + hamzat al-waṣl · ② sākin + lām (al-) + sākin · ③ medd letter dropped before sākin.',
+    items: [
+      // Type 1: tanwīn + hamzat al-waṣl → kasra inserted on the tanwīn
+      'مُحَمَّدٌ ابْنُ → مُحَمَّدُنِ بْنُ',
+      'عَلِيمٌ ابْنُ → عَلِيمُنِ بْنُ',
+      // Type 2: sākin + lām (al-) → kasra on the previous sākin
+      'قُلِ ادْعُوا',
+      'وَلَمْ يَكُنِ الَّذِينَ',
+      'إِنِ امْرُؤٌ',
+      'أَنِ اعْبُدُوا',
+      // Type 3: medd letter elided before a sākin
+      'فِي الْكِتَابِ → فِ لْكِتَابِ',
+      'قَالُوا ادْعُوا → قَالُ دْعُوا',
+      'فِي السَّمَاءِ → فِ سَّمَاءِ',
+    ] },
+  { id: 'wA5-sentence', level: 'advanced', title: 'A5 · Reading short sentences',
     items: ['ذَهَبَ مُحَمَّدٌ إِلَى الْمَدْرَسَةِ.','قَرَأَ الْوَلَدُ كِتَابًا.','الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ.'] },
 ];
 

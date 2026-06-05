@@ -185,6 +185,38 @@ router.post('/book', optionalAuth, async (req, res) => {
   }
 });
 
+// Admin-only meeting creator used by the "Create from paste" dialog. Skips
+// availability / slot / time-off guards; the admin is recording an out-of-band
+// booking with explicit start/end times.
+router.post('/admin-create', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await meetingService.adminCreateMeeting({
+      adminId: parseAdminId(req),
+      requester: req.user,
+      payload: req.body || {},
+    });
+    res.status(201).json({ message: 'Meeting created', meeting: result.meeting });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Returns the meeting the admin is currently in (or closest to now within a
+// configurable window). Used by the evaluation studio to offer a prefill
+// without re-entering guardian / student data.
+router.get('/current', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const windowMinutes = Number(req.query.windowMinutes) || 90;
+    const result = await meetingService.getCurrentMeetingForAdmin({
+      adminId: parseAdminId(req),
+      windowMinutes,
+    });
+    res.json({ meeting: result.meeting });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const meetings = await meetingService.listMeetings({

@@ -21,21 +21,23 @@ import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
 import { showToast } from '../../utils/toast';
 import {
-  IMPORTANT_LINKS, DEFAULT_BIO,
+  DEFAULT_BIO,
   READING_LETTERS, READING_WORDS,
   QURAN_PASSAGES, TAJWEED_THEORY, TAJWEED_PRACTICAL,
   WEAKNESS_AREAS, FEEDBACK_QUESTIONS,
   ARABIC_SKILLS,
 } from '../../data/evaluationContent';
 import { SURAHS } from '../../data/surahs';
+import { subjects as CLASS_SUBJECTS } from '../../constants/reportTopicsConfig';
 import '../../styles/quran-fonts.css';
 import {
   ChevronRight, ChevronLeft, ChevronDown, Plus, Trash2, Copy, CheckCircle2,
   XCircle, MinusCircle, Send, Link as LinkIcon, Users,
   History, Maximize2, Minimize2, Shuffle, Pencil, Save,
   ArrowUp, ArrowDown, RefreshCw, BookOpen, Flag, Sparkles,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, MessageCircle, CalendarClock, Wand2,
 } from 'lucide-react';
+import { getCurrentAdminMeeting } from '../../api/meetings';
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Constants & helpers                                                       */
@@ -48,8 +50,7 @@ const ALL_SECTIONS = [
   { key: 'reading-words',     title: 'Reading · Words',         ar: 'قراءة · الكلمات',       icon: '📖', testable: true },
   { key: 'quran-recitation',  title: 'Qur’an Recitation',       ar: 'تلاوة القرآن',          icon: '۝', testable: true },
   { key: 'quran-memorization',title: 'Qur’an Memorization',     ar: 'تحفيظ القرآن',        icon: '📜', testable: true },
-  { key: 'tajweed-theory',    title: 'Tajweed · Theory',        ar: 'تجويد · نظري',          icon: '🎓', testable: true },
-  { key: 'tajweed-practical', title: 'Tajweed · Practical',     ar: 'تجويد · تطبيقي',        icon: '🎧', testable: true },
+  { key: 'tajweed',           title: 'Tajweed',                 ar: 'التجويد',               icon: '🎓', testable: true },
   { key: 'arabic-skills',     title: 'Arabic Skills',           ar: 'مهارات العربية',        icon: '🌐', testable: true },
   { key: 'summary',           title: 'Summary & next steps',    ar: 'الخلاصة',               testable: false },
   { key: 'links',             title: 'Important links',         ar: 'روابط مهمة',            testable: false },
@@ -59,7 +60,6 @@ const VERDICTS = [
   { v: 'correct',   label: 'Correct',   icon: CheckCircle2, cls: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
   { v: 'partial',   label: 'Partial',   icon: MinusCircle,  cls: 'bg-amber-100 text-amber-700 border-amber-300' },
   { v: 'incorrect', label: 'Incorrect', icon: XCircle,      cls: 'bg-rose-100 text-rose-700 border-rose-300' },
-  { v: 'skipped',   label: 'Skipped',   icon: MinusCircle,  cls: 'bg-zinc-100 text-zinc-700 border-zinc-300' },
 ];
 
 // Vibrant palette for letter / word tiles.
@@ -119,6 +119,8 @@ const emptyStudent = (name = '') => ({
   name: name || 'Student',
   age: undefined,
   contactEmail: '',
+  contactPhone: '',
+  contactNote: '',
   desiredSubjects: [],
   availability: '',
   generalNotes: '',
@@ -173,6 +175,11 @@ const EvaluationPage = ({ isActive = true }) => {
   const [selectedSections, setSelectedSections] = useState([]);
   const [welcomeShown, setWelcomeShown] = useState(true);
   const [sideMenuHidden, setSideMenuHidden] = useState(false);
+  const [evalLinks, setEvalLinks] = useState([]);
+  const [linksLoaded, setLinksLoaded] = useState(false);
+  const [whatsappNumber, setWhatsappNumber] = useState('');
+  const [currentMeeting, setCurrentMeeting] = useState(null);
+  const [meetingPrefilled, setMeetingPrefilled] = useState(false);
 
   const shellRef = useRef(null);
   const saveTimer = useRef(null);
@@ -214,6 +221,44 @@ const EvaluationPage = ({ isActive = true }) => {
     })();
     return () => { alive = false; };
   }, []);
+
+  // ── Important links + WhatsApp number (admin-editable Setting) ───────────
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [linksRes, waRes] = await Promise.all([
+          api.get('/settings/evaluation/links').catch(() => null),
+          api.get('/settings/evaluation/whatsapp').catch(() => null),
+        ]);
+        if (!alive) return;
+        const links = Array.isArray(linksRes?.data?.links) ? linksRes.data.links : [];
+        setEvalLinks(links.map((l) => ({
+          label: l.label || '',
+          url: l.url || '',
+          description: l.description || '',
+          includeInFeedback: Boolean(l.includeInFeedback),
+        })));
+        setWhatsappNumber(waRes?.data?.number || '');
+      } finally {
+        if (alive) setLinksLoaded(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // ── Current meeting (for evaluation prefill banner) ──────────────────────
+  useEffect(() => {
+    if (!isActive) return undefined;
+    let alive = true;
+    (async () => {
+      try {
+        const meeting = await getCurrentAdminMeeting({ windowMinutes: 90 });
+        if (alive) setCurrentMeeting(meeting || null);
+      } catch { /* ignore */ }
+    })();
+    return () => { alive = false; };
+  }, [isActive]);
 
   // ── Load or create session ────────────────────────────────────────────────
   useEffect(() => {
@@ -282,6 +327,75 @@ const EvaluationPage = ({ isActive = true }) => {
       return { ...prev, students };
     });
   }, [activeStudentIdx, updateSession]);
+
+  // Apply a patch to every student in the session (used by "apply to all" toggles).
+  const updateAllStudents = useCallback((patch) => {
+    updateSession((prev) => {
+      const students = (prev.students || []).map((s) => ({ ...s, ...patch }));
+      return { ...prev, students };
+    });
+  }, [updateSession]);
+
+  // ── Important links: save (admin) ─────────────────────────────────────────
+  const saveEvalLinks = useCallback(async (next) => {
+    setEvalLinks(next);
+    try {
+      await api.put('/settings/evaluation/links', { links: next });
+    } catch (err) {
+      console.error('Failed to save evaluation links', err);
+      showToast('Failed to save important links');
+    }
+  }, []);
+
+  const saveWhatsappNumber = useCallback(async (next) => {
+    setWhatsappNumber(next);
+    try {
+      await api.put('/settings/evaluation/whatsapp', { number: next });
+    } catch (err) {
+      console.error('Failed to save WhatsApp number', err);
+    }
+  }, []);
+
+  // ── Prefill the active student from the current meeting ──────────────────
+  const prefillFromMeeting = useCallback(() => {
+    if (!currentMeeting) return;
+    const guardianName = currentMeeting.guardianName
+      || currentMeeting.bookingPayload?.guardian?.guardianName
+      || '';
+    const guardianEmail = currentMeeting.guardianEmail
+      || currentMeeting.bookingPayload?.guardian?.guardianEmail
+      || '';
+    const guardianPhone = currentMeeting.guardianPhone
+      || currentMeeting.bookingPayload?.guardian?.guardianPhone
+      || '';
+    const studentsFromMeeting = Array.isArray(currentMeeting.students)
+      ? currentMeeting.students
+      : (currentMeeting.bookingPayload?.students || []);
+    updateSession((prev) => {
+      if (!prev) return prev;
+      const baseStudents = studentsFromMeeting.length
+        ? studentsFromMeeting.map((m, i) => {
+            const existing = (prev.students || [])[i] || emptyStudent();
+            return {
+              ...existing,
+              name: m.name || existing.name || `Student ${i + 1}`,
+              age: m.age ?? existing.age,
+              contactEmail: existing.contactEmail || guardianEmail || '',
+              contactPhone: existing.contactPhone || guardianPhone || '',
+              desiredSubjects: existing.desiredSubjects?.length
+                ? existing.desiredSubjects
+                : (Array.isArray(m.courses) ? m.courses : []),
+              generalNotes: existing.generalNotes
+                || [m.notes, currentMeeting.notes].filter(Boolean).join('\n').trim(),
+            };
+          })
+        : (prev.students || []);
+      const title = prev.title || (guardianName ? `Evaluation · ${guardianName}` : prev.title);
+      return { ...prev, title, students: baseStudents.length ? baseStudents : prev.students };
+    });
+    setMeetingPrefilled(true);
+    showToast('Filled from current meeting');
+  }, [currentMeeting, updateSession]);
 
   const upsertAnswer = useCallback((entry) => {
     updateStudent((s) => {
@@ -480,24 +594,33 @@ const EvaluationPage = ({ isActive = true }) => {
         {/* Centre — scrollable content */}
         <main className="eval-content">
           {welcomeShown ? (
-            <WelcomeSlide
-              branding={branding}
-              adminName={adminName}
-              bio={bio}
-              onBioChange={setBio}
-              activeStudent={activeStudent}
-              onUpdateStudent={updateStudent}
-              students={session.students || []}
-              activeStudentIdx={activeStudentIdx}
-              onPickStudent={setActiveStudentIdx}
-              onAddStudent={addStudentInline}
-              onRenameStudent={renameStudent}
-              onRemoveStudent={removeStudent}
-              allSections={ALL_SECTIONS}
-              selected={selectedSections}
-              onToggle={toggleSection}
-              onStart={startEvaluation}
-            />
+            <>
+              {currentMeeting && !meetingPrefilled && (
+                <MeetingPrefillBanner
+                  meeting={currentMeeting}
+                  onPrefill={prefillFromMeeting}
+                  onDismiss={() => setCurrentMeeting(null)}
+                />
+              )}
+              <WelcomeSlide
+                branding={branding}
+                adminName={adminName}
+                bio={bio}
+                onBioChange={setBio}
+                activeStudent={activeStudent}
+                onUpdateStudent={updateStudent}
+                students={session.students || []}
+                activeStudentIdx={activeStudentIdx}
+                onPickStudent={setActiveStudentIdx}
+                onAddStudent={addStudentInline}
+                onRenameStudent={renameStudent}
+                onRemoveStudent={removeStudent}
+                allSections={ALL_SECTIONS}
+                selected={selectedSections}
+                onToggle={toggleSection}
+                onStart={startEvaluation}
+              />
+            </>
           ) : (
             <>
               <div className="eval-slide-v2 slide-anim" key={section.key}>
@@ -550,24 +673,17 @@ const EvaluationPage = ({ isActive = true }) => {
                     onAnswer={upsertAnswer}
                   />
                 )}
-                {section.key === 'tajweed-theory' && (
-                  <TajweedTheorySlide
+                {section.key === 'tajweed' && (
+                  <TajweedSlide
                     student={activeStudent}
                     onAnswer={upsertAnswer}
                     editorOn={editorOn}
-                    custom={customContent.tajweedTheory}
-                    setCustom={(p) => setCustom('tajweedTheory', p)}
-                    resetCustom={() => resetCustom('tajweedTheory')}
-                  />
-                )}
-                {section.key === 'tajweed-practical' && (
-                  <TajweedPracticalSlide
-                    student={activeStudent}
-                    onAnswer={upsertAnswer}
-                    editorOn={editorOn}
-                    custom={customContent.tajweedPractical}
-                    setCustom={(p) => setCustom('tajweedPractical', p)}
-                    resetCustom={() => resetCustom('tajweedPractical')}
+                    customTheory={customContent.tajweedTheory}
+                    setCustomTheory={(p) => setCustom('tajweedTheory', p)}
+                    resetCustomTheory={() => resetCustom('tajweedTheory')}
+                    customPractical={customContent.tajweedPractical}
+                    setCustomPractical={(p) => setCustom('tajweedPractical', p)}
+                    resetCustomPractical={() => resetCustom('tajweedPractical')}
                   />
                 )}
                 {section.key === 'arabic-skills' && (
@@ -584,12 +700,18 @@ const EvaluationPage = ({ isActive = true }) => {
                   <SummarySlide
                     session={session}
                     student={activeStudent}
+                    students={session.students || []}
+                    activeStudentIdx={activeStudentIdx}
+                    onPickStudent={setActiveStudentIdx}
                     onChange={updateStudent}
-                    onSendFeedback={async (email) => {
+                    onSendFeedback={async (email, opts = {}) => {
                       try {
+                        const links = Array.isArray(opts.links)
+                          ? opts.links
+                          : evalLinks.filter((l) => l.includeInFeedback);
                         const { data } = await api.post(
                           `/evaluations/${session._id}/students/${activeStudent._id || ''}/send-feedback`,
-                          { email },
+                          { email, links },
                         );
                         showToast('Feedback request sent.');
                         return data?.link || '';
@@ -601,7 +723,39 @@ const EvaluationPage = ({ isActive = true }) => {
                     }}
                   />
                 )}
-                {section.key === 'links' && <LinksSlide />}
+                {section.key === 'links' && (
+                  <LinksSlide
+                    session={session}
+                    students={session.students || []}
+                    activeStudentIdx={activeStudentIdx}
+                    onPickStudent={setActiveStudentIdx}
+                    onUpdateStudent={updateStudent}
+                    onUpdateAllStudents={updateAllStudents}
+                    links={evalLinks}
+                    linksLoaded={linksLoaded}
+                    onSaveLinks={saveEvalLinks}
+                    whatsappNumber={whatsappNumber}
+                    onSaveWhatsappNumber={saveWhatsappNumber}
+                    onFinishSession={endTest}
+                    onSendFeedback={async (email, opts = {}) => {
+                      try {
+                        const links = Array.isArray(opts.links)
+                          ? opts.links
+                          : evalLinks.filter((l) => l.includeInFeedback);
+                        const { data } = await api.post(
+                          `/evaluations/${session._id}/students/${activeStudent._id || ''}/send-feedback`,
+                          { email, links },
+                        );
+                        showToast('Feedback request sent.');
+                        return data?.link || '';
+                      } catch (err) {
+                        const link = err?.response?.data?.link;
+                        showToast(err?.response?.data?.message || 'Failed to send feedback email');
+                        return link || '';
+                      }
+                    }}
+                  />
+                )}
               </div>
 
               <div className="eval-footer-bar">
@@ -1043,16 +1197,20 @@ const WelcomeSlide = ({
                 <input type="number" className="eval-input" value={activeStudent.age || ''} onChange={(e) => onUpdateStudent({ age: Number(e.target.value) || undefined })} />
               </div>
               <div className="full">
-                <label className="eval-field-label">Contact email · <span dir="rtl" className="font-naskh">البريد الإلكتروني</span></label>
-                <input className="eval-input" placeholder="name@example.com" value={activeStudent.contactEmail || ''} onChange={(e) => onUpdateStudent({ contactEmail: e.target.value })} />
+                <label className="eval-field-label">Intro note · <span dir="rtl" className="font-naskh">ملاحظة سريعة</span></label>
+                <input
+                  className="eval-input"
+                  placeholder="Anything you want to remember about this student…"
+                  value={activeStudent.contactNote || ''}
+                  onChange={(e) => onUpdateStudent({ contactNote: e.target.value })}
+                />
               </div>
               <div className="full">
-                <label className="eval-field-label">Availability · <span dir="rtl" className="font-naskh">المواعيد المتاحة</span></label>
-                <textarea className="eval-input min-h-[52px]" value={activeStudent.availability || ''} onChange={(e) => onUpdateStudent({ availability: e.target.value })} />
-              </div>
-              <div className="full">
-                <label className="eval-field-label">General notes · <span dir="rtl" className="font-naskh">ملاحظات عامة</span></label>
-                <textarea className="eval-input min-h-[52px]" value={activeStudent.generalNotes || ''} onChange={(e) => onUpdateStudent({ generalNotes: e.target.value })} />
+                <label className="eval-field-label">Subjects of interest · <span dir="rtl" className="font-naskh">المواد المطلوبة</span></label>
+                <SubjectChipsPicker
+                  value={activeStudent.desiredSubjects || []}
+                  onChange={(next) => onUpdateStudent({ desiredSubjects: next })}
+                />
               </div>
               <div className="full flex items-center gap-2 mt-1">
                 <input
@@ -1204,16 +1362,54 @@ const StudentSlide = ({ student, onChange }) => (
     <div className="grid sm:grid-cols-2 gap-3">
       <Field label="Name"><input className="eval-input" value={student.name || ''} onChange={(e) => onChange({ name: e.target.value })} /></Field>
       <Field label="Age"><input type="number" className="eval-input" value={student.age || ''} onChange={(e) => onChange({ age: Number(e.target.value) || undefined })} /></Field>
-      <Field label="Contact email"><input className="eval-input" value={student.contactEmail || ''} onChange={(e) => onChange({ contactEmail: e.target.value })} /></Field>
-      <Field label="Availability" full>
-        <textarea className="eval-input min-h-[60px]" value={student.availability || ''} onChange={(e) => onChange({ availability: e.target.value })} />
+      <Field label="Intro note" full>
+        <input
+          className="eval-input"
+          placeholder="Anything you want to remember about this student…"
+          value={student.contactNote || ''}
+          onChange={(e) => onChange({ contactNote: e.target.value })}
+        />
       </Field>
-      <Field label="General notes" full>
-        <textarea className="eval-input min-h-[80px]" value={student.generalNotes || ''} onChange={(e) => onChange({ generalNotes: e.target.value })} />
+      <Field label="Subjects of interest" full>
+        <SubjectChipsPicker
+          value={student.desiredSubjects || []}
+          onChange={(next) => onChange({ desiredSubjects: next })}
+        />
       </Field>
     </div>
+    <p className="mt-3 text-[11px] text-emerald-700/80">
+      Availability, general notes, contact email and phone will be collected on the closing
+      <span className="font-semibold"> Important links</span> tab.
+    </p>
   </div>
 );
+
+const SubjectChipsPicker = ({ value, onChange }) => {
+  const selected = Array.isArray(value) ? value : [];
+  const toggle = (s) => {
+    if (selected.includes(s)) onChange(selected.filter((x) => x !== s));
+    else onChange([...selected, s]);
+  };
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {CLASS_SUBJECTS.map((s) => {
+        const on = selected.includes(s);
+        return (
+          <button
+            key={s}
+            type="button"
+            onClick={() => toggle(s)}
+            className={`px-2.5 py-1 rounded-full text-[11px] border font-display-en ${on
+              ? 'bg-indigo-600 text-white border-indigo-600 shadow'
+              : 'bg-white/70 border-indigo-200 text-indigo-800 hover:bg-indigo-50'}`}
+          >
+            <bdi>{s}</bdi>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 const Field = ({ label, children, full }) => (
   <div className={full ? 'sm:col-span-2' : ''}>
@@ -1261,14 +1457,17 @@ const tileVerdictClass = (v) => (
 
 /**
  * Hook for tile-level testing inside Reading · Letters / Words slides.
- * • Clicking a tile toggles it into a "tested / pending" state (dimmed, dashed amber).
- * • Re-clicking removes it (back to default), or — if already graded — clears the
- *   grade and puts the tile back into pending.
- * • Section-level Correct/Partial/Incorrect button then bulk-applies that verdict
- *   to ALL currently-pending tiles in that group and clears the pending set.
+ *
+ * UX:
+ *   • Tap a tile → a focus overlay opens with the letter/word enlarged
+ *     and the three verdict buttons (Correct / Partial / Incorrect).
+ *   • Pick a verdict → the tile is graded and the overlay closes.
+ *   • Tapping an already-graded tile re-opens the overlay so the admin can
+ *     change or clear the verdict.
+ *   • No “skipped” — untouched tiles simply have no verdict.
  */
-const useTileTesting = ({ items, qid, section, level, groupTitle, answers, onAnswer }) => {
-  const [pending, setPending] = useState(() => new Set());
+const useTileTesting = ({ items, qid, section, level, groupTitle, onAnswer, answers }) => {
+  const [activeTile, setActiveTile] = useState(null);
 
   const itemQid = (idx) => `${qid}.t${idx}`;
   const verdictOf = (idx) => {
@@ -1277,44 +1476,75 @@ const useTileTesting = ({ items, qid, section, level, groupTitle, answers, onAns
     return v && v !== 'na' ? v : null;
   };
 
-  const togglePending = (idx) => {
-    const current = verdictOf(idx);
-    if (current) {
-      // Clear existing grade and queue for re-grading
-      onAnswer({ questionId: itemQid(idx), section, level, prompt: `${groupTitle} · ${items[idx]}`, expertVerdict: 'na' });
-      setPending((prev) => { const n = new Set(prev); n.add(idx); return n; });
-    } else {
-      setPending((prev) => {
-        const n = new Set(prev);
-        if (n.has(idx)) n.delete(idx); else n.add(idx);
-        return n;
-      });
-    }
-  };
+  const openTile = (idx) => setActiveTile(idx);
+  const closeTile = () => setActiveTile(null);
 
-  const applyPending = (verdict) => {
-    if (!pending.size) return false;
-    pending.forEach((idx) => {
-      onAnswer({
-        questionId: itemQid(idx),
-        section,
-        level,
-        prompt: `${groupTitle} · ${items[idx]}`,
-        expertVerdict: verdict,
-      });
+  const setVerdict = (idx, verdict) => {
+    onAnswer({
+      questionId: itemQid(idx),
+      section,
+      level,
+      prompt: `${groupTitle} · ${items[idx]}`,
+      expertVerdict: verdict || 'na',
     });
-    setPending(new Set());
-    return true;
+    closeTile();
   };
 
   const counts = useMemo(() => {
-    const c = { graded: 0, pending: pending.size, total: items.length };
-    items.forEach((_, idx) => { if (verdictOf(idx)) c.graded += 1; });
+    const c = { correct: 0, partial: 0, incorrect: 0, graded: 0, total: items.length };
+    items.forEach((_, idx) => {
+      const v = verdictOf(idx);
+      if (v) {
+        c.graded += 1;
+        c[v] = (c[v] || 0) + 1;
+      }
+    });
     return c;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.length, pending, answers]);
+  }, [items.length, answers]);
 
-  return { pending, togglePending, verdictOf, applyPending, counts };
+  return { activeTile, openTile, closeTile, setVerdict, verdictOf, counts };
+};
+
+/* Floating overlay shown when a tile is tapped. The tile content is enlarged
+   for students using a phone, and the three verdict buttons are presented. */
+const TileFocusOverlay = ({ text, verdict, onPick, onClose, dir }) => {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="tile-focus-overlay" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="tile-focus-card" onClick={(e) => e.stopPropagation()} dir={dir}>
+        <div className="tile-focus-text">{text}</div>
+        <div className="tile-focus-actions">
+          {VERDICTS.map((v) => {
+            const Icon = v.icon;
+            const on = verdict === v.v;
+            return (
+              <button
+                key={v.v}
+                type="button"
+                onClick={() => onPick(v.v)}
+                className={`tile-focus-btn tile-focus-${v.v} ${on ? 'is-on' : ''}`}
+              >
+                <Icon className="h-5 w-5" /> {v.label}
+              </button>
+            );
+          })}
+          {verdict && (
+            <button type="button" onClick={() => onPick(null)} className="tile-focus-clear">
+              Clear
+            </button>
+          )}
+        </div>
+        <button type="button" onClick={onClose} className="tile-focus-close" aria-label="Close">
+          ✕
+        </button>
+      </div>
+    </div>
+  );
 };
 
 /* ─── Reading · Letters ────────────────────────────────────────────────── */
@@ -1405,11 +1635,11 @@ const ReadingLettersSlide = ({ student, onChange, onAnswer, editorOn, custom, se
 
 const LettersGroupCard = ({ group: g, items, qid, level, section, dir, gi, answers, onAnswer, editorOn, onSave, onDelete, onMove, total }) => {
   const tiles = useTileTesting({ items, qid, section, level, groupTitle: g.title, answers, onAnswer });
-  const allGraded = tiles.counts.total > 0 && tiles.counts.graded === tiles.counts.total && tiles.counts.pending === 0;
+  const allGraded = tiles.counts.total > 0 && tiles.counts.graded === tiles.counts.total;
   return (
     <div
       dir={dir}
-      className={`rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm transition-opacity ${allGraded ? 'opacity-70 hover:opacity-100' : ''}`}
+      className={`tile-group-card ${allGraded ? 'is-done' : ''}`}
     >
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
         <div className="min-w-0">
@@ -1417,43 +1647,44 @@ const LettersGroupCard = ({ group: g, items, qid, level, section, dir, gi, answe
           {g.note && <div className="text-sm text-emerald-700">{g.note}</div>}
           <div className="text-[11px] text-emerald-700/80 mt-1">
             {tiles.counts.graded}/{tiles.counts.total} graded
-            {tiles.counts.pending > 0 && (
-              <span className="ml-2 text-amber-700 font-semibold">· {tiles.counts.pending} tested</span>
+            {tiles.counts.incorrect > 0 && (
+              <span className="ml-2 text-rose-700 font-semibold">· {tiles.counts.incorrect} incorrect</span>
+            )}
+            {tiles.counts.partial > 0 && (
+              <span className="ml-2 text-amber-700 font-semibold">· {tiles.counts.partial} partial</span>
             )}
           </div>
         </div>
-        <VerdictRow
-          answer={null}
-          onChange={(v) => {
-            const ok = tiles.applyPending(v);
-            if (!ok) showToast('Click the tiles you tested first');
-          }}
-        />
       </div>
 
       <div className="letter-row">
         {items.map((ch, idx) => {
           const v = tiles.verdictOf(idx);
-          const isPending = tiles.pending.has(idx);
-          const cls = [
-            'letter-tile',
-            v ? tileVerdictClass(v) : '',
-            isPending ? 'letter-tile-pending' : '',
-          ].filter(Boolean).join(' ');
+          const cls = ['letter-tile', v ? tileVerdictClass(v) : ''].filter(Boolean).join(' ');
           return (
             <button
               key={`${ch}-${idx}`}
               type="button"
-              onClick={() => tiles.togglePending(idx)}
+              onClick={() => tiles.openTile(idx)}
               className={cls}
               style={{ background: TILE_GRADIENTS[(gi * 7 + idx) % TILE_GRADIENTS.length] }}
-              title={`${ch}${v ? ` · ${v}` : isPending ? ' · tested' : ''}`}
+              title={`${ch}${v ? ` · ${v}` : ''}`}
             >
               {ch}
             </button>
           );
         })}
       </div>
+
+      {tiles.activeTile !== null && (
+        <TileFocusOverlay
+          text={items[tiles.activeTile]}
+          verdict={tiles.verdictOf(tiles.activeTile)}
+          onPick={(v) => tiles.setVerdict(tiles.activeTile, v)}
+          onClose={tiles.closeTile}
+          dir={dir}
+        />
+      )}
 
       {editorOn && (
         <GroupEditor
@@ -1702,11 +1933,11 @@ const ReadingWordsSlide = ({ student, onChange, onAnswer, diacritics, onToggleDi
 const WordsGroupCard = ({ group: g, qid, level, dir, gi, diacritics, answers, onAnswer, editorOn, total, onSave, onDelete, onMove }) => {
   const rawItems = g.items || [];
   const tiles = useTileTesting({ items: rawItems, qid, section: 'reading-words', level, groupTitle: g.title, answers, onAnswer });
-  const allGraded = tiles.counts.total > 0 && tiles.counts.graded === tiles.counts.total && tiles.counts.pending === 0;
+  const allGraded = tiles.counts.total > 0 && tiles.counts.graded === tiles.counts.total;
   return (
     <div
       dir={dir}
-      className={`rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm transition-opacity ${allGraded ? 'opacity-70 hover:opacity-100' : ''}`}
+      className={`tile-group-card ${allGraded ? 'is-done' : ''}`}
     >
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
         <div className="min-w-0">
@@ -1714,41 +1945,42 @@ const WordsGroupCard = ({ group: g, qid, level, dir, gi, diacritics, answers, on
           {g.note && <div className="text-sm text-emerald-700">{g.note}</div>}
           <div className="text-[11px] text-emerald-700/80 mt-1">
             {tiles.counts.graded}/{tiles.counts.total} graded
-            {tiles.counts.pending > 0 && (
-              <span className="ml-2 text-amber-700 font-semibold">· {tiles.counts.pending} tested</span>
+            {tiles.counts.incorrect > 0 && (
+              <span className="ml-2 text-rose-700 font-semibold">· {tiles.counts.incorrect} incorrect</span>
+            )}
+            {tiles.counts.partial > 0 && (
+              <span className="ml-2 text-amber-700 font-semibold">· {tiles.counts.partial} partial</span>
             )}
           </div>
         </div>
-        <VerdictRow
-          answer={null}
-          onChange={(v) => {
-            const ok = tiles.applyPending(v);
-            if (!ok) showToast('Click the tiles you tested first');
-          }}
-        />
       </div>
       <div className="letter-row row-word">
         {rawItems.map((w, idx) => {
           const text = diacritics ? w : stripDiacritics(w);
           const v = tiles.verdictOf(idx);
-          const isPending = tiles.pending.has(idx);
-          const cls = [
-            'letter-tile word',
-            v ? tileVerdictClass(v) : '',
-            isPending ? 'letter-tile-pending' : '',
-          ].filter(Boolean).join(' ');
+          const cls = ['letter-tile word', v ? tileVerdictClass(v) : ''].filter(Boolean).join(' ');
           return (
             <button
               key={`${w}-${idx}`}
               type="button"
-              onClick={() => tiles.togglePending(idx)}
+              onClick={() => tiles.openTile(idx)}
               className={cls}
               style={{ background: TILE_GRADIENTS[(gi * 5 + idx) % TILE_GRADIENTS.length] }}
-              title={`${text}${v ? ` · ${v}` : isPending ? ' · tested' : ''}`}
+              title={`${text}${v ? ` · ${v}` : ''}`}
             >{text}</button>
           );
         })}
       </div>
+
+      {tiles.activeTile !== null && (
+        <TileFocusOverlay
+          text={diacritics ? rawItems[tiles.activeTile] : stripDiacritics(rawItems[tiles.activeTile])}
+          verdict={tiles.verdictOf(tiles.activeTile)}
+          onPick={(v) => tiles.setVerdict(tiles.activeTile, v)}
+          onClose={tiles.closeTile}
+          dir={dir}
+        />
+      )}
 
       {editorOn && (
         <GroupEditor
@@ -1766,20 +1998,55 @@ const WordsGroupCard = ({ group: g, qid, level, dir, gi, diacritics, answers, on
 
 /* ─── Qur'an recitation ───────────────────────────────────────────────── */
 
+// Helper: read the per-passage word-mistake map from an answer note.
+// Shape: { mistakes: { [verseIdx]: { [wordIdx]: 'obvious'|'advanced' } } }
+const parseQuranNote = (note) => {
+  if (!note) return { mistakes: {}, comment: '' };
+  try {
+    const parsed = JSON.parse(note);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        mistakes: parsed.mistakes && typeof parsed.mistakes === 'object' ? parsed.mistakes : {},
+        comment: typeof parsed.comment === 'string' ? parsed.comment : '',
+      };
+    }
+  } catch {
+    // Legacy notes were free-form text; surface as comment.
+    return { mistakes: {}, comment: String(note) };
+  }
+  return { mistakes: {}, comment: '' };
+};
+
+const stringifyQuranNote = (data) => JSON.stringify({
+  mistakes: data.mistakes || {},
+  comment: data.comment || '',
+});
+
 const QuranSlide = ({ student, onAnswer, font, onChangeFont, editorOn, custom, setCustom, resetCustom }) => {
   const passages = mergeWithCustom(QURAN_PASSAGES, custom);
   const defaultIds = new Set(QURAN_PASSAGES.map((p) => p.id));
+  const cycleSeverity = (curr) => {
+    if (!curr) return 'obvious';
+    if (curr === 'obvious') return 'advanced';
+    return null;
+  };
   return (
   <div>
     <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
       <div>
         <h3 className="text-lg font-semibold text-emerald-900 inline-flex items-center gap-2"><BookOpen className="h-5 w-5" /> Qur’an Recitation</h3>
-        <p className="text-sm text-emerald-700/80" dir="rtl">اختر المقطع وغيّر النمط (المدينة / الهند والباكستان).</p>
+        <p className="text-sm text-emerald-700/80" dir="rtl">اضغط على أي كلمة لتسجيل خطأ — لون أحمر للخطأ الواضح ولون كهرماني للخطأ المتقدّم.</p>
       </div>
       <div className="inline-flex rounded-full border border-emerald-200 overflow-hidden bg-white/70">
         <button type="button" onClick={() => onChangeFont('uthmani')} className={`px-3 py-1 text-xs ${font === 'uthmani' ? 'bg-emerald-700 text-white' : 'text-emerald-800'}`}>Uthmani · Madinah</button>
         <button type="button" onClick={() => onChangeFont('indopak')} className={`px-3 py-1 text-xs ${font === 'indopak' ? 'bg-emerald-700 text-white' : 'text-emerald-800'}`}>IndoPak / Urdu</button>
       </div>
+    </div>
+
+    <div className="mb-3 inline-flex items-center gap-3 text-[11px] text-emerald-800/80">
+      <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full bg-rose-500" /> Obvious mistake</span>
+      <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full bg-amber-400" /> Advanced mistake</span>
+      <span className="text-emerald-700/70">· Tap a word to cycle: none → obvious → advanced → none.</span>
     </div>
 
     {editorOn && (
@@ -1795,40 +2062,95 @@ const QuranSlide = ({ student, onAnswer, font, onChangeFont, editorOn, custom, s
       {passages.map((p) => {
         const qid = `quran.${p.id}`;
         const answer = (student.answers || []).find((a) => a.questionId === qid);
-        const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
+        const parsed = parseQuranNote(answer?.note);
+        const mistakes = parsed.mistakes;
+        const totalMistakes = Object.values(mistakes).reduce((sum, row) => sum + Object.keys(row || {}).length, 0);
+        const obviousCount = Object.values(mistakes).reduce((sum, row) => sum + Object.values(row || {}).filter((v) => v === 'obvious').length, 0);
+        const advancedCount = totalMistakes - obviousCount;
         const isDefault = defaultIds.has(p.id);
+
+        const writeNext = (nextMistakes, nextComment = parsed.comment) => {
+          const next = { mistakes: nextMistakes, comment: nextComment };
+          const totals = Object.values(nextMistakes).reduce((acc, row) => {
+            Object.values(row || {}).forEach((sev) => { acc[sev] = (acc[sev] || 0) + 1; });
+            return acc;
+          }, { obvious: 0, advanced: 0 });
+          const verdict = totals.advanced > 0 ? 'incorrect' : totals.obvious > 0 ? 'partial' : 'correct';
+          onAnswer({
+            questionId: qid, section: 'quran-recitation', level: 'na',
+            prompt: `${p.surah} ${p.range}`,
+            expertVerdict: verdict,
+            note: stringifyQuranNote(next),
+          });
+        };
+
+        const toggleWord = (verseIdx, wordIdx) => {
+          const row = { ...(mistakes[verseIdx] || {}) };
+          const next = cycleSeverity(row[wordIdx]);
+          if (next) row[wordIdx] = next;
+          else delete row[wordIdx];
+          const nextMistakes = { ...mistakes };
+          if (Object.keys(row).length === 0) delete nextMistakes[verseIdx];
+          else nextMistakes[verseIdx] = row;
+          writeNext(nextMistakes);
+        };
+
+        const clearAll = () => writeNext({});
+
         return (
-          <div
-            key={p.id}
-            className={`rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/60 to-white p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
-          >
-            <div className="flex items-center justify-between mb-2">
+          <div key={p.id} className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/60 to-white p-4">
+            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
               <div className="text-sm font-semibold text-emerald-900">{p.surah} <span className="text-emerald-700/70">· {p.range}</span></div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {totalMistakes > 0 && (
+                  <span className="text-[11px] inline-flex items-center gap-2 rounded-full bg-white border border-emerald-200 px-2 py-0.5 text-emerald-800">
+                    <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-rose-500" /> {obviousCount}</span>
+                    <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-amber-400" /> {advancedCount}</span>
+                  </span>
+                )}
+                {totalMistakes > 0 && (
+                  <button type="button" onClick={clearAll} className="text-[11px] px-2 py-0.5 rounded-full border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-50">Clear marks</button>
+                )}
                 {editorOn && <DeleteDefaultBtn onClick={() => setCustom(removeCustomItem(custom, p.id, isDefault))} />}
-                <VerdictRow
-                  answer={answer}
-                  onChange={(v) => onAnswer({ questionId: qid, section: 'quran-recitation', level: 'na', prompt: `${p.surah} ${p.range}`, expertVerdict: v })}
-                />
               </div>
             </div>
             <div
               dir="rtl"
               className={font === 'indopak' ? 'font-quran-indopak text-emerald-900' : 'font-quran-uthmani text-emerald-900'}
-              style={{ textAlign: 'center' }}
+              style={{ textAlign: 'center', lineHeight: 2.2 }}
             >
-              {(p.verses || []).map((v, i) => (
-                <span key={i}>{typeof v === 'string' ? v : v.text} </span>
-              ))}
+              {(p.verses || []).map((v, vIdx) => {
+                const text = typeof v === 'string' ? v : v.text;
+                const words = String(text).split(/\s+/).filter(Boolean);
+                return (
+                  <span key={vIdx} style={{ display: 'inline' }}>
+                    {words.map((w, wIdx) => {
+                      const sev = mistakes[vIdx]?.[wIdx];
+                      const cls = sev === 'obvious'
+                        ? 'quran-word is-obvious'
+                        : sev === 'advanced'
+                          ? 'quran-word is-advanced'
+                          : 'quran-word';
+                      return (
+                        <button
+                          key={wIdx}
+                          type="button"
+                          onClick={() => toggleWord(vIdx, wIdx)}
+                          className={cls}
+                          title={sev ? `Marked: ${sev} (tap to change)` : 'Tap to mark mistake'}
+                        >{w}</button>
+                      );
+                    })}
+                    {' '}
+                  </span>
+                );
+              })}
             </div>
             <textarea
               className="eval-input mt-3 text-sm min-h-[44px]"
-              placeholder="Notes (tajweed errors, hesitation, makhārij…)"
-              value={answer?.note || ''}
-              onChange={(e) => onAnswer({
-                questionId: qid, section: 'quran-recitation', level: 'na',
-                prompt: `${p.surah} ${p.range}`, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value,
-              })}
+              placeholder="General notes (tajweed, fluency, makhārij…)"
+              value={parsed.comment}
+              onChange={(e) => writeNext(mistakes, e.target.value)}
             />
             {editorOn && !isDefault && (
               <CustomItemEditor
@@ -1849,55 +2171,132 @@ const QuranSlide = ({ student, onAnswer, font, onChangeFont, editorOn, custom, s
 /* ─── Qur'an memorization ─────────────────────────────────────────────── */
 
 /**
- * Searchable picker over the 114 surahs. The admin types a name (in Arabic
- * or English transliteration) or a number, picks one, and the surah is added
- * to the student's known-surahs list with an optional "starts from…" note.
+ * Per-surah memorization tracker. Each surah can have one of three statuses
+ * (memorized · partial · not memorized) with an optional notes textarea
+ * (e.g. "memorized up to ayah 50", "needs review of last 10 ayat").
  *
- * The answer is stored as a single record keyed `memorization.summary` with
- * a structured `note` JSON so it round-trips through the existing answer
- * pipeline without backend changes.
+ * Statuses persist as a single answer keyed `memorization.summary` with the
+ * structured payload encoded in `note`, so no backend changes are required.
  */
+const MEM_STATUSES = [
+  { v: 'memorized', label: 'Memorized', short: 'M', cls: 'bg-emerald-100 text-emerald-800 border-emerald-300', on: 'bg-emerald-600 text-white border-emerald-700' },
+  { v: 'partial',   label: 'Partial',   short: 'P', cls: 'bg-amber-100 text-amber-800 border-amber-300',     on: 'bg-amber-500 text-white border-amber-600' },
+  { v: 'none',      label: 'Not yet',   short: '·', cls: 'bg-rose-100 text-rose-800 border-rose-200',         on: 'bg-rose-500 text-white border-rose-600' },
+];
+
 const QuranMemorizationSlide = ({ student, onAnswer }) => {
   const qid = 'memorization.summary';
   const answer = (student.answers || []).find((a) => a.questionId === qid);
-  let stored = { surahs: [] };
+  let stored = { surahs: {} };
   try {
-    if (answer?.note) stored = JSON.parse(answer.note);
-    if (!Array.isArray(stored.surahs)) stored.surahs = [];
+    if (answer?.note) {
+      const parsed = JSON.parse(answer.note);
+      // Migrate the legacy `surahs: [{ id, startsFrom }]` shape to the new map.
+      if (Array.isArray(parsed?.surahs)) {
+        const map = {};
+        parsed.surahs.forEach((s) => {
+          map[s.id] = { status: 'memorized', note: s.startsFrom || '' };
+        });
+        stored = { surahs: map };
+      } else if (parsed?.surahs && typeof parsed.surahs === 'object') {
+        stored = { surahs: parsed.surahs };
+      }
+    }
   } catch {
-    stored = { surahs: [] };
+    stored = { surahs: {} };
   }
+
   const [picked, setPicked] = useState(stored);
   const [search, setSearch] = useState('');
+  const [showAll, setShowAll] = useState(false);
 
   const persist = (next) => {
     setPicked(next);
+    const totals = Object.values(next.surahs || {}).reduce((acc, row) => {
+      acc[row.status] = (acc[row.status] || 0) + 1;
+      return acc;
+    }, {});
     onAnswer({
       questionId: qid,
       section: 'quran-memorization',
       level: 'na',
       prompt: 'Qur’an memorization summary',
-      expertVerdict: next.surahs.length ? 'partial' : 'na',
+      expertVerdict: (totals.memorized || totals.partial) ? 'partial' : 'na',
       note: JSON.stringify(next),
     });
   };
 
   const term = search.trim().toLowerCase();
-  const results = !term ? [] : SURAHS.filter((s) => {
-    if (String(s.id) === term) return true;
-    if (s.en.toLowerCase().includes(term)) return true;
-    if (s.ar.includes(search.trim())) return true;
-    return false;
-  }).slice(0, 12);
+  const matches = !term
+    ? []
+    : SURAHS.filter((s) => {
+        if (String(s.id) === term) return true;
+        if (s.en.toLowerCase().includes(term)) return true;
+        if (s.ar.includes(search.trim())) return true;
+        return false;
+      }).slice(0, 12);
 
-  const pickedSet = new Set(picked.surahs.map((s) => s.id));
-  const addSurah = (s) => {
-    if (pickedSet.has(s.id)) return;
-    persist({ ...picked, surahs: [...picked.surahs, { id: s.id, ar: s.ar, en: s.en, ayat: s.ayat, startsFrom: '' }] });
-    setSearch('');
+  const setStatus = (id, status) => {
+    const row = picked.surahs[id] || { note: '' };
+    persist({ ...picked, surahs: { ...picked.surahs, [id]: { ...row, status } } });
   };
-  const removeSurah = (id) => persist({ ...picked, surahs: picked.surahs.filter((s) => s.id !== id) });
-  const updateNote = (id, startsFrom) => persist({ ...picked, surahs: picked.surahs.map((s) => (s.id === id ? { ...s, startsFrom } : s)) });
+  const setNote = (id, note) => {
+    const row = picked.surahs[id] || { status: 'memorized' };
+    persist({ ...picked, surahs: { ...picked.surahs, [id]: { ...row, note } } });
+  };
+  const removeSurah = (id) => {
+    const next = { ...picked.surahs };
+    delete next[id];
+    persist({ ...picked, surahs: next });
+  };
+
+  const trackedIds = Object.keys(picked.surahs).map((n) => Number(n));
+  const tracked = SURAHS.filter((s) => trackedIds.includes(s.id));
+  const counts = trackedIds.reduce((acc, id) => {
+    const st = picked.surahs[id]?.status || 'none';
+    acc[st] = (acc[st] || 0) + 1;
+    return acc;
+  }, { memorized: 0, partial: 0, none: 0 });
+
+  const renderRow = (s) => {
+    const row = picked.surahs[s.id] || { status: null, note: '' };
+    return (
+      <div key={s.id} className="rounded-2xl border border-emerald-100 bg-white/70 p-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <div className="flex items-center gap-3 sm:flex-1 min-w-0">
+            <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold shrink-0">{s.id}</span>
+            <div className="min-w-0">
+              <div className="font-naskh text-emerald-900 text-lg leading-tight" dir="rtl">{s.ar}</div>
+              <div className="text-xs text-emerald-700/80">{s.en} · {s.ayat} āyāt</div>
+            </div>
+          </div>
+          <div className="inline-flex rounded-full border border-emerald-200 overflow-hidden text-[11px]">
+            {MEM_STATUSES.map((st) => {
+              const on = row.status === st.v;
+              return (
+                <button key={st.v} type="button" onClick={() => setStatus(s.id, st.v)}
+                  className={`px-2.5 py-1 border-r last:border-r-0 ${on ? st.on : st.cls}`}>{st.label}</button>
+              );
+            })}
+          </div>
+          {row.status && (
+            <button type="button" onClick={() => removeSurah(s.id)}
+              className="text-rose-700/80 hover:text-rose-700 inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full border border-rose-200 bg-white/70">
+              <Trash2 className="h-3 w-3" /> Clear
+            </button>
+          )}
+        </div>
+        {row.status && (
+          <textarea
+            className="eval-input mt-2 text-xs min-h-[36px]"
+            placeholder="Notes (e.g. memorized up to ayah 50, weak in tajweed of ayat 5–7…)"
+            value={row.note || ''}
+            onChange={(e) => setNote(s.id, e.target.value)}
+          />
+        )}
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -1905,71 +2304,104 @@ const QuranMemorizationSlide = ({ student, onAnswer }) => {
         <h3 className="text-lg font-semibold text-emerald-900 inline-flex items-center gap-2">
           <BookOpen className="h-5 w-5" /> Qur’an Memorization
         </h3>
-        <p className="text-sm text-emerald-700/80" dir="rtl">اختر السور التي يحفظها الطالب وأضف ملاحظة عن نقطة البداية إن وُجدت.</p>
+        <p className="text-sm text-emerald-700/80" dir="rtl">سجِّل حالة كل سورة وأضف ملاحظة قصيرة عند الحاجة.</p>
       </div>
 
       <div className="rounded-2xl border border-emerald-100 bg-white/60 p-4 mb-4">
-        <label className="eval-field-label">Search by surah name or number · <span dir="rtl" className="font-naskh">ابحث عن السورة</span></label>
+        <label className="eval-field-label">Search through all 114 surahs · <span dir="rtl" className="font-naskh">ابحث عن السورة</span></label>
         <input
           className="eval-input"
           placeholder="e.g. Al-Fatihah, البقرة, 36 …"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        {results.length > 0 && (
+        {matches.length > 0 && (
           <div className="mt-2 rounded-xl border border-emerald-200 bg-white max-h-60 overflow-y-auto divide-y divide-emerald-50">
-            {results.map((s) => {
-              const already = pickedSet.has(s.id);
+            {matches.map((s) => {
+              const status = picked.surahs[s.id]?.status;
               return (
-                <button key={s.id} type="button" onClick={() => addSurah(s)} disabled={already}
-                  className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-sm ${already ? 'opacity-50' : 'hover:bg-emerald-50'}`}
+                <button key={s.id} type="button"
+                  onClick={() => { setStatus(s.id, status || 'memorized'); setSearch(''); }}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-emerald-50"
                 >
                   <span className="flex items-center gap-3 min-w-0">
                     <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold shrink-0">{s.id}</span>
                     <span className="font-naskh text-emerald-900 text-base" dir="rtl">{s.ar}</span>
                     <span className="text-emerald-700/80 text-xs">{s.en}</span>
                   </span>
-                  <span className="text-[10px] text-emerald-700/70">{s.ayat} āyāt · {s.place}</span>
+                  <span className="text-[10px] text-emerald-700/70">{status ? `· ${status}` : `${s.ayat} āyāt`}</span>
                 </button>
               );
             })}
           </div>
         )}
-        {term && results.length === 0 && (
-          <div className="mt-2 text-xs text-emerald-700/70 italic">No matching surah.</div>
-        )}
-      </div>
-
-      <div className="mb-2 text-xs uppercase tracking-wide text-emerald-700/80 font-semibold">
-        Memorized surahs · {picked.surahs.length}
-      </div>
-
-      <div className="space-y-2">
-        {picked.surahs.length === 0 && (
-          <div className="text-sm text-emerald-700/70 italic">No surahs added yet.</div>
-        )}
-        {picked.surahs.map((s) => (
-          <div key={s.id} className="rounded-2xl border border-emerald-100 bg-white/60 p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <div className="flex items-center gap-3 sm:flex-1 min-w-0">
-              <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold shrink-0">{s.id}</span>
-              <div className="min-w-0">
-                <div className="font-naskh text-emerald-900 text-lg leading-tight" dir="rtl">{s.ar}</div>
-                <div className="text-xs text-emerald-700/80">{s.en} · {s.ayat} āyāt</div>
-              </div>
-            </div>
-            <input
-              className="eval-input text-sm sm:max-w-xs"
-              placeholder="Starts from ayah / page (optional)"
-              value={s.startsFrom || ''}
-              onChange={(e) => updateNote(s.id, e.target.value)}
-            />
-            <button type="button" onClick={() => removeSurah(s.id)}
-              className="text-rose-700/80 hover:text-rose-700 inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border border-rose-200 bg-white/70">
-              <Trash2 className="h-3 w-3" /> Remove
-            </button>
+        <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
+          <div className="text-[11px] text-emerald-700/80">
+            Tracked: <strong>{tracked.length}</strong> · Memorized {counts.memorized} · Partial {counts.partial} · Not yet {counts.none}
           </div>
-        ))}
+          <button type="button" onClick={() => setShowAll((x) => !x)}
+            className="text-[11px] px-2.5 py-1 rounded-full border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-50">
+            {showAll ? 'Hide full list' : 'Show all 114 surahs'}
+          </button>
+        </div>
       </div>
+
+      {tracked.length > 0 && (
+        <div className="mb-4">
+          <div className="text-xs uppercase tracking-wide text-emerald-700/80 font-semibold mb-2">
+            Tracked surahs · {tracked.length}
+          </div>
+          <div className="space-y-2">{tracked.map(renderRow)}</div>
+        </div>
+      )}
+
+      {showAll && (
+        <div>
+          <div className="text-xs uppercase tracking-wide text-emerald-700/80 font-semibold mb-2">
+            All surahs · 114
+          </div>
+          <div className="space-y-2">{SURAHS.map(renderRow)}</div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─── Tajweed (merged Theory + Practical) ─────────────────────────────── */
+
+const TajweedSlide = ({
+  student, onAnswer, editorOn,
+  customTheory, setCustomTheory, resetCustomTheory,
+  customPractical, setCustomPractical, resetCustomPractical,
+}) => {
+  const [tab, setTab] = useState('theory');
+  return (
+    <div>
+      <div className="flex items-center justify-center mb-4">
+        <div className="inline-flex rounded-full border border-emerald-200 overflow-hidden bg-white/70">
+          <button
+            type="button"
+            onClick={() => setTab('theory')}
+            className={`px-4 py-1.5 text-sm font-display-en ${tab === 'theory' ? 'bg-emerald-700 text-white' : 'text-emerald-800'}`}
+          >Theory · نظري</button>
+          <button
+            type="button"
+            onClick={() => setTab('practical')}
+            className={`px-4 py-1.5 text-sm font-display-en ${tab === 'practical' ? 'bg-emerald-700 text-white' : 'text-emerald-800'}`}
+          >Practical · تطبيقي</button>
+        </div>
+      </div>
+      {tab === 'theory' ? (
+        <TajweedTheorySlide
+          student={student} onAnswer={onAnswer} editorOn={editorOn}
+          custom={customTheory} setCustom={setCustomTheory} resetCustom={resetCustomTheory}
+        />
+      ) : (
+        <TajweedPracticalSlide
+          student={student} onAnswer={onAnswer} editorOn={editorOn}
+          custom={customPractical} setCustom={setCustomPractical} resetCustom={resetCustomPractical}
+        />
+      )}
     </div>
   );
 };
@@ -2135,9 +2567,9 @@ const TajweedPracticalSlide = ({ student, onAnswer, editorOn, custom, setCustom,
 const ArabicSkillsSlide = ({ student, onAnswer, editorOn, custom, setCustom, resetCustom }) => {
   const [skillKey, setSkillKey] = useState('grammar');
   const [level, setLevel] = useState('easy');
+  const [questionIdx, setQuestionIdx] = useState(0);
   const skill = ARABIC_SKILLS.find((s) => s.key === skillKey) || ARABIC_SKILLS[0];
   const defaultItems = skill.content?.[level] || [];
-  // Custom payload is namespaced by skill+level so admins can curate each pair.
   const slotKey = `${skillKey}.${level}`;
   const slotCustom = (custom && custom[slotKey]) || null;
   const items = mergeWithCustom(defaultItems, slotCustom);
@@ -2151,6 +2583,8 @@ const ArabicSkillsSlide = ({ student, onAnswer, editorOn, custom, setCustom, res
     speaking: 'arabic-speaking',
   }[skillKey];
 
+  useEffect(() => { setQuestionIdx(0); }, [skillKey, level]);
+
   const addStub = () => {
     const id = newCustomId(`${skillKey}-${level}`);
     if (skill.type === 'mcq') {
@@ -2161,21 +2595,137 @@ const ArabicSkillsSlide = ({ student, onAnswer, editorOn, custom, setCustom, res
     return { id, prompt: 'New prompt' };
   };
 
+  const total = items.length;
+  const safeIdx = Math.min(questionIdx, Math.max(0, total - 1));
+  const q = items[safeIdx];
+  const answered = (qq) => {
+    const a = (student.answers || []).find((x) => x.questionId === `arabic.${skillKey}.${qq.id}`);
+    if (skill.type === 'mcq') return a?.chosen?.[0] !== undefined;
+    return a?.expertVerdict && a.expertVerdict !== 'na';
+  };
+
+  const renderQuestion = () => {
+    if (!q) {
+      return (
+        <div className="text-sm text-emerald-700 italic text-center">No items for this level yet.</div>
+      );
+    }
+    const qid = `arabic.${skillKey}.${q.id}`;
+    const answer = (student.answers || []).find((a) => a.questionId === qid);
+    const dir = directionFor(q.prompt || q.passage || '');
+    const isDefault = defaultIds.has(q.id);
+    const deleteBtn = editorOn ? <DeleteDefaultBtn onClick={() => setSlot(removeCustomItem(slotCustom, q.id, isDefault))} /> : null;
+    const editor = editorOn && !isDefault ? (
+      <CustomItemEditor
+        item={skill.type === 'passage' ? q : q}
+        schema={skill.type}
+        onChange={(patch) => setSlot(updateCustomItem(slotCustom, q.id, patch))}
+        onDelete={() => setSlot(removeCustomItem(slotCustom, q.id, false))}
+      />
+    ) : null;
+
+    if (skill.type === 'mcq') {
+      const chosenIdx = answer?.chosen?.[0] !== undefined ? Number(answer.chosen[0]) : null;
+      return (
+        <div className="w-full" dir={dir}>
+          <div className="flex justify-end mb-2">{deleteBtn}</div>
+          <div className="text-2xl sm:text-3xl font-medium text-emerald-900 text-center leading-snug mb-6" dir="auto">{q.prompt}</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto">
+            {q.options.map((opt, i) => {
+              const isChosen = chosenIdx === i;
+              const isCorrect = i === q.correctIndex;
+              const revealed = chosenIdx !== null;
+              const cls = revealed
+                ? (isCorrect ? 'bg-emerald-50 border-emerald-400 text-emerald-800'
+                  : isChosen ? 'bg-rose-50 border-rose-400 text-rose-800'
+                  : 'bg-white/70 border-emerald-100')
+                : 'bg-white/70 border-emerald-200 hover:bg-emerald-50';
+              return (
+                <button key={i} type="button" dir="auto"
+                  onClick={() => onAnswer({
+                    questionId: qid, section: sectionFor, level,
+                    prompt: q.prompt, chosen: [String(i)],
+                    expertVerdict: i === q.correctIndex ? 'correct' : 'incorrect',
+                  })}
+                  className={`px-4 py-3 rounded-xl border text-base text-center ${cls}`}>{opt}</button>
+              );
+            })}
+          </div>
+          {editor}
+        </div>
+      );
+    }
+
+    if (skill.type === 'expect') {
+      return (
+        <div className="w-full max-w-2xl mx-auto" dir={dir}>
+          <div className="flex justify-end mb-2 gap-2">
+            <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
+            {deleteBtn}
+          </div>
+          <div className="font-arabic-display text-3xl sm:text-4xl text-emerald-900 text-center leading-loose mb-4" dir="auto">{q.prompt}</div>
+          <div className="text-sm text-emerald-700/80 text-center mb-3">Expected: {q.expected}</div>
+          <textarea className="eval-input text-sm min-h-[80px]" placeholder="Student's answer / notes…"
+            value={answer?.note || ''}
+            onChange={(e) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value })} />
+          {editor}
+        </div>
+      );
+    }
+
+    if (skill.type === 'passage') {
+      return (
+        <div className="w-full max-w-3xl mx-auto" dir={dir}>
+          <div className="flex justify-end mb-2 gap-2">
+            <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.passage, expertVerdict: v })} />
+            {deleteBtn}
+          </div>
+          <div className="font-arabic-display text-xl sm:text-2xl text-emerald-900 leading-loose mb-4 text-center" dir="auto">{q.passage}</div>
+          <ol className="list-decimal pl-6 text-sm sm:text-base text-emerald-800 mb-3 space-y-1 max-w-xl mx-auto">
+            {q.questions.map((qq, i) => <li key={i} dir="auto">{qq}</li>)}
+          </ol>
+          <textarea className="eval-input text-sm min-h-[80px]" placeholder="What did the student get / miss?"
+            value={answer?.note || ''}
+            onChange={(e) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.passage, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value })} />
+          {editor}
+        </div>
+      );
+    }
+
+    // prompt
+    return (
+      <div className="w-full max-w-2xl mx-auto" dir={dir}>
+        <div className="flex justify-end mb-2 gap-2">
+          <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
+          {deleteBtn}
+        </div>
+        <div className="text-2xl sm:text-3xl font-medium text-emerald-900 text-center leading-snug mb-4" dir="auto">{q.prompt}</div>
+        <textarea className="eval-input text-sm min-h-[100px]"
+          placeholder={skillKey === 'writing' ? 'Transcribe what the student wrote…' : 'Notes on fluency, accuracy, vocabulary…'}
+          value={answer?.note || ''}
+          onChange={(e) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value })} />
+        {editor}
+      </div>
+    );
+  };
+
   return (
     <div>
-      <h3 className="text-lg font-semibold text-emerald-900 mb-1">Arabic Skills</h3>
-      <p className="text-sm text-emerald-700/80 mb-3">Probe each skill at the level that best matches the student.</p>
+      <div className="text-center mb-2">
+        <h3 className="text-lg font-semibold text-emerald-900">Arabic Skills</h3>
+        <p className="text-sm text-emerald-700/80">Probe each skill at the level that best matches the student.</p>
+      </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-3">
+      <div className="flex flex-wrap gap-1.5 mb-3 justify-center">
         {ARABIC_SKILLS.map((s) => (
           <button key={s.key} type="button" onClick={() => setSkillKey(s.key)}
-            className={`px-2.5 py-1 rounded-full text-xs border ${skillKey === s.key ? 'bg-emerald-700 text-white border-emerald-800' : 'bg-white/70 border-emerald-200 text-emerald-800'}`}>
+            className={`px-3 py-1 rounded-full text-xs border ${skillKey === s.key ? 'bg-emerald-700 text-white border-emerald-800' : 'bg-white/70 border-emerald-200 text-emerald-800'}`}>
             {s.label}
           </button>
         ))}
       </div>
 
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center justify-center gap-2 mb-4">
         <span className="text-xs text-emerald-700/80">Level:</span>
         <DifficultyPicker value={level} onChange={setLevel} />
       </div>
@@ -2194,169 +2744,36 @@ const ArabicSkillsSlide = ({ student, onAnswer, editorOn, custom, setCustom, res
         />
       )}
 
-      <div className="space-y-3">
-        {items.length === 0 && (
-          <div className="text-sm text-emerald-700 italic">No items for this level yet.</div>
+      <div className="rounded-2xl bg-white/60 px-3 py-5 sm:p-6 flex flex-col items-center">
+        {q && (
+          <div className="text-[11px] uppercase tracking-wider text-emerald-700/70 mb-3 font-display-en">
+            <bdi>Question {safeIdx + 1} / {total}</bdi>
+          </div>
         )}
-
-        {skill.type === 'mcq' && items.map((q, idx) => {
-          const qid = `arabic.${skillKey}.${q.id}`;
-          const answer = (student.answers || []).find((a) => a.questionId === qid);
-          const chosenIdx = answer?.chosen?.[0] !== undefined ? Number(answer.chosen[0]) : null;
-          const answered = chosenIdx !== null;
-          const dir = directionFor(q.prompt);
-          const isDefault = defaultIds.has(q.id);
-          return (
-            <div
-              key={q.id}
-              dir={dir}
-              className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
-            >
-              <div className="flex items-start justify-between gap-3 mb-2">
-                <div className="flex-1 min-w-0">
-                  <div className="text-[11px] uppercase tracking-wide text-emerald-700/70 font-semibold mb-0.5">Question {idx + 1}</div>
-                  <div className="font-medium text-emerald-900" dir="auto" style={{ textAlign: 'start' }}>{q.prompt}</div>
-                </div>
-                {editorOn && <DeleteDefaultBtn onClick={() => setSlot(removeCustomItem(slotCustom, q.id, isDefault))} />}
-              </div>
-              <div className="rounded-xl bg-emerald-50/40 p-2">
-                <div className="text-[10px] uppercase tracking-wide text-emerald-700/80 mb-1.5 font-semibold">Options</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {q.options.map((opt, i) => {
-                    const isChosen = chosenIdx === i;
-                    const isCorrect = i === q.correctIndex;
-                    const revealed = chosenIdx !== null;
-                    const cls = revealed
-                      ? (isCorrect ? 'bg-emerald-50 border-emerald-400 text-emerald-800'
-                        : isChosen ? 'bg-rose-50 border-rose-400 text-rose-800'
-                        : 'bg-white/70 border-emerald-100')
-                      : 'bg-white/70 border-emerald-100 hover:bg-emerald-50';
-                    return (
-                      <button key={i} type="button" dir="auto"
-                        onClick={() => onAnswer({
-                          questionId: qid, section: sectionFor, level,
-                          prompt: q.prompt, chosen: [String(i)],
-                          expertVerdict: i === q.correctIndex ? 'correct' : 'incorrect',
-                        })}
-                        className={`text-left px-3 py-2 rounded-xl border text-sm ${cls}`}>{opt}</button>
-                    );
-                  })}
-                </div>
-              </div>
-              {editorOn && !isDefault && (
-                <CustomItemEditor
-                  item={q}
-                  schema="mcq"
-                  onChange={(patch) => setSlot(updateCustomItem(slotCustom, q.id, patch))}
-                  onDelete={() => setSlot(removeCustomItem(slotCustom, q.id, false))}
-                />
-              )}
+        {renderQuestion()}
+        {total > 0 && (
+          <div className="mt-6 flex items-center gap-2">
+            <button type="button"
+              disabled={safeIdx === 0}
+              onClick={() => setQuestionIdx((i) => Math.max(0, i - 1))}
+              className="px-3 py-1.5 rounded-full border border-emerald-300 bg-white text-emerald-800 text-xs inline-flex items-center gap-1 disabled:opacity-40">
+              <ChevronLeft className="h-4 w-4" /> Prev
+            </button>
+            <div className="flex items-center gap-1">
+              {items.map((it, i) => (
+                <button key={it.id} type="button" onClick={() => setQuestionIdx(i)}
+                  className={`w-2.5 h-2.5 rounded-full ${i === safeIdx ? 'bg-emerald-700' : answered(it) ? 'bg-emerald-400' : 'bg-emerald-200'}`}
+                  title={`Question ${i + 1}`} />
+              ))}
             </div>
-          );
-        })}
-
-        {skill.type === 'expect' && items.map((q, idx) => {
-          const qid = `arabic.${skillKey}.${q.id}`;
-          const answer = (student.answers || []).find((a) => a.questionId === qid);
-          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
-          const dir = directionFor(q.prompt);
-          const isDefault = defaultIds.has(q.id);
-          return (
-            <div
-              key={q.id}
-              dir={dir}
-              className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
-            >
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="flex-1 min-w-0">
-                  <div className="text-[11px] uppercase tracking-wide text-emerald-700/70 font-semibold mb-0.5">Question {idx + 1}</div>
-                  <div className="font-arabic-display text-xl text-emerald-900" dir="auto" style={{ textAlign: 'start' }}>{q.prompt}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {editorOn && <DeleteDefaultBtn onClick={() => setSlot(removeCustomItem(slotCustom, q.id, isDefault))} />}
-                  <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
-                </div>
-              </div>
-              <div className="text-xs text-emerald-700/80">Expected: {q.expected}</div>
-              <textarea className="eval-input mt-2 text-sm min-h-[40px]"
-                placeholder="Student's answer / notes…"
-                value={answer?.note || ''}
-                onChange={(e) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value })} />
-              {editorOn && !isDefault && (
-                <CustomItemEditor item={q} schema="expect"
-                  onChange={(patch) => setSlot(updateCustomItem(slotCustom, q.id, patch))}
-                  onDelete={() => setSlot(removeCustomItem(slotCustom, q.id, false))} />
-              )}
-            </div>
-          );
-        })}
-
-        {skill.type === 'passage' && items.map((q, idx) => {
-          const qid = `arabic.${skillKey}.${q.id}`;
-          const answer = (student.answers || []).find((a) => a.questionId === qid);
-          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
-          const dir = directionFor(q.passage);
-          const isDefault = defaultIds.has(q.id);
-          return (
-            <div
-              key={q.id}
-              dir={dir}
-              className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
-            >
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <div className="text-[11px] uppercase tracking-wide text-emerald-700/70 font-semibold">Passage {idx + 1}</div>
-                {editorOn && <DeleteDefaultBtn onClick={() => setSlot(removeCustomItem(slotCustom, q.id, isDefault))} />}
-              </div>
-              <div className="font-arabic-display text-lg leading-loose text-emerald-900 mb-2" dir="auto" style={{ textAlign: 'start' }}>{q.passage}</div>
-              <ol className="list-decimal pl-5 text-sm text-emerald-700 mb-2 space-y-1">
-                {q.questions.map((qq, i) => <li key={i} dir="auto">{qq}</li>)}
-              </ol>
-              <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.passage, expertVerdict: v })} />
-              <textarea className="eval-input mt-2 text-sm min-h-[44px]" placeholder="What did the student get / miss?" value={answer?.note || ''}
-                onChange={(e) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.passage, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value })} />
-              {editorOn && !isDefault && (
-                <CustomItemEditor item={q} schema="passage"
-                  onChange={(patch) => setSlot(updateCustomItem(slotCustom, q.id, patch))}
-                  onDelete={() => setSlot(removeCustomItem(slotCustom, q.id, false))} />
-              )}
-            </div>
-          );
-        })}
-
-        {skill.type === 'prompt' && items.map((q, idx) => {
-          const qid = `arabic.${skillKey}.${q.id}`;
-          const answer = (student.answers || []).find((a) => a.questionId === qid);
-          const answered = answer?.expertVerdict && answer.expertVerdict !== 'na';
-          const dir = directionFor(q.prompt);
-          const isDefault = defaultIds.has(q.id);
-          return (
-            <div
-              key={q.id}
-              dir={dir}
-              className={`rounded-2xl border border-emerald-100 bg-white/60 p-4 transition-opacity ${answered ? 'opacity-60 hover:opacity-100' : ''}`}
-            >
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="flex-1 min-w-0">
-                  <div className="text-[11px] uppercase tracking-wide text-emerald-700/70 font-semibold mb-0.5">Prompt {idx + 1}</div>
-                  <div className="font-medium text-emerald-900" dir="auto" style={{ textAlign: 'start' }}>{q.prompt}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {editorOn && <DeleteDefaultBtn onClick={() => setSlot(removeCustomItem(slotCustom, q.id, isDefault))} />}
-                  <VerdictRow answer={answer} onChange={(v) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: v })} />
-                </div>
-              </div>
-              <textarea className="eval-input mt-2 text-sm min-h-[60px]"
-                placeholder={skillKey === 'writing' ? 'Transcribe what the student wrote…' : 'Notes on fluency, accuracy, vocabulary…'}
-                value={answer?.note || ''}
-                onChange={(e) => onAnswer({ questionId: qid, section: sectionFor, level, prompt: q.prompt, expertVerdict: answer?.expertVerdict || 'na', note: e.target.value })} />
-              {editorOn && !isDefault && (
-                <CustomItemEditor item={q} schema="prompt"
-                  onChange={(patch) => setSlot(updateCustomItem(slotCustom, q.id, patch))}
-                  onDelete={() => setSlot(removeCustomItem(slotCustom, q.id, false))} />
-              )}
-            </div>
-          );
-        })}
+            <button type="button"
+              disabled={safeIdx >= total - 1}
+              onClick={() => setQuestionIdx((i) => Math.min(total - 1, i + 1))}
+              className="px-3 py-1.5 rounded-full border border-emerald-300 bg-white text-emerald-800 text-xs inline-flex items-center gap-1 disabled:opacity-40">
+              Next <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2373,6 +2790,7 @@ const SECTION_LABELS = {
   'quran-recitation':  { en: 'Qur’an Recitation',   ar: 'تلاوة القرآن' },
   'tajweed-theory':    { en: 'Tajweed · Theory',    ar: 'تجويد · نظري' },
   'tajweed-practical': { en: 'Tajweed · Practical', ar: 'تجويد · تطبيقي' },
+  'tajweed':           { en: 'Tajweed',              ar: 'التجويد' },
   'arabic-grammar':    { en: 'Arabic · Grammar',    ar: 'العربية · النحو' },
   'arabic-vocab':      { en: 'Arabic · Vocabulary', ar: 'العربية · المفردات' },
   'arabic-comprehension': { en: 'Arabic · Comprehension', ar: 'العربية · الفهم' },
@@ -2384,7 +2802,7 @@ const NEXT_LEVEL = { easy: 'medium', medium: 'advanced', advanced: 'advanced+' }
 const summarizeJourney = (answers = []) => {
   // Only consider items the admin actually graded. Untouched questions
   // are treated as "not asked" and excluded from the summary entirely.
-  const VALID = new Set(['correct', 'partial', 'incorrect', 'skipped']);
+  const VALID = new Set(['correct', 'partial', 'incorrect']);
   const graded = (answers || []).filter((a) => a && VALID.has(a.expertVerdict));
   const bySection = {};
   graded.forEach((a) => {
@@ -2415,9 +2833,9 @@ const summarizeJourney = (answers = []) => {
   return out;
 };
 
-const SummarySlide = ({ session, student, onChange, onSendFeedback }) => {
+const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, onPickStudent, onChange, onSendFeedback }) => {
   const totals = useMemo(() => {
-    const t = { correct: 0, partial: 0, incorrect: 0, skipped: 0, total: 0 };
+    const t = { correct: 0, partial: 0, incorrect: 0, total: 0 };
     (student.answers || []).forEach((a) => {
       if (!a.expertVerdict || a.expertVerdict === 'na') return;
       t.total += 1;
@@ -2426,20 +2844,84 @@ const SummarySlide = ({ session, student, onChange, onSendFeedback }) => {
     return t;
   }, [student.answers]);
 
+  // Derive structured mistake lists from the student's answers.
+  // Quran-recitation answers store word-level mistakes inside `note` as JSON;
+  // they are expanded into per-word entries so the summary lists every word.
+  const { majorMistakes, minorMistakes } = useMemo(() => {
+    const major = [];
+    const minor = [];
+    (student.answers || []).forEach((a) => {
+      if (!a.section) return;
+      const labelObj = SECTION_LABELS[a.section] || { en: a.section };
+      const label = labelObj.en;
+      if (a.section === 'quran-recitation') {
+        // Expand word-level marks.
+        try {
+          const parsed = a.note ? JSON.parse(a.note) : null;
+          const mistakes = parsed?.mistakes || {};
+          Object.entries(mistakes).forEach(([vIdx, row]) => {
+            Object.entries(row || {}).forEach(([wIdx, sev]) => {
+              const entry = { section: label, prompt: a.prompt, detail: `verse ${Number(vIdx) + 1} · word ${Number(wIdx) + 1}` };
+              if (sev === 'advanced') major.push(entry);
+              else if (sev === 'obvious') minor.push(entry);
+            });
+          });
+          if (parsed?.comment && parsed.comment.trim()) {
+            minor.push({ section: label, prompt: a.prompt, detail: parsed.comment.trim() });
+          }
+        } catch { /* legacy note */ }
+        return;
+      }
+      if (a.expertVerdict === 'incorrect') {
+        major.push({ section: label, prompt: a.prompt || '', detail: a.note || '' });
+      } else if (a.expertVerdict === 'partial') {
+        minor.push({ section: label, prompt: a.prompt || '', detail: a.note || '' });
+      }
+    });
+    return { majorMistakes: major, minorMistakes: minor };
+  }, [student.answers]);
+
+  const journey = useMemo(() => summarizeJourney(student.answers), [student.answers]);
+
+  // Recommended levels — stored as an array of "<subject>:<level>" strings
+  // (e.g. "Qur'an Recitation:intermediate"). Each subject cycles off → beg →
+  // intermediate → advanced → off when its chip is tapped.
+  const recommended = Array.isArray(student.recommendedLevels) && student.recommendedLevels.length
+    ? student.recommendedLevels
+    : (student.recommendedLevel ? [student.recommendedLevel] : []);
+  const RECO_LEVELS = ['beginner', 'intermediate', 'advanced'];
+  const recoMap = useMemo(() => {
+    const m = {};
+    recommended.forEach((entry) => {
+      const [sub, lv] = String(entry).split(':');
+      if (sub && RECO_LEVELS.includes(lv)) m[sub.trim()] = lv;
+    });
+    return m;
+  }, [recommended]);
+  const cycleSubject = (subject) => {
+    const curr = recoMap[subject];
+    const nextLevel = curr === 'beginner' ? 'intermediate' : curr === 'intermediate' ? 'advanced' : curr === 'advanced' ? null : 'beginner';
+    const nextMap = { ...recoMap };
+    if (nextLevel) nextMap[subject] = nextLevel;
+    else delete nextMap[subject];
+    const next = Object.entries(nextMap).map(([s, l]) => `${s}:${l}`);
+    onChange({ recommendedLevels: next, recommendedLevel: next.join(', ') });
+  };
+  const subjectsForRecommendation = useMemo(() => {
+    const base = student.desiredSubjects?.length ? student.desiredSubjects : CLASS_SUBJECTS;
+    const fromReco = Object.keys(recoMap);
+    return Array.from(new Set([...base, ...fromReco]));
+  }, [student.desiredSubjects, recoMap]);
+
   const [feedbackEmail, setFeedbackEmail] = useState(
     student.contactEmail || session?.students?.[0]?.contactEmail || ''
   );
   const [feedbackLink, setFeedbackLink] = useState('');
 
-  // Re-default the email field when the active student changes (e.g. switching tabs).
-  // Falls back to the first student's contact email if the current one is empty —
-  // useful when multiple students share the same guardian email.
   useEffect(() => {
     setFeedbackEmail(student.contactEmail || session?.students?.[0]?.contactEmail || '');
     setFeedbackLink('');
   }, [student._id, student.contactEmail, session?.students]);
-
-  const journey = useMemo(() => summarizeJourney(student.answers), [student.answers]);
 
   const exportText = useMemo(() => {
     const lines = [];
@@ -2447,23 +2929,44 @@ const SummarySlide = ({ session, student, onChange, onSendFeedback }) => {
     lines.push(`Student: ${student.name}${student.age ? ` (${student.age})` : ''}`);
     if (student.desiredSubjects?.length) lines.push(`Subjects: ${student.desiredSubjects.join(', ')}`);
     if (student.availability) lines.push(`Availability: ${student.availability}`);
-    lines.push(`\nVerdicts: ${totals.correct}/${totals.total} correct · ${totals.partial} partial · ${totals.incorrect} incorrect · ${totals.skipped} skipped`);
-    if (student.recommendedLevel) lines.push(`Recommended level: ${student.recommendedLevel}`);
-    if (student.weaknesses?.length) lines.push(`Weaknesses: ${student.weaknesses.map((w) => w.area).join(', ')}`);
-    if (student.strengths?.length) lines.push(`Strengths: ${student.strengths.join(', ')}`);
+    lines.push(`\nVerdicts: ${totals.correct}/${totals.total} correct · ${totals.partial} partial · ${totals.incorrect} incorrect`);
+    if (recommended.length) lines.push(`Recommended: ${recommended.join(', ')}`);
+    if (majorMistakes.length) {
+      lines.push('\nMistakes:');
+      majorMistakes.forEach((m) => lines.push(`  · ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`));
+    }
+    if (minorMistakes.length) {
+      lines.push('\nMinor mistakes:');
+      minorMistakes.forEach((m) => lines.push(`  · ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`));
+    }
     if (student.adminSummary) lines.push(`\nNotes: ${student.adminSummary}`);
     return lines.join('\n');
-  }, [session.title, student, totals]);
+  }, [session.title, student, totals, recommended, majorMistakes, minorMistakes]);
 
   return (
     <div>
-      <h3 className="text-lg font-semibold text-emerald-900 mb-3">Summary & next steps</h3>
+      {students.length > 1 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {students.map((s, i) => (
+            <button key={s._id || i} type="button"
+              onClick={() => onPickStudent && onPickStudent(i)}
+              className={`px-2.5 py-1 rounded-full text-[11px] inline-flex items-center gap-1 border font-display-en ${
+                i === activeStudentIdx ? 'bg-emerald-600 text-white border-emerald-600 shadow' : 'bg-white/70 border-emerald-200 text-emerald-800'
+              }`}>
+              <bdi>{s.name || `Student ${i + 1}`}</bdi>
+            </button>
+          ))}
+        </div>
+      )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+      <h3 className="text-lg font-semibold text-emerald-900 mb-3">
+        Summary for <bdi>{student.name}</bdi>
+      </h3>
+
+      <div className="grid grid-cols-3 gap-2 mb-4">
         <Stat label="Correct"   value={totals.correct}   cls="from-emerald-500 to-teal-600" />
         <Stat label="Partial"   value={totals.partial}   cls="from-amber-500 to-orange-500" />
         <Stat label="Incorrect" value={totals.incorrect} cls="from-rose-500 to-pink-600" />
-        <Stat label="Skipped"   value={totals.skipped}   cls="from-zinc-400 to-zinc-600" />
       </div>
 
       {journey.length > 0 && (
@@ -2492,35 +2995,80 @@ const SummarySlide = ({ session, student, onChange, onSendFeedback }) => {
               );
             })}
           </ul>
-          <p className="font-display-en text-[11px] text-emerald-700/70 mt-2">
-            Tip: untested subjects mean the student stopped earlier — start from the easiest item there.
-          </p>
         </div>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-semibold text-emerald-800 mb-1">Recommended level</label>
-          <input className="eval-input" value={student.recommendedLevel || ''} onChange={(e) => onChange({ recommendedLevel: e.target.value })} />
+      <div className="mb-4">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <label className="text-xs font-semibold text-emerald-800">Recommended subjects & levels</label>
+          <span className="text-[10px] text-emerald-700/60">Tap a subject to cycle: beginner → intermediate → advanced → off</span>
         </div>
-        <div>
-          <label className="block text-xs font-semibold text-emerald-800 mb-1">Strengths (comma separated)</label>
-          <input className="eval-input"
-            value={(student.strengths || []).join(', ')}
-            onChange={(e) => onChange({ strengths: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-          />
+        <div className="flex flex-wrap gap-1.5">
+          {subjectsForRecommendation.map((sub) => {
+            const lv = recoMap[sub];
+            const cls = !lv
+              ? 'bg-white/70 border-emerald-200 text-emerald-800'
+              : lv === 'beginner'
+                ? 'bg-emerald-100 border-emerald-400 text-emerald-900'
+                : lv === 'intermediate'
+                  ? 'bg-amber-100 border-amber-400 text-amber-900'
+                  : 'bg-rose-100 border-rose-400 text-rose-900';
+            return (
+              <button key={sub} type="button" onClick={() => cycleSubject(sub)}
+                className={`px-2.5 py-1 rounded-full text-xs border ${cls}`}>
+                {sub}{lv ? ` · ${lv}` : ''}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50/30 p-3">
+          <div className="text-xs font-semibold text-rose-800 mb-2 inline-flex items-center gap-1">
+            <XCircle className="h-3.5 w-3.5" /> Mistakes · {majorMistakes.length}
+          </div>
+          {majorMistakes.length === 0 ? (
+            <div className="text-[11px] text-rose-700/70 italic">No serious mistakes recorded.</div>
+          ) : (
+            <ul className="space-y-1.5">
+              {majorMistakes.map((m, i) => (
+                <li key={i} className="rounded-lg bg-white/80 border border-rose-100 px-2 py-1.5">
+                  <div className="text-[10px] uppercase tracking-wide text-rose-700/70">{m.section}</div>
+                  <div className="text-xs text-rose-900 leading-snug" dir="auto">{m.prompt || '—'}</div>
+                  {m.detail && <div className="text-[11px] text-rose-700/80 italic mt-0.5" dir="auto">{m.detail}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/30 p-3">
+          <div className="text-xs font-semibold text-amber-800 mb-2 inline-flex items-center gap-1">
+            <MinusCircle className="h-3.5 w-3.5" /> Minor mistakes · {minorMistakes.length}
+          </div>
+          {minorMistakes.length === 0 ? (
+            <div className="text-[11px] text-amber-700/70 italic">No minor mistakes recorded.</div>
+          ) : (
+            <ul className="space-y-1.5">
+              {minorMistakes.map((m, i) => (
+                <li key={i} className="rounded-lg bg-white/80 border border-amber-100 px-2 py-1.5">
+                  <div className="text-[10px] uppercase tracking-wide text-amber-700/70">{m.section}</div>
+                  <div className="text-xs text-amber-900 leading-snug" dir="auto">{m.prompt || '—'}</div>
+                  {m.detail && <div className="text-[11px] text-amber-700/80 italic mt-0.5" dir="auto">{m.detail}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 
       <div className="mt-3">
-        <label className="block text-xs font-semibold text-emerald-800 mb-1">Weaknesses</label>
+        <label className="block text-xs font-semibold text-emerald-800 mb-1">Additional weakness tags</label>
         <div className="flex flex-wrap gap-1.5">
           {WEAKNESS_AREAS.map((area) => {
             const on = (student.weaknesses || []).some((w) => w.area === area);
             return (
-              <button
-                key={area}
-                type="button"
+              <button key={area} type="button"
                 onClick={() => {
                   const list = student.weaknesses || [];
                   const next = on ? list.filter((w) => w.area !== area) : [...list, { area }];
@@ -2598,35 +3146,474 @@ const Stat = ({ label, value, cls }) => (
   </div>
 );
 
-/* ─── Links ────────────────────────────────────────────────────────────── */
+/* ─── Meeting prefill banner ──────────────────────────────────────────── */
 
-const LinksSlide = () => {
-  const copyAll = () => {
-    const text = IMPORTANT_LINKS.map((l) => `${l.label}: ${l.url}`).join('\n');
-    navigator.clipboard?.writeText(text);
-    showToast('All links copied');
-  };
+const MeetingPrefillBanner = ({ meeting, onPrefill, onDismiss }) => {
+  const start = meeting?.scheduledStart ? new Date(meeting.scheduledStart) : null;
+  const end = meeting?.scheduledEnd ? new Date(meeting.scheduledEnd) : null;
+  const guardianName = meeting?.guardianName
+    || meeting?.bookingPayload?.guardian?.guardianName
+    || 'Guardian';
+  const studentNames = (Array.isArray(meeting?.students) ? meeting.students : (meeting?.bookingPayload?.students || []))
+    .map((s) => s.name)
+    .filter(Boolean)
+    .join(', ');
+  const range = start && end
+    ? `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : '';
   return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-semibold text-emerald-900">Important links</h3>
-        <button type="button" onClick={copyAll} className="text-xs px-2.5 py-1 rounded-full bg-emerald-700 text-white inline-flex items-center gap-1"><Copy className="h-3 w-3" /> Copy all</button>
-      </div>
-      <div className="grid sm:grid-cols-2 gap-3">
-        {IMPORTANT_LINKS.map((l) => (
-          <div key={l.url} className="rounded-2xl border border-emerald-100 bg-white/70 p-3 flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-emerald-900 truncate">{l.label}</div>
-              <a className="text-xs text-emerald-700 underline truncate block" href={l.url} target="_blank" rel="noreferrer">{l.url}</a>
-            </div>
-            <button type="button" onClick={() => { navigator.clipboard?.writeText(l.url); showToast('Copied'); }}
-              className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs inline-flex items-center gap-1"><Copy className="h-3 w-3" /> Copy</button>
+    <div className="mb-4 rounded-2xl border border-emerald-300 bg-gradient-to-br from-emerald-50 to-teal-50 p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="rounded-full bg-emerald-600 text-white p-2 shrink-0">
+            <CalendarClock className="h-5 w-5" />
           </div>
-        ))}
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-emerald-900">
+              Meeting now: <bdi>{guardianName}</bdi>
+            </div>
+            <div className="text-xs text-emerald-800/80">
+              {range}
+              {studentNames && <> · Students: <bdi>{studentNames}</bdi></>}
+            </div>
+            {meeting?.notes && (
+              <div className="text-[11px] text-emerald-700/80 mt-1 italic line-clamp-2">{meeting.notes}</div>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={onPrefill}
+            className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-sm inline-flex items-center gap-1 shadow"
+          ><Wand2 className="h-3.5 w-3.5" /> Prefill from meeting</button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="px-2 py-1.5 rounded-full border border-emerald-300 bg-white text-emerald-800 text-xs inline-flex items-center gap-1"
+            title="Dismiss banner"
+          ><XCircle className="h-3.5 w-3.5" /></button>
+        </div>
       </div>
     </div>
   );
 };
+
+/* ─── Links ────────────────────────────────────────────────────────────── */
+
+const LinksSlide = ({
+  session,
+  students = [],
+  activeStudentIdx = 0,
+  onPickStudent,
+  onUpdateStudent,
+  onUpdateAllStudents,
+  links = [],
+  linksLoaded = true,
+  onSaveLinks,
+  whatsappNumber = '',
+  onSaveWhatsappNumber,
+  onFinishSession,
+  onSendFeedback,
+}) => {
+  const active = students[activeStudentIdx] || null;
+  const isCompleted = session?.status === 'completed';
+
+  const [editingLinks, setEditingLinks] = useState(false);
+  const [draftLinks, setDraftLinks] = useState(links);
+  useEffect(() => { if (!editingLinks) setDraftLinks(links); }, [links, editingLinks]);
+
+  const [waDraft, setWaDraft] = useState(whatsappNumber);
+  useEffect(() => { setWaDraft(whatsappNumber); }, [whatsappNumber]);
+
+  const [feedbackEmail, setFeedbackEmail] = useState(active?.contactEmail || '');
+  const [feedbackLink, setFeedbackLink] = useState('');
+  const [sending, setSending] = useState(false);
+  useEffect(() => {
+    setFeedbackEmail(active?.contactEmail || '');
+    setFeedbackLink('');
+  }, [activeStudentIdx, active?.contactEmail]);
+
+  const includedLinks = (links || []).filter((l) => l.includeInFeedback);
+
+  const applyToAll = (patch) => {
+    if (typeof onUpdateAllStudents === 'function') {
+      onUpdateAllStudents(patch);
+      showToast('Applied to all students');
+    }
+  };
+
+  const copyAll = () => {
+    const text = (links || []).map((l) => `${l.label}: ${l.url}`).join('\n');
+    navigator.clipboard?.writeText(text);
+    showToast('All links copied');
+  };
+
+  const sendFeedbackEmail = async () => {
+    if (!active?._id) { showToast('Save the session first'); return; }
+    if (!feedbackEmail) { showToast('Please enter an email first'); return; }
+    setSending(true);
+    try {
+      const link = await onSendFeedback(feedbackEmail, { links: includedLinks });
+      if (link) setFeedbackLink(link);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendWhatsApp = () => {
+    if (!active) return;
+    const phoneRaw = (active.contactPhone || whatsappNumber || '').trim();
+    if (!phoneRaw) { showToast('Add a contact phone or default WhatsApp number first'); return; }
+    const digits = phoneRaw.replace(/[^\d]/g, '');
+    if (!digits) { showToast('Phone number is not valid'); return; }
+    const greeting = `Assalāmu ʿalaykum ${active.name || ''},`.trim();
+    const intro = `Thank you for your evaluation with Waraqa today. Here are the next steps.`;
+    const linksText = includedLinks.length
+      ? `\n\nHelpful links:\n${includedLinks.map((l) => `• ${l.label}: ${l.url}`).join('\n')}`
+      : '';
+    const register = 'https://app.waraqaweb.com/dashboard/register-student';
+    const cta = `\n\nReady to begin? Register a student here: ${register}`;
+    const body = `${greeting}\n\n${intro}${linksText}${cta}`;
+    const url = `https://wa.me/${digits}?text=${encodeURIComponent(body)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const addLink = () => {
+    setDraftLinks([...draftLinks, { label: '', url: '', description: '', includeInFeedback: true }]);
+  };
+  const updateDraftLink = (idx, patch) => {
+    setDraftLinks(draftLinks.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  };
+  const removeDraftLink = (idx) => {
+    setDraftLinks(draftLinks.filter((_, i) => i !== idx));
+  };
+  const saveDraftLinks = async () => {
+    const cleaned = draftLinks
+      .map((l) => ({
+        label: (l.label || '').trim(),
+        url: (l.url || '').trim(),
+        description: (l.description || '').trim(),
+        includeInFeedback: Boolean(l.includeInFeedback),
+      }))
+      .filter((l) => l.label && l.url);
+    await onSaveLinks(cleaned);
+    setEditingLinks(false);
+    showToast('Important links saved');
+  };
+
+  const toggleIncluded = (idx) => {
+    const next = links.map((l, i) => (i === idx ? { ...l, includeInFeedback: !l.includeInFeedback } : l));
+    onSaveLinks(next);
+  };
+
+  const handleFinish = async () => {
+    if (!isCompleted) onFinishSession();
+  };
+
+  return (
+    <div>
+      {students.length > 0 && active && (
+        <div className="mb-5">
+          <div className="flex items-baseline justify-between mb-2">
+            <h3 className="text-lg font-semibold text-emerald-900">Wrap-up details</h3>
+            <span className="font-naskh text-emerald-700/80 text-sm" dir="rtl">تفاصيل الختام</span>
+          </div>
+
+          {students.length > 1 && (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {students.map((s, i) => (
+                <button
+                  key={s._id || i}
+                  type="button"
+                  onClick={() => onPickStudent && onPickStudent(i)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] inline-flex items-center gap-1 border font-display-en ${
+                    i === activeStudentIdx ? 'bg-emerald-600 text-white border-emerald-600 shadow' : 'bg-white/70 border-emerald-200 text-emerald-800'
+                  }`}
+                >
+                  <bdi>{s.name || `Student ${i + 1}`}</bdi>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            <WrapUpField
+              label="Contact email"
+              ar="البريد الإلكتروني"
+              value={active.contactEmail || ''}
+              onChange={(v) => onUpdateStudent({ contactEmail: v })}
+              onApplyAll={() => applyToAll({ contactEmail: active.contactEmail || '' })}
+              showApplyAll={students.length > 1}
+              placeholder="name@example.com"
+            />
+            <WrapUpField
+              label="Contact phone"
+              ar="رقم الهاتف"
+              value={active.contactPhone || ''}
+              onChange={(v) => onUpdateStudent({ contactPhone: v })}
+              onApplyAll={() => applyToAll({ contactPhone: active.contactPhone || '' })}
+              showApplyAll={students.length > 1}
+              placeholder="+1 555 123 4567"
+            />
+            <WrapUpField
+              full
+              textarea
+              label="Availability"
+              ar="المواعيد المتاحة"
+              value={active.availability || ''}
+              onChange={(v) => onUpdateStudent({ availability: v })}
+              onApplyAll={() => applyToAll({ availability: active.availability || '' })}
+              showApplyAll={students.length > 1}
+            />
+            <WrapUpField
+              full
+              textarea
+              label="General notes"
+              ar="ملاحظات عامة"
+              value={active.generalNotes || ''}
+              onChange={(v) => onUpdateStudent({ generalNotes: v })}
+              onApplyAll={() => applyToAll({ generalNotes: active.generalNotes || '' })}
+              showApplyAll={students.length > 1}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Important links */}
+      <div className="mb-6 rounded-2xl border border-emerald-100 bg-white/60 p-4">
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div>
+            <h3 className="text-lg font-semibold text-emerald-900 inline-flex items-center gap-2">
+              <LinkIcon className="h-4 w-4" /> Important links
+            </h3>
+            <p className="text-xs text-emerald-700/70">Tick the ones to include in the feedback email & WhatsApp message.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {!editingLinks && (
+              <>
+                <button type="button" onClick={copyAll} className="text-xs px-2.5 py-1 rounded-full border border-emerald-300 bg-white text-emerald-800 inline-flex items-center gap-1">
+                  <Copy className="h-3 w-3" /> Copy all
+                </button>
+                <button type="button" onClick={() => setEditingLinks(true)} className="text-xs px-2.5 py-1 rounded-full bg-emerald-700 text-white inline-flex items-center gap-1">
+                  <Pencil className="h-3 w-3" /> Edit links
+                </button>
+              </>
+            )}
+            {editingLinks && (
+              <>
+                <button type="button" onClick={() => { setEditingLinks(false); setDraftLinks(links); }} className="text-xs px-2.5 py-1 rounded-full border border-emerald-300 bg-white text-emerald-800">
+                  Cancel
+                </button>
+                <button type="button" onClick={saveDraftLinks} className="text-xs px-2.5 py-1 rounded-full bg-emerald-700 text-white inline-flex items-center gap-1">
+                  <Save className="h-3 w-3" /> Save
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {!linksLoaded && <div className="text-sm text-emerald-700">Loading links…</div>}
+
+        {editingLinks ? (
+          <div className="space-y-2">
+            {draftLinks.map((l, idx) => (
+              <div key={idx} className="rounded-xl border border-emerald-100 bg-white/80 p-3">
+                <div className="grid sm:grid-cols-2 gap-2">
+                  <input
+                    className="eval-input"
+                    placeholder="Label (e.g. Pricing)"
+                    value={l.label}
+                    onChange={(e) => updateDraftLink(idx, { label: e.target.value })}
+                  />
+                  <input
+                    className="eval-input"
+                    placeholder="https://…"
+                    value={l.url}
+                    onChange={(e) => updateDraftLink(idx, { url: e.target.value })}
+                  />
+                </div>
+                <input
+                  className="eval-input mt-2"
+                  placeholder="Short description (shown in the email)"
+                  value={l.description}
+                  onChange={(e) => updateDraftLink(idx, { description: e.target.value })}
+                />
+                <div className="mt-2 flex items-center justify-between">
+                  <label className="inline-flex items-center gap-1.5 text-xs text-emerald-800">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(l.includeInFeedback)}
+                      onChange={(e) => updateDraftLink(idx, { includeInFeedback: e.target.checked })}
+                    />
+                    Include by default in feedback email & WhatsApp
+                  </label>
+                  <button type="button" onClick={() => removeDraftLink(idx)} className="text-rose-700 hover:text-rose-900 text-xs inline-flex items-center gap-1">
+                    <Trash2 className="h-3 w-3" /> Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+            <button type="button" onClick={addLink} className="text-xs px-3 py-1.5 rounded-full border border-dashed border-emerald-400 text-emerald-800 inline-flex items-center gap-1">
+              <Plus className="h-3 w-3" /> Add link
+            </button>
+          </div>
+        ) : (
+          <div className="grid sm:grid-cols-2 gap-2">
+            {(links || []).map((l, idx) => (
+              <div key={`${l.url}-${idx}`} className="rounded-xl border border-emerald-100 bg-white/80 p-3 flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={Boolean(l.includeInFeedback)}
+                  onChange={() => toggleIncluded(idx)}
+                  title="Include in feedback email & WhatsApp"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-emerald-900 truncate">{l.label}</div>
+                  <a className="text-xs text-emerald-700 underline truncate block" href={l.url} target="_blank" rel="noreferrer">{l.url}</a>
+                  {l.description && <div className="text-[11px] text-emerald-700/80 mt-0.5">{l.description}</div>}
+                </div>
+                <button type="button" onClick={() => { navigator.clipboard?.writeText(l.url); showToast('Copied'); }}
+                  className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs inline-flex items-center gap-1 shrink-0">
+                  <Copy className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+            {(!links || links.length === 0) && linksLoaded && (
+              <div className="text-sm text-emerald-700/80 italic col-span-full">No links yet. Click <strong>Edit links</strong> to add some.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* WhatsApp default number */}
+      <div className="mb-6 rounded-2xl border border-emerald-100 bg-white/60 p-4">
+        <div className="flex items-baseline justify-between mb-2">
+          <h4 className="text-sm font-semibold text-emerald-900 inline-flex items-center gap-2">
+            <MessageCircle className="h-4 w-4" /> Default WhatsApp number
+          </h4>
+          <span className="text-[11px] text-emerald-700/70">Used when the student has no contact phone</span>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            className="eval-input flex-1"
+            placeholder="+1 555 123 4567"
+            value={waDraft}
+            onChange={(e) => setWaDraft(e.target.value)}
+            onBlur={() => {
+              if (waDraft !== whatsappNumber) onSaveWhatsappNumber(waDraft);
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Closing actions */}
+      <div className="mb-4 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/70 to-white p-4">
+        <h4 className="text-sm font-semibold text-emerald-900 mb-3 inline-flex items-center gap-1">
+          <Send className="h-4 w-4" /> Closing actions for <bdi>{active?.name || 'this student'}</bdi>
+        </h4>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div>
+            <label className="eval-field-label">Feedback email</label>
+            <div className="flex gap-2">
+              <input
+                className="eval-input flex-1"
+                placeholder="name@example.com"
+                value={feedbackEmail}
+                onChange={(e) => setFeedbackEmail(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={sendFeedbackEmail}
+                disabled={sending}
+                className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-sm inline-flex items-center gap-1 disabled:opacity-50"
+              ><Send className="h-3 w-3" /> {sending ? 'Sending…' : 'Send'}</button>
+            </div>
+            {feedbackLink && (
+              <div className="mt-2 text-[11px] flex items-center gap-2 text-emerald-800 break-all">
+                <LinkIcon className="h-3 w-3" />
+                <a href={feedbackLink} className="underline flex-1 min-w-0 truncate" target="_blank" rel="noreferrer">{feedbackLink}</a>
+                <button type="button" className="text-emerald-700 underline shrink-0" onClick={() => { navigator.clipboard?.writeText(feedbackLink); showToast('Link copied'); }}>Copy</button>
+              </div>
+            )}
+            <div className="text-[11px] text-emerald-700/70 mt-1">
+              {includedLinks.length > 0
+                ? `Will include ${includedLinks.length} important link${includedLinks.length === 1 ? '' : 's'}.`
+                : 'No links will be included — tick links above to add them.'}
+            </div>
+          </div>
+
+          <div>
+            <label className="eval-field-label">WhatsApp message</label>
+            <div className="flex gap-2">
+              <input
+                className="eval-input flex-1"
+                placeholder="Phone (uses student's, then default)"
+                value={active?.contactPhone || whatsappNumber}
+                readOnly
+              />
+              <button
+                type="button"
+                onClick={sendWhatsApp}
+                className="px-3 py-1.5 rounded-full bg-emerald-600 text-white text-sm inline-flex items-center gap-1"
+              ><MessageCircle className="h-3 w-3" /> Open</button>
+            </div>
+            <div className="text-[11px] text-emerald-700/70 mt-1">Opens WhatsApp Web with a prefilled message including the selected links.</div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-emerald-100">
+          <div className="text-xs text-emerald-700/80">
+            {isCompleted
+              ? <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" /> Session marked completed.</span>
+              : 'When you finish, the meeting is saved and history is updated.'}
+          </div>
+          <button
+            type="button"
+            onClick={handleFinish}
+            disabled={isCompleted}
+            className="px-4 py-2 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-sm inline-flex items-center gap-2 shadow disabled:opacity-50 disabled:cursor-not-allowed"
+          ><Flag className="h-4 w-4" /> {isCompleted ? 'Saved' : 'Finish & save meeting'}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const WrapUpField = ({ label, ar, value, onChange, onApplyAll, showApplyAll, placeholder, textarea, full }) => (
+  <div className={full ? 'sm:col-span-2' : ''}>
+    <div className="flex items-baseline justify-between mb-1">
+      <label className="eval-field-label">
+        {label} {ar && <span dir="rtl" className="font-naskh">· {ar}</span>}
+      </label>
+      {showApplyAll && (
+        <button
+          type="button"
+          onClick={onApplyAll}
+          className="text-[10px] font-display-en text-emerald-700 hover:text-emerald-900 underline"
+          title="Copy this value to every student in the session"
+        >Apply to all students</button>
+      )}
+    </div>
+    {textarea ? (
+      <textarea
+        className="eval-input min-h-[52px]"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+    ) : (
+      <input
+        className="eval-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+    )}
+  </div>
+);
 
 /* ─── History drawer ───────────────────────────────────────────────────── */
 

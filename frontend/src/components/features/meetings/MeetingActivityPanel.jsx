@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, FileText, RefreshCw, Trash2, Users, Pencil, XCircle, UserCheck, UserX, Ban, Bell } from 'lucide-react';
+import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, ClipboardPaste, FileText, RefreshCw, Trash2, Users, Pencil, XCircle, UserCheck, UserX, Ban, Bell } from 'lucide-react';
 import { listMeetings, rescheduleMeeting, deleteMeeting, hardDeleteMeeting, updateMeetingAttendance, sendMeetingReminder } from '../../../api/meetings';
 import { MEETING_TYPE_LABELS, MEETING_TYPE_TONES } from '../../../constants/meetingConstants';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 import MeetingReportModal from '../../dashboard/MeetingReportModal';
+import PasteMeetingModal from './PasteMeetingModal';
 
 const PAGE_SIZE = 6;
 
@@ -55,6 +56,7 @@ export default function MeetingActivityPanel({ timezone }) {
   const [busyId, setBusyId] = useState('');
   const [scheduledPage, setScheduledPage] = useState(1);
   const [reportedPage, setReportedPage] = useState(1);
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const load = async () => {
     try {
@@ -416,6 +418,15 @@ export default function MeetingActivityPanel({ timezone }) {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => setPasteOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50"
+        >
+          <ClipboardPaste className="h-3.5 w-3.5" /> Create from paste
+        </button>
+      </div>
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
       {loading ? <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Loading meetings…</div> : null}
 
@@ -438,6 +449,17 @@ export default function MeetingActivityPanel({ timezone }) {
         meeting={reportMeeting}
         onClose={() => setReportMeeting(null)}
         onSaved={handleReportSaved}
+      />
+      <PasteMeetingModal
+        open={pasteOpen}
+        onClose={() => setPasteOpen(false)}
+        onCreated={(meeting) => {
+          if (meeting?._id) {
+            setItems((prev) => [meeting, ...prev]);
+          }
+          // Refresh cache so the next mount sees the new meeting too.
+          load();
+        }}
       />
     </div>
   );

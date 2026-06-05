@@ -21,6 +21,16 @@ export async function bookMeeting(payload) {
   return data;
 }
 
+export async function adminCreateMeeting(payload) {
+  const { data } = await api.post(`${BASE}/admin-create`, payload);
+  return data.meeting;
+}
+
+export async function getCurrentAdminMeeting(params = {}) {
+  const { data } = await api.get(`${BASE}/current`, { params });
+  return data.meeting || null;
+}
+
 export async function listMeetingAvailabilitySlots(params = {}, options = {}) {
   const { data } = await api.get(`${BASE}/availability/slots`, { params, ...options });
   return data;

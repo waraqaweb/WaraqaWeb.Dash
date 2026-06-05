@@ -1286,6 +1286,146 @@ const submitMeetingReport = async ({ meetingId, payload, submittedBy }) => {
   return formatMeetingResponse(meeting);
 };
 
+/**
+ * Admin-only meeting creator used by the "Create from paste" dialog. Skips the
+ * slot/availability/timeoff guards because the admin is recording an
+ * out-of-band booking they already have (e.g. from a Google Form or another
+ * system). The caller passes explicit start/end timestamps and all guardian +
+ * student details up front.
+ */
+const adminCreateMeeting = async ({
+  adminId,
+  payload = {},
+  requester,
+}) => {
+  const {
+    meetingType = MEETING_TYPES.NEW_STUDENT_EVALUATION,
+    startTime,
+    endTime,
+    timezone,
+    students = [],
+    guardian = {},
+    notes = '',
+    calendarPreference,
+    meetingLink,
+    status,
+  } = payload;
+
+  ensureMeetingType(meetingType);
+  if (!startTime) {
+    throw createError(400, 'startTime is required');
+  }
+  const admin = await resolveAdmin(adminId, { meetingType });
+  const startUtc = new Date(startTime);
+  if (Number.isNaN(startUtc.getTime())) {
+    throw createError(400, 'startTime is not a valid date');
+  }
+
+  const bookingTimezone = timezone
+    || guardian.timezone
+    || admin.adminSettings?.meetingTimezone
+    || DEFAULT_TIMEZONE;
+
+  let endUtc;
+  if (endTime) {
+    endUtc = new Date(endTime);
+    if (Number.isNaN(endUtc.getTime())) {
+      throw createError(400, 'endTime is not a valid date');
+    }
+  } else {
+    const minutes = computeDurationMinutes(meetingType, students);
+    endUtc = new Date(startUtc.getTime() + minutes * 60000);
+  }
+
+  const durationMinutes = Math.max(MIN_DURATION_MINUTES, Math.round((endUtc - startUtc) / 60000));
+
+  const monthKey = formatMonthKey(startUtc, admin.adminSettings?.meetingTimezone || DEFAULT_TIMEZONE);
+
+  const guardianName = guardian.guardianName
+    || [guardian.guardianFirstName, guardian.guardianLastName].filter(Boolean).join(' ').trim()
+    || guardian.guardianEmail
+    || 'Guest guardian';
+
+  const meeting = new Meeting({
+    meetingType,
+    status: status === 'no_show' ? MEETING_STATUSES.NO_SHOW : MEETING_STATUSES.SCHEDULED,
+    scheduledStart: startUtc,
+    scheduledEnd: endUtc,
+    durationMinutes,
+    timezone: bookingTimezone,
+    adminId: admin._id,
+    bookingSource: MEETING_SOURCES.ADMIN,
+    bookingPayload: {
+      guardianName,
+      guardianEmail: guardian.guardianEmail,
+      guardianPhone: guardian.guardianPhone,
+      timezone: bookingTimezone,
+      notes,
+      students: students.map((student) => ({
+        studentId: toObjectId(student.studentId) || undefined,
+        guardianSubdocumentId: student.guardianSubdocumentId,
+        studentName: student.studentName || `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student',
+        isExistingStudent: Boolean(student.isExistingStudent),
+        isGuardianSelf: Boolean(student.isGuardianSelf),
+        notes: student.notes,
+      })),
+      preferredCalendar: calendarPreference || null,
+    },
+    attendees: {
+      guardianName,
+      additionalEmails: [],
+    },
+    meetingLinkSnapshot: meetingLink || undefined,
+    quotaKeys: {
+      monthKey,
+    },
+    buffers: {
+      beforeMinutes: getBufferMinutes(admin, meetingType),
+      afterMinutes: getBufferMinutes(admin, meetingType),
+    },
+    visibility: {
+      showInCalendar: true,
+      displayColor: MEETING_COLORS.background,
+    },
+  });
+
+  await meeting.save();
+  return { meeting: formatMeetingResponse(meeting) };
+};
+
+/**
+ * Return the meeting that the admin is most likely "in" right now: a scheduled
+ * meeting whose window covers now, or the closest scheduled meeting within a
+ * +/- window (default 90 minutes). Used by the evaluation studio to prefill
+ * guardian + student data without re-entry.
+ */
+const getCurrentMeetingForAdmin = async ({ adminId, windowMinutes = 90 }) => {
+  const admin = await resolveAdmin(adminId);
+  const now = new Date();
+  const windowMs = windowMinutes * 60_000;
+
+  const meetings = await Meeting.find({
+    adminId: admin._id,
+    status: { $in: [MEETING_STATUSES.SCHEDULED, MEETING_STATUSES.NO_SHOW] },
+    scheduledStart: { $lt: new Date(now.getTime() + windowMs) },
+    scheduledEnd: { $gt: new Date(now.getTime() - windowMs) },
+  }).sort({ scheduledStart: 1 }).limit(20);
+
+  if (!meetings.length) return { meeting: null };
+
+  // Prefer one whose window currently covers `now`; otherwise pick the closest
+  // by absolute distance to `now`.
+  const inProgress = meetings.find((m) => m.scheduledStart <= now && m.scheduledEnd >= now);
+  const chosen = inProgress || meetings.reduce((best, m) => {
+    if (!best) return m;
+    const bd = Math.abs(best.scheduledStart - now);
+    const md = Math.abs(m.scheduledStart - now);
+    return md < bd ? m : best;
+  }, null);
+
+  return { meeting: chosen ? formatMeetingResponse(chosen) : null };
+};
+
 module.exports = {
   listAvailabilitySlots,
   createAvailabilitySlot,
@@ -1304,5 +1444,7 @@ module.exports = {
   buildCalendarLinks,
   listMeetingTimeOff,
   createMeetingTimeOff,
-  deleteMeetingTimeOff
+  deleteMeetingTimeOff,
+  adminCreateMeeting,
+  getCurrentMeetingForAdmin,
 };

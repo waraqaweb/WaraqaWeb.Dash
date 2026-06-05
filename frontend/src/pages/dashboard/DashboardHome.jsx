@@ -20,6 +20,7 @@ import {
   CheckCircle,
   RefreshCcw,
   TrendingUp,
+  GraduationCap,
 } from "lucide-react";
 
 import StatCard from '../../components/dashboard/widgets/StatCard';
@@ -1321,6 +1322,16 @@ const DashboardHome = ({ isActive = true }) => {
                         return <span>Updated {date} • {time}</span>;
                       })()}
                     </div>
+                    <button
+                      type="button"
+                      aria-label="Live Evaluation"
+                      title="Open evaluation studio"
+                      className="ml-1 inline-flex items-center gap-1 rounded-full text-white bg-gradient-to-r from-teal-500 to-emerald-600 shadow-sm hover:opacity-95 h-7 px-2.5 text-[11px] font-medium"
+                      onClick={() => navigate('/dashboard/evaluation')}
+                    >
+                      <GraduationCap className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Live Eval</span>
+                    </button>
                     <button
                       aria-label="Business Intelligence"
                       title="Business Intelligence"

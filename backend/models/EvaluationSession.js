@@ -56,6 +56,7 @@ const StudentResultSchema = new mongoose.Schema({
   name: { type: String, trim: true, required: true, maxlength: 200 },
   age: { type: Number, min: 1, max: 120 },
   contactEmail: { type: String, trim: true, lowercase: true, maxlength: 200 },
+  contactPhone: { type: String, trim: true, maxlength: 60 },
   contactNote: { type: String, trim: true, maxlength: 2000 },
 
   // What the student is interested in studying & their availability (free text)
@@ -74,6 +75,7 @@ const StudentResultSchema = new mongoose.Schema({
   weaknesses: [WeaknessSchema],
   strengths: [{ type: String, trim: true, maxlength: 300 }],
   recommendedLevel: { type: String, trim: true, maxlength: 200 },
+  recommendedLevels: [{ type: String, trim: true, maxlength: 200 }],
   adminSummary: { type: String, trim: true, maxlength: 4000 },
 
   endedAt: { type: Date },

@@ -988,5 +988,83 @@ router.put('/:key', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+// ─── Evaluation Studio: important links & WhatsApp number ────────────────────
+const EVAL_LINKS_KEY = 'evaluation.importantLinks';
+const EVAL_WHATSAPP_KEY = 'evaluation.whatsappNumber';
+
+const DEFAULT_EVAL_LINKS = [
+  { label: 'Terms & Conditions', url: 'https://www.waraqaweb.com/terms', description: 'Our service terms and policies.', includeInFeedback: false },
+  { label: 'Pricing', url: 'https://www.waraqaweb.com/pricing', description: 'Plans and rates for ongoing lessons.', includeInFeedback: true },
+  { label: 'Courses', url: 'https://www.waraqaweb.com/courses', description: 'Browse our Qur\u2019an and Arabic course catalog.', includeInFeedback: true },
+  { label: 'Schedule a New Evaluation', url: 'https://www.waraqaweb.com/book', description: 'Book another free placement evaluation.', includeInFeedback: false },
+  { label: 'Website', url: 'https://www.waraqaweb.com/', description: 'Learn more about Waraqa.', includeInFeedback: false },
+  { label: 'Register a Student', url: 'https://app.waraqaweb.com/dashboard/register-student', description: 'Create a student account to start your journey.', includeInFeedback: true },
+];
+
+const normalizeEvalLinks = (raw) => {
+  const arr = Array.isArray(raw) ? raw : [];
+  return arr
+    .map((l) => l && typeof l === 'object' ? {
+      label: String(l.label || '').trim().slice(0, 120),
+      url: String(l.url || '').trim().slice(0, 500),
+      description: String(l.description || '').trim().slice(0, 500),
+      includeInFeedback: Boolean(l.includeInFeedback),
+    } : null)
+    .filter((l) => l && l.label && l.url);
+};
+
+router.get('/evaluation/links', authenticateToken, async (req, res) => {
+  try {
+    const s = await Setting.findOne({ key: EVAL_LINKS_KEY }).lean();
+    const links = s?.value && Array.isArray(s.value) && s.value.length
+      ? normalizeEvalLinks(s.value)
+      : DEFAULT_EVAL_LINKS;
+    res.json({ success: true, links });
+  } catch (err) {
+    console.error('Failed to fetch evaluation links', err);
+    res.status(500).json({ message: 'Failed to fetch evaluation links' });
+  }
+});
+
+router.put('/evaluation/links', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const value = normalizeEvalLinks(req.body?.links ?? req.body?.value ?? []);
+    const s = await Setting.findOneAndUpdate(
+      { key: EVAL_LINKS_KEY },
+      { value },
+      { upsert: true, new: true }
+    );
+    res.json({ success: true, links: s.value });
+  } catch (err) {
+    console.error('Failed to save evaluation links', err);
+    res.status(500).json({ message: 'Failed to save evaluation links' });
+  }
+});
+
+router.get('/evaluation/whatsapp', authenticateToken, async (req, res) => {
+  try {
+    const s = await Setting.findOne({ key: EVAL_WHATSAPP_KEY }).lean();
+    res.json({ success: true, number: s?.value || '' });
+  } catch (err) {
+    console.error('Failed to fetch evaluation whatsapp number', err);
+    res.status(500).json({ message: 'Failed to fetch evaluation whatsapp number' });
+  }
+});
+
+router.put('/evaluation/whatsapp', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const value = String(req.body?.number ?? req.body?.value ?? '').trim().slice(0, 40);
+    const s = await Setting.findOneAndUpdate(
+      { key: EVAL_WHATSAPP_KEY },
+      { value },
+      { upsert: true, new: true }
+    );
+    res.json({ success: true, number: s.value });
+  } catch (err) {
+    console.error('Failed to save evaluation whatsapp number', err);
+    res.status(500).json({ message: 'Failed to save evaluation whatsapp number' });
+  }
+});
+
 module.exports = router;
 

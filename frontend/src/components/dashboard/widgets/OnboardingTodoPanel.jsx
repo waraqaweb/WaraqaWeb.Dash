@@ -11,7 +11,7 @@ import {
 } from '../../../api/leads';
 import {
   introMessage, postEvaluationMessage, teacherAvailabilityMessage,
-  firstClassReminderMessage, firstClassFeedbackMessage,
+  firstClassReminderMessage, firstClassFeedbackMessage, buildRecipient,
 } from '../../../utils/onboardingMessages';
 import { formatAvailability } from '../../../utils/evaluationMessage';
 
@@ -37,9 +37,21 @@ const fmtDateTime = (v) => {
 const sourceBadge = {
   lead: { label: 'Registration form', tone: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' },
   signup: { label: 'Signed up', tone: 'bg-sky-50 text-sky-700 ring-1 ring-sky-200' },
+  meeting: { label: 'Evaluation meeting', tone: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' },
 };
 
-const rowId = (row) => (row.kind === 'lead' ? `lead_${row._id}` : `user_${row.userId}`);
+const rowId = (row) => {
+  if (row.kind === 'lead') return `lead_${row._id}`;
+  if (row.kind === 'meeting') return `meeting_${row.meetingId}`;
+  return `user_${row.userId}`;
+};
+
+// The id passed to registration endpoints, keyed by kind.
+const regIdOf = (row) => {
+  if (row.kind === 'lead') return row._id;
+  if (row.kind === 'meeting') return row.meetingId;
+  return row.userId;
+};
 
 const nameOf = (row) => row.personalInfo?.fullName
   || [row.personalInfo?.firstName, row.personalInfo?.lastName].filter(Boolean).join(' ')
@@ -121,8 +133,8 @@ export default function OnboardingTodoPanel() {
   const load = async () => {
     try {
       setError('');
-      const { leads, signups } = await getOnboardingTodos();
-      const merged = [...leads, ...signups].sort(
+      const { leads, signups, meetings } = await getOnboardingTodos();
+      const merged = [...leads, ...signups, ...meetings].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
       setRows(merged);
@@ -136,6 +148,13 @@ export default function OnboardingTodoPanel() {
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  // Auto-dismiss the small inline notification next to the header.
+  useEffect(() => {
+    if (!message) return undefined;
+    const t = setTimeout(() => setMessage(''), 2500);
+    return () => clearTimeout(t);
+  }, [message]);
 
   const buckets = useMemo(() => {
     const active = []; const completed = []; const cancelled = [];
@@ -168,7 +187,7 @@ export default function OnboardingTodoPanel() {
       ? { ...r, steps: { ...(r.steps || {}), [step.key]: done ? undefined : new Date().toISOString() } }
       : r)));
     try {
-      await setRegistrationStep(row.kind, row.kind === 'lead' ? row._id : row.userId, step.key, !done);
+      await setRegistrationStep(row.kind, regIdOf(row), step.key, !done);
     } catch (err) {
       setError(err?.response?.data?.message || 'Failed to update step');
     } finally {
@@ -179,7 +198,7 @@ export default function OnboardingTodoPanel() {
 
   const completeRow = async (row) => {
     try {
-      await completeRegistration(row.kind, row.kind === 'lead' ? row._id : row.userId, true);
+      await completeRegistration(row.kind, regIdOf(row), true);
       setMessage('Registration completed and moved to the Completed tab.');
       await load();
     } catch (err) {
@@ -201,6 +220,7 @@ export default function OnboardingTodoPanel() {
           <ClipboardList className="h-4 w-4 text-primary" />
           <h3 className="text-sm font-semibold">Registration funnel</h3>
           <span className="text-xs text-muted-foreground">last 45 days</span>
+          {message ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">{message}</span> : null}
         </div>
         <div className="flex items-center gap-1 rounded-full bg-muted p-0.5 text-xs">
           {tabDefs.map(([key, label, count]) => (
@@ -216,9 +236,7 @@ export default function OnboardingTodoPanel() {
         </div>
       </div>
 
-      {message ? <div className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{message}</div> : null}
       {error ? <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div> : null}
-
       {loading ? (
         <div className="py-6 text-center text-sm text-muted-foreground">Loading…</div>
       ) : tab === 'active' ? (
@@ -289,14 +307,18 @@ function FunnelCard({ row, pending, ready, onToggle, onManage, onComplete }) {
   return (
     <div className="rounded-lg border border-border bg-background/50 p-2.5">
       <button type="button" onClick={() => onManage(row)} className="block w-full text-left">
-        <span className="block truncate text-sm font-semibold text-foreground">{nameOf(row)}</span>
+        <span className="flex items-center justify-between gap-2">
+          <span className="truncate text-sm font-semibold text-foreground">{nameOf(row)}</span>
+          <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{done}/{total}</span>
+        </span>
         <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
           <span className={`rounded-full px-1.5 py-0.5 font-semibold ${badge.tone}`}>{badge.label}</span>
-          <span>{naturalDate(row.createdAt)}</span>
+          {row.isReturning ? <span className="rounded-full bg-purple-50 px-1.5 py-0.5 font-semibold text-purple-700 ring-1 ring-purple-200">Returning</span> : null}
+          {row.meeting?.scheduledStart ? <span title="Evaluation meeting time">📅 {naturalDate(row.meeting.scheduledStart)}</span> : <span>{naturalDate(row.createdAt)}</span>}
           {studentCount ? <span>{studentCount} student{studentCount === 1 ? '' : 's'}</span> : null}
         </span>
       </button>
-      <div className="mt-2 flex flex-wrap items-center gap-1">
+      <div className="mt-2 flex items-center gap-0.5">
         {STEPS.map((step) => {
           const stepDone = isStepDone(row, step);
           const busy = pending === `${rowId(row)}:${step.key}`;
@@ -307,11 +329,10 @@ function FunnelCard({ row, pending, ready, onToggle, onManage, onComplete }) {
               title={`${step.label}${stepDone ? ' ✓' : ''}${step.derived ? ' (set automatically)' : ' — click to toggle'}`}
               onClick={() => onToggle(row, step)}
               disabled={busy}
-              className={`h-3.5 w-3.5 rounded-full border transition-colors disabled:opacity-50 ${stepDone ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-slate-100 hover:border-emerald-400'} ${step.derived ? 'ring-1 ring-offset-1 ring-slate-200' : ''}`}
+              className={`h-3 w-3 shrink-0 rounded-full border transition-colors disabled:opacity-50 ${stepDone ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-slate-100 hover:border-emerald-400'} ${step.derived ? 'ring-1 ring-offset-1 ring-slate-200' : ''}`}
             />
           );
         })}
-        <span className="ml-1 text-[10px] font-medium text-muted-foreground">{done}/{total}</span>
       </div>
       {ready && (
         <button
@@ -355,7 +376,7 @@ function SimpleRow({ row, tab, onManage }) {
 /* ─── Management modal ─────────────────────────────────────────────────── */
 function RegistrationManageModal({ row, name, adminName, onClose, onChanged, setBanner }) {
   const kind = row.kind;
-  const id = kind === 'lead' ? row._id : row.userId;
+  const id = regIdOf(row);
   const email = row.personalInfo?.email || '';
   const phone = row.personalInfo?.phone || '';
   const cancelled = isCancelled(row);
@@ -409,25 +430,28 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
 
   const evalStudents = details?.evaluation?.students || [];
   const classesByStudent = details?.classesByStudent || [];
-  const firstStudentName = (row.students?.[0]
-    ? `${row.students[0].firstName || ''} ${row.students[0].lastName || ''}`.trim()
-    : evalStudents[0]?.name) || name;
   const nextClassAt = classesByStudent.find((c) => c.nextClassAt)?.nextClassAt || null;
 
   const startDateLabel = (s) => (s?.expectedStartDate ? new Date(s.expectedStartDate).toLocaleDateString() : '');
 
+  // Personalization: is the guardian the learner, and which honorific to use.
+  const recipient = useMemo(
+    () => buildRecipient({ guardianName: name, students: row.students }),
+    [name, row.students]
+  );
+
   // Build the copy-ready message attached to a step (or '' if none).
   const messageForStep = (step) => {
     switch (step.message) {
-      case 'intro': return introMessage(adminName);
-      case 'postEval': return postEvaluationMessage(name);
+      case 'intro': return introMessage(adminName, recipient);
+      case 'postEval': return postEvaluationMessage(recipient);
       case 'teacher': {
         const s = evalStudents[0];
         if (!s) return '';
         return teacherAvailabilityMessage({ studentName: s.name, slots: s.availabilitySlots, timezone: s.availabilityTimezone, expectedStartDate: startDateLabel(s) });
       }
-      case 'reminder': return firstClassReminderMessage({ studentName: firstStudentName, classAt: nextClassAt });
-      case 'feedback': return firstClassFeedbackMessage(name);
+      case 'reminder': return firstClassReminderMessage({ recipient, classAt: nextClassAt });
+      case 'feedback': return firstClassFeedbackMessage(recipient);
       default: return '';
     }
   };
@@ -446,6 +470,8 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
               <span className={`rounded-full px-2 py-0.5 font-semibold ${(sourceBadge[kind] || sourceBadge.lead).tone}`}>{(sourceBadge[kind] || sourceBadge.lead).label}</span>
               <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">{stageLabel}</span>
+              {row.isReturning ? <span className="rounded-full bg-purple-50 px-2 py-0.5 font-semibold text-purple-700 ring-1 ring-purple-200">Returning guardian</span> : null}
+              {row.meeting?.scheduledStart ? <span title="Evaluation meeting">📅 {fmtDateTime(row.meeting.scheduledStart)}</span> : null}
               {email ? <span className="truncate">{email}</span> : null}
               {phone ? <span>{phone}</span> : null}
               {row.personalInfo?.timezone ? <span>{row.personalInfo.timezone}</span> : null}
@@ -515,7 +541,12 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
               <div className="space-y-1.5">
                 {classesByStudent.map((c, i) => (
                   <div key={i} className="flex items-center justify-between rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs">
-                    <span className="font-medium text-foreground">{c.name}</span>
+                    <span className="flex items-center gap-1.5 font-medium text-foreground">
+                      {c.name}
+                      {c.isExistingStudent
+                        ? <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200">Existing student</span>
+                        : <span className="rounded-full bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700 ring-1 ring-purple-200">New — add to account</span>}
+                    </span>
                     {c.hasClasses
                       ? <span className="text-emerald-700">{c.upcomingCount || c.totalCount} class{(c.upcomingCount || c.totalCount) === 1 ? '' : 'es'}{c.nextClassAt ? ` · next ${fmtDateTime(c.nextClassAt)}` : ''}</span>
                       : <span className="text-amber-600">No classes scheduled yet</span>}

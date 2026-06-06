@@ -3,6 +3,8 @@ const RegistrationLead = require('../models/RegistrationLead');
 const User = require('../models/User');
 const EvaluationSession = require('../models/EvaluationSession');
 const Class = require('../models/Class');
+const Meeting = require('../models/Meeting');
+const { MEETING_TYPES, MEETING_STATUSES } = require('../constants/meetingConstants');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
 const { sendMail, loadBrandingAndLogo, baseEmailTemplate } = require('../services/emailService');
@@ -454,7 +456,9 @@ router.patch('/:leadId/onboarding', authenticateToken, requireAdmin, async (req,
 router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
+    const normEmail = (e) => String(e || '').trim().toLowerCase();
 
+    // 1) Registration-form leads (within the window).
     const leads = await RegistrationLead.find({ createdAt: { $gte: since } })
       .sort({ createdAt: -1 })
       .populate('conversion.guardianUserId', 'firstName lastName email')
@@ -468,55 +472,106 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
         .map((id) => String(id))
     );
 
+    // 2) Guardian self-signups (within the window).
     const signupDocs = await User.find({ role: 'guardian', createdAt: { $gte: since } })
       .select('firstName lastName email phone timezone createdAt isActive guardianInfo.students registrationFollowUp')
       .sort({ createdAt: -1 })
       .lean();
 
-    const signups = signupDocs
-      .filter((u) => !convertedUserIds.has(String(u._id)))
-      .map((u) => {
-        const rf = u.registrationFollowUp || {};
-        return {
-          kind: 'signup',
-          userId: u._id,
-          accountUserId: u._id,
-          createdAt: u.createdAt,
-          status: u.isActive === false ? 'cancelled' : 'account',
-          completedAt: rf.completedAt || null,
-          personalInfo: {
-            fullName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
-            email: u.email,
-            phone: u.phone || '',
-            timezone: u.timezone || '',
-          },
-          students: (u.guardianInfo?.students || []).map((s) => ({
-            firstName: s.firstName,
-            lastName: s.lastName,
-            courses: Array.isArray(s.subjects) ? s.subjects : [],
-          })),
-          onboarding: {
-            contactedAt: rf.contactedAt || null,
-            evaluationDoneAt: rf.evaluationDoneAt || null,
-            classScheduledAt: rf.classScheduledAt || null,
-          },
-          steps: seedFunnelSteps(rf.steps, rf),
-          notes: Array.isArray(rf.notes) ? rf.notes : [],
-          cancelReason: rf.cancelReason || '',
-        };
-      });
+    const leadRows = leads.map((l) => ({
+      ...l,
+      kind: 'lead',
+      accountUserId: l.conversion?.guardianUserId?._id || l.conversion?.guardianUserId || null,
+      completedAt: l.onboarding?.completedAt || null,
+      steps: seedFunnelSteps(l.onboarding?.steps, l.onboarding || {}),
+      notes: l.onboardingNotes || [],
+      meeting: null,
+      isReturning: false,
+    }));
 
-    return res.json({
-      leads: leads.map((l) => ({
-        ...l,
-        kind: 'lead',
-        accountUserId: l.conversion?.guardianUserId?._id || l.conversion?.guardianUserId || null,
-        completedAt: l.onboarding?.completedAt || null,
-        steps: seedFunnelSteps(l.onboarding?.steps, l.onboarding || {}),
-        notes: l.onboardingNotes || [],
-      })),
-      signups,
+    const signupRows = signupDocs
+      .filter((u) => !convertedUserIds.has(String(u._id)))
+      .map((u) => buildSignupRow(u));
+
+    // 3) Scheduled evaluation meetings = the booking entry point of the funnel.
+    //    "later I will wire the website to the dashboard": for now we read any
+    //    evaluation meeting that is upcoming or recently happened.
+    const meetingDocs = await Meeting.find({
+      meetingType: MEETING_TYPES.NEW_STUDENT_EVALUATION,
+      status: { $ne: MEETING_STATUSES.CANCELLED },
+      scheduledStart: { $gte: since },
+    })
+      .sort({ scheduledStart: -1 })
+      .populate('guardianId', 'firstName lastName email phone timezone isActive createdAt guardianInfo.students registrationFollowUp')
+      .lean();
+
+    // Look up guardian accounts (any age) for meeting emails so returning
+    // guardians — who already have an account and maybe paused — are detected
+    // and slotted into the funnel at their existing stage.
+    const meetingEmails = [...new Set(
+      meetingDocs.map((m) => normEmail(m.bookingPayload?.guardianEmail)).filter(Boolean)
+    )];
+    const guardiansByEmail = new Map();
+    if (meetingEmails.length) {
+      const extraGuardians = await User.find({ role: 'guardian', email: { $in: meetingEmails } })
+        .select('firstName lastName email phone timezone isActive createdAt guardianInfo.students registrationFollowUp')
+        .lean();
+      extraGuardians.forEach((g) => guardiansByEmail.set(normEmail(g.email), g));
+    }
+
+    // Index emitted rows so a meeting can attach to an existing lead/signup
+    // instead of creating a duplicate.
+    const rowsByEmail = new Map();
+    const rowsByUid = new Map();
+    const indexRow = (row) => {
+      const e = normEmail(row.personalInfo?.email);
+      if (e) rowsByEmail.set(e, row);
+      if (row.accountUserId) rowsByUid.set(String(row.accountUserId), row);
+    };
+    leadRows.forEach(indexRow);
+    signupRows.forEach(indexRow);
+
+    const meetingSummary = (m) => ({
+      scheduledStart: m.scheduledStart,
+      timezone: m.timezone || m.bookingPayload?.timezone || '',
+      status: m.status,
     });
+
+    const meetingRows = [];
+    const seenMeetingEmails = new Set();
+    meetingDocs.forEach((m) => {
+      const email = normEmail(m.bookingPayload?.guardianEmail);
+      const guardian = m.guardianId || (email ? guardiansByEmail.get(email) : null);
+
+      // Already represented by a lead or signup row? Attach the booking to it.
+      let existing = email ? rowsByEmail.get(email) : null;
+      if (!existing && guardian) existing = rowsByUid.get(String(guardian._id));
+      if (existing) {
+        if (!existing.meeting) existing.meeting = meetingSummary(m);
+        if (!existing.steps) existing.steps = {};
+        if (!existing.steps.booked) existing.steps.booked = m.createdAt || m.scheduledStart;
+        return;
+      }
+
+      // Only one pure row per email (keep the most recent meeting).
+      if (email && seenMeetingEmails.has(email)) return;
+      if (email) seenMeetingEmails.add(email);
+
+      if (guardian) {
+        // Returning guardian: existing account, surfaced via a fresh evaluation.
+        const row = buildSignupRow(guardian, { isReturning: true, meeting: meetingSummary(m) });
+        if (!row.steps.booked) row.steps.booked = m.createdAt || m.scheduledStart;
+        signupRows.push(row);
+        indexRow(row);
+      } else {
+        // Brand-new booking with no lead/account yet.
+        const row = buildMeetingRow(m);
+        meetingRows.push(row);
+        if (email) rowsByEmail.set(email, row);
+      }
+    });
+
+    return res.json({ leads: leadRows, signups: signupRows, meetings: meetingRows });
   } catch (error) {
     console.error('Onboarding to-dos error:', error);
     return res.status(500).json({ message: 'Failed to load onboarding to-dos.' });
@@ -546,6 +601,85 @@ function seedFunnelSteps(steps, legacy = {}) {
   return out;
 }
 
+// Build a unified funnel row from a guardian User document. Used both for fresh
+// self-signups and for returning guardians detected from a new evaluation
+// meeting (pass { isReturning: true, meeting } via `extra`).
+function buildSignupRow(u, extra = {}) {
+  const rf = u.registrationFollowUp || {};
+  return {
+    kind: 'signup',
+    userId: u._id,
+    accountUserId: u._id,
+    createdAt: u.createdAt,
+    status: u.isActive === false ? 'cancelled' : 'account',
+    completedAt: rf.completedAt || null,
+    personalInfo: {
+      fullName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      email: u.email,
+      phone: u.phone || '',
+      timezone: u.timezone || '',
+    },
+    students: (u.guardianInfo?.students || []).map((s) => ({
+      firstName: s.firstName,
+      lastName: s.lastName,
+      courses: Array.isArray(s.subjects) ? s.subjects : [],
+    })),
+    onboarding: {
+      contactedAt: rf.contactedAt || null,
+      evaluationDoneAt: rf.evaluationDoneAt || null,
+      classScheduledAt: rf.classScheduledAt || null,
+    },
+    steps: seedFunnelSteps(rf.steps, rf),
+    notes: Array.isArray(rf.notes) ? rf.notes : [],
+    cancelReason: rf.cancelReason || '',
+    meeting: null,
+    isReturning: false,
+    ...extra,
+  };
+}
+
+// Build a unified funnel row from an evaluation Meeting (the booking entry
+// point) when no lead or guardian account exists for it yet.
+function buildMeetingRow(m) {
+  const ob = m.onboarding || {};
+  const bp = m.bookingPayload || {};
+  const steps = seedFunnelSteps(ob.steps, {});
+  // The booking itself starts the series — light up the "booked" step.
+  if (!steps.booked) steps.booked = m.createdAt || m.scheduledStart;
+  const splitFullName = (full = '') => {
+    const parts = String(full).trim().split(/\s+/).filter(Boolean);
+    return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' };
+  };
+  return {
+    kind: 'meeting',
+    meetingId: m._id,
+    accountUserId: null,
+    createdAt: m.createdAt || m.scheduledStart,
+    status: m.status === MEETING_STATUSES.CANCELLED ? 'cancelled' : 'meeting',
+    completedAt: ob.completedAt || null,
+    personalInfo: {
+      fullName: bp.guardianName || m.attendees?.guardianName || 'Guardian',
+      email: bp.guardianEmail || '',
+      phone: bp.guardianPhone || '',
+      timezone: bp.timezone || m.timezone || '',
+    },
+    students: (bp.students || []).map((s) => {
+      const { firstName, lastName } = splitFullName(s.studentName);
+      return { firstName, lastName, courses: [] };
+    }),
+    onboarding: {},
+    steps,
+    notes: Array.isArray(ob.notes) ? ob.notes : [],
+    cancelReason: m.cancellation?.reason || '',
+    meeting: {
+      scheduledStart: m.scheduledStart,
+      timezone: m.timezone || bp.timezone || '',
+      status: m.status,
+    },
+    isReturning: false,
+  };
+}
+
 const actorName = (req) => `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim() || 'Admin';
 
 async function loadRegistration(kind, id) {
@@ -557,13 +691,49 @@ async function loadRegistration(kind, id) {
     const doc = await User.findById(id);
     return doc && doc.role === 'guardian' ? { kind, doc } : null;
   }
+  if (kind === 'meeting') {
+    const doc = await Meeting.findById(id);
+    return doc ? { kind, doc } : null;
+  }
   return null;
 }
 
-const regEmailOf = (kind, doc) => (kind === 'lead' ? doc.personalInfo?.email : doc.email);
-const regNameOf = (kind, doc) => (kind === 'lead'
-  ? (doc.personalInfo?.fullName || doc.personalInfo?.guardianName || `${doc.personalInfo?.firstName || ''} ${doc.personalInfo?.lastName || ''}`.trim())
-  : `${doc.firstName || ''} ${doc.lastName || ''}`.trim());
+// Which document field holds the funnel state for each kind. Leads and meetings
+// both keep it under `onboarding`; guardian signups under `registrationFollowUp`.
+const onboardingBlock = (kind) => (kind === 'signup' ? 'registrationFollowUp' : 'onboarding');
+
+const regEmailOf = (kind, doc) => {
+  if (kind === 'lead') return doc.personalInfo?.email;
+  if (kind === 'meeting') return doc.bookingPayload?.guardianEmail;
+  return doc.email;
+};
+const regNameOf = (kind, doc) => {
+  if (kind === 'lead') {
+    return doc.personalInfo?.fullName || doc.personalInfo?.guardianName || `${doc.personalInfo?.firstName || ''} ${doc.personalInfo?.lastName || ''}`.trim();
+  }
+  if (kind === 'meeting') {
+    return doc.bookingPayload?.guardianName || doc.attendees?.guardianName || '';
+  }
+  return `${doc.firstName || ''} ${doc.lastName || ''}`.trim();
+};
+
+// Append a follow-up note to whichever block a registration kind uses.
+const pushRegistrationNote = (kind, doc, note) => {
+  if (kind === 'lead') {
+    if (!Array.isArray(doc.onboardingNotes)) doc.onboardingNotes = [];
+    doc.onboardingNotes.push(note);
+  } else if (kind === 'meeting') {
+    if (!doc.onboarding) doc.onboarding = {};
+    if (!Array.isArray(doc.onboarding.notes)) doc.onboarding.notes = [];
+    doc.onboarding.notes.push(note);
+    doc.markModified('onboarding');
+  } else {
+    if (!doc.registrationFollowUp) doc.registrationFollowUp = {};
+    if (!Array.isArray(doc.registrationFollowUp.notes)) doc.registrationFollowUp.notes = [];
+    doc.registrationFollowUp.notes.push(note);
+    doc.markModified('registrationFollowUp');
+  }
+};
 
 // Toggle any onboarding step (writes into the flexible steps map).
 router.post('/registration/:kind/:id/step', authenticateToken, requireAdmin, async (req, res) => {
@@ -576,7 +746,7 @@ router.post('/registration/:kind/:id/step', authenticateToken, requireAdmin, asy
     if (!found) return res.status(404).json({ message: 'Registration not found.' });
     const { kind, doc } = found;
     const stamp = done === false ? null : new Date();
-    const block = kind === 'lead' ? 'onboarding' : 'registrationFollowUp';
+    const block = onboardingBlock(kind);
 
     if (!doc[block]) doc[block] = {};
     if (!doc[block].steps || typeof doc[block].steps !== 'object') doc[block].steps = {};
@@ -602,7 +772,7 @@ router.post('/registration/:kind/:id/complete', authenticateToken, requireAdmin,
     const found = await loadRegistration(req.params.kind, req.params.id);
     if (!found) return res.status(404).json({ message: 'Registration not found.' });
     const { kind, doc } = found;
-    const block = kind === 'lead' ? 'onboarding' : 'registrationFollowUp';
+    const block = onboardingBlock(kind);
     if (!doc[block]) doc[block] = {};
     doc[block].completedAt = complete ? new Date() : null;
     doc.markModified(block);
@@ -626,7 +796,19 @@ router.get('/registration/:kind/:id/details', authenticateToken, requireAdmin, a
     if (!found) return res.status(404).json({ message: 'Registration not found.' });
     const { kind, doc } = found;
     const email = regEmailOf(kind, doc);
-    const guardianUserId = kind === 'signup' ? doc._id : (doc.conversion?.guardianUserId || null);
+    let guardianUserId = null;
+    if (kind === 'signup') guardianUserId = doc._id;
+    else if (kind === 'meeting') guardianUserId = doc.guardianId || null;
+    else guardianUserId = doc.conversion?.guardianUserId || null;
+
+    // A returning guardian booking a new evaluation may not have linked their
+    // account on the meeting — fall back to matching a guardian by email.
+    if (!guardianUserId && kind === 'meeting' && email) {
+      const match = await User.findOne({ role: 'guardian', email: new RegExp(`^${escapeRegExp(email)}$`, 'i') })
+        .select('_id')
+        .lean();
+      if (match) guardianUserId = match._id;
+    }
 
     // Find the most recent evaluation linked by guardian user or contact email.
     const or = [];
@@ -658,7 +840,22 @@ router.get('/registration/:kind/:id/details', authenticateToken, requireAdmin, a
     if (!names.length && Array.isArray(doc.students)) {
       names = doc.students.map((s) => firstNameOf(s.firstName)).filter(Boolean);
     }
+    if (!names.length && Array.isArray(doc.bookingPayload?.students)) {
+      names = doc.bookingPayload.students.map((s) => firstNameOf(s.studentName)).filter(Boolean);
+    }
     names = [...new Set(names)];
+
+    // Detect which evaluated students already exist under the guardian's
+    // account. A returning guardian restarting classes usually keeps the same
+    // students; a new child shows up as a name not yet on the account.
+    let existingFirstNames = [];
+    if (kind === 'signup' && Array.isArray(doc.guardianInfo?.students)) {
+      existingFirstNames = doc.guardianInfo.students.map((s) => firstNameOf(s.firstName).toLowerCase()).filter(Boolean);
+    } else if (guardianUserId) {
+      const gUser = await User.findById(guardianUserId).select('guardianInfo.students').lean();
+      existingFirstNames = (gUser?.guardianInfo?.students || []).map((s) => firstNameOf(s.firstName).toLowerCase()).filter(Boolean);
+    }
+    const existingSet = new Set(existingFirstNames);
 
     let classesByStudent = [];
     if (guardianUserId && names.length) {
@@ -675,6 +872,7 @@ router.get('/registration/:kind/:id/details', authenticateToken, requireAdmin, a
         const upcoming = matched.filter((c) => c.scheduledDate && new Date(c.scheduledDate) >= new Date());
         return {
           name: fn,
+          isExistingStudent: existingSet.has(fn.toLowerCase()),
           hasClasses: matched.length > 0,
           totalCount: matched.length,
           upcomingCount: upcoming.length,
@@ -682,7 +880,14 @@ router.get('/registration/:kind/:id/details', authenticateToken, requireAdmin, a
         };
       });
     } else {
-      classesByStudent = names.map((fn) => ({ name: fn, hasClasses: false, totalCount: 0, upcomingCount: 0, nextClassAt: null }));
+      classesByStudent = names.map((fn) => ({
+        name: fn,
+        isExistingStudent: existingSet.has(fn.toLowerCase()),
+        hasClasses: false,
+        totalCount: 0,
+        upcomingCount: 0,
+        nextClassAt: null,
+      }));
     }
 
     return res.json({
@@ -709,15 +914,7 @@ router.post('/registration/:kind/:id/note', authenticateToken, requireAdmin, asy
     const { kind, doc } = found;
     const note = { text: text.slice(0, 2000), by: req.user._id, byName: actorName(req), at: new Date() };
 
-    if (kind === 'lead') {
-      if (!Array.isArray(doc.onboardingNotes)) doc.onboardingNotes = [];
-      doc.onboardingNotes.push(note);
-    } else {
-      if (!doc.registrationFollowUp) doc.registrationFollowUp = {};
-      if (!Array.isArray(doc.registrationFollowUp.notes)) doc.registrationFollowUp.notes = [];
-      doc.registrationFollowUp.notes.push(note);
-      doc.markModified('registrationFollowUp');
-    }
+    pushRegistrationNote(kind, doc, note);
     await doc.save();
     return res.json({ message: 'Note added.', note });
   } catch (error) {
@@ -755,15 +952,7 @@ router.post('/registration/:kind/:id/email', authenticateToken, requireAdmin, as
 
     // Record the email as a note for the activity trail.
     const note = { text: `Email sent: ${subject}`, by: req.user._id, byName: actorName(req), at: new Date() };
-    if (kind === 'lead') {
-      if (!Array.isArray(doc.onboardingNotes)) doc.onboardingNotes = [];
-      doc.onboardingNotes.push(note);
-    } else {
-      if (!doc.registrationFollowUp) doc.registrationFollowUp = {};
-      if (!Array.isArray(doc.registrationFollowUp.notes)) doc.registrationFollowUp.notes = [];
-      doc.registrationFollowUp.notes.push(note);
-      doc.markModified('registrationFollowUp');
-    }
+    pushRegistrationNote(kind, doc, note);
     await doc.save();
 
     return res.json({ message: 'Email sent.', note });
@@ -789,6 +978,11 @@ router.post('/registration/:kind/:id/cancel', authenticateToken, requireAdmin, a
       doc.archive = cancel
         ? { archivedAt: new Date(), archivedBy: req.user._id, reason }
         : { archivedAt: null, archivedBy: null, reason: '' };
+    } else if (kind === 'meeting') {
+      doc.status = cancel ? MEETING_STATUSES.CANCELLED : MEETING_STATUSES.SCHEDULED;
+      doc.cancellation = cancel
+        ? { reason, cancelledBy: req.user._id, cancelledAt: new Date() }
+        : { reason: '', cancelledBy: null, cancelledAt: null };
     } else {
       doc.isActive = !cancel;
       if (!doc.registrationFollowUp) doc.registrationFollowUp = {};

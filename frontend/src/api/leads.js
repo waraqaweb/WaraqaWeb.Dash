@@ -36,10 +36,10 @@ export async function updateLeadOnboarding(leadId, step, done) {
 // Homepage onboarding to-do: recent leads + recent guardian signups (last 3 weeks).
 export async function getOnboardingTodos() {
   const { data } = await api.get(`${BASE}/onboarding-todos`);
-  return { leads: data.leads || [], signups: data.signups || [] };
+  return { leads: data.leads || [], signups: data.signups || [], meetings: data.meetings || [] };
 }
 
-// Unified registration management (kind = 'lead' | 'signup').
+// Unified registration management (kind = 'lead' | 'signup' | 'meeting').
 export async function setRegistrationStep(kind, id, step, done) {
   const { data } = await api.post(`${BASE}/registration/${kind}/${id}/step`, { step, done });
   return data;

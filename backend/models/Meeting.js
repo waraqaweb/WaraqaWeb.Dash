@@ -247,6 +247,22 @@ const meetingSchema = new mongoose.Schema({
   visibility: {
     showInCalendar: { type: Boolean, default: true },
     displayColor: { type: String, default: '#FEF9C3' }
+  },
+  // Lightweight onboarding-funnel state used when this evaluation meeting is the
+  // canonical funnel row — i.e. the website booking exists before any
+  // registration lead or guardian account. Mirrors RegistrationLead.onboarding:
+  // a flexible { [stepKey]: Date } map plus a completion stamp and notes.
+  onboarding: {
+    steps: { type: mongoose.Schema.Types.Mixed, default: {} },
+    completedAt: { type: Date, default: null },
+    notes: [
+      {
+        text: { type: String, trim: true, maxlength: 2000 },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        byName: { type: String, trim: true, maxlength: 160 },
+        at: { type: Date, default: Date.now }
+      }
+    ]
   }
 }, {
   timestamps: true,

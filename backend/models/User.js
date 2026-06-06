@@ -794,6 +794,25 @@ const userSchema = new mongoose.Schema({
     },
   },
 
+  // Registration follow-up funnel for self-signed-up guardians. Mirrors the
+  // RegistrationLead.onboarding shape so the admin homepage to-do list can treat
+  // leads and direct sign-ups the same way (contacted → evaluated → class set).
+  registrationFollowUp: {
+    contactedAt: { type: Date, default: null },
+    evaluationDoneAt: { type: Date, default: null },
+    classScheduledAt: { type: Date, default: null },
+    cancelledAt: { type: Date, default: null },
+    cancelReason: { type: String, trim: true, maxlength: 500, default: '' },
+    notes: [
+      {
+        text: { type: String, trim: true, maxlength: 2000 },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        byName: { type: String, trim: true, maxlength: 160 },
+        at: { type: Date, default: Date.now },
+      },
+    ],
+  },
+
   // Per-user email notification preferences (all roles).
   // globalEnabled acts as a master kill-switch for this user.
   // Admin can also override this per-user from the profile edit modal.

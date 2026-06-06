@@ -38,7 +38,7 @@ import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import useMinLoading from '../../components/ui/useMinLoading';
 import api from '../../api/axios';
 import ExportExcelButton from '../../components/ui/ExportExcelButton';
-import { fetchAllForExport, mapGuardianRow, downloadExcel } from '../../utils/exportToExcel';
+import { fetchAllForExport, buildGuardianExportRows, downloadExcel } from '../../utils/exportToExcel';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const GUARDIAN_STATUS_TABS = [
@@ -812,7 +812,7 @@ const GuardiansPage = () => {
             if (statusFilter !== 'all') params.isActive = statusFilter === 'active';
             if (debouncedSearch) params.search = debouncedSearch;
             const data = await fetchAllForExport('/users', params);
-            await downloadExcel((data.users || []).map(mapGuardianRow), 'guardians');
+            await downloadExcel(buildGuardianExportRows(data.users || []), 'guardians');
           }} />
         </div>
 

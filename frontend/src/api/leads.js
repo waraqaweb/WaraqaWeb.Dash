@@ -38,3 +38,24 @@ export async function getOnboardingTodos() {
   const { data } = await api.get(`${BASE}/onboarding-todos`);
   return { leads: data.leads || [], signups: data.signups || [] };
 }
+
+// Unified registration management (kind = 'lead' | 'signup').
+export async function setRegistrationStep(kind, id, step, done) {
+  const { data } = await api.post(`${BASE}/registration/${kind}/${id}/step`, { step, done });
+  return data;
+}
+
+export async function addRegistrationNote(kind, id, text) {
+  const { data } = await api.post(`${BASE}/registration/${kind}/${id}/note`, { text });
+  return data;
+}
+
+export async function sendRegistrationEmail(kind, id, subject, body) {
+  const { data } = await api.post(`${BASE}/registration/${kind}/${id}/email`, { subject, body });
+  return data;
+}
+
+export async function cancelRegistration(kind, id, cancel = true, reason = '') {
+  const { data } = await api.post(`${BASE}/registration/${kind}/${id}/cancel`, { cancel, reason });
+  return data;
+}

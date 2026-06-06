@@ -42,6 +42,13 @@ export async function downloadExcel(rows, name, sheet = 'Data') {
 
 /* ─── Page-specific mappers ──────────────────────────────────────── */
 
+// Small shared formatters so every export renders dates/lists consistently.
+const fmtDate = (v) => (v ? new Date(v).toLocaleDateString() : '');
+const fmtDateTime = (v) => (v ? new Date(v).toLocaleString() : '');
+const fmtList = (v) => (Array.isArray(v) ? v.filter(Boolean).join(', ') : (v || ''));
+const yesNo = (v) => (v ? 'Yes' : 'No');
+const fullName = (first, last) => [first, last].filter(Boolean).join(' ');
+
 export function mapClassRow(c) {
   const teacher = c.teacher || {};
   const stu = c.student || {};
@@ -53,60 +60,157 @@ export function mapClassRow(c) {
     'Date': c.scheduledDate ? new Date(c.scheduledDate).toLocaleDateString() : '',
     'Time': c.scheduledDate ? new Date(c.scheduledDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
     'Duration (min)': c.duration || '',
-    'Teacher': [teacher.firstName, teacher.lastName].filter(Boolean).join(' '),
-    'Student': [stu.studentFirstName || stu.firstName, stu.studentLastName || stu.lastName].filter(Boolean).join(' '),
-    'Guardian': [guardian.firstName, guardian.lastName].filter(Boolean).join(' '),
+    'Teacher': fullName(teacher.firstName, teacher.lastName),
+    'Teacher Email': teacher.email || '',
+    'Student': fullName(stu.studentFirstName || stu.firstName, stu.studentLastName || stu.lastName),
+    'Guardian': fullName(guardian.firstName, guardian.lastName),
+    'Guardian Email': guardian.email || '',
     'Meeting Link': c.meetingLink || '',
+    'Recurring': yesNo(c.isRecurring || c.recurring),
+    'Trial': yesNo(c.isTrial),
     'Report Status': c.reportSubmission?.status || '',
     'Report Attendance': report.attendance || '',
     'Report Score': report.score ?? '',
+    'Report Progress': report.progress || '',
     'Report Notes': report.notes || '',
-    'Created': c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '',
+    'Cancelled By': c.cancelledBy || c.cancellation?.cancelledBy || '',
+    'Cancel Reason': c.cancellation?.reason || c.cancelReason || '',
+    'Created': fmtDate(c.createdAt),
+    'Updated': fmtDate(c.updatedAt),
   };
 }
 
 export function mapTeacherRow(t) {
   const td = t.teacherData || t.teacherInfo || {};
+  const bank = td.bankDetails || {};
+  const addr = t.address || {};
   return {
     'First Name': t.firstName || '',
     'Last Name': t.lastName || '',
     'Email': t.email || '',
     'Phone': t.phone || '',
+    'Gender': t.gender || '',
     'Status': t.isActive ? 'Active' : 'Inactive',
+    'Email Verified': yesNo(t.isEmailVerified),
+    'Timezone': t.timezone || '',
+    'Country': addr.country || '',
+    'City': addr.city || '',
+    'Subjects': fmtList(td.subjects),
     'Specialization': td.specialization || '',
+    'Spoken Languages': fmtList(td.spokenLanguages),
+    'Hourly Rate (USD)': td.hourlyRate ?? '',
+    'Bonus (USD)': td.bonus ?? '',
+    'Monthly Hours': td.monthlyHours ?? '',
+    'Total Classes Taught': td.totalClassesTaught ?? '',
+    'Preferred Currency': td.preferredCurrency || '',
+    'Instapay Name': td.instapayName || '',
+    'Bank Name': bank.bankName || '',
+    'Account Number': bank.accountNumber || '',
+    'IBAN': bank.iban || '',
+    'SWIFT': bank.swift || '',
+    'Google Meet Link': td.googleMeetLink || '',
+    'Vacation Days/Year': td.vacationAllowance?.defaultDaysPerYear ?? '',
     'Bio': td.bio || '',
-    'Created': t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '',
+    'Date of Birth': fmtDate(t.dateOfBirth),
+    'Created': fmtDate(t.createdAt),
+    'Updated': fmtDate(t.updatedAt),
   };
 }
 
+/**
+ * Guardian export: one flat row per guardian with every student summarized into
+ * its own set of columns (Student 1 …, Student 2 …). Use buildGuardianExportRows
+ * so every row shares the same student columns (padded to the largest family).
+ */
+export function buildGuardianExportRows(guardians = []) {
+  const maxStudents = guardians.reduce(
+    (max, g) => Math.max(max, (g.guardianInfo?.students || []).length),
+    0
+  );
+  return guardians.map((g) => {
+    const gi = g.guardianInfo || {};
+    const tf = gi.transferFee || {};
+    const addr = g.address || {};
+    const billing = gi.billingAddress || {};
+    const bank = gi.bankDetails || {};
+    const students = Array.isArray(gi.students) ? gi.students : [];
+    const row = {
+      'First Name': g.firstName || '',
+      'Last Name': g.lastName || '',
+      'Email': g.email || '',
+      'Phone': g.phone || '',
+      'Status': g.isActive ? 'Active' : 'Inactive',
+      'Email Verified': yesNo(g.isEmailVerified),
+      'Relationship': gi.relationship || '',
+      'Timezone': g.timezone || gi.timezone || '',
+      'Country': addr.country || billing.country || '',
+      'City': addr.city || billing.city || '',
+      'State': addr.state || billing.state || '',
+      'Hourly Rate': gi.hourlyRate ?? '',
+      'Transfer Fee Mode': tf.mode || '',
+      'Transfer Fee Value': tf.value ?? '',
+      'Currency': gi.currency || '',
+      'Payment Method': gi.paymentMethod || '',
+      'Total Hours': gi.totalHours ?? '',
+      'Cumulative Hours': gi.cumulativeConsumedHours ?? '',
+      'Spoken Languages': fmtList(gi.spokenLanguages),
+      'Emergency Contact': gi.emergencyContact?.name
+        ? `${gi.emergencyContact.name}${gi.emergencyContact.phone ? ` (${gi.emergencyContact.phone})` : ''}`
+        : '',
+      'Bank Name': bank.bankName || '',
+      'IBAN': bank.iban || '',
+      '# Students': students.length,
+      'Created': fmtDate(g.createdAt),
+      'Updated': fmtDate(g.updatedAt),
+    };
+    for (let i = 0; i < maxStudents; i += 1) {
+      const s = students[i] || {};
+      const n = i + 1;
+      row[`Student ${n} Name`] = fullName(s.firstName, s.lastName);
+      row[`Student ${n} Gender`] = s.gender || '';
+      row[`Student ${n} Birth Date`] = fmtDate(s.dateOfBirth);
+      row[`Student ${n} Subjects`] = fmtList(s.subjects);
+      row[`Student ${n} Language`] = s.language || '';
+      row[`Student ${n} Grade`] = s.grade || '';
+      row[`Student ${n} Hours Left`] = s.hoursRemaining ?? '';
+      row[`Student ${n} Status`] = s.isActive === false ? 'Inactive' : 'Active';
+      row[`Student ${n} Classes Attended`] = s.totalClassesAttended ?? '';
+      row[`Student ${n} Timezone`] = s.timezone || '';
+      row[`Student ${n} Notes`] = s.notes || '';
+    }
+    return row;
+  });
+}
+
+// Kept for backward compatibility (single guardian, no student columns).
 export function mapGuardianRow(g) {
-  return {
-    'First Name': g.firstName || '',
-    'Last Name': g.lastName || '',
-    'Email': g.email || '',
-    'Phone': g.phone || '',
-    'Status': g.isActive ? 'Active' : 'Inactive',
-    'Hourly Rate': g.guardianInfo?.hourlyRate ?? '',
-    'Transfer Fee': g.guardianInfo?.transferFee ?? '',
-    'Currency': g.guardianInfo?.currency || '',
-    'Created': g.createdAt ? new Date(g.createdAt).toLocaleDateString() : '',
-  };
+  return buildGuardianExportRows([g])[0];
 }
 
 export function mapStudentRow(s) {
-  const guardian = s.guardian || {};
+  const guardian = s.guardian || s.guardianId || {};
   return {
-    'First Name': s.firstName || '',
-    'Last Name': s.lastName || '',
-    'Status': s.status || '',
+    'First Name': s.firstName || s.studentFirstName || '',
+    'Last Name': s.lastName || s.studentLastName || '',
+    'Status': s.status || (s.isActive === false ? 'Inactive' : 'Active'),
     'Gender': s.gender || '',
-    'Birth Date': s.birthDate ? new Date(s.birthDate).toLocaleDateString() : '',
+    'Birth Date': fmtDate(s.birthDate || s.dateOfBirth),
     'Language': s.language || '',
-    'Subjects': Array.isArray(s.subjects) ? s.subjects.join(', ') : (s.subjects || ''),
-    'Guardian': [guardian.firstName, guardian.lastName].filter(Boolean).join(' '),
+    'Grade': s.grade || '',
+    'School': s.school || '',
+    'Subjects': fmtList(s.subjects),
+    'Hours Remaining': s.hoursRemaining ?? '',
+    'Classes Attended': s.totalClassesAttended ?? '',
+    'Timezone': s.timezone || '',
+    'Phone': s.phone || '',
+    'WhatsApp': s.whatsapp || '',
+    'Email': s.email || '',
+    'Guardian': fullName(guardian.firstName, guardian.lastName),
     'Guardian Email': guardian.email || '',
+    'Guardian Phone': guardian.phone || '',
+    'Learning Preferences': s.learningPreferences || '',
     'Notes': s.notes || '',
-    'Created': s.createdAt ? new Date(s.createdAt).toLocaleDateString() : '',
+    'Created': fmtDate(s.createdAt),
   };
 }
 
@@ -118,21 +222,33 @@ export function mapInvoiceRow(inv) {
     'Invoice #': inv.invoiceNumber || inv.invoiceSlug || '',
     'Status': inv.status || '',
     'Type': inv.type || '',
-    'Guardian': [guardian.firstName, guardian.lastName].filter(Boolean).join(' '),
+    'Guardian': fullName(guardian.firstName, guardian.lastName),
     'Guardian Email': guardian.email || '',
-    'Teacher': [teacher.firstName, teacher.lastName].filter(Boolean).join(' '),
-    'Billing Start': bp.startDate ? new Date(bp.startDate).toLocaleDateString() : '',
-    'Billing End': bp.endDate ? new Date(bp.endDate).toLocaleDateString() : '',
+    'Guardian Phone': guardian.phone || '',
+    'Teacher': fullName(teacher.firstName, teacher.lastName),
+    'Teacher Email': teacher.email || '',
+    'Billing Start': fmtDate(bp.startDate),
+    'Billing End': fmtDate(bp.endDate),
+    'Currency': inv.currency || '',
     'Subtotal': inv.subtotal ?? '',
+    'Discount': inv.discount ?? inv.discountAmount ?? '',
+    'Transfer Fee': inv.transferFee ?? '',
     'Total': inv.total ?? inv.adjustedTotal ?? '',
+    'Adjusted Total': inv.adjustedTotal ?? '',
     'Paid Amount': inv.paidAmount ?? '',
+    'Balance Due': inv.balanceDue ?? ((inv.total ?? 0) - (inv.paidAmount ?? 0)),
     'Hours': inv.hoursCovered ?? '',
-    'Due Date': inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : '',
-    'Paid At': inv.paidAt ? new Date(inv.paidAt).toLocaleDateString() : '',
+    'Hourly Rate': inv.hourlyRate ?? '',
     'Classes': inv.items?.length ?? '',
-    'Created': inv.createdAt ? new Date(inv.createdAt).toLocaleDateString() : '',
+    'Due Date': fmtDate(inv.dueDate),
+    'Paid At': fmtDate(inv.paidAt),
+    'Payment Method': inv.paymentMethod || '',
+    'Notes': inv.notes || inv.adminNotes || '',
+    'Created': fmtDate(inv.createdAt),
+    'Updated': fmtDate(inv.updatedAt),
   };
 }
+
 
 export function mapSalaryRow(s) {
   const teacher = s.teacher || {};
@@ -141,19 +257,24 @@ export function mapSalaryRow(s) {
     'Invoice #': s.invoiceNumber || '',
     'Invoice Name': s.invoiceName || '',
     'Status': s.status || '',
-    'Teacher': [teacher.firstName, teacher.lastName].filter(Boolean).join(' '),
+    'Teacher': fullName(teacher.firstName, teacher.lastName),
     'Teacher Email': teacher.email || '',
+    'Teacher Phone': teacher.phone || '',
     'Month': s.month || '',
     'Year': s.year || '',
-    'Billing Start': bp.startDate ? new Date(bp.startDate).toLocaleDateString() : '',
-    'Billing End': bp.endDate ? new Date(bp.endDate).toLocaleDateString() : '',
+    'Billing Start': fmtDate(bp.startDate),
+    'Billing End': fmtDate(bp.endDate),
     'Total (USD)': s.totalUSD ?? s.total ?? '',
-    'Net (EGP)': s.netEGP ?? '',
+    'Net (EGP)': s.netEGP ?? s.netAmountEGP ?? '',
+    'Total (EGP)': s.totalEGP ?? '',
     'Bonus (USD)': s.bonusUSD ?? '',
-    'Hours': s.totalHours ?? s.hoursCovered ?? '',
-    'Rate (USD/hr)': s.rateUSD ?? '',
+    'Extras (USD)': Array.isArray(s.extras) ? s.extras.reduce((sum, e) => sum + (e.amountUSD || 0), 0) : '',
+    'Hours': s.totalHours ?? s.hoursCovered ?? s.lockedMonthlyHours ?? '',
+    'Rate (USD/hr)': s.rateUSD ?? s.rateSnapshot?.hourlyRate ?? '',
     'Currency': s.currency || '',
-    'Paid At': s.paidAt ? new Date(s.paidAt).toLocaleDateString() : '',
-    'Created': s.createdAt ? new Date(s.createdAt).toLocaleDateString() : '',
+    'Paid At': fmtDate(s.paidAt),
+    'Created': fmtDate(s.createdAt),
+    'Updated': fmtDate(s.updatedAt),
   };
 }
+

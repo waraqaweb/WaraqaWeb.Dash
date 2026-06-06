@@ -3,6 +3,7 @@ const RegistrationLead = require('../models/RegistrationLead');
 const User = require('../models/User');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
+const { sendMail, loadBrandingAndLogo, baseEmailTemplate } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -466,37 +467,210 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
     );
 
     const signupDocs = await User.find({ role: 'guardian', createdAt: { $gte: since } })
-      .select('firstName lastName email phone timezone createdAt isActive guardianInfo.students')
+      .select('firstName lastName email phone timezone createdAt isActive guardianInfo.students registrationFollowUp')
       .sort({ createdAt: -1 })
       .lean();
 
     const signups = signupDocs
       .filter((u) => !convertedUserIds.has(String(u._id)))
-      .map((u) => ({
-        kind: 'signup',
-        userId: u._id,
-        createdAt: u.createdAt,
-        status: u.isActive === false ? 'cancelled' : 'account',
-        personalInfo: {
-          fullName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
-          email: u.email,
-          phone: u.phone || '',
-          timezone: u.timezone || '',
-        },
-        students: (u.guardianInfo?.students || []).map((s) => ({
-          firstName: s.firstName,
-          lastName: s.lastName,
-          courses: Array.isArray(s.subjects) ? s.subjects : [],
-        })),
-      }));
+      .map((u) => {
+        const rf = u.registrationFollowUp || {};
+        return {
+          kind: 'signup',
+          userId: u._id,
+          createdAt: u.createdAt,
+          status: u.isActive === false ? 'cancelled' : 'account',
+          personalInfo: {
+            fullName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+            email: u.email,
+            phone: u.phone || '',
+            timezone: u.timezone || '',
+          },
+          students: (u.guardianInfo?.students || []).map((s) => ({
+            firstName: s.firstName,
+            lastName: s.lastName,
+            courses: Array.isArray(s.subjects) ? s.subjects : [],
+          })),
+          onboarding: {
+            contactedAt: rf.contactedAt || null,
+            evaluationDoneAt: rf.evaluationDoneAt || null,
+            classScheduledAt: rf.classScheduledAt || null,
+          },
+          notes: Array.isArray(rf.notes) ? rf.notes : [],
+          cancelReason: rf.cancelReason || '',
+        };
+      });
 
     return res.json({
-      leads: leads.map((l) => ({ ...l, kind: 'lead' })),
+      leads: leads.map((l) => ({ ...l, kind: 'lead', notes: l.onboardingNotes || [] })),
       signups,
     });
   } catch (error) {
     console.error('Onboarding to-dos error:', error);
     return res.status(500).json({ message: 'Failed to load onboarding to-dos.' });
+  }
+});
+
+// ─── Unified registration management (works for leads AND guardian signups) ──
+// kind ∈ { 'lead', 'signup' }. Leads store onboarding on the RegistrationLead;
+// signups store it on the guardian User's registrationFollowUp block.
+const FOLLOWUP_STEP_FIELDS = {
+  contacted: 'contactedAt',
+  evaluationDone: 'evaluationDoneAt',
+  classScheduled: 'classScheduledAt',
+};
+
+const actorName = (req) => `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim() || 'Admin';
+
+async function loadRegistration(kind, id) {
+  if (kind === 'lead') {
+    const doc = await RegistrationLead.findById(id);
+    return doc ? { kind, doc } : null;
+  }
+  if (kind === 'signup') {
+    const doc = await User.findById(id);
+    return doc && doc.role === 'guardian' ? { kind, doc } : null;
+  }
+  return null;
+}
+
+const regEmailOf = (kind, doc) => (kind === 'lead' ? doc.personalInfo?.email : doc.email);
+const regNameOf = (kind, doc) => (kind === 'lead'
+  ? (doc.personalInfo?.fullName || doc.personalInfo?.guardianName || `${doc.personalInfo?.firstName || ''} ${doc.personalInfo?.lastName || ''}`.trim())
+  : `${doc.firstName || ''} ${doc.lastName || ''}`.trim());
+
+// Toggle an onboarding step (contacted / evaluationDone / classScheduled).
+router.post('/registration/:kind/:id/step', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { step, done } = req.body || {};
+    const field = FOLLOWUP_STEP_FIELDS[step];
+    if (!field) return res.status(400).json({ message: 'Unknown onboarding step.' });
+
+    const found = await loadRegistration(req.params.kind, req.params.id);
+    if (!found) return res.status(404).json({ message: 'Registration not found.' });
+    const { kind, doc } = found;
+    const stamp = done === false ? null : new Date();
+
+    if (kind === 'lead') {
+      if (!doc.onboarding) doc.onboarding = {};
+      doc.onboarding[field] = stamp;
+      doc.markModified('onboarding');
+    } else {
+      if (!doc.registrationFollowUp) doc.registrationFollowUp = {};
+      doc.registrationFollowUp[field] = stamp;
+      doc.markModified('registrationFollowUp');
+    }
+    await doc.save();
+    return res.json({ message: 'Step updated.' });
+  } catch (error) {
+    console.error('Registration step error:', error);
+    return res.status(500).json({ message: 'Failed to update step.' });
+  }
+});
+
+// Add a follow-up note.
+router.post('/registration/:kind/:id/note', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const text = String(req.body?.text || '').trim();
+    if (!text) return res.status(400).json({ message: 'Note text is required.' });
+
+    const found = await loadRegistration(req.params.kind, req.params.id);
+    if (!found) return res.status(404).json({ message: 'Registration not found.' });
+    const { kind, doc } = found;
+    const note = { text: text.slice(0, 2000), by: req.user._id, byName: actorName(req), at: new Date() };
+
+    if (kind === 'lead') {
+      if (!Array.isArray(doc.onboardingNotes)) doc.onboardingNotes = [];
+      doc.onboardingNotes.push(note);
+    } else {
+      if (!doc.registrationFollowUp) doc.registrationFollowUp = {};
+      if (!Array.isArray(doc.registrationFollowUp.notes)) doc.registrationFollowUp.notes = [];
+      doc.registrationFollowUp.notes.push(note);
+      doc.markModified('registrationFollowUp');
+    }
+    await doc.save();
+    return res.json({ message: 'Note added.', note });
+  } catch (error) {
+    console.error('Registration note error:', error);
+    return res.status(500).json({ message: 'Failed to add note.' });
+  }
+});
+
+// Send a custom email to the guardian and record it as a note.
+router.post('/registration/:kind/:id/email', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const subject = String(req.body?.subject || '').trim();
+    const body = String(req.body?.body || '').trim();
+    if (!subject || !body) return res.status(400).json({ message: 'Subject and message are required.' });
+
+    const found = await loadRegistration(req.params.kind, req.params.id);
+    if (!found) return res.status(404).json({ message: 'Registration not found.' });
+    const { kind, doc } = found;
+    const to = regEmailOf(kind, doc);
+    if (!to) return res.status(400).json({ message: 'No email address on file.' });
+
+    const name = regNameOf(kind, doc) || 'there';
+    const branding = await loadBrandingAndLogo();
+    const safeBody = body
+      .split('\n')
+      .map((line) => (line.trim() ? `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#1f2937;">${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>` : ''))
+      .join('');
+    const html = baseEmailTemplate({
+      preheader: subject,
+      branding,
+      body: `<p style="margin:0 0 16px;font-size:16px;font-weight:600;color:#111827;">Assalamu alaikum ${name},</p>${safeBody}`,
+    });
+
+    await sendMail({ to, subject, html, text: body });
+
+    // Record the email as a note for the activity trail.
+    const note = { text: `Email sent: ${subject}`, by: req.user._id, byName: actorName(req), at: new Date() };
+    if (kind === 'lead') {
+      if (!Array.isArray(doc.onboardingNotes)) doc.onboardingNotes = [];
+      doc.onboardingNotes.push(note);
+    } else {
+      if (!doc.registrationFollowUp) doc.registrationFollowUp = {};
+      if (!Array.isArray(doc.registrationFollowUp.notes)) doc.registrationFollowUp.notes = [];
+      doc.registrationFollowUp.notes.push(note);
+      doc.markModified('registrationFollowUp');
+    }
+    await doc.save();
+
+    return res.json({ message: 'Email sent.', note });
+  } catch (error) {
+    console.error('Registration email error:', error);
+    return res.status(500).json({ message: 'Failed to send email.' });
+  }
+});
+
+// Mark a registration as cancelled (or restore it).
+router.post('/registration/:kind/:id/cancel', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const cancel = req.body?.cancel !== false;
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
+
+    const found = await loadRegistration(req.params.kind, req.params.id);
+    if (!found) return res.status(404).json({ message: 'Registration not found.' });
+    const { kind, doc } = found;
+
+    if (kind === 'lead') {
+      if (doc.status === 'converted') return res.status(409).json({ message: 'Converted leads cannot be cancelled.' });
+      doc.status = cancel ? 'archived' : 'new';
+      doc.archive = cancel
+        ? { archivedAt: new Date(), archivedBy: req.user._id, reason }
+        : { archivedAt: null, archivedBy: null, reason: '' };
+    } else {
+      doc.isActive = !cancel;
+      if (!doc.registrationFollowUp) doc.registrationFollowUp = {};
+      doc.registrationFollowUp.cancelledAt = cancel ? new Date() : null;
+      doc.registrationFollowUp.cancelReason = cancel ? reason : '';
+      doc.markModified('registrationFollowUp');
+    }
+    await doc.save();
+    return res.json({ message: cancel ? 'Marked as cancelled.' : 'Restored.' });
+  } catch (error) {
+    console.error('Registration cancel error:', error);
+    return res.status(500).json({ message: 'Failed to update status.' });
   }
 });
 

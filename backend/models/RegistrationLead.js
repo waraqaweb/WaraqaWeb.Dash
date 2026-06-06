@@ -81,6 +81,15 @@ const registrationLeadSchema = new mongoose.Schema({
     evaluationDoneAt: { type: Date },
     classScheduledAt: { type: Date },
   },
+  // Free-form follow-up notes the admin adds while shepherding the lead.
+  onboardingNotes: [
+    {
+      text: { type: String, trim: true, maxlength: 2000 },
+      by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      byName: { type: String, trim: true, maxlength: 160 },
+      at: { type: Date, default: Date.now },
+    },
+  ],
   archive: {
     archivedAt: { type: Date },
     archivedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

@@ -28,10 +28,10 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 const DURATIONS = [30, 45, 60, 90, 120];
 
 const STEPS = [
-  { key: 'guardian', label: 'About you', icon: User },
-  { key: 'students', label: 'Students', icon: Users },
-  { key: 'availability', label: 'Availability', icon: CalendarDays },
-  { key: 'review', label: 'Review', icon: ClipboardCheck },
+  { key: 'guardian', label: 'About you', icon: User, description: 'Tell us about you, the parent or guardian. You will add the student(s) in the next step.' },
+  { key: 'students', label: 'Students', icon: Users, description: 'Add the student(s) who will take classes — this can be your child, yourself, or both.' },
+  { key: 'availability', label: 'Availability', icon: CalendarDays, description: 'Pick the days and times that work best for you.' },
+  { key: 'review', label: 'Review', icon: ClipboardCheck, description: 'Check everything looks right, then submit.' },
 ];
 
 const makeStudent = () => ({
@@ -43,6 +43,7 @@ const makeStudent = () => ({
   courses: [],
   classesPerWeek: '',
   notes: '',
+  isSelf: false,
 });
 
 const addMinutesToTime = (time, minutes) => {
@@ -85,6 +86,7 @@ const RegisterStudentPage = () => {
 
   // Students
   const [students, setStudents] = useState(() => [makeStudent()]);
+  const [enrollSelf, setEnrollSelf] = useState(false);
 
   // Availability
   const [preferredStartingDate, setPreferredStartingDate] = useState('');
@@ -125,6 +127,23 @@ const RegisterStudentPage = () => {
   const addStudent = () => setStudents((prev) => [...prev, makeStudent()]);
   const removeStudent = (id) =>
     setStudents((prev) => (prev.length > 1 ? prev.filter((s) => s.id !== id) : prev));
+
+  // Let the guardian quickly enroll themselves as a student (uses their name).
+  const toggleEnrollSelf = () => {
+    setEnrollSelf((was) => {
+      const next = !was;
+      setStudents((prev) => {
+        if (next) {
+          // Fill the first student with the guardian's own name.
+          const [first, ...rest] = prev;
+          return [{ ...(first || makeStudent()), firstName: firstName.trim() || first?.firstName || '', lastName: lastName.trim() || first?.lastName || '', isSelf: true }, ...rest];
+        }
+        // Clear the self flag (and the auto-filled name if untouched).
+        return prev.map((s) => (s.isSelf ? { ...s, isSelf: false } : s));
+      });
+      return next;
+    });
+  };
 
   const updateSlot = (id, patch) =>
     setSlots((prev) => prev.map((s) => {
@@ -195,6 +214,7 @@ const RegisterStudentPage = () => {
         courses: s.courses,
         classesPerWeek: s.classesPerWeek ? Number(s.classesPerWeek) : undefined,
         notes: s.notes.trim(),
+        isSelf: Boolean(s.isSelf),
       })),
     availability: {
       weekdays: [...new Set(slots.map((s) => s.day))],
@@ -290,10 +310,11 @@ const RegisterStudentPage = () => {
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg p-6">
-          <div className="flex items-center gap-2 mb-4 text-emerald-900">
+          <div className="flex items-center gap-2 mb-1 text-emerald-900">
             <StepIcon className="h-5 w-5" />
             <h3 className="text-lg font-semibold">{STEPS[stepIdx].label}</h3>
           </div>
+          <p className="text-sm text-slate-500 mb-4">{STEPS[stepIdx].description}</p>
 
           {error && (
             <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
@@ -327,6 +348,15 @@ const RegisterStudentPage = () => {
           {/* Step 2: Students */}
           {stepIdx === 1 && (
             <div className="space-y-4">
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3">
+                <label className="flex items-center gap-2 cursor-pointer text-sm text-emerald-900">
+                  <input type="checkbox" checked={enrollSelf} onChange={toggleEnrollSelf} />
+                  <span>I want to take classes myself (enroll me as a student)</span>
+                </label>
+                <p className="text-[12px] text-slate-500 mt-1">
+                  Adding one child? Just fill in their details below. Have more students? Use <strong>Add another student</strong> at the bottom.
+                </p>
+              </div>
               {students.map((s, idx) => (
                 <div key={s.id} className="rounded-xl border border-slate-200 p-4">
                   <div className="flex items-center justify-between mb-3">

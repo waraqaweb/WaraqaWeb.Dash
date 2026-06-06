@@ -8,12 +8,36 @@
  *    optionally converting every slot into Africa/Cairo time.
  */
 import moment from 'moment-timezone';
+import { SURAHS } from '../data/surahs';
 
 export const CAIRO_TZ = 'Africa/Cairo';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 const pad = (n) => String(n).padStart(2, '0');
+
+// Resolve a surah id (number or numeric string) to its English name.
+export const surahNameFor = (id) => {
+  const s = SURAHS.find((x) => String(x.id) === String(id));
+  return s ? s.en : `Surah ${id}`;
+};
+
+/**
+ * Turn a date into a natural, conversational phrase relative to today:
+ *   today · yesterday · on Tuesday · last Tuesday · last week.
+ * Used so messages read like a human wrote them instead of a timestamp.
+ */
+export const naturalDate = (date) => {
+  const d = moment(date);
+  if (!date || !d.isValid()) return 'today';
+  const days = moment().startOf('day').diff(d.clone().startOf('day'), 'days');
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `on ${d.format('dddd')}`;
+  if (days < 14) return `last ${d.format('dddd')}`;
+  if (days < 28) return 'last week';
+  return `on ${d.format('MMMM D')}`;
+};
 
 // Add minutes to an "HH:mm" string, returning "HH:mm" (wraps within a day).
 export const addMinutesToTime = (time, minutes) => {
@@ -105,23 +129,25 @@ export const formatAvailability = ({
  *
  * @param {object} args
  * @param {object} args.student      evaluation student subdocument
- * @param {Array}  args.majorMistakes grouped major mistakes (with optional surah/words)
+ * @param {Array}  args.majorMistakes grouped major mistakes (with optional surah/verses/words)
  * @param {Array}  args.minorMistakes grouped minor mistakes
  * @param {Array}  args.journey      starting-point recommendation rows
- * @param {boolean} args.convertToCairo convert availability into Cairo time
+ * @param {Array}  args.memorization humanized memorization rows ({ name, status, note })
+ * @param {string} args.sessionDate  ISO date the evaluation happened (for natural phrasing)
  */
 export const buildTeacherSummaryMessage = ({
   student = {},
   majorMistakes = [],
   minorMistakes = [],
   journey = [],
-  convertToCairo = false,
+  memorization = [],
+  sessionDate = '',
 } = {}) => {
   const lines = [];
   const name = student.name || 'the student';
   lines.push(`Assalāmu ʿalaykum,`);
   lines.push('');
-  lines.push(`Here is the evaluation summary for ${name}${student.age ? ` (age ${student.age})` : ''} so you know where to start.`);
+  lines.push(`We evaluated ${name}${student.age ? ` (age ${student.age})` : ''} ${naturalDate(sessionDate)}. Here is a quick summary so you know exactly where to start.`);
 
   const subjects = Array.isArray(student.desiredSubjects) ? student.desiredSubjects.filter(Boolean) : [];
   if (subjects.length) lines.push('', `Subjects: ${subjects.join(', ')}`);
@@ -142,25 +168,50 @@ export const buildTeacherSummaryMessage = ({
     if (!list.length) return;
     lines.push('', `${title}:`);
     list.forEach((m) => {
-      if (Array.isArray(m.words)) lines.push(`• ${m.surah}: ${m.words.join('، ')}`);
-      else lines.push(`• ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`);
+      if (Array.isArray(m.verses) && m.verses.length) {
+        lines.push(`• ${m.surah}:`);
+        m.verses.forEach((v) => lines.push(`    – Ayah ${v.verse}: ${v.words.join('، ')}`));
+      } else if (Array.isArray(m.words)) {
+        lines.push(`• ${m.surah}: ${m.words.join('، ')}`);
+      } else {
+        lines.push(`• ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`);
+      }
     });
   };
-  renderMistakes('Major mistakes to focus on', majorMistakes);
-  renderMistakes('Minor mistakes', minorMistakes);
+  renderMistakes('Clear mistakes to focus on first', majorMistakes);
+  renderMistakes('Minor slips to polish', minorMistakes);
+
+  if (Array.isArray(memorization) && memorization.length) {
+    lines.push('', 'Qur’an memorization:');
+    memorization.forEach((s) => {
+      const status = s.status === 'memorized' ? 'memorized well'
+        : s.status === 'partial' ? 'partially memorized'
+        : s.status || 'reviewed';
+      const note = s.note && s.note.trim() ? ` — needs review on: ${s.note.trim()}` : '';
+      lines.push(`• ${s.name}: ${status}${note}`);
+    });
+  }
 
   if (student.contactNote && student.contactNote.trim()) lines.push('', `Quick note: ${student.contactNote.trim()}`);
   if (student.generalNotes && student.generalNotes.trim()) lines.push('', `General notes: ${student.generalNotes.trim()}`);
   if (student.adminSummary && student.adminSummary.trim()) lines.push('', `Evaluator summary: ${student.adminSummary.trim()}`);
 
-  const availabilityText = formatAvailability({
-    slots: student.availabilitySlots || [],
-    timezone: student.availabilityTimezone || CAIRO_TZ,
-    convertToCairo,
+  const studentTz = student.availabilityTimezone || CAIRO_TZ;
+  const slots = student.availabilitySlots || [];
+  const localText = formatAvailability({
+    slots,
+    timezone: studentTz,
+    convertToCairo: false,
     expectedStartDate: student.expectedStartDate || '',
   });
-  if (availabilityText) {
-    lines.push('', availabilityText);
+  if (localText) {
+    lines.push('', localText);
+    // When the student is not already on Cairo time, also show the Cairo
+    // equivalent so the (Cairo-based) teacher can read it at a glance.
+    if (studentTz !== CAIRO_TZ) {
+      const cairoText = formatAvailability({ slots, timezone: studentTz, convertToCairo: true });
+      if (cairoText) lines.push('', cairoText);
+    }
   } else if (student.availability && student.availability.trim()) {
     lines.push('', `Availability: ${student.availability.trim()}`);
   }

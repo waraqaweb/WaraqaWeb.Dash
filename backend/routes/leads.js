@@ -444,4 +444,60 @@ router.patch('/:leadId/onboarding', authenticateToken, requireAdmin, async (req,
   }
 });
 
+// ─── Homepage onboarding to-do: recent leads + recent guardian signups ───────
+// Surfaces everyone who registered in the last 3 weeks so admins can shepherd
+// them from sign-up → first class. Combines the registration funnel (leads)
+// with guardians who created their own account directly.
+router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const since = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000);
+
+    const leads = await RegistrationLead.find({ createdAt: { $gte: since } })
+      .sort({ createdAt: -1 })
+      .populate('conversion.guardianUserId', 'firstName lastName email')
+      .lean();
+
+    // Avoid showing a converted lead twice (once as lead, once as signup).
+    const convertedUserIds = new Set(
+      leads
+        .map((l) => l.conversion?.guardianUserId?._id || l.conversion?.guardianUserId)
+        .filter(Boolean)
+        .map((id) => String(id))
+    );
+
+    const signupDocs = await User.find({ role: 'guardian', createdAt: { $gte: since } })
+      .select('firstName lastName email phone timezone createdAt isActive guardianInfo.students')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const signups = signupDocs
+      .filter((u) => !convertedUserIds.has(String(u._id)))
+      .map((u) => ({
+        kind: 'signup',
+        userId: u._id,
+        createdAt: u.createdAt,
+        status: u.isActive === false ? 'cancelled' : 'account',
+        personalInfo: {
+          fullName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+          email: u.email,
+          phone: u.phone || '',
+          timezone: u.timezone || '',
+        },
+        students: (u.guardianInfo?.students || []).map((s) => ({
+          firstName: s.firstName,
+          lastName: s.lastName,
+          courses: Array.isArray(s.subjects) ? s.subjects : [],
+        })),
+      }));
+
+    return res.json({
+      leads: leads.map((l) => ({ ...l, kind: 'lead' })),
+      signups,
+    });
+  } catch (error) {
+    console.error('Onboarding to-dos error:', error);
+    return res.status(500).json({ message: 'Failed to load onboarding to-dos.' });
+  }
+});
+
 module.exports = router;

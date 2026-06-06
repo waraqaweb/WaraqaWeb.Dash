@@ -32,3 +32,9 @@ export async function updateLeadOnboarding(leadId, step, done) {
   const { data } = await api.patch(`${BASE}/${leadId}/onboarding`, { step, done });
   return data;
 }
+
+// Homepage onboarding to-do: recent leads + recent guardian signups (last 3 weeks).
+export async function getOnboardingTodos() {
+  const { data } = await api.get(`${BASE}/onboarding-todos`);
+  return { leads: data.leads || [], signups: data.signups || [] };
+}

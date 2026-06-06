@@ -36,12 +36,12 @@ import {
   XCircle, MinusCircle, Send, Link as LinkIcon, Users,
   History, Maximize2, Minimize2, Shuffle, Pencil, Save,
   ArrowUp, ArrowDown, RefreshCw, BookOpen, Flag, Sparkles,
-  PanelLeftClose, PanelLeftOpen, MessageCircle, CalendarClock, Wand2,
-  PenTool,
+   PanelLeftClose, PanelLeftOpen, MessageCircle, CalendarClock, Wand2,
+  PenTool, Tag,
 } from 'lucide-react';
 import { getCurrentAdminMeeting } from '../../api/meetings';
 import { TIMEZONE_LIST, DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
-import { buildTeacherSummaryMessage, formatAvailability, addMinutesToTime } from '../../utils/evaluationMessage';
+import { buildTeacherSummaryMessage, formatAvailability, addMinutesToTime, surahNameFor } from '../../utils/evaluationMessage';
 
 const WhiteboardModal = React.lazy(() => import('../../components/library/WhiteboardModal'));
 
@@ -2881,6 +2881,25 @@ const SECTION_LABELS = {
 };
 const NEXT_LEVEL = { easy: 'medium', medium: 'advanced', advanced: 'advanced+' };
 
+// Which evaluation category each weakness tag belongs to, so the Summary page
+// can show only the tags relevant to the sections the student was tested in.
+const WEAKNESS_CATEGORY = {
+  'Letter recognition (similar shapes)': 'reading',
+  'Letter pronunciation (heavy / light)': 'reading',
+  'Short vowels (fatḥa / kasra / ḍamma)': 'reading',
+  'Long vowels (alif / wāw / yāʾ)': 'reading',
+  'Tanwīn': 'reading',
+  'Lām shamsiyya / qamariyya': 'reading',
+  'Sukūn': 'reading',
+  'Shadda': 'reading',
+  'Reading fluency (two/three words & sentences)': 'reading',
+  'Silent letters': 'reading',
+  'Stopping rules': 'tajweed',
+  'Quran recitation accuracy': 'quran',
+  'Tajweed theory': 'tajweed',
+  'Tajweed application': 'tajweed',
+};
+
 const summarizeJourney = (answers = []) => {
   // Only consider items the admin actually graded. Untouched questions
   // are treated as "not asked" and excluded from the summary entirely.
@@ -2932,12 +2951,20 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
   const { majorMistakes, minorMistakes } = useMemo(() => {
     const major = [];
     const minor = [];
-    // Quran-recitation mistakes are grouped per surah so each surah name is
-    // shown once with all its mistaken words gathered into a single box.
-    const quranMajor = {};
+    // Quran-recitation mistakes are grouped per surah AND per ayah so each
+    // surah name appears once, with its mistaken words listed under the exact
+    // verse number they occurred in (much easier for a teacher to read).
+    const quranMajor = {}; // surah -> { verse -> [words] }
     const quranMinor = {};
+    const addWord = (bucket, surah, verse, word) => {
+      const s = (bucket[surah] = bucket[surah] || {});
+      (s[verse] = s[verse] || []).push(word);
+    };
     (student.answers || []).forEach((a) => {
       if (!a.section) return;
+      // The memorization summary is not a "mistake"; it is rendered in its own
+      // humanized section below, so skip it here.
+      if (a.section === 'quran-memorization' || a.questionId === 'memorization.summary') return;
       const labelObj = SECTION_LABELS[a.section] || { en: a.section };
       const label = labelObj.en;
       if (a.section === 'quran-recitation') {
@@ -2947,18 +2974,20 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
           const marks = Array.isArray(parsed?.marks) ? parsed.marks : [];
           if (marks.length) {
             marks.forEach((m) => {
-              const word = m.text || `verse ${m.verse} · word ${m.word}`;
-              if (m.sev === 'advanced') (quranMajor[surah] = quranMajor[surah] || []).push(word);
-              else if (m.sev === 'obvious') (quranMinor[surah] = quranMinor[surah] || []).push(word);
+              const verse = m.verse || 1;
+              const word = m.text || `word ${m.word}`;
+              if (m.sev === 'advanced') addWord(quranMajor, surah, verse, word);
+              else if (m.sev === 'obvious') addWord(quranMinor, surah, verse, word);
             });
           } else {
             // Legacy notes without word text — fall back to verse/word indices.
             const mistakes = parsed?.mistakes || {};
             Object.entries(mistakes).forEach(([vIdx, row]) => {
               Object.entries(row || {}).forEach(([wIdx, sev]) => {
-                const word = `verse ${Number(vIdx) + 1} · word ${Number(wIdx) + 1}`;
-                if (sev === 'advanced') (quranMajor[surah] = quranMajor[surah] || []).push(word);
-                else if (sev === 'obvious') (quranMinor[surah] = quranMinor[surah] || []).push(word);
+                const verse = Number(vIdx) + 1;
+                const word = `word ${Number(wIdx) + 1}`;
+                if (sev === 'advanced') addWord(quranMajor, surah, verse, word);
+                else if (sev === 'obvious') addWord(quranMinor, surah, verse, word);
               });
             });
           }
@@ -2974,12 +3003,51 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
         minor.push({ section: label, prompt: a.prompt || '', detail: a.note || '' });
       }
     });
-    Object.entries(quranMajor).forEach(([surah, words]) => major.unshift({ section: 'Qur’an Recitation', surah, words }));
-    Object.entries(quranMinor).forEach(([surah, words]) => minor.unshift({ section: 'Qur’an Recitation', surah, words }));
+    const toVerses = (byVerse) => Object.entries(byVerse)
+      .map(([verse, words]) => ({ verse: Number(verse), words }))
+      .sort((x, y) => x.verse - y.verse);
+    Object.entries(quranMajor).forEach(([surah, byVerse]) => major.unshift({ section: 'Qur’an Recitation', surah, verses: toVerses(byVerse) }));
+    Object.entries(quranMinor).forEach(([surah, byVerse]) => minor.unshift({ section: 'Qur’an Recitation', surah, verses: toVerses(byVerse) }));
     return { majorMistakes: major, minorMistakes: minor };
   }, [student.answers]);
 
+  // Humanized memorization summary derived from the memorization.summary answer.
+  const memorization = useMemo(() => {
+    const ans = (student.answers || []).find((a) => a.questionId === 'memorization.summary');
+    if (!ans?.note) return [];
+    try {
+      const parsed = JSON.parse(ans.note);
+      const surahs = parsed?.surahs && typeof parsed.surahs === 'object' ? parsed.surahs : {};
+      return Object.entries(surahs)
+        .map(([id, row]) => ({
+          id: Number(id),
+          name: surahNameFor(id),
+          status: row?.status || 'memorized',
+          note: row?.note || '',
+        }))
+        .sort((a, b) => a.id - b.id);
+    } catch {
+      return [];
+    }
+  }, [student.answers]);
+
   const journey = useMemo(() => summarizeJourney(student.answers), [student.answers]);
+
+  // Weakness tags relevant to what was actually evaluated. Each weakness area
+  // belongs to a category; we only surface categories the student was tested in
+  // (so the dropdown stays short and compatible with the selected levels).
+  const relevantWeaknesses = useMemo(() => {
+    const tested = new Set();
+    (student.answers || []).forEach((a) => {
+      if (!a.section || !['correct', 'partial', 'incorrect'].includes(a.expertVerdict)) return;
+      if (a.section.startsWith('reading')) tested.add('reading');
+      else if (a.section === 'quran-recitation' || a.section === 'quran-memorization') tested.add('quran');
+      else if (a.section.startsWith('tajweed')) tested.add('tajweed');
+      else if (a.section.startsWith('arabic')) tested.add('arabic');
+    });
+    if (!tested.size) return WEAKNESS_AREAS;
+    return WEAKNESS_AREAS.filter((area) => tested.has(WEAKNESS_CATEGORY[area] || 'reading'));
+  }, [student.answers]);
 
   // Recommended levels — stored as an array of "<subject>:<level>" strings
   // (e.g. "Qur'an Recitation:intermediate"). Each subject cycles off → beg →
@@ -3019,26 +3087,35 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
     if (student.availability) lines.push(`Availability: ${student.availability}`);
     lines.push(`\nVerdicts: ${totals.correct}/${totals.total} correct · ${totals.partial} partial · ${totals.incorrect} incorrect`);
     if (recommended.length) lines.push(`Recommended: ${recommended.join(', ')}`);
+    const renderMistakeLine = (m) => {
+      if (Array.isArray(m.verses) && m.verses.length) {
+        lines.push(`  · ${m.surah}:`);
+        m.verses.forEach((v) => lines.push(`      – Ayah ${v.verse}: ${v.words.join('، ')}`));
+      } else if (Array.isArray(m.words)) {
+        lines.push(`  · ${m.surah}: ${m.words.join('، ')}`);
+      } else {
+        lines.push(`  · ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`);
+      }
+    };
     if (majorMistakes.length) {
       lines.push('\nMistakes:');
-      majorMistakes.forEach((m) => {
-        if (Array.isArray(m.words)) lines.push(`  · ${m.surah}: ${m.words.join('، ')}`);
-        else lines.push(`  · ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`);
-      });
+      majorMistakes.forEach(renderMistakeLine);
     }
     if (minorMistakes.length) {
       lines.push('\nMinor mistakes:');
-      minorMistakes.forEach((m) => {
-        if (Array.isArray(m.words)) lines.push(`  · ${m.surah}: ${m.words.join('، ')}`);
-        else lines.push(`  · ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`);
-      });
+      minorMistakes.forEach(renderMistakeLine);
+    }
+    if (memorization.length) {
+      lines.push('\nMemorization:');
+      memorization.forEach((s) => lines.push(`  · ${s.name}: ${s.status}${s.note ? ` — review: ${s.note}` : ''}`));
     }
     if (student.adminSummary) lines.push(`\nNotes: ${student.adminSummary}`);
     return lines.join('\n');
-  }, [session.title, student, totals, recommended, majorMistakes, minorMistakes]);
+  }, [session.title, student, totals, recommended, majorMistakes, minorMistakes, memorization]);
 
-  // Copy a well-phrased hand-off message for the teacher (optionally in Cairo time).
-  const copyForTeacher = (convertToCairo) => {
+  // Copy a well-phrased hand-off message for the teacher. Availability is shown
+  // in the student's own timezone and (when different) also in Cairo time.
+  const copyForTeacher = () => {
     const journeyForMsg = journey.map((j) => ({
       ...j,
       label: (SECTION_LABELS[j.section] || { en: j.section }).en,
@@ -3048,10 +3125,51 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
       majorMistakes,
       minorMistakes,
       journey: journeyForMsg,
-      convertToCairo,
+      memorization,
+      sessionDate: session.createdAt || session.date || '',
     });
     navigator.clipboard?.writeText(msg);
-    showToast(convertToCairo ? 'Copied for teacher (Cairo time)' : 'Copied for teacher');
+    showToast('Copied for teacher');
+  };
+
+  // Render a single mistake entry inside the rose/amber boxes. Quran entries
+  // are grouped per ayah (verse number shown once, words in a single row).
+  const renderMistakeBody = (m, tone) => {
+    const chipCls = tone === 'rose'
+      ? 'bg-rose-100 text-rose-900'
+      : 'bg-amber-100 text-amber-900';
+    const verseLblCls = tone === 'rose' ? 'text-rose-700/70' : 'text-amber-700/70';
+    if (Array.isArray(m.verses) && m.verses.length) {
+      return (
+        <div className="mt-1 space-y-1">
+          {m.verses.map((v) => (
+            <div key={v.verse} className="flex items-start gap-1.5" dir="rtl">
+              <span className={`shrink-0 mt-0.5 text-[10px] font-display-en ${verseLblCls}`} dir="ltr">Ayah {v.verse}</span>
+              <div className="flex flex-wrap gap-1">
+                {v.words.map((w, wi) => (
+                  <span key={wi} className={`font-naskh px-1.5 py-0.5 rounded ${chipCls} text-base leading-tight`}>{w}</span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    if (Array.isArray(m.words)) {
+      return (
+        <div className="flex flex-wrap gap-1 mt-1" dir="rtl">
+          {m.words.map((w, wi) => (
+            <span key={wi} className={`font-naskh px-1.5 py-0.5 rounded ${chipCls} text-base leading-tight`}>{w}</span>
+          ))}
+        </div>
+      );
+    }
+    return (
+      <>
+        <div className={`text-xs leading-snug ${tone === 'rose' ? 'text-rose-900' : 'text-amber-900'}`} dir="auto">{m.prompt || '—'}</div>
+        {m.detail && <div className={`text-[11px] italic mt-0.5 ${tone === 'rose' ? 'text-rose-700/80' : 'text-amber-700/80'}`} dir="auto">{m.detail}</div>}
+      </>
+    );
   };
 
   return (
@@ -3080,8 +3198,9 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
         <Stat label="Incorrect" value={totals.incorrect} cls="from-rose-500 to-pink-600" />
       </div>
 
+      <div className="grid lg:grid-cols-2 gap-3 mb-4 items-start">
       {journey.length > 0 && (
-        <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/70 to-white p-4 mb-4">
+        <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/70 to-white p-4">
           <div className="flex items-baseline justify-between gap-2 mb-2">
             <h4 className="font-display-en text-sm font-semibold text-emerald-900">Starting point recommendation</h4>
             <span className="font-naskh text-emerald-800 text-base" dir="rtl">نقطة الانطلاق المقترحة</span>
@@ -3109,10 +3228,10 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
         </div>
       )}
 
-      <div className="mb-4">
+      <div className="rounded-2xl border border-emerald-100 bg-white/50 p-4">
         <div className="flex items-center justify-between gap-2 mb-2">
           <label className="text-xs font-semibold text-emerald-800">Recommended subjects & levels</label>
-          <span className="text-[10px] text-emerald-700/60">Tap a subject to cycle: beginner → intermediate → advanced → off</span>
+          <span className="text-[10px] text-emerald-700/60">Tap to cycle: beginner → intermediate → advanced → off</span>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {subjectsForRecommendation.map((sub) => {
@@ -3133,11 +3252,12 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
           })}
         </div>
       </div>
+      </div>
 
       <div className="grid sm:grid-cols-2 gap-3 mb-4">
         <div className="rounded-2xl border border-rose-200 bg-rose-50/30 p-3">
           <div className="text-xs font-semibold text-rose-800 mb-2 inline-flex items-center gap-1">
-            <XCircle className="h-3.5 w-3.5" /> Mistakes · {majorMistakes.length}
+            <XCircle className="h-3.5 w-3.5" /> Clear mistakes · {majorMistakes.length}
           </div>
           {majorMistakes.length === 0 ? (
             <div className="text-[11px] text-rose-700/70 italic">No serious mistakes recorded.</div>
@@ -3146,18 +3266,7 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
               {majorMistakes.map((m, i) => (
                 <li key={i} className="rounded-lg bg-white/80 border border-rose-100 px-2 py-1.5">
                   <div className="text-[10px] uppercase tracking-wide text-rose-700/70">{m.surah || m.section}</div>
-                  {Array.isArray(m.words) ? (
-                    <div className="flex flex-wrap gap-1 mt-1" dir="rtl">
-                      {m.words.map((w, wi) => (
-                        <span key={wi} className="font-naskh px-1.5 py-0.5 rounded bg-rose-100 text-rose-900 text-base leading-tight">{w}</span>
-                      ))}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="text-xs text-rose-900 leading-snug" dir="auto">{m.prompt || '—'}</div>
-                      {m.detail && <div className="text-[11px] text-rose-700/80 italic mt-0.5" dir="auto">{m.detail}</div>}
-                    </>
-                  )}
+                  {renderMistakeBody(m, 'rose')}
                 </li>
               ))}
             </ul>
@@ -3165,7 +3274,7 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
         </div>
         <div className="rounded-2xl border border-amber-200 bg-amber-50/30 p-3">
           <div className="text-xs font-semibold text-amber-800 mb-2 inline-flex items-center gap-1">
-            <MinusCircle className="h-3.5 w-3.5" /> Minor mistakes · {minorMistakes.length}
+            <MinusCircle className="h-3.5 w-3.5" /> Minor slips · {minorMistakes.length}
           </div>
           {minorMistakes.length === 0 ? (
             <div className="text-[11px] text-amber-700/70 italic">No minor mistakes recorded.</div>
@@ -3174,18 +3283,7 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
               {minorMistakes.map((m, i) => (
                 <li key={i} className="rounded-lg bg-white/80 border border-amber-100 px-2 py-1.5">
                   <div className="text-[10px] uppercase tracking-wide text-amber-700/70">{m.surah || m.section}</div>
-                  {Array.isArray(m.words) ? (
-                    <div className="flex flex-wrap gap-1 mt-1" dir="rtl">
-                      {m.words.map((w, wi) => (
-                        <span key={wi} className="font-naskh px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-base leading-tight">{w}</span>
-                      ))}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="text-xs text-amber-900 leading-snug" dir="auto">{m.prompt || '—'}</div>
-                      {m.detail && <div className="text-[11px] text-amber-700/80 italic mt-0.5" dir="auto">{m.detail}</div>}
-                    </>
-                  )}
+                  {renderMistakeBody(m, 'amber')}
                 </li>
               ))}
             </ul>
@@ -3193,22 +3291,63 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
         </div>
       </div>
 
-      <div className="mt-3">
-        <label className="block text-xs font-semibold text-emerald-800 mb-1">Additional weakness tags</label>
-        <div className="flex flex-wrap gap-1.5">
-          {WEAKNESS_AREAS.map((area) => {
-            const on = (student.weaknesses || []).some((w) => w.area === area);
-            return (
-              <button key={area} type="button"
-                onClick={() => {
-                  const list = student.weaknesses || [];
-                  const next = on ? list.filter((w) => w.area !== area) : [...list, { area }];
-                  onChange({ weaknesses: next });
-                }}
-                className={`px-2.5 py-1 rounded-full text-xs border ${on ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white/70 border-emerald-200 text-emerald-800'}`}
-              >{area}</button>
-            );
-          })}
+      {memorization.length > 0 && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/30 p-3 mb-4">
+          <div className="text-xs font-semibold text-emerald-800 mb-2 inline-flex items-center gap-1">
+            <BookOpen className="h-3.5 w-3.5" /> Qur’an memorization · {memorization.length}
+          </div>
+          <div className="grid sm:grid-cols-2 gap-1.5">
+            {memorization.map((s) => (
+              <div key={s.id} className="rounded-lg bg-white/80 border border-emerald-100 px-2 py-1.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-xs font-semibold text-emerald-900">{s.name}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${s.status === 'memorized' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                    {s.status === 'memorized' ? 'Memorized' : s.status === 'partial' ? 'Partial' : s.status}
+                  </span>
+                </div>
+                {s.note && s.note.trim() && (
+                  <div className="text-[11px] text-emerald-700/80 mt-0.5 font-naskh" dir="rtl">{s.note}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-start gap-2">
+        <details className="relative shrink-0">
+          <summary className="list-none cursor-pointer select-none px-3 py-1.5 rounded-full text-xs border border-emerald-200 bg-white/70 text-emerald-800 inline-flex items-center gap-1">
+            <Tag className="h-3 w-3" /> Weakness tags{(student.weaknesses || []).length ? ` · ${(student.weaknesses || []).length}` : ''}
+            <ChevronDown className="h-3 w-3" />
+          </summary>
+          <div className="absolute z-20 mt-1 w-64 max-h-56 overflow-y-auto rounded-xl border border-emerald-200 bg-white shadow-lg p-2 space-y-0.5">
+            {relevantWeaknesses.map((area) => {
+              const on = (student.weaknesses || []).some((w) => w.area === area);
+              return (
+                <label key={area} className="flex items-center gap-2 text-xs text-emerald-900 px-1.5 py-1 rounded hover:bg-emerald-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => {
+                      const list = student.weaknesses || [];
+                      const next = on ? list.filter((w) => w.area !== area) : [...list, { area }];
+                      onChange({ weaknesses: next });
+                    }}
+                  />
+                  <span>{area}</span>
+                </label>
+              );
+            })}
+          </div>
+        </details>
+        <div className="flex flex-wrap gap-1">
+          {(student.weaknesses || []).map((w) => (
+            <span key={w.area} className="px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-900 inline-flex items-center gap-1">
+              {w.area}
+              <button type="button" className="text-amber-700 hover:text-amber-900"
+                onClick={() => onChange({ weaknesses: (student.weaknesses || []).filter((x) => x.area !== w.area) })}>×</button>
+            </span>
+          ))}
         </div>
       </div>
 
@@ -3220,11 +3359,9 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => { navigator.clipboard?.writeText(exportText); showToast('Copied summary'); }}
           className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-xs inline-flex items-center gap-1"><Copy className="h-3 w-3" /> Copy summary</button>
-        <button type="button" onClick={() => copyForTeacher(false)}
-          className="px-3 py-1.5 rounded-full bg-indigo-700 text-white text-xs inline-flex items-center gap-1"><Copy className="h-3 w-3" /> Copy for teacher</button>
-        <button type="button" onClick={() => copyForTeacher(true)}
-          className="px-3 py-1.5 rounded-full bg-indigo-600 text-white text-xs inline-flex items-center gap-1" title="Times converted to Cairo timezone">
-          <Copy className="h-3 w-3" /> Copy for teacher (Cairo time)</button>
+        <button type="button" onClick={copyForTeacher}
+          className="px-3 py-1.5 rounded-full bg-indigo-700 text-white text-xs inline-flex items-center gap-1" title="Includes availability in the student's timezone and Cairo time">
+          <Copy className="h-3 w-3" /> Copy for teacher</button>
       </div>
 
       {/* Quick intro note captured on the student slide */}
@@ -3517,13 +3654,24 @@ const LinksSlide = ({
     }
   };
 
-  const sendWhatsApp = () => {
+  const sendWhatsApp = async () => {
     if (!active) return;
     const phoneRaw = (active.contactPhone || whatsappNumber || '').trim();
     if (!phoneRaw) { showToast('Add a contact phone or default WhatsApp number first'); return; }
     const digits = phoneRaw.replace(/[^\d]/g, '');
     if (!digits) { showToast('Phone number is not valid'); return; }
-    const body = buildWhatsAppMessage({ name: active.name, links: includedLinks, feedbackLink });
+    // Make sure a feedback link exists so it can be woven into the message.
+    let link = feedbackLink;
+    if (!link && active._id && session?._id) {
+      try {
+        const { data } = await api.post(`/evaluations/${session._id}/students/${active._id}/feedback-link`);
+        link = data?.link || '';
+        if (link) setFeedbackLink(link);
+      } catch {
+        /* fall back to a message without the feedback link */
+      }
+    }
+    const body = buildWhatsAppMessage({ name: active.name, links: includedLinks, feedbackLink: link });
     const url = `https://wa.me/${digits}?text=${encodeURIComponent(body)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
@@ -3881,7 +4029,7 @@ const AvailabilitySlotsEditor = ({ student, onChange }) => {
 
       <div className="grid sm:grid-cols-3 gap-2 mb-3">
         <div>
-          <label className="block text-[10px] text-emerald-700/80 mb-0.5">Timezone</label>
+          <label className="block text-[10px] text-emerald-700/80 mb-0.5">Student's timezone (converted to Cairo for the teacher)</label>
           <select
             className="eval-input"
             value={timezone}

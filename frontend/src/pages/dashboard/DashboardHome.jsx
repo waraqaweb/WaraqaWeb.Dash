@@ -34,6 +34,7 @@ import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { getHomepageAnnouncementContainerClass, getHomepageAnnouncementTextClass } from '../../utils/homepageAnnouncement';
 const BusinessIntelligenceModal = React.lazy(() => import('../../components/admin/BusinessIntelligenceModal'));
 const AdminDashboardCharts = React.lazy(() => import('../../components/dashboard/widgets/AdminDashboardCharts'));
+const OnboardingTodoPanel = React.lazy(() => import('../../components/dashboard/widgets/OnboardingTodoPanel'));
 
 const formatClassDate = (d) => {
   if (!d) return '—';
@@ -1662,6 +1663,11 @@ const DashboardHome = ({ isActive = true }) => {
                     </div>
                   </div>
                 </div>
+
+                {/* Onboarding to-do: recent registrations (leads + signups), last 3 weeks */}
+                <React.Suspense fallback={<div className="rounded-xl border border-border/60 bg-card/70 p-4 text-sm text-muted-foreground">Loading onboarding to-do…</div>}>
+                  <OnboardingTodoPanel />
+                </React.Suspense>
               </div>
             );
   };

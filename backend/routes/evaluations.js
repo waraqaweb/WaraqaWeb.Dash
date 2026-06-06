@@ -22,10 +22,26 @@ function resolvePublicAppBaseUrl() {
   return String(raw).split(',')[0].trim().replace(/\/$/, '');
 }
 
+// Turn a date into a natural, conversational phrase relative to today:
+// today · yesterday · on Tuesday · last Tuesday · last week.
+function naturalDate(date) {
+  const d = date ? new Date(date) : null;
+  if (!d || Number.isNaN(d.getTime())) return 'today';
+  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const startOf = (x) => { const y = new Date(x); y.setHours(0, 0, 0, 0); return y; };
+  const diffDays = Math.round((startOf(new Date()) - startOf(d)) / 86400000);
+  if (diffDays <= 0) return 'today';
+  if (diffDays === 1) return 'yesterday';
+  if (diffDays < 7) return `on ${DAYS[d.getDay()]}`;
+  if (diffDays < 14) return `last ${DAYS[d.getDay()]}`;
+  if (diffDays < 28) return 'last week';
+  return `on ${d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`;
+}
+
 // Default intro paragraph for the feedback email. Kept here so the preview and
 // the actual send share one source of truth; the admin can override it.
-function defaultFeedbackIntro(student, sessionLabel) {
-  return `Thank you for joining ${sessionLabel}. It was a pleasure meeting you. We'd love a quick note on how the session went — it should take less than a minute.`;
+function defaultFeedbackIntro(student, sessionDate) {
+  return `Thank you for joining your Waraqa evaluation ${naturalDate(sessionDate)}. It was a pleasure meeting you. We'd love a quick note on how the session went — it should take less than a minute.`;
 }
 
 function sanitizeCuratedLinks(rawLinks) {
@@ -40,9 +56,9 @@ function sanitizeCuratedLinks(rawLinks) {
 
 // Build the feedback email ({ subject, html, text }). `intro` (plain text) and
 // `subject` may be overridden by the admin from the preview modal.
-function buildFeedbackEmail({ student, sessionLabel, link, registerLink, curatedLinks, branding, subject, intro }) {
+function buildFeedbackEmail({ student, sessionLabel, sessionDate, link, registerLink, curatedLinks, branding, subject, intro }) {
   const safeSubject = (subject && String(subject).trim()) || `How was your Waraqa evaluation, ${student.name}?`;
-  const introText = (intro && String(intro).trim()) || defaultFeedbackIntro(student, sessionLabel);
+  const introText = (intro && String(intro).trim()) || defaultFeedbackIntro(student, sessionDate);
   // Escape minimal HTML in the (admin-authored) intro to avoid breaking layout.
   const introHtml = introText
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -207,6 +223,7 @@ router.post('/:id/students/:studentSubId/send-feedback', authenticateToken, requ
     const { subject, html, text } = buildFeedbackEmail({
       student,
       sessionLabel,
+      sessionDate: session.createdAt,
       link,
       registerLink,
       curatedLinks,
@@ -252,6 +269,7 @@ router.post('/:id/students/:studentSubId/feedback-preview', authenticateToken, r
     const built = buildFeedbackEmail({
       student,
       sessionLabel,
+      sessionDate: session.createdAt,
       link,
       registerLink,
       curatedLinks,
@@ -261,12 +279,35 @@ router.post('/:id/students/:studentSubId/feedback-preview', authenticateToken, r
     });
     res.json({
       ...built,
-      defaultIntro: defaultFeedbackIntro(student, sessionLabel),
+      defaultIntro: defaultFeedbackIntro(student, session.createdAt),
       to: student.contactEmail || '',
     });
   } catch (err) {
     console.error('[evaluations] feedback-preview failed', err);
     res.status(500).json({ message: 'Failed to build preview' });
+  }
+});
+
+// ─── Admin: ensure a feedback token exists and return its link (no email) ────
+router.post('/:id/students/:studentSubId/feedback-link', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const session = await EvaluationSession.findOne({ _id: req.params.id, admin: req.user._id });
+    if (!session) return res.status(404).json({ message: 'Not found' });
+    const student = session.students.id(req.params.studentSubId);
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    if (!student.feedback) student.feedback = {};
+    // Reuse an existing token; only mint a new one when none exists yet.
+    if (!student.feedback.token) {
+      student.feedback.token = EvaluationSession.generateFeedbackToken();
+      await session.save();
+    }
+    const base = resolvePublicAppBaseUrl();
+    const link = `${base}/dashboard/evaluation/feedback/${student.feedback.token}`;
+    res.json({ link });
+  } catch (err) {
+    console.error('[evaluations] feedback-link failed', err);
+    res.status(500).json({ message: 'Failed to generate feedback link' });
   }
 });
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Archive, CheckCircle2, ChevronDown, ChevronUp, Clock3, RotateCcw, UserPlus, Users } from 'lucide-react';
+import { Archive, CheckCircle2, ChevronDown, ChevronUp, Circle, Clock3, Copy, RotateCcw, UserPlus, Users } from 'lucide-react';
 import moment from 'moment-timezone';
-import { archiveRegistrationLead, convertRegistrationLead, listRegistrationLeads } from '../../../api/leads';
+import { archiveRegistrationLead, convertRegistrationLead, listRegistrationLeads, updateLeadOnboarding } from '../../../api/leads';
 import { getBrowserTimezone } from '../../../utils/timezoneUtils';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 import { useSearch } from '../../../contexts/SearchContext';
@@ -123,6 +123,31 @@ export default function RegistrationLeadsPanel() {
     }
   };
 
+  const handleOnboardingToggle = async (leadId, step, done) => {
+    // Optimistic update so the funnel feels instant.
+    const stamp = done ? new Date().toISOString() : null;
+    const fieldKey = { contacted: 'contactedAt', evaluationDone: 'evaluationDoneAt', classScheduled: 'classScheduledAt' }[step];
+    setItems((prev) => prev.map((l) => (
+      l._id === leadId ? { ...l, onboarding: { ...(l.onboarding || {}), [fieldKey]: stamp } } : l
+    )));
+    try {
+      await updateLeadOnboarding(leadId, step, done);
+      writeCache(makeCacheKey('meetings:registrationLeads', 'admin', { status: 'all' }), null, { ttlMs: 0, deps: ['leads'] });
+    } catch (err) {
+      setMessage(err?.response?.data?.message || 'Failed to update onboarding');
+      await load();
+    }
+  };
+
+  const copyText = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage('Message copied to clipboard.');
+    } catch {
+      setMessage('Could not copy — please copy manually.');
+    }
+  };
+
   const formatAvailabilitySlot = (slot, sourceTimezone, targetTimezone) => {
     try {
       const dayIndex = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(slot.day);
@@ -206,6 +231,16 @@ export default function RegistrationLeadsPanel() {
 
                 {isOpen ? (
                   <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
+                    <OnboardingFunnel
+                      lead={lead}
+                      displayName={displayName}
+                      targetTimezone={lead.personalInfo?.timezone || targetTimezone}
+                      availabilitySummary={(lead.availability?.slots || [])
+                        .map((slot) => formatAvailabilitySlot(slot, lead.personalInfo?.timezone, lead.personalInfo?.timezone || targetTimezone))
+                        .join('\n')}
+                      onToggle={handleOnboardingToggle}
+                      onCopy={copyText}
+                    />
                     <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
                         <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Overview</p>
@@ -311,6 +346,85 @@ export default function RegistrationLeadsPanel() {
           }) : <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">No leads found.</div>}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/* ─── Per-lead onboarding funnel ─────────────────────────────────────────
+   Visualises the journey from registration → first class and offers a
+   ready-to-send, timezone-aware message for each step. */
+function buildStepMessage(step, { displayName, availabilitySummary, targetTimezone }) {
+  const name = displayName || 'there';
+  switch (step) {
+    case 'contacted':
+      return `Assalamu alaikum ${name}! 🌟\n\nThank you for registering with Waraqa. We're excited to help your family start learning. To get you set up, we'd love to book a short, free evaluation session at a time that works for you.\n\nWhen would be a good time to talk?`;
+    case 'evaluationDone':
+      return `Assalamu alaikum ${name},\n\nThank you for attending the evaluation! 🎉 We've noted your child's level and your preferred schedule. We'll now match you with the best teacher and confirm your class times shortly.`;
+    case 'classScheduled':
+      return `Assalamu alaikum ${name},\n\nGreat news — your classes are scheduled! 📅\n\nYour weekly times (${targetTimezone}):\n${availabilitySummary || '—'}\n\nYour teacher will meet you at these times. Please log in to your dashboard to see the details. Welcome to Waraqa!`;
+    default:
+      return '';
+  }
+}
+
+function OnboardingFunnel({ lead, displayName, targetTimezone, availabilitySummary, onToggle, onCopy }) {
+  const ob = lead.onboarding || {};
+  const isConverted = lead.status === 'converted';
+  const steps = [
+    { key: 'registered', label: 'Registered', done: true, locked: true, at: lead.createdAt },
+    { key: 'contacted', label: 'Contacted', done: Boolean(ob.contactedAt), at: ob.contactedAt },
+    { key: 'evaluationDone', label: 'Evaluated', done: Boolean(ob.evaluationDoneAt), at: ob.evaluationDoneAt },
+    { key: 'accountCreated', label: 'Account', done: isConverted, locked: true, at: lead.conversion?.convertedAt },
+    { key: 'classScheduled', label: 'Class set', done: Boolean(ob.classScheduledAt), at: ob.classScheduledAt },
+  ];
+  const completed = steps.filter((s) => s.done).length;
+  const pct = Math.round((completed / steps.length) * 100);
+
+  return (
+    <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/70 to-white p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Onboarding</p>
+        <span className="text-xs font-semibold text-emerald-700">{completed}/{steps.length} done</span>
+      </div>
+
+      {/* Progress bar */}
+      <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-emerald-100">
+        <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+
+      {/* Steps */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        {steps.map((step) => {
+          const message = buildStepMessage(step.key, { displayName, availabilitySummary, targetTimezone });
+          return (
+            <div key={step.key} className={`flex-1 min-w-[140px] rounded-xl border p-3 ${step.done ? 'border-emerald-300 bg-white' : 'border-slate-200 bg-slate-50'}`}>
+              <div className="flex items-center gap-2">
+                {step.done ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Circle className="h-4 w-4 text-slate-300" />}
+                <span className={`text-sm font-semibold ${step.done ? 'text-emerald-800' : 'text-slate-600'}`}>{step.label}</span>
+              </div>
+              {!step.locked && (
+                <button
+                  type="button"
+                  onClick={() => onToggle(lead._id, step.key, !step.done)}
+                  className="mt-2 text-[11px] font-medium text-emerald-700 underline"
+                >
+                  {step.done ? 'Mark not done' : 'Mark done'}
+                </button>
+              )}
+              {message && (
+                <button
+                  type="button"
+                  onClick={() => onCopy(message)}
+                  className="mt-1 ml-2 inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-emerald-700"
+                  title="Copy message"
+                >
+                  <Copy className="h-3 w-3" /> Copy msg
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

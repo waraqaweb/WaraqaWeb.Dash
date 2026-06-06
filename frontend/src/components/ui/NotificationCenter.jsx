@@ -10,6 +10,7 @@ import {
   bindAudioUnlockOnUserGesture,
   playClassStartSound,
   playGeneralNotificationSound,
+  playMeetingStartSound,
 } from '../../utils/notificationSounds';
 import {
   canUseBrowserNotifications,
@@ -68,6 +69,8 @@ const NotificationCenter = () => {
   const classAlertedKeysRef = useRef(new Set());
   const notificationsInFlightRef = useRef(false);
   const classAlertsInFlightRef = useRef(false);
+  const meetingAlertedKeysRef = useRef(new Set());
+  const meetingAlertsInFlightRef = useRef(false);
   const [notificationPrefs, setNotificationPrefs] = useState(() => getNotificationPreferences(user?._id));
   const [resolveUninvoicedState, setResolveUninvoicedState] = useState({
     loading: false,
@@ -92,9 +95,9 @@ const NotificationCenter = () => {
       fetchNotifications();
       checkCurrentVacation();
       checkClassStartAlerts();
+      checkMeetingStartAlerts();
     }
   }, [user]);
-
   useEffect(() => {
     setNotificationPrefs(getNotificationPreferences(user?._id));
   }, [user?._id]);
@@ -122,6 +125,7 @@ const NotificationCenter = () => {
       }
       fetchNotifications({ showLoading: false });
       checkClassStartAlerts();
+      checkMeetingStartAlerts();
     }, 30000);
 
     return () => clearInterval(interval);
@@ -245,6 +249,53 @@ const NotificationCenter = () => {
       // ignore class alert failures to avoid interrupting notification center
     } finally {
       classAlertsInFlightRef.current = false;
+    }
+  };
+
+  const checkMeetingStartAlerts = async () => {
+    if (isBrowserOffline()) return;
+    if (meetingAlertsInFlightRef.current) return;
+    // Meetings belong to admins, so only admins get the meeting-start chime.
+    if (user?.role !== 'admin') return;
+    if (!notificationPrefs.liveAlertsEnabled) return;
+    meetingAlertsInFlightRef.current = true;
+    try {
+      const res = await api.get('/meetings/current', { params: { windowMinutes: 90 } });
+      const meeting = res.data?.meeting;
+      if (!meeting) return;
+
+      const startRaw = meeting.scheduledStart;
+      const startMs = startRaw ? new Date(startRaw).getTime() : NaN;
+      if (!Number.isFinite(startMs)) return;
+
+      const alertKey = `${meeting._id}:${startMs}`;
+      if (meetingAlertedKeysRef.current.has(alertKey)) return;
+
+      const diffMs = Date.now() - startMs;
+      // Fire once when the meeting has just started (within the last 2 minutes).
+      if (diffMs < 0 || diffMs > 2 * 60 * 1000) return;
+
+      meetingAlertedKeysRef.current.add(alertKey);
+
+      if (canUseBrowserNotifications() && Notification.permission === 'granted') {
+        const who = meeting.requesterName || meeting.guestName || meeting.contactName || 'Guest';
+        try {
+          new Notification('Meeting is starting now', {
+            body: `${meeting.meetingType || 'Meeting'} • ${who}`,
+            tag: `meeting-start-${meeting._id}`,
+          });
+        } catch (e) {
+          // ignore browser notification failures
+        }
+      }
+
+      if (notificationPrefs.classStartSoundEnabled) {
+        playMeetingStartSound();
+      }
+    } catch (err) {
+      // ignore meeting alert failures to avoid interrupting notification center
+    } finally {
+      meetingAlertsInFlightRef.current = false;
     }
   };
 

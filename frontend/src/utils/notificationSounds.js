@@ -126,3 +126,18 @@ export const playClassStartSound = async () => {
     // ignore audio failures
   }
 };
+
+// Distinct two-tone "doorbell" chime for meetings so they are clearly
+// distinguishable from the rising class-start arpeggio.
+export const playMeetingStartSound = async () => {
+  try {
+    await playPattern([
+      { frequency: 987.77, durationMs: 180, delayMs: 0, type: 'square', gain: 0.06 },
+      { frequency: 659.25, durationMs: 320, delayMs: 200, type: 'square', gain: 0.06 },
+      { frequency: 987.77, durationMs: 180, delayMs: 560, type: 'square', gain: 0.06 },
+      { frequency: 659.25, durationMs: 360, delayMs: 760, type: 'square', gain: 0.06 },
+    ]);
+  } catch (e) {
+    // ignore audio failures
+  }
+};

@@ -412,4 +412,36 @@ router.post('/:leadId/archive', authenticateToken, requireAdmin, async (req, res
   }
 });
 
+const ONBOARDING_STEP_FIELDS = {
+  contacted: 'onboarding.contactedAt',
+  evaluationDone: 'onboarding.evaluationDoneAt',
+  classScheduled: 'onboarding.classScheduledAt',
+};
+
+router.patch('/:leadId/onboarding', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { step, done } = req.body || {};
+    const field = ONBOARDING_STEP_FIELDS[step];
+    if (!field) {
+      return res.status(400).json({ message: 'Unknown onboarding step.' });
+    }
+
+    const lead = await RegistrationLead.findById(req.params.leadId);
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    if (!lead.onboarding) lead.onboarding = {};
+    const key = field.split('.')[1];
+    lead.onboarding[key] = done === false ? null : new Date();
+    lead.markModified('onboarding');
+    await lead.save();
+
+    return res.json({ message: 'Onboarding updated.', lead });
+  } catch (error) {
+    console.error('Update lead onboarding error:', error);
+    return res.status(500).json({ message: 'Failed to update onboarding.' });
+  }
+});
+
 module.exports = router;

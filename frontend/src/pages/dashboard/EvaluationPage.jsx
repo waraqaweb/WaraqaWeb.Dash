@@ -17,6 +17,7 @@
  *   • Real-time admin toast when a guardian/student submits feedback.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactDOM from 'react-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
 import { showToast } from '../../utils/toast';
@@ -36,8 +37,13 @@ import {
   History, Maximize2, Minimize2, Shuffle, Pencil, Save,
   ArrowUp, ArrowDown, RefreshCw, BookOpen, Flag, Sparkles,
   PanelLeftClose, PanelLeftOpen, MessageCircle, CalendarClock, Wand2,
+  PenTool,
 } from 'lucide-react';
 import { getCurrentAdminMeeting } from '../../api/meetings';
+import { TIMEZONE_LIST, DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
+import { buildTeacherSummaryMessage, formatAvailability, addMinutesToTime } from '../../utils/evaluationMessage';
+
+const WhiteboardModal = React.lazy(() => import('../../components/library/WhiteboardModal'));
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Constants & helpers                                                       */
@@ -118,6 +124,7 @@ const directionFor = (text) => {
 const emptyStudent = (name = '') => ({
   name: name || 'Student',
   age: undefined,
+  contactName: '',
   contactEmail: '',
   contactPhone: '',
   contactNote: '',
@@ -170,6 +177,7 @@ const EvaluationPage = ({ isActive = true }) => {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [editorOn, setEditorOn] = useState(false);
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const [branding, setBranding] = useState({ title: 'Waraqa', slogan: '', logoUrl: null });
   const [customContent, setCustomContent] = useState(() => loadCustom(adminId));
   const [selectedSections, setSelectedSections] = useState([]);
@@ -359,18 +367,20 @@ const EvaluationPage = ({ isActive = true }) => {
   // ── Prefill the active student from the current meeting ──────────────────
   const prefillFromMeeting = useCallback(() => {
     if (!currentMeeting) return;
+    const payload = currentMeeting.bookingPayload || {};
     const guardianName = currentMeeting.guardianName
-      || currentMeeting.bookingPayload?.guardian?.guardianName
+      || payload.guardianName
+      || currentMeeting.attendees?.guardianName
       || '';
     const guardianEmail = currentMeeting.guardianEmail
-      || currentMeeting.bookingPayload?.guardian?.guardianEmail
+      || payload.guardianEmail
       || '';
     const guardianPhone = currentMeeting.guardianPhone
-      || currentMeeting.bookingPayload?.guardian?.guardianPhone
+      || payload.guardianPhone
       || '';
-    const studentsFromMeeting = Array.isArray(currentMeeting.students)
+    const studentsFromMeeting = Array.isArray(currentMeeting.students) && currentMeeting.students.length
       ? currentMeeting.students
-      : (currentMeeting.bookingPayload?.students || []);
+      : (Array.isArray(payload.students) ? payload.students : []);
     updateSession((prev) => {
       if (!prev) return prev;
       const baseStudents = studentsFromMeeting.length
@@ -378,15 +388,16 @@ const EvaluationPage = ({ isActive = true }) => {
             const existing = (prev.students || [])[i] || emptyStudent();
             return {
               ...existing,
-              name: m.name || existing.name || `Student ${i + 1}`,
+              name: m.studentName || m.name || existing.name || `Student ${i + 1}`,
               age: m.age ?? existing.age,
+              contactName: existing.contactName || guardianName || '',
               contactEmail: existing.contactEmail || guardianEmail || '',
               contactPhone: existing.contactPhone || guardianPhone || '',
               desiredSubjects: existing.desiredSubjects?.length
                 ? existing.desiredSubjects
                 : (Array.isArray(m.courses) ? m.courses : []),
               generalNotes: existing.generalNotes
-                || [m.notes, currentMeeting.notes].filter(Boolean).join('\n').trim(),
+                || [m.notes, payload.notes, currentMeeting.notes].filter(Boolean).join('\n').trim(),
             };
           })
         : (prev.students || []);
@@ -428,20 +439,30 @@ const EvaluationPage = ({ isActive = true }) => {
   // ── Navigation ────────────────────────────────────────────────────────────
   const goNext = () => setSectionIdx((i) => Math.min(visibleSections.length - 1, i + 1));
   const goPrev = () => setSectionIdx((i) => Math.max(0, i - 1));
-  const goTo = (key) => {
-    const i = visibleSections.findIndex((s) => s.key === key);
-    if (i >= 0) { setSectionIdx(i); setWelcomeShown(false); }
-  };
 
   const startEvaluation = () => {
     setWelcomeShown(false);
     setSectionIdx(0);
   };
 
-  const endTest = () => {
-    if (!window.confirm('End this evaluation and mark it completed?')) return;
-    updateSession((prev) => ({ ...prev, status: 'completed', endedAt: new Date().toISOString() }));
-    goTo('summary');
+  const endTest = async () => {
+    if (!session?._id) return;
+    if (!window.confirm('Finish this evaluation and open a fresh one for a new student?')) return;
+    try {
+      // Persist completion immediately (bypass the debounced autosave) so the
+      // finished session is saved before we swap to a brand-new blank one.
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      await api.put(`/evaluations/${session._id}`, {
+        title: session.title,
+        status: 'completed',
+        students: session.students || [],
+      });
+    } catch (err) {
+      console.error('Failed to finalize evaluation', err);
+      showToast('Could not save before finishing');
+    }
+    await startNewSession();
+    showToast('Started a fresh evaluation');
   };
 
   // ── History drawer ────────────────────────────────────────────────────────
@@ -704,23 +725,7 @@ const EvaluationPage = ({ isActive = true }) => {
                     activeStudentIdx={activeStudentIdx}
                     onPickStudent={setActiveStudentIdx}
                     onChange={updateStudent}
-                    onSendFeedback={async (email, opts = {}) => {
-                      try {
-                        const links = Array.isArray(opts.links)
-                          ? opts.links
-                          : evalLinks.filter((l) => l.includeInFeedback);
-                        const { data } = await api.post(
-                          `/evaluations/${session._id}/students/${activeStudent._id || ''}/send-feedback`,
-                          { email, links },
-                        );
-                        showToast('Feedback request sent.');
-                        return data?.link || '';
-                      } catch (err) {
-                        const link = err?.response?.data?.link;
-                        showToast(err?.response?.data?.message || 'Failed to send feedback email');
-                        return link || '';
-                      }
-                    }}
+                    onUpdateAllStudents={updateAllStudents}
                   />
                 )}
                 {section.key === 'links' && (
@@ -736,7 +741,6 @@ const EvaluationPage = ({ isActive = true }) => {
                     onSaveLinks={saveEvalLinks}
                     whatsappNumber={whatsappNumber}
                     onSaveWhatsappNumber={saveWhatsappNumber}
-                    onFinishSession={endTest}
                     onSendFeedback={async (email, opts = {}) => {
                       try {
                         const links = Array.isArray(opts.links)
@@ -744,7 +748,7 @@ const EvaluationPage = ({ isActive = true }) => {
                           : evalLinks.filter((l) => l.includeInFeedback);
                         const { data } = await api.post(
                           `/evaluations/${session._id}/students/${activeStudent._id || ''}/send-feedback`,
-                          { email, links },
+                          { email, links, subject: opts.subject, intro: opts.intro },
                         );
                         showToast('Feedback request sent.');
                         return data?.link || '';
@@ -801,6 +805,10 @@ const EvaluationPage = ({ isActive = true }) => {
             <Pencil className="h-5 w-5" />
             <span className="rb-cap">{editorOn ? 'Done' : 'Edit'}</span>
           </button>
+          <button type="button" className="rail-btn" title="Open interactive whiteboard" onClick={() => setWhiteboardOpen(true)}>
+            <PenTool className="h-5 w-5" />
+            <span className="rb-cap">Board</span>
+          </button>
           <button type="button" className="rail-btn" title="Past sessions" onClick={openHistory}>
             <History className="h-5 w-5" />
             <span className="rb-cap">History</span>
@@ -810,10 +818,6 @@ const EvaluationPage = ({ isActive = true }) => {
             <span className="rb-cap">{fullscreen ? 'Exit' : 'Full'}</span>
           </button>
           <div className="flex-1" />
-          <button type="button" className="rail-btn is-danger" title="End and mark completed" onClick={endTest}>
-            <Flag className="h-5 w-5" />
-            <span className="rb-cap">Finish</span>
-          </button>
         </aside>
       </div>
 
@@ -827,6 +831,11 @@ const EvaluationPage = ({ isActive = true }) => {
           onNew={startNewSession}
           onDelete={deleteSession}
         />
+      )}
+      {whiteboardOpen && (
+        <React.Suspense fallback={null}>
+          <WhiteboardModal open onClose={() => setWhiteboardOpen(false)} />
+        </React.Suspense>
       )}
     </div>
   );
@@ -1362,6 +1371,14 @@ const StudentSlide = ({ student, onChange }) => (
     <div className="grid sm:grid-cols-2 gap-3">
       <Field label="Name"><input className="eval-input" value={student.name || ''} onChange={(e) => onChange({ name: e.target.value })} /></Field>
       <Field label="Age"><input type="number" className="eval-input" value={student.age || ''} onChange={(e) => onChange({ age: Number(e.target.value) || undefined })} /></Field>
+      <Field label="Guardian name" full>
+        <input
+          className="eval-input"
+          placeholder="Parent / guardian full name (shown in the feedback hub)"
+          value={student.contactName || ''}
+          onChange={(e) => onChange({ contactName: e.target.value })}
+        />
+      </Field>
       <Field label="Intro note" full>
         <input
           className="eval-input"
@@ -1386,27 +1403,63 @@ const StudentSlide = ({ student, onChange }) => (
 
 const SubjectChipsPicker = ({ value, onChange }) => {
   const selected = Array.isArray(value) ? value : [];
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
   const toggle = (s) => {
     if (selected.includes(s)) onChange(selected.filter((x) => x !== s));
     else onChange([...selected, s]);
   };
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {CLASS_SUBJECTS.map((s) => {
-        const on = selected.includes(s);
-        return (
-          <button
-            key={s}
-            type="button"
-            onClick={() => toggle(s)}
-            className={`px-2.5 py-1 rounded-full text-[11px] border font-display-en ${on
-              ? 'bg-indigo-600 text-white border-indigo-600 shadow'
-              : 'bg-white/70 border-indigo-200 text-indigo-800 hover:bg-indigo-50'}`}
-          >
-            <bdi>{s}</bdi>
-          </button>
-        );
-      })}
+    <div className="relative" ref={wrapRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full min-h-[38px] flex items-center justify-between gap-2 rounded-xl border border-indigo-200 bg-white/70 px-3 py-1.5 text-left hover:bg-indigo-50"
+      >
+        <span className="flex flex-wrap gap-1.5 min-w-0">
+          {selected.length === 0 ? (
+            <span className="text-[11px] text-indigo-400">Select subjects…</span>
+          ) : (
+            selected.map((s) => (
+              <span key={s} className="px-2 py-0.5 rounded-full text-[11px] bg-indigo-600 text-white inline-flex items-center gap-1">
+                <bdi>{s}</bdi>
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  onClick={(e) => { e.stopPropagation(); toggle(s); }}
+                  className="opacity-80 hover:opacity-100"
+                  aria-label={`Remove ${s}`}
+                >×</span>
+              </span>
+            ))
+          )}
+        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-indigo-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 w-full max-h-60 overflow-auto rounded-xl border border-indigo-200 bg-white shadow-lg p-1.5">
+          {CLASS_SUBJECTS.map((s) => {
+            const on = selected.includes(s);
+            return (
+              <label
+                key={s}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] cursor-pointer ${on ? 'bg-indigo-50 text-indigo-900' : 'text-indigo-800 hover:bg-indigo-50/60'}`}
+              >
+                <input type="checkbox" checked={on} onChange={() => toggle(s)} className="accent-indigo-600" />
+                <bdi>{s}</bdi>
+              </label>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
@@ -1512,9 +1565,18 @@ const TileFocusOverlay = ({ text, verdict, onPick, onClose, dir }) => {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // Lock background scroll while the focus overlay is open so the enlarged
+    // tile always sits in the centre of the current viewport.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
   }, [onClose]);
-  return (
+  // Portal to <body> so `position: fixed` is relative to the true viewport and
+  // never trapped inside a transformed/scrolled studio ancestor.
+  return ReactDOM.createPortal(
     <div className="tile-focus-overlay" role="dialog" aria-modal="true" onClick={onClose}>
       <div className="tile-focus-card" onClick={(e) => e.stopPropagation()} dir={dir}>
         <div className="tile-focus-text">{text}</div>
@@ -1543,7 +1605,8 @@ const TileFocusOverlay = ({ text, verdict, onPick, onClose, dir }) => {
           ✕
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 
@@ -2020,6 +2083,9 @@ const parseQuranNote = (note) => {
 const stringifyQuranNote = (data) => JSON.stringify({
   mistakes: data.mistakes || {},
   comment: data.comment || '',
+  surah: data.surah || '',
+  range: data.range || '',
+  marks: data.marks || [],
 });
 
 const QuranSlide = ({ student, onAnswer, font, onChangeFont, editorOn, custom, setCustom, resetCustom }) => {
@@ -2070,7 +2136,23 @@ const QuranSlide = ({ student, onAnswer, font, onChangeFont, editorOn, custom, s
         const isDefault = defaultIds.has(p.id);
 
         const writeNext = (nextMistakes, nextComment = parsed.comment) => {
-          const next = { mistakes: nextMistakes, comment: nextComment };
+          // Capture the actual mistaken word text so the Summary can list the
+          // words per surah (instead of opaque verse/word indices).
+          const marks = [];
+          Object.entries(nextMistakes).forEach(([vIdx, row]) => {
+            const verse = (p.verses || [])[Number(vIdx)];
+            const verseText = typeof verse === 'string' ? verse : verse?.text;
+            const words = String(verseText || '').split(/\s+/).filter(Boolean);
+            Object.entries(row || {}).forEach(([wIdx, sev]) => {
+              marks.push({
+                verse: Number(vIdx) + 1,
+                word: Number(wIdx) + 1,
+                text: words[Number(wIdx)] || '',
+                sev,
+              });
+            });
+          });
+          const next = { mistakes: nextMistakes, comment: nextComment, surah: p.surah, range: p.range, marks };
           const totals = Object.values(nextMistakes).reduce((acc, row) => {
             Object.values(row || {}).forEach((sev) => { acc[sev] = (acc[sev] || 0) + 1; });
             return acc;
@@ -2833,7 +2915,7 @@ const summarizeJourney = (answers = []) => {
   return out;
 };
 
-const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, onPickStudent, onChange, onSendFeedback }) => {
+const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, onPickStudent, onChange, onUpdateAllStudents }) => {
   const totals = useMemo(() => {
     const t = { correct: 0, partial: 0, incorrect: 0, total: 0 };
     (student.answers || []).forEach((a) => {
@@ -2850,24 +2932,38 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
   const { majorMistakes, minorMistakes } = useMemo(() => {
     const major = [];
     const minor = [];
+    // Quran-recitation mistakes are grouped per surah so each surah name is
+    // shown once with all its mistaken words gathered into a single box.
+    const quranMajor = {};
+    const quranMinor = {};
     (student.answers || []).forEach((a) => {
       if (!a.section) return;
       const labelObj = SECTION_LABELS[a.section] || { en: a.section };
       const label = labelObj.en;
       if (a.section === 'quran-recitation') {
-        // Expand word-level marks.
         try {
           const parsed = a.note ? JSON.parse(a.note) : null;
-          const mistakes = parsed?.mistakes || {};
-          Object.entries(mistakes).forEach(([vIdx, row]) => {
-            Object.entries(row || {}).forEach(([wIdx, sev]) => {
-              const entry = { section: label, prompt: a.prompt, detail: `verse ${Number(vIdx) + 1} · word ${Number(wIdx) + 1}` };
-              if (sev === 'advanced') major.push(entry);
-              else if (sev === 'obvious') minor.push(entry);
+          const surah = (parsed?.surah || a.prompt || 'Qur’an').trim();
+          const marks = Array.isArray(parsed?.marks) ? parsed.marks : [];
+          if (marks.length) {
+            marks.forEach((m) => {
+              const word = m.text || `verse ${m.verse} · word ${m.word}`;
+              if (m.sev === 'advanced') (quranMajor[surah] = quranMajor[surah] || []).push(word);
+              else if (m.sev === 'obvious') (quranMinor[surah] = quranMinor[surah] || []).push(word);
             });
-          });
+          } else {
+            // Legacy notes without word text — fall back to verse/word indices.
+            const mistakes = parsed?.mistakes || {};
+            Object.entries(mistakes).forEach(([vIdx, row]) => {
+              Object.entries(row || {}).forEach(([wIdx, sev]) => {
+                const word = `verse ${Number(vIdx) + 1} · word ${Number(wIdx) + 1}`;
+                if (sev === 'advanced') (quranMajor[surah] = quranMajor[surah] || []).push(word);
+                else if (sev === 'obvious') (quranMinor[surah] = quranMinor[surah] || []).push(word);
+              });
+            });
+          }
           if (parsed?.comment && parsed.comment.trim()) {
-            minor.push({ section: label, prompt: a.prompt, detail: parsed.comment.trim() });
+            minor.push({ section: label, prompt: surah, detail: parsed.comment.trim() });
           }
         } catch { /* legacy note */ }
         return;
@@ -2878,6 +2974,8 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
         minor.push({ section: label, prompt: a.prompt || '', detail: a.note || '' });
       }
     });
+    Object.entries(quranMajor).forEach(([surah, words]) => major.unshift({ section: 'Qur’an Recitation', surah, words }));
+    Object.entries(quranMinor).forEach(([surah, words]) => minor.unshift({ section: 'Qur’an Recitation', surah, words }));
     return { majorMistakes: major, minorMistakes: minor };
   }, [student.answers]);
 
@@ -2913,16 +3011,6 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
     return Array.from(new Set([...base, ...fromReco]));
   }, [student.desiredSubjects, recoMap]);
 
-  const [feedbackEmail, setFeedbackEmail] = useState(
-    student.contactEmail || session?.students?.[0]?.contactEmail || ''
-  );
-  const [feedbackLink, setFeedbackLink] = useState('');
-
-  useEffect(() => {
-    setFeedbackEmail(student.contactEmail || session?.students?.[0]?.contactEmail || '');
-    setFeedbackLink('');
-  }, [student._id, student.contactEmail, session?.students]);
-
   const exportText = useMemo(() => {
     const lines = [];
     lines.push(`Waraqa Evaluation · ${session.title || ''}`);
@@ -2933,15 +3021,38 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
     if (recommended.length) lines.push(`Recommended: ${recommended.join(', ')}`);
     if (majorMistakes.length) {
       lines.push('\nMistakes:');
-      majorMistakes.forEach((m) => lines.push(`  · ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`));
+      majorMistakes.forEach((m) => {
+        if (Array.isArray(m.words)) lines.push(`  · ${m.surah}: ${m.words.join('، ')}`);
+        else lines.push(`  · ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`);
+      });
     }
     if (minorMistakes.length) {
       lines.push('\nMinor mistakes:');
-      minorMistakes.forEach((m) => lines.push(`  · ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`));
+      minorMistakes.forEach((m) => {
+        if (Array.isArray(m.words)) lines.push(`  · ${m.surah}: ${m.words.join('، ')}`);
+        else lines.push(`  · ${m.section} — ${m.prompt}${m.detail ? ` (${m.detail})` : ''}`);
+      });
     }
     if (student.adminSummary) lines.push(`\nNotes: ${student.adminSummary}`);
     return lines.join('\n');
   }, [session.title, student, totals, recommended, majorMistakes, minorMistakes]);
+
+  // Copy a well-phrased hand-off message for the teacher (optionally in Cairo time).
+  const copyForTeacher = (convertToCairo) => {
+    const journeyForMsg = journey.map((j) => ({
+      ...j,
+      label: (SECTION_LABELS[j.section] || { en: j.section }).en,
+    }));
+    const msg = buildTeacherSummaryMessage({
+      student,
+      majorMistakes,
+      minorMistakes,
+      journey: journeyForMsg,
+      convertToCairo,
+    });
+    navigator.clipboard?.writeText(msg);
+    showToast(convertToCairo ? 'Copied for teacher (Cairo time)' : 'Copied for teacher');
+  };
 
   return (
     <div>
@@ -3034,9 +3145,19 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
             <ul className="space-y-1.5">
               {majorMistakes.map((m, i) => (
                 <li key={i} className="rounded-lg bg-white/80 border border-rose-100 px-2 py-1.5">
-                  <div className="text-[10px] uppercase tracking-wide text-rose-700/70">{m.section}</div>
-                  <div className="text-xs text-rose-900 leading-snug" dir="auto">{m.prompt || '—'}</div>
-                  {m.detail && <div className="text-[11px] text-rose-700/80 italic mt-0.5" dir="auto">{m.detail}</div>}
+                  <div className="text-[10px] uppercase tracking-wide text-rose-700/70">{m.surah || m.section}</div>
+                  {Array.isArray(m.words) ? (
+                    <div className="flex flex-wrap gap-1 mt-1" dir="rtl">
+                      {m.words.map((w, wi) => (
+                        <span key={wi} className="font-naskh px-1.5 py-0.5 rounded bg-rose-100 text-rose-900 text-base leading-tight">{w}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-xs text-rose-900 leading-snug" dir="auto">{m.prompt || '—'}</div>
+                      {m.detail && <div className="text-[11px] text-rose-700/80 italic mt-0.5" dir="auto">{m.detail}</div>}
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
@@ -3052,9 +3173,19 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
             <ul className="space-y-1.5">
               {minorMistakes.map((m, i) => (
                 <li key={i} className="rounded-lg bg-white/80 border border-amber-100 px-2 py-1.5">
-                  <div className="text-[10px] uppercase tracking-wide text-amber-700/70">{m.section}</div>
-                  <div className="text-xs text-amber-900 leading-snug" dir="auto">{m.prompt || '—'}</div>
-                  {m.detail && <div className="text-[11px] text-amber-700/80 italic mt-0.5" dir="auto">{m.detail}</div>}
+                  <div className="text-[10px] uppercase tracking-wide text-amber-700/70">{m.surah || m.section}</div>
+                  {Array.isArray(m.words) ? (
+                    <div className="flex flex-wrap gap-1 mt-1" dir="rtl">
+                      {m.words.map((w, wi) => (
+                        <span key={wi} className="font-naskh px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-base leading-tight">{w}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-xs text-amber-900 leading-snug" dir="auto">{m.prompt || '—'}</div>
+                      {m.detail && <div className="text-[11px] text-amber-700/80 italic mt-0.5" dir="auto">{m.detail}</div>}
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
@@ -3089,52 +3220,56 @@ const SummarySlide = ({ session, student, students = [], activeStudentIdx = 0, o
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => { navigator.clipboard?.writeText(exportText); showToast('Copied summary'); }}
           className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-xs inline-flex items-center gap-1"><Copy className="h-3 w-3" /> Copy summary</button>
+        <button type="button" onClick={() => copyForTeacher(false)}
+          className="px-3 py-1.5 rounded-full bg-indigo-700 text-white text-xs inline-flex items-center gap-1"><Copy className="h-3 w-3" /> Copy for teacher</button>
+        <button type="button" onClick={() => copyForTeacher(true)}
+          className="px-3 py-1.5 rounded-full bg-indigo-600 text-white text-xs inline-flex items-center gap-1" title="Times converted to Cairo timezone">
+          <Copy className="h-3 w-3" /> Copy for teacher (Cairo time)</button>
       </div>
 
-      {/* Feedback request */}
-      <div className="mt-6 rounded-2xl border border-emerald-200 bg-gradient-to-br from-white to-emerald-50 p-4">
-        <h4 className="text-sm font-semibold text-emerald-900 mb-2 inline-flex items-center gap-1"><Send className="h-4 w-4" /> Ask {student.name} for feedback</h4>
-        <div className="flex flex-col sm:flex-row gap-2 items-stretch">
-          <input
-            className="eval-input flex-1"
-            placeholder="Email"
-            value={feedbackEmail}
-            onChange={(e) => setFeedbackEmail(e.target.value)}
-          />
-          <button
-            type="button"
-            onClick={async () => {
-              if (!student._id) { showToast('Save the session first'); return; }
-              const link = await onSendFeedback(feedbackEmail);
-              if (link) setFeedbackLink(link);
-            }}
-            className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-sm"
-          >Send</button>
+      {/* Quick intro note captured on the student slide */}
+      {student.contactNote && student.contactNote.trim() && (
+        <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50/40 p-3">
+          <div className="flex items-baseline justify-between mb-1">
+            <label className="text-xs font-semibold text-emerald-800">Intro note</label>
+            <span dir="rtl" className="font-naskh text-emerald-700/80 text-sm">ملاحظة سريعة</span>
+          </div>
+          <p className="text-sm text-emerald-900 whitespace-pre-wrap" dir="auto">{student.contactNote}</p>
         </div>
-        {feedbackLink && (
-          <div className="mt-2 text-xs flex items-center gap-2 text-emerald-800 break-all">
-            <LinkIcon className="h-3 w-3" /> <a href={feedbackLink} className="underline" target="_blank" rel="noreferrer">{feedbackLink}</a>
-            <button type="button" className="ml-auto text-emerald-700 underline" onClick={() => { navigator.clipboard?.writeText(feedbackLink); showToast('Link copied'); }}>Copy</button>
-          </div>
-        )}
+      )}
 
-        {student.feedback?.submittedAt && (
-          <div className="mt-3 rounded-xl border border-emerald-300 bg-white p-3">
-            <div className="text-xs text-emerald-700 mb-1">Received {new Date(student.feedback.submittedAt).toLocaleString()}</div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-              {FEEDBACK_QUESTIONS.map((q) => (
-                <div key={q.key} className="rounded-lg bg-emerald-50 p-2 text-center">
-                  <div className="text-[10px] uppercase text-emerald-700">{q.key}</div>
-                  <div className="text-lg font-bold text-emerald-900">{student.feedback.ratings?.[q.key] ?? '—'}/5</div>
-                </div>
-              ))}
-            </div>
-            {student.feedback.comment && (
-              <div className="mt-2 text-sm text-emerald-900 italic">“{student.feedback.comment}”</div>
-            )}
-          </div>
-        )}
+      {/* Availability & general notes (moved here from the closing slide) */}
+      <div className="mt-4 grid sm:grid-cols-2 gap-3">
+        <AvailabilitySlotsEditor student={student} onChange={onChange} />
+        <WrapUpField
+          full
+          textarea
+          label="General notes"
+          ar="ملاحظات عامة"
+          value={student.generalNotes || ''}
+          onChange={(v) => onChange({ generalNotes: v })}
+          onApplyAll={() => onUpdateAllStudents && onUpdateAllStudents({ generalNotes: student.generalNotes || '' })}
+          showApplyAll={students.length > 1}
+        />
       </div>
+
+      {/* Received feedback */}
+      {student.feedback?.submittedAt && (
+        <div className="mt-4 rounded-2xl border border-emerald-300 bg-white p-3">
+          <div className="text-xs text-emerald-700 mb-1">Feedback received {new Date(student.feedback.submittedAt).toLocaleString()}</div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {FEEDBACK_QUESTIONS.map((q) => (
+              <div key={q.key} className="rounded-lg bg-emerald-50 p-2 text-center">
+                <div className="text-[10px] uppercase text-emerald-700">{q.key}</div>
+                <div className="text-lg font-bold text-emerald-900">{student.feedback.ratings?.[q.key] ?? '—'}/5</div>
+              </div>
+            ))}
+          </div>
+          {student.feedback.comment && (
+            <div className="mt-2 text-sm text-emerald-900 italic">“{student.feedback.comment}”</div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -3152,10 +3287,13 @@ const MeetingPrefillBanner = ({ meeting, onPrefill, onDismiss }) => {
   const start = meeting?.scheduledStart ? new Date(meeting.scheduledStart) : null;
   const end = meeting?.scheduledEnd ? new Date(meeting.scheduledEnd) : null;
   const guardianName = meeting?.guardianName
-    || meeting?.bookingPayload?.guardian?.guardianName
+    || meeting?.bookingPayload?.guardianName
+    || meeting?.attendees?.guardianName
     || 'Guardian';
-  const studentNames = (Array.isArray(meeting?.students) ? meeting.students : (meeting?.bookingPayload?.students || []))
-    .map((s) => s.name)
+  const studentNames = (Array.isArray(meeting?.students) && meeting.students.length
+    ? meeting.students
+    : (meeting?.bookingPayload?.students || []))
+    .map((s) => s.studentName || s.name)
     .filter(Boolean)
     .join(', ');
   const range = start && end
@@ -3176,8 +3314,8 @@ const MeetingPrefillBanner = ({ meeting, onPrefill, onDismiss }) => {
               {range}
               {studentNames && <> · Students: <bdi>{studentNames}</bdi></>}
             </div>
-            {meeting?.notes && (
-              <div className="text-[11px] text-emerald-700/80 mt-1 italic line-clamp-2">{meeting.notes}</div>
+            {(meeting?.notes || meeting?.bookingPayload?.notes) && (
+              <div className="text-[11px] text-emerald-700/80 mt-1 italic line-clamp-2">{meeting.notes || meeting.bookingPayload.notes}</div>
             )}
           </div>
         </div>
@@ -3201,6 +3339,125 @@ const MeetingPrefillBanner = ({ meeting, onPrefill, onDismiss }) => {
 
 /* ─── Links ────────────────────────────────────────────────────────────── */
 
+// Where guardians are sent to create their account + add students (the
+// registration funnel). Kept as a single constant so the WhatsApp message and
+// the email stay in sync.
+const REGISTER_URL = 'https://app.waraqaweb.com/dashboard/register-student';
+
+// Builds the post-evaluation WhatsApp message. Shared so the live "Open"
+// button and the preview produce identical text.
+const buildWhatsAppMessage = ({ name = '', links = [], feedbackLink = '' }) => {
+  const greeting = `Assalāmu ʿalaykum ${name || ''},`.trim();
+  const lines = [
+    greeting,
+    '',
+    'Thank you for joining the evaluation with Waraqa today. Here are the next steps.',
+    '',
+    'Please create your account so that we can start the registration process:',
+    '',
+    REGISTER_URL,
+    '',
+    'After that we will send you a confirmation message with all confirmed classes details as soon as we assign you a teacher.',
+  ];
+  if (links.length) {
+    lines.push('', 'Helpful links:');
+    links.forEach((l) => lines.push(`* ${l.label}: ${l.url}`));
+  }
+  lines.push(
+    '',
+    "It was a pleasure meeting you. We'd love a quick note on how the session went — it should take less than a minute.",
+  );
+  if (feedbackLink) lines.push(feedbackLink);
+  lines.push('', 'Looking forward to start!', 'Thank you');
+  return lines.join('\n');
+};
+
+/* Email preview/edit modal shown before sending the feedback email. The admin
+   can tweak the subject and intro text and see the rendered HTML. */
+const EmailPreviewModal = ({ sessionId, student, links, onClose, onSend }) => {
+  const [loading, setLoading] = useState(true);
+  const [subject, setSubject] = useState('');
+  const [intro, setIntro] = useState('');
+  const [html, setHtml] = useState('');
+  const [email, setEmail] = useState(student?.contactEmail || '');
+  const [sending, setSending] = useState(false);
+
+  const refresh = useCallback(async (subjOverride, introOverride) => {
+    if (!sessionId || !student?._id) return;
+    setLoading(true);
+    try {
+      const { data } = await api.post(
+        `/evaluations/${sessionId}/students/${student._id}/feedback-preview`,
+        { links, subject: subjOverride, intro: introOverride },
+      );
+      setSubject((s) => (subjOverride != null ? subjOverride : (s || data.subject || '')));
+      setIntro((s) => (introOverride != null ? introOverride : (s || data.defaultIntro || '')));
+      setHtml(data.html || '');
+      if (!email) setEmail(data.to || '');
+    } catch {
+      showToast('Failed to build email preview');
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, student?._id, links]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const doSend = async () => {
+    if (!email) { showToast('Enter a recipient email'); return; }
+    setSending(true);
+    try {
+      await onSend(email, { subject, intro });
+      onClose();
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-3xl max-h-[90vh] bg-white rounded-2xl shadow-xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <header className="flex items-center justify-between px-4 py-3 border-b border-emerald-100 bg-emerald-50">
+          <h3 className="text-sm font-semibold text-emerald-900 inline-flex items-center gap-2"><Send className="h-4 w-4" /> Preview & edit email</h3>
+          <button type="button" onClick={onClose} className="text-emerald-700 hover:text-emerald-900">✕</button>
+        </header>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          <div>
+            <label className="eval-field-label">Recipient</label>
+            <input className="eval-input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" />
+          </div>
+          <div>
+            <label className="eval-field-label">Subject</label>
+            <input className="eval-input" value={subject} onChange={(e) => setSubject(e.target.value)} onBlur={() => refresh(subject, intro)} />
+          </div>
+          <div>
+            <label className="eval-field-label">Intro message</label>
+            <textarea className="eval-input min-h-[90px]" value={intro} onChange={(e) => setIntro(e.target.value)} onBlur={() => refresh(subject, intro)} />
+          </div>
+          <div>
+            <label className="eval-field-label">Preview</label>
+            <div className="rounded-xl border border-emerald-100 overflow-hidden bg-white">
+              {loading ? (
+                <div className="p-6 text-center text-sm text-emerald-700">Building preview…</div>
+              ) : (
+                <iframe title="Email preview" srcDoc={html} className="w-full h-[320px] border-0" sandbox="" />
+              )}
+            </div>
+          </div>
+        </div>
+        <footer className="flex items-center justify-end gap-2 px-4 py-3 border-t border-emerald-100 bg-white">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-full border border-emerald-300 bg-white text-emerald-800 text-sm">Cancel</button>
+          <button type="button" onClick={doSend} disabled={sending} className="px-4 py-1.5 rounded-full bg-emerald-700 text-white text-sm inline-flex items-center gap-1 disabled:opacity-50">
+            <Send className="h-3 w-3" /> {sending ? 'Sending…' : 'Send email'}
+          </button>
+        </footer>
+      </div>
+    </div>,
+    document.body,
+  );
+};
+
 const LinksSlide = ({
   session,
   students = [],
@@ -3213,11 +3470,9 @@ const LinksSlide = ({
   onSaveLinks,
   whatsappNumber = '',
   onSaveWhatsappNumber,
-  onFinishSession,
   onSendFeedback,
 }) => {
   const active = students[activeStudentIdx] || null;
-  const isCompleted = session?.status === 'completed';
 
   const [editingLinks, setEditingLinks] = useState(false);
   const [draftLinks, setDraftLinks] = useState(links);
@@ -3229,6 +3484,7 @@ const LinksSlide = ({
   const [feedbackEmail, setFeedbackEmail] = useState(active?.contactEmail || '');
   const [feedbackLink, setFeedbackLink] = useState('');
   const [sending, setSending] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   useEffect(() => {
     setFeedbackEmail(active?.contactEmail || '');
     setFeedbackLink('');
@@ -3249,12 +3505,12 @@ const LinksSlide = ({
     showToast('All links copied');
   };
 
-  const sendFeedbackEmail = async () => {
+  const sendFeedbackEmail = async (overrides = {}) => {
     if (!active?._id) { showToast('Save the session first'); return; }
     if (!feedbackEmail) { showToast('Please enter an email first'); return; }
     setSending(true);
     try {
-      const link = await onSendFeedback(feedbackEmail, { links: includedLinks });
+      const link = await onSendFeedback(feedbackEmail, { links: includedLinks, ...overrides });
       if (link) setFeedbackLink(link);
     } finally {
       setSending(false);
@@ -3267,14 +3523,7 @@ const LinksSlide = ({
     if (!phoneRaw) { showToast('Add a contact phone or default WhatsApp number first'); return; }
     const digits = phoneRaw.replace(/[^\d]/g, '');
     if (!digits) { showToast('Phone number is not valid'); return; }
-    const greeting = `Assalāmu ʿalaykum ${active.name || ''},`.trim();
-    const intro = `Thank you for your evaluation with Waraqa today. Here are the next steps.`;
-    const linksText = includedLinks.length
-      ? `\n\nHelpful links:\n${includedLinks.map((l) => `• ${l.label}: ${l.url}`).join('\n')}`
-      : '';
-    const register = 'https://app.waraqaweb.com/dashboard/register-student';
-    const cta = `\n\nReady to begin? Register a student here: ${register}`;
-    const body = `${greeting}\n\n${intro}${linksText}${cta}`;
+    const body = buildWhatsAppMessage({ name: active.name, links: includedLinks, feedbackLink });
     const url = `https://wa.me/${digits}?text=${encodeURIComponent(body)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
@@ -3305,10 +3554,6 @@ const LinksSlide = ({
   const toggleIncluded = (idx) => {
     const next = links.map((l, i) => (i === idx ? { ...l, includeInFeedback: !l.includeInFeedback } : l));
     onSaveLinks(next);
-  };
-
-  const handleFinish = async () => {
-    if (!isCompleted) onFinishSession();
   };
 
   return (
@@ -3355,26 +3600,6 @@ const LinksSlide = ({
               onApplyAll={() => applyToAll({ contactPhone: active.contactPhone || '' })}
               showApplyAll={students.length > 1}
               placeholder="+1 555 123 4567"
-            />
-            <WrapUpField
-              full
-              textarea
-              label="Availability"
-              ar="المواعيد المتاحة"
-              value={active.availability || ''}
-              onChange={(v) => onUpdateStudent({ availability: v })}
-              onApplyAll={() => applyToAll({ availability: active.availability || '' })}
-              showApplyAll={students.length > 1}
-            />
-            <WrapUpField
-              full
-              textarea
-              label="General notes"
-              ar="ملاحظات عامة"
-              value={active.generalNotes || ''}
-              onChange={(v) => onUpdateStudent({ generalNotes: v })}
-              onApplyAll={() => applyToAll({ generalNotes: active.generalNotes || '' })}
-              showApplyAll={students.length > 1}
             />
           </div>
         </div>
@@ -3526,10 +3751,14 @@ const LinksSlide = ({
               />
               <button
                 type="button"
-                onClick={sendFeedbackEmail}
+                onClick={() => {
+                  if (!active?._id) { showToast('Save the session first'); return; }
+                  if (!feedbackEmail) { showToast('Please enter an email first'); return; }
+                  setPreviewOpen(true);
+                }}
                 disabled={sending}
                 className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-sm inline-flex items-center gap-1 disabled:opacity-50"
-              ><Send className="h-3 w-3" /> {sending ? 'Sending…' : 'Send'}</button>
+              ><Send className="h-3 w-3" /> Preview &amp; send</button>
             </div>
             {feedbackLink && (
               <div className="mt-2 text-[11px] flex items-center gap-2 text-emerald-800 break-all">
@@ -3563,21 +3792,20 @@ const LinksSlide = ({
             <div className="text-[11px] text-emerald-700/70 mt-1">Opens WhatsApp Web with a prefilled message including the selected links.</div>
           </div>
         </div>
-
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-emerald-100">
-          <div className="text-xs text-emerald-700/80">
-            {isCompleted
-              ? <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" /> Session marked completed.</span>
-              : 'When you finish, the meeting is saved and history is updated.'}
-          </div>
-          <button
-            type="button"
-            onClick={handleFinish}
-            disabled={isCompleted}
-            className="px-4 py-2 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-sm inline-flex items-center gap-2 shadow disabled:opacity-50 disabled:cursor-not-allowed"
-          ><Flag className="h-4 w-4" /> {isCompleted ? 'Saved' : 'Finish & save meeting'}</button>
-        </div>
       </div>
+
+      {previewOpen && active && (
+        <EmailPreviewModal
+          sessionId={session?._id}
+          student={active}
+          links={includedLinks}
+          onClose={() => setPreviewOpen(false)}
+          onSend={async (email, opts) => {
+            const link = await onSendFeedback(email, { links: includedLinks, ...opts });
+            if (link) setFeedbackLink(link);
+          }}
+        />
+      )}
     </div>
   );
 };
@@ -3614,6 +3842,135 @@ const WrapUpField = ({ label, ar, value, onChange, onApplyAll, showApplyAll, pla
     )}
   </div>
 );
+
+/* ─── Availability slots editor (create-class-modal style) ──────────────── */
+
+const DOW = [
+  { v: 0, label: 'Sun' }, { v: 1, label: 'Mon' }, { v: 2, label: 'Tue' },
+  { v: 3, label: 'Wed' }, { v: 4, label: 'Thu' }, { v: 5, label: 'Fri' }, { v: 6, label: 'Sat' },
+];
+
+const AvailabilitySlotsEditor = ({ student, onChange }) => {
+  const slots = Array.isArray(student.availabilitySlots) ? student.availabilitySlots : [];
+  const timezone = student.availabilityTimezone || DEFAULT_TIMEZONE;
+  const [duration, setDuration] = useState(30);
+
+  const patchSlot = (idx, patch) => {
+    const next = slots.map((s, i) => (i === idx ? { ...s, ...patch } : s));
+    onChange({ availabilitySlots: next });
+  };
+  const addSlot = (seed) => {
+    const base = seed || slots[slots.length - 1] || { day: 1, start: '17:00', durationMinutes: duration };
+    const nextDay = ((Number(base.day) || 0) + 1) % 7;
+    const start = base.start || '17:00';
+    onChange({
+      availabilitySlots: [
+        ...slots,
+        { day: nextDay, start, end: base.end || addMinutesToTime(start, base.durationMinutes || duration), durationMinutes: base.durationMinutes || duration },
+      ],
+    });
+  };
+  const removeSlot = (idx) => onChange({ availabilitySlots: slots.filter((_, i) => i !== idx) });
+
+  return (
+    <div className="sm:col-span-2 rounded-2xl border border-emerald-200 bg-white/60 p-3">
+      <div className="flex items-baseline justify-between mb-2">
+        <label className="eval-field-label">Availability · <span dir="rtl" className="font-naskh">المواعيد المتاحة</span></label>
+        <span className="text-[10px] text-emerald-700/60">Same style as create-class: pick a day, a start time and (optionally) an end time.</span>
+      </div>
+
+      <div className="grid sm:grid-cols-3 gap-2 mb-3">
+        <div>
+          <label className="block text-[10px] text-emerald-700/80 mb-0.5">Timezone</label>
+          <select
+            className="eval-input"
+            value={timezone}
+            onChange={(e) => onChange({ availabilityTimezone: e.target.value })}
+          >
+            {TIMEZONE_LIST.map((tz) => (
+              <option key={tz.value} value={tz.value}>{tz.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] text-emerald-700/80 mb-0.5">Default class duration (min)</label>
+          <input
+            type="number"
+            min={5}
+            step={5}
+            className="eval-input"
+            value={duration}
+            onChange={(e) => setDuration(Math.max(5, Number(e.target.value) || 30))}
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] text-emerald-700/80 mb-0.5">Expected starting date</label>
+          <input
+            type="date"
+            className="eval-input"
+            value={student.expectedStartDate || ''}
+            onChange={(e) => onChange({ expectedStartDate: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {slots.map((s, idx) => (
+          <div key={idx} className="flex flex-wrap items-end gap-2 rounded-xl border border-emerald-100 bg-white/80 p-2">
+            <div>
+              <label className="block text-[10px] text-emerald-700/80 mb-0.5">Day</label>
+              <select
+                className="eval-input"
+                value={Number(s.day)}
+                onChange={(e) => patchSlot(idx, { day: Number(e.target.value) })}
+              >
+                {DOW.map((d) => <option key={d.v} value={d.v}>{d.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] text-emerald-700/80 mb-0.5">Start</label>
+              <input
+                type="time"
+                className="eval-input"
+                value={s.start || ''}
+                onChange={(e) => {
+                  const start = e.target.value;
+                  // Auto-fill end from the duration; the admin can still override it.
+                  patchSlot(idx, { start, end: addMinutesToTime(start, s.durationMinutes || duration) });
+                }}
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-emerald-700/80 mb-0.5">End (window)</label>
+              <input
+                type="time"
+                className="eval-input"
+                value={s.end || ''}
+                onChange={(e) => patchSlot(idx, { end: e.target.value })}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => addSlot(s)}
+              className="px-2 py-1.5 rounded-full border border-emerald-300 bg-white text-emerald-800 text-[11px] inline-flex items-center gap-1"
+              title="Duplicate this slot to the next day"
+            ><Copy className="h-3 w-3" /> Duplicate</button>
+            <button
+              type="button"
+              onClick={() => removeSlot(idx)}
+              className="px-2 py-1.5 rounded-full border border-rose-200 bg-white text-rose-700 text-[11px] inline-flex items-center gap-1"
+            ><Trash2 className="h-3 w-3" /></button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => addSlot()}
+          className="text-xs px-3 py-1.5 rounded-full border border-dashed border-emerald-400 text-emerald-800 inline-flex items-center gap-1"
+        ><Plus className="h-3 w-3" /> Add availability slot</button>
+      </div>
+    </div>
+  );
+};
 
 /* ─── History drawer ───────────────────────────────────────────────────── */
 

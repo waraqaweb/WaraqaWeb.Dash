@@ -98,6 +98,7 @@ const collectMetaChips = (feedback = {}) => {
   if (feedback.scheduledDate) chips.push({ label: `Class on ${formatDateDDMMMYYYY(feedback.scheduledDate)}` });
   if (feedback.promptMonth) chips.push({ label: `Month ${feedback.promptMonth}` });
   if (feedback.evaluationTitle) chips.push({ label: feedback.evaluationTitle });
+  if (feedback.guardianName) chips.push({ label: `Guardian ${feedback.guardianName}` });
   return chips;
 };
 
@@ -368,6 +369,7 @@ const FeedbacksAdmin = () => {
         const message = (feedback.notes || feedback.message || '').toLowerCase();
         const heardAboutUs = (feedback.heardAboutUs || '').toLowerCase();
         const evaluationTitle = (feedback.evaluationTitle || '').toLowerCase();
+        const guardianName = (feedback.guardianName || '').toLowerCase();
         const type = (feedback.type || '').toLowerCase();
         const date = (formatDateDDMMMYYYY(feedback.createdAt) || '').toLowerCase();
 
@@ -378,6 +380,7 @@ const FeedbacksAdmin = () => {
           message.includes(term) ||
           heardAboutUs.includes(term) ||
           evaluationTitle.includes(term) ||
+          guardianName.includes(term) ||
           type.includes(term) ||
           date.includes(term) ||
           String(feedback._id).includes(term)

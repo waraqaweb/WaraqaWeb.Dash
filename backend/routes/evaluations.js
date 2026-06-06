@@ -22,6 +22,72 @@ function resolvePublicAppBaseUrl() {
   return String(raw).split(',')[0].trim().replace(/\/$/, '');
 }
 
+// Default intro paragraph for the feedback email. Kept here so the preview and
+// the actual send share one source of truth; the admin can override it.
+function defaultFeedbackIntro(student, sessionLabel) {
+  return `Thank you for joining ${sessionLabel}. It was a pleasure meeting you. We'd love a quick note on how the session went — it should take less than a minute.`;
+}
+
+function sanitizeCuratedLinks(rawLinks) {
+  return (Array.isArray(rawLinks) ? rawLinks : [])
+    .map((l) => l && typeof l === 'object' ? {
+      label: String(l.label || '').trim().slice(0, 120),
+      url: String(l.url || '').trim().slice(0, 500),
+      description: String(l.description || '').trim().slice(0, 500),
+    } : null)
+    .filter((l) => l && l.label && l.url);
+}
+
+// Build the feedback email ({ subject, html, text }). `intro` (plain text) and
+// `subject` may be overridden by the admin from the preview modal.
+function buildFeedbackEmail({ student, sessionLabel, link, registerLink, curatedLinks, branding, subject, intro }) {
+  const safeSubject = (subject && String(subject).trim()) || `How was your Waraqa evaluation, ${student.name}?`;
+  const introText = (intro && String(intro).trim()) || defaultFeedbackIntro(student, sessionLabel);
+  // Escape minimal HTML in the (admin-authored) intro to avoid breaking layout.
+  const introHtml = introText
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br/>');
+
+  const linksBlock = curatedLinks.length ? `
+      <div style="background:#ffffff;border:1px solid #d1e0de;border-radius:8px;padding:18px 20px;margin:14px 0;">
+        <p style="margin:0 0 12px;color:#111827;font-size:14px;font-weight:600;">Helpful links from your evaluator</p>
+        <ul style="margin:0;padding-left:18px;color:#374151;font-size:13px;line-height:1.7;">
+          ${curatedLinks.map((l) => `
+            <li style="margin-bottom:6px;">
+              <a href="${l.url}" style="color:#0f766e;text-decoration:none;font-weight:600;">${l.label}</a>
+              ${l.description ? `<div style="color:#6b7280;font-size:12px;">${l.description}</div>` : ''}
+            </li>`).join('')}
+        </ul>
+      </div>
+    ` : '';
+
+  const ctaBlock = `
+      <div style="background:linear-gradient(135deg,#ecfdf5,#f0fdfa);border:1px solid #99f6e4;border-radius:10px;padding:18px 20px;margin:14px 0;text-align:center;">
+        <p style="margin:0 0 8px;color:#064e3b;font-size:14px;font-weight:700;">Ready to begin your journey with Waraqa?</p>
+        <p style="margin:0 0 14px;color:#065f46;font-size:13px;">Register a student account in seconds and book your first lesson.</p>
+        <a href="${registerLink}" style="display:inline-block;background:#0f766e;color:white;text-decoration:none;padding:10px 24px;border-radius:6px;font-size:13px;font-weight:600;">Register a Student</a>
+      </div>
+    `;
+
+  const body = `
+      <p style="margin:0 0 14px;font-size:15px;">Assalāmu ʿalaykum <strong>${student.name}</strong>,</p>
+      <p style="margin:0 0 14px;color:#374151;">${introHtml}</p>
+      <div style="text-align:center;margin:18px 0;"><a href="${link}" style="display:inline-block;background:#2C736C;color:white;text-decoration:none;padding:11px 30px;border-radius:6px;font-size:14px;font-weight:600;">Open Feedback Form</a></div>
+      ${linksBlock}
+      ${ctaBlock}
+      <p style="font-size:12px;color:#6b7280;margin:12px 0 0;">If the button does not work, copy and paste this link into your browser:</p>
+      <p style="font-size:12px;color:#0f766e;word-break:break-all;margin:6px 0 0;">${link}</p>
+    `;
+  const html = baseEmailTemplate({
+    preheader: `Share feedback for ${student.name}`,
+    body,
+    branding,
+  });
+  const linksText = curatedLinks.length ? `\n\nHelpful links:\n${curatedLinks.map((l) => `  · ${l.label}: ${l.url}`).join('\n')}` : '';
+  const text = `Assalāmu ʿalaykum ${student.name},\n\n${introText}\n${link}${linksText}\n\nRegister a student: ${registerLink}`;
+  return { subject: safeSubject, html, text };
+}
+
 // ─── Admin: list my recent sessions ──────────────────────────────────────────
 router.get('/', authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -134,57 +200,20 @@ router.post('/:id/students/:studentSubId/send-feedback', authenticateToken, requ
     const base = resolvePublicAppBaseUrl();
     const link = `${base}/dashboard/evaluation/feedback/${student.feedback.token}`;
     const registerLink = `${base}/dashboard/register-student`;
-    const subject = `How was your Waraqa evaluation, ${student.name}?`;
     const branding = await loadBrandingAndLogo();
-    const sessionLabel = session.title ? `<strong>${session.title}</strong>` : 'your recent evaluation';
+    const sessionLabel = session.title ? session.title : 'your recent evaluation';
+    const curatedLinks = sanitizeCuratedLinks(req.body?.links);
 
-    // Optional curated list of important links from the closing-tab UI.
-    const rawLinks = Array.isArray(req.body?.links) ? req.body.links : [];
-    const curatedLinks = rawLinks
-      .map((l) => l && typeof l === 'object' ? {
-        label: String(l.label || '').trim().slice(0, 120),
-        url: String(l.url || '').trim().slice(0, 500),
-        description: String(l.description || '').trim().slice(0, 500),
-      } : null)
-      .filter((l) => l && l.label && l.url);
-
-    const linksBlock = curatedLinks.length ? `
-      <div style="background:#ffffff;border:1px solid #d1e0de;border-radius:8px;padding:18px 20px;margin:14px 0;">
-        <p style="margin:0 0 12px;color:#111827;font-size:14px;font-weight:600;">Helpful links from your evaluator</p>
-        <ul style="margin:0;padding-left:18px;color:#374151;font-size:13px;line-height:1.7;">
-          ${curatedLinks.map((l) => `
-            <li style="margin-bottom:6px;">
-              <a href="${l.url}" style="color:#0f766e;text-decoration:none;font-weight:600;">${l.label}</a>
-              ${l.description ? `<div style="color:#6b7280;font-size:12px;">${l.description}</div>` : ''}
-            </li>`).join('')}
-        </ul>
-      </div>
-    ` : '';
-
-    const ctaBlock = `
-      <div style="background:linear-gradient(135deg,#ecfdf5,#f0fdfa);border:1px solid #99f6e4;border-radius:10px;padding:18px 20px;margin:14px 0;text-align:center;">
-        <p style="margin:0 0 8px;color:#064e3b;font-size:14px;font-weight:700;">Ready to begin your journey with Waraqa?</p>
-        <p style="margin:0 0 14px;color:#065f46;font-size:13px;">Register a student account in seconds and book your first lesson.</p>
-        <a href="${registerLink}" style="display:inline-block;background:#0f766e;color:white;text-decoration:none;padding:10px 24px;border-radius:6px;font-size:13px;font-weight:600;">Register a Student</a>
-      </div>
-    `;
-
-    const body = `
-      <p style="margin:0 0 14px;font-size:15px;">Assalāmu ʿalaykum <strong>${student.name}</strong>,</p>
-      <p style="margin:0 0 14px;color:#374151;">Thank you for joining ${sessionLabel}. It was a pleasure meeting you. We'd love a quick note on how the session went — it should take less than a minute.</p>
-      <div style="text-align:center;margin:18px 0;"><a href="${link}" style="display:inline-block;background:#2C736C;color:white;text-decoration:none;padding:11px 30px;border-radius:6px;font-size:14px;font-weight:600;">Open Feedback Form</a></div>
-      ${linksBlock}
-      ${ctaBlock}
-      <p style="font-size:12px;color:#6b7280;margin:12px 0 0;">If the button does not work, copy and paste this link into your browser:</p>
-      <p style="font-size:12px;color:#0f766e;word-break:break-all;margin:6px 0 0;">${link}</p>
-    `;
-    const html = baseEmailTemplate({
-      preheader: `Share feedback for ${student.name}`,
-      body,
+    const { subject, html, text } = buildFeedbackEmail({
+      student,
+      sessionLabel,
+      link,
+      registerLink,
+      curatedLinks,
       branding,
+      subject: req.body?.subject,
+      intro: req.body?.intro,
     });
-    const linksText = curatedLinks.length ? `\n\nHelpful links:\n${curatedLinks.map((l) => `  · ${l.label}: ${l.url}`).join('\n')}` : '';
-    const text = `Assalāmu ʿalaykum ${student.name},\n\nThank you for joining your Waraqa evaluation today. Please share quick feedback here:\n${link}${linksText}\n\nRegister a student: ${registerLink}`;
 
     try {
       await sendMail({ to, subject, html, text });
@@ -200,6 +229,44 @@ router.post('/:id/students/:studentSubId/send-feedback', authenticateToken, requ
   } catch (err) {
     console.error('[evaluations] send-feedback failed', err);
     res.status(500).json({ message: 'Failed to send feedback request' });
+  }
+});
+
+// ─── Admin: preview the feedback email before sending ────────────────────────
+router.post('/:id/students/:studentSubId/feedback-preview', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const session = await EvaluationSession.findOne({ _id: req.params.id, admin: req.user._id });
+    if (!session) return res.status(404).json({ message: 'Not found' });
+    const student = session.students.id(req.params.studentSubId);
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    const base = resolvePublicAppBaseUrl();
+    // Use the existing token if present; otherwise a placeholder for preview only.
+    const token = student.feedback?.token || 'PREVIEW-TOKEN';
+    const link = `${base}/dashboard/evaluation/feedback/${token}`;
+    const registerLink = `${base}/dashboard/register-student`;
+    const branding = await loadBrandingAndLogo();
+    const sessionLabel = session.title ? session.title : 'your recent evaluation';
+    const curatedLinks = sanitizeCuratedLinks(req.body?.links);
+
+    const built = buildFeedbackEmail({
+      student,
+      sessionLabel,
+      link,
+      registerLink,
+      curatedLinks,
+      branding,
+      subject: req.body?.subject,
+      intro: req.body?.intro,
+    });
+    res.json({
+      ...built,
+      defaultIntro: defaultFeedbackIntro(student, sessionLabel),
+      to: student.contactEmail || '',
+    });
+  } catch (err) {
+    console.error('[evaluations] feedback-preview failed', err);
+    res.status(500).json({ message: 'Failed to build preview' });
   }
 });
 

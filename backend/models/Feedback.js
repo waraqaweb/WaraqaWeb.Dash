@@ -41,6 +41,7 @@ const feedbackSchema = new mongoose.Schema({
   },
   heardAboutUs: { type: String, trim: true, maxlength: 500 },
   submitterName: { type: String, trim: true, maxlength: 200 },
+  guardianName: { type: String, trim: true, maxlength: 200 },
   submitterEmail: { type: String, trim: true, lowercase: true, maxlength: 200 },
   evaluationTitle: { type: String, trim: true, maxlength: 200 },
   evaluationSession: {

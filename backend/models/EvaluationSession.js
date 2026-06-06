@@ -55,6 +55,7 @@ const StudentResultSchema = new mongoose.Schema({
   guardianUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   name: { type: String, trim: true, required: true, maxlength: 200 },
   age: { type: Number, min: 1, max: 120 },
+  contactName: { type: String, trim: true, maxlength: 200 },
   contactEmail: { type: String, trim: true, lowercase: true, maxlength: 200 },
   contactPhone: { type: String, trim: true, maxlength: 60 },
   contactNote: { type: String, trim: true, maxlength: 2000 },
@@ -62,6 +63,17 @@ const StudentResultSchema = new mongoose.Schema({
   // What the student is interested in studying & their availability (free text)
   desiredSubjects: [{ type: String, trim: true, maxlength: 120 }],
   availability: { type: String, trim: true, maxlength: 2000 },
+  // Structured availability captured like the create-class modal: one or more
+  // weekly slots (day + start/end time) in a chosen timezone, plus an expected
+  // starting date. Used to generate the message sent to teachers.
+  availabilitySlots: [new mongoose.Schema({
+    day: { type: Number, min: 0, max: 6 },          // 0 = Sunday … 6 = Saturday
+    start: { type: String, trim: true, maxlength: 10 }, // "HH:mm"
+    end: { type: String, trim: true, maxlength: 10 },   // "HH:mm"
+    durationMinutes: { type: Number, min: 5, max: 600 },
+  }, { _id: false })],
+  availabilityTimezone: { type: String, trim: true, maxlength: 80 },
+  expectedStartDate: { type: String, trim: true, maxlength: 40 },
   generalNotes: { type: String, trim: true, maxlength: 4000 },
 
   // Per-section difficulty selected by the admin (last value)

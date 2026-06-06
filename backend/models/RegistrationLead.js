@@ -73,6 +73,14 @@ const registrationLeadSchema = new mongoose.Schema({
     convertedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     guardianUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
+  // Per-lead onboarding funnel. Each timestamp marks when a step was completed;
+  // absence means the step is still pending. "registered" is implicit
+  // (createdAt) and "accountCreated" is derived from conversion.convertedAt.
+  onboarding: {
+    contactedAt: { type: Date },
+    evaluationDoneAt: { type: Date },
+    classScheduledAt: { type: Date },
+  },
   archive: {
     archivedAt: { type: Date },
     archivedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

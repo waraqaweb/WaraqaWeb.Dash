@@ -27,3 +27,8 @@ export async function archiveRegistrationLead(leadId, archived = true, reason = 
   const { data } = await api.post(`${BASE}/${leadId}/archive`, { archived, reason });
   return data;
 }
+
+export async function updateLeadOnboarding(leadId, step, done) {
+  const { data } = await api.patch(`${BASE}/${leadId}/onboarding`, { step, done });
+  return data;
+}

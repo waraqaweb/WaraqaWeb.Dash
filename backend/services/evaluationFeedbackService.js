@@ -14,6 +14,7 @@ function buildEvaluationFeedbackPayload({ session, student }) {
     user: student?.guardianUser || student?.studentUser || undefined,
     student: student?.studentUser || undefined,
     submitterName: String(student?.name || '').trim() || 'Evaluation participant',
+    guardianName: String(student?.contactName || '').trim() || undefined,
     submitterEmail: String(student?.feedback?.sentTo || student?.contactEmail || '').trim().toLowerCase(),
     evaluationTitle: String(session?.title || '').trim() || 'Evaluation feedback',
     source: 'evaluation',

@@ -498,9 +498,11 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
     // 3) Scheduled evaluation meetings = the booking entry point of the funnel.
     //    "later I will wire the website to the dashboard": for now we read any
     //    evaluation meeting that is upcoming or recently happened.
+    // Include cancelled meetings too: a meeting that was actively worked in the
+    // funnel (then cancelled) must still surface in the Cancelled tab so it can
+    // be restored. Stale cancelled no-shows are filtered out below by progress.
     const meetingDocs = await Meeting.find({
       meetingType: MEETING_TYPES.NEW_STUDENT_EVALUATION,
-      status: { $ne: MEETING_STATUSES.CANCELLED },
       scheduledStart: { $gte: since },
     })
       .sort({ scheduledStart: -1 })
@@ -552,22 +554,33 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
       const guardianName = m.bookingPayload?.guardianName || m.attendees?.guardianName || '';
       const nameKey = normName(guardianName);
       const guardian = m.guardianId || (email ? guardiansByEmail.get(email) : null);
+      const cancelled = m.status === MEETING_STATUSES.CANCELLED;
 
-      // Already represented by a lead or signup row? Attach the booking to it.
+      // Already represented by a lead or signup row? Attach the booking to it —
+      // but never decorate an active funnel row with a cancelled evaluation.
       let existing = email ? rowsByEmail.get(email) : null;
       if (!existing && guardian) existing = rowsByUid.get(String(guardian._id));
       if (!existing && nameKey) existing = rowsByName.get(nameKey);
       if (existing) {
-        if (!existing.meeting) existing.meeting = meetingSummary(m);
-        if (!existing.steps) existing.steps = {};
-        if (!existing.steps.booked) existing.steps.booked = m.createdAt || m.scheduledStart;
+        if (!cancelled) {
+          if (!existing.meeting) existing.meeting = meetingSummary(m);
+          if (!existing.steps) existing.steps = {};
+          if (!existing.steps.booked) existing.steps.booked = m.createdAt || m.scheduledStart;
+        }
         return;
       }
 
-      // The Booked column only shows upcoming evaluations — skip past meetings
-      // that never turned into a lead/account.
+      // Keep working a meeting once it has funnel progress, even after its time
+      // passes (e.g. right after you mark "Evaluation done", or after it was
+      // cancelled). Otherwise only show upcoming evaluations and hide stale
+      // bookings that never turned into a lead/account.
+      const ob = m.onboarding || {};
+      const stepsMap = ob.steps && typeof ob.steps === 'object' ? ob.steps : {};
+      const hasProgress = Object.keys(stepsMap).some((k) => k !== 'booked')
+        || (Array.isArray(ob.notes) && ob.notes.length > 0)
+        || Boolean(ob.completedAt);
       const isFuture = m.scheduledStart && new Date(m.scheduledStart) >= now;
-      if (!isFuture) return;
+      if (!isFuture && !hasProgress) return;
 
       // Only one pure row per email/name (keep the most recent meeting).
       if (email && seenMeetingEmails.has(email)) return;
@@ -575,14 +588,15 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
       if (email) seenMeetingEmails.add(email);
       if (nameKey) seenMeetingNames.add(nameKey);
 
-      if (guardian) {
+      if (guardian && !cancelled) {
         // Returning guardian: existing account, surfaced via a fresh evaluation.
         const row = buildSignupRow(guardian, { isReturning: true, meeting: meetingSummary(m) });
         if (!row.steps.booked) row.steps.booked = m.createdAt || m.scheduledStart;
         signupRows.push(row);
         indexRow(row);
       } else {
-        // Brand-new booking with no lead/account yet.
+        // Brand-new booking with no lead/account yet (or a cancelled meeting that
+        // still carries funnel progress, so it can be restored).
         const row = buildMeetingRow(m);
         meetingRows.push(row);
         if (email) rowsByEmail.set(email, row);

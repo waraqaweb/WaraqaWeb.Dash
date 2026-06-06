@@ -5,7 +5,7 @@
 From `E:\waraqa`, run:
 
 ```powershell
-.\scripts\push-and-deploy.ps1 -WhatChanged "brief summary of what changed"
+.\scripts\push-and-deploy.ps1 -WhatChanged "student registration funnel"
 ```
 
 Optional examples:

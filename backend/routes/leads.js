@@ -1,6 +1,8 @@
 const express = require('express');
 const RegistrationLead = require('../models/RegistrationLead');
 const User = require('../models/User');
+const EvaluationSession = require('../models/EvaluationSession');
+const Class = require('../models/Class');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
 const { sendMail, loadBrandingAndLogo, baseEmailTemplate } = require('../services/emailService');
@@ -451,7 +453,7 @@ router.patch('/:leadId/onboarding', authenticateToken, requireAdmin, async (req,
 // with guardians who created their own account directly.
 router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const since = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000);
+    const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
 
     const leads = await RegistrationLead.find({ createdAt: { $gte: since } })
       .sort({ createdAt: -1 })
@@ -478,8 +480,10 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
         return {
           kind: 'signup',
           userId: u._id,
+          accountUserId: u._id,
           createdAt: u.createdAt,
           status: u.isActive === false ? 'cancelled' : 'account',
+          completedAt: rf.completedAt || null,
           personalInfo: {
             fullName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
             email: u.email,
@@ -496,13 +500,21 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
             evaluationDoneAt: rf.evaluationDoneAt || null,
             classScheduledAt: rf.classScheduledAt || null,
           },
+          steps: seedFunnelSteps(rf.steps, rf),
           notes: Array.isArray(rf.notes) ? rf.notes : [],
           cancelReason: rf.cancelReason || '',
         };
       });
 
     return res.json({
-      leads: leads.map((l) => ({ ...l, kind: 'lead', notes: l.onboardingNotes || [] })),
+      leads: leads.map((l) => ({
+        ...l,
+        kind: 'lead',
+        accountUserId: l.conversion?.guardianUserId?._id || l.conversion?.guardianUserId || null,
+        completedAt: l.onboarding?.completedAt || null,
+        steps: seedFunnelSteps(l.onboarding?.steps, l.onboarding || {}),
+        notes: l.onboardingNotes || [],
+      })),
       signups,
     });
   } catch (error) {
@@ -514,11 +526,25 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
 // ─── Unified registration management (works for leads AND guardian signups) ──
 // kind ∈ { 'lead', 'signup' }. Leads store onboarding on the RegistrationLead;
 // signups store it on the guardian User's registrationFollowUp block.
-const FOLLOWUP_STEP_FIELDS = {
-  contacted: 'contactedAt',
-  evaluationDone: 'evaluationDoneAt',
-  classScheduled: 'classScheduledAt',
+//
+// The funnel is now a flexible map: onboarding.steps / registrationFollowUp.steps
+// is { [stepKey]: Date }. These three legacy timestamps are kept in sync so older
+// data and any other code that reads them keeps working.
+const LEGACY_STEP_MIRROR = {
+  booked: 'contactedAt',
+  evaluated: 'evaluationDoneAt',
+  classesCreated: 'classScheduledAt',
 };
+
+// Merge a stored steps map with the three legacy timestamps so old records still
+// light up the right funnel steps on the board.
+function seedFunnelSteps(steps, legacy = {}) {
+  const out = { ...(steps && typeof steps === 'object' ? steps : {}) };
+  Object.entries(LEGACY_STEP_MIRROR).forEach(([stepKey, legacyField]) => {
+    if (legacy && legacy[legacyField] && !out[stepKey]) out[stepKey] = legacy[legacyField];
+  });
+  return out;
+}
 
 const actorName = (req) => `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim() || 'Admin';
 
@@ -539,32 +565,136 @@ const regNameOf = (kind, doc) => (kind === 'lead'
   ? (doc.personalInfo?.fullName || doc.personalInfo?.guardianName || `${doc.personalInfo?.firstName || ''} ${doc.personalInfo?.lastName || ''}`.trim())
   : `${doc.firstName || ''} ${doc.lastName || ''}`.trim());
 
-// Toggle an onboarding step (contacted / evaluationDone / classScheduled).
+// Toggle any onboarding step (writes into the flexible steps map).
 router.post('/registration/:kind/:id/step', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { step, done } = req.body || {};
-    const field = FOLLOWUP_STEP_FIELDS[step];
-    if (!field) return res.status(400).json({ message: 'Unknown onboarding step.' });
+    const step = String(req.body?.step || '').trim();
+    const { done } = req.body || {};
+    if (!step) return res.status(400).json({ message: 'Step is required.' });
 
     const found = await loadRegistration(req.params.kind, req.params.id);
     if (!found) return res.status(404).json({ message: 'Registration not found.' });
     const { kind, doc } = found;
     const stamp = done === false ? null : new Date();
+    const block = kind === 'lead' ? 'onboarding' : 'registrationFollowUp';
 
-    if (kind === 'lead') {
-      if (!doc.onboarding) doc.onboarding = {};
-      doc.onboarding[field] = stamp;
-      doc.markModified('onboarding');
-    } else {
-      if (!doc.registrationFollowUp) doc.registrationFollowUp = {};
-      doc.registrationFollowUp[field] = stamp;
-      doc.markModified('registrationFollowUp');
-    }
+    if (!doc[block]) doc[block] = {};
+    if (!doc[block].steps || typeof doc[block].steps !== 'object') doc[block].steps = {};
+    if (stamp) doc[block].steps[step] = stamp;
+    else delete doc[block].steps[step];
+
+    // Keep the three legacy timestamps mirrored.
+    if (LEGACY_STEP_MIRROR[step]) doc[block][LEGACY_STEP_MIRROR[step]] = stamp;
+
+    doc.markModified(block);
     await doc.save();
     return res.json({ message: 'Step updated.' });
   } catch (error) {
     console.error('Registration step error:', error);
     return res.status(500).json({ message: 'Failed to update step.' });
+  }
+});
+
+// Mark the whole registration complete (paid + done) and close it out, or reopen.
+router.post('/registration/:kind/:id/complete', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const complete = req.body?.complete !== false;
+    const found = await loadRegistration(req.params.kind, req.params.id);
+    if (!found) return res.status(404).json({ message: 'Registration not found.' });
+    const { kind, doc } = found;
+    const block = kind === 'lead' ? 'onboarding' : 'registrationFollowUp';
+    if (!doc[block]) doc[block] = {};
+    doc[block].completedAt = complete ? new Date() : null;
+    doc.markModified(block);
+    await doc.save();
+    return res.json({ message: complete ? 'Registration completed.' : 'Registration reopened.' });
+  } catch (error) {
+    console.error('Registration complete error:', error);
+    return res.status(500).json({ message: 'Failed to update completion.' });
+  }
+});
+
+// Lazily load the heavy joins for ONE registration (only when the modal opens):
+// the linked evaluation's availability (raw slots + timezone) and whether each
+// student already has classes scheduled after their expected start date.
+const firstNameOf = (value = '') => String(value || '').trim().split(/\s+/)[0] || '';
+const escapeRegExp = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+router.get('/registration/:kind/:id/details', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const found = await loadRegistration(req.params.kind, req.params.id);
+    if (!found) return res.status(404).json({ message: 'Registration not found.' });
+    const { kind, doc } = found;
+    const email = regEmailOf(kind, doc);
+    const guardianUserId = kind === 'signup' ? doc._id : (doc.conversion?.guardianUserId || null);
+
+    // Find the most recent evaluation linked by guardian user or contact email.
+    const or = [];
+    if (guardianUserId) or.push({ 'students.guardianUser': guardianUserId });
+    if (email) or.push({ 'students.contactEmail': new RegExp(`^${escapeRegExp(email)}$`, 'i') });
+    let evaluation = null;
+    if (or.length) {
+      evaluation = await EvaluationSession.findOne({ $or: or })
+        .sort({ startedAt: -1, createdAt: -1 })
+        .lean();
+    }
+
+    const evalStudents = (evaluation?.students || []).map((s) => ({
+      name: s.name || '',
+      age: s.age || null,
+      desiredSubjects: Array.isArray(s.desiredSubjects) ? s.desiredSubjects : [],
+      availabilitySlots: Array.isArray(s.availabilitySlots) ? s.availabilitySlots : [],
+      availabilityTimezone: s.availabilityTimezone || '',
+      availabilityText: s.availability || '',
+      expectedStartDate: s.expectedStartDate || null,
+      recommendedLevel: s.recommendedLevel || '',
+    }));
+
+    // Build the list of student first names to check for scheduled classes.
+    let names = evalStudents.map((s) => firstNameOf(s.name)).filter(Boolean);
+    if (!names.length && doc.guardianInfo?.students?.length) {
+      names = doc.guardianInfo.students.map((s) => firstNameOf(s.firstName)).filter(Boolean);
+    }
+    if (!names.length && Array.isArray(doc.students)) {
+      names = doc.students.map((s) => firstNameOf(s.firstName)).filter(Boolean);
+    }
+    names = [...new Set(names)];
+
+    let classesByStudent = [];
+    if (guardianUserId && names.length) {
+      const classes = await Class.find({
+        'student.guardianId': guardianUserId,
+        status: { $nin: ['cancelled'] },
+      })
+        .select('student.studentName scheduledDate status')
+        .sort({ scheduledDate: 1 })
+        .lean();
+
+      classesByStudent = names.map((fn) => {
+        const matched = classes.filter((c) => firstNameOf(c.student?.studentName).toLowerCase() === fn.toLowerCase());
+        const upcoming = matched.filter((c) => c.scheduledDate && new Date(c.scheduledDate) >= new Date());
+        return {
+          name: fn,
+          hasClasses: matched.length > 0,
+          totalCount: matched.length,
+          upcomingCount: upcoming.length,
+          nextClassAt: (upcoming[0] || matched[0])?.scheduledDate || null,
+        };
+      });
+    } else {
+      classesByStudent = names.map((fn) => ({ name: fn, hasClasses: false, totalCount: 0, upcomingCount: 0, nextClassAt: null }));
+    }
+
+    return res.json({
+      guardianUserId: guardianUserId || null,
+      evaluation: evaluation
+        ? { _id: evaluation._id, title: evaluation.title || '', status: evaluation.status || '', students: evalStudents }
+        : null,
+      classesByStudent,
+    });
+  } catch (error) {
+    console.error('Registration details error:', error);
+    return res.status(500).json({ message: 'Failed to load registration details.' });
   }
 });
 

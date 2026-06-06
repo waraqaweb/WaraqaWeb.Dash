@@ -80,6 +80,10 @@ const registrationLeadSchema = new mongoose.Schema({
     contactedAt: { type: Date },
     evaluationDoneAt: { type: Date },
     classScheduledAt: { type: Date },
+    // Flexible funnel: { [stepKey]: Date }. Lets us add steps without schema churn.
+    steps: { type: mongoose.Schema.Types.Mixed, default: {} },
+    // Set when the whole registration is finished (paid + done) and closed out.
+    completedAt: { type: Date, default: null },
   },
   // Free-form follow-up notes the admin adds while shepherding the lead.
   onboardingNotes: [

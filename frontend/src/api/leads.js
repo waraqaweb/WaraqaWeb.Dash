@@ -59,3 +59,16 @@ export async function cancelRegistration(kind, id, cancel = true, reason = '') {
   const { data } = await api.post(`${BASE}/registration/${kind}/${id}/cancel`, { cancel, reason });
   return data;
 }
+
+// Mark the whole registration complete (paid + done) and close it out, or reopen.
+export async function completeRegistration(kind, id, complete = true) {
+  const { data } = await api.post(`${BASE}/registration/${kind}/${id}/complete`, { complete });
+  return data;
+}
+
+// Lazily fetch heavy joins for one registration: linked evaluation availability
+// and whether each student already has scheduled classes. Only call when a modal opens.
+export async function getRegistrationDetails(kind, id) {
+  const { data } = await api.get(`${BASE}/registration/${kind}/${id}/details`);
+  return data;
+}

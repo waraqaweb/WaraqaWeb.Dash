@@ -803,6 +803,10 @@ const userSchema = new mongoose.Schema({
     classScheduledAt: { type: Date, default: null },
     cancelledAt: { type: Date, default: null },
     cancelReason: { type: String, trim: true, maxlength: 500, default: '' },
+    // Flexible funnel: { [stepKey]: Date }. Mirrors RegistrationLead.onboarding.steps.
+    steps: { type: mongoose.Schema.Types.Mixed, default: {} },
+    // Set when the whole registration is finished (paid + done) and closed out.
+    completedAt: { type: Date, default: null },
     notes: [
       {
         text: { type: String, trim: true, maxlength: 2000 },

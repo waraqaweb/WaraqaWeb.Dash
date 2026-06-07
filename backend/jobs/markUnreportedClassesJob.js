@@ -100,10 +100,19 @@ async function runJob() {
 
 /**
  * Delete unreported classes older than 30 days (cleanup)
+ *
+ * Safety guarantees:
+ *  - Never deletes a class that was reported (classReport.submittedAt present) — those
+ *    consumed guardian/teacher hours and carry financial meaning.
+ *  - Only removes classes still at an open-ended class status ('scheduled'/'unreported')
+ *    whose report window fully closed ('reportSubmission.status' === 'unreported').
+ *  - Never deletes a class referenced by a finalized (paid/refunded) invoice, so paid
+ *    invoices and guardian hours are never altered with a minus or addition.
  */
 async function cleanupOldUnreportedClasses() {
   console.log('[MarkUnreportedJob] Cleaning old unreported classes...');
   try {
+    const Invoice = require('../models/Invoice');
     let days = 30;
     try {
       const setting = await Setting.findOne({ key: 'unreportedClassCleanupDays' }).lean();
@@ -113,15 +122,46 @@ async function cleanupOldUnreportedClasses() {
       // fallback to default
     }
     const cutoff = dayjs().subtract(days, 'day').toDate();
-    const filter = {
+
+    // Build the protected set: every class/lesson referenced by a finalized invoice.
+    // If this lookup fails we abort the deletion rather than risk touching paid data.
+    const protectedClassIds = new Set();
+    try {
+      const finalizedFilter = { status: { $in: ['paid', 'refunded'] } };
+      const [byClass, byLesson] = await Promise.all([
+        Invoice.distinct('items.class', finalizedFilter),
+        Invoice.distinct('items.lessonId', finalizedFilter),
+      ]);
+      for (const id of [...(byClass || []), ...(byLesson || [])]) {
+        if (!id) continue;
+        const str = String(id);
+        if (str && str !== '[object Object]') protectedClassIds.add(str);
+      }
+    } catch (protErr) {
+      console.warn('[MarkUnreportedJob] ⚠️ Could not build paid-invoice safety set; skipping cleanup this run:', protErr.message);
+      return { success: false, error: 'protected_set_failed' };
+    }
+
+    // Candidate classes: old, never reported, window fully closed, still open-ended.
+    const candidates = await Class.find({
       scheduledDate: { $lt: cutoff },
       'classReport.submittedAt': { $exists: false },
       'reportSubmission.status': 'unreported',
-      status: { $ne: 'pattern' }
-    };
-    const result = await Class.deleteMany(filter);
-    console.log(`[MarkUnreportedJob] ✅ Deleted ${result.deletedCount || 0} unreported class(es) older than ${days} days`);
-    return { success: true, deleted: result.deletedCount || 0, days };
+      status: { $in: ['scheduled', 'unreported'] },
+    }).select('_id').lean();
+
+    const deletableIds = (candidates || [])
+      .filter((c) => c && c._id && !protectedClassIds.has(String(c._id)))
+      .map((c) => c._id);
+
+    if (!deletableIds.length) {
+      console.log(`[MarkUnreportedJob] ✅ No deletable unreported classes older than ${days} days (protected ${protectedClassIds.size} paid-invoice refs)`);
+      return { success: true, deleted: 0, days, protected: protectedClassIds.size };
+    }
+
+    const result = await Class.deleteMany({ _id: { $in: deletableIds } });
+    console.log(`[MarkUnreportedJob] ✅ Deleted ${result.deletedCount || 0} unreported class(es) older than ${days} days (protected ${protectedClassIds.size} paid-invoice refs)`);
+    return { success: true, deleted: result.deletedCount || 0, days, protected: protectedClassIds.size };
   } catch (err) {
     console.error('[MarkUnreportedJob] ❌ Error cleaning old unreported classes:', err.message);
     return { success: false, error: err.message };

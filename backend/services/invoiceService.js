@@ -381,12 +381,16 @@ const isSubmissionWindowActive = (cls, now) => {
   if (!allowance) {
     const scheduledDate = ensureDate(cls?.scheduledDate || cls?.dateTime);
     if (scheduledDate) {
+      // We can determine the class end time, so the 72h window is authoritative:
+      // open while within the window, expired once it passes. A stale lifecycle
+      // status ('pending'/'open') must NOT keep an old past class eligible forever.
       const durationMin = Math.max(0, Number(cls?.duration || 0));
       const classEndMs = scheduledDate.getTime() + durationMin * 60 * 1000;
       const fallbackDeadlineMs = classEndMs + DEFAULT_TEACHER_REPORT_WINDOW_HOURS * 60 * 60 * 1000;
-      if (now.getTime() <= fallbackDeadlineMs) return true;
+      return now.getTime() <= fallbackDeadlineMs;
     }
-    // No allowance stored, but tracking lifecycle says window is still open.
+    // Only when we cannot compute a window at all (no schedule date) do we defer to
+    // the lifecycle status — such a class has not been dated/started yet.
     if (rs.status === 'open' || rs.status === 'admin_extended' || rs.status === 'pending') {
       return true;
     }

@@ -420,27 +420,53 @@ class ReportSubmissionService {
   static async processExpiredSubmissions() {
     try {
       const now = new Date();
-      
-      // Find classes where:
-      // 1. Report not submitted
-      // 2. Deadline passed OR extension expired
-      // 3. Not already marked as unreported
+      const settings = await this.getSubmissionSettings();
+      const windowHours = Number(settings.teacherWindowHours) || 72;
+      const windowMs = windowHours * 60 * 60 * 1000;
+
+      // Find classes whose report submission window has fully closed and were never
+      // reported. This includes:
+      //   - classes with tracking ('open'/'admin_extended') whose deadline/extension passed
+      //   - classes that NEVER had tracking initialized (status 'pending' or missing) and
+      //     are now past classEnd + window. Without this, stale "scheduled" classes linger
+      //     forever as eligible in invoices and never become cleanup-eligible.
       const expiredClasses = await Class.find({
         'classReport.submittedAt': { $exists: false },
-        'reportSubmission.status': { $in: ['open', 'admin_extended'] },
-        $or: [
-          // Regular deadline expired
+        // Only open-ended class statuses — never touch finalized records
+        // (attended/absent/cancelled/etc. carry financial meaning).
+        status: { $in: ['scheduled', 'in_progress'] },
+        'reportSubmission.status': { $ne: 'unreported' },
+        $and: [
+          // No active admin extension
           {
-            'reportSubmission.adminExtension.granted': { $ne: true },
-            'reportSubmission.teacherDeadline': { $lt: now },
+            $or: [
+              { 'reportSubmission.adminExtension.granted': { $ne: true } },
+              { 'reportSubmission.adminExtension.expiresAt': { $lt: now } },
+            ],
           },
-          // Extension expired
+          // Window has closed (explicit deadline passed, or fallback classEnd + window)
           {
-            'reportSubmission.adminExtension.granted': true,
-            'reportSubmission.adminExtension.expiresAt': { $lt: now },
+            $or: [
+              { 'reportSubmission.teacherDeadline': { $lt: now } },
+              {
+                'reportSubmission.teacherDeadline': { $in: [null] },
+                $expr: {
+                  $lt: [
+                    {
+                      $add: [
+                        '$scheduledDate',
+                        { $multiply: [{ $ifNull: ['$duration', 0] }, 60000] },
+                        windowMs,
+                      ],
+                    },
+                    now,
+                  ],
+                },
+              },
+            ],
           },
         ],
-      });
+      }).select('_id');
 
       let markedCount = 0;
       for (const classDoc of expiredClasses) {

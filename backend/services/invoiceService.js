@@ -638,6 +638,37 @@ class InvoiceService {
           console.warn('Failed to check future classes for guardian', guardian._id, fErr && fErr.message);
         }
 
+        // Exclude brand-new guardians who have never attended (or been billed for)
+        // a single class yet. Their first charge must come from the first-lesson
+        // invoice path, not a zero-hour top-up. Without this, a freshly-registered
+        // guardian with totalHours=0 and future scheduled classes is wrongly issued
+        // a top-up invoice before ever starting.
+        let hasAttendedClasses = false;
+        try {
+          const studentIds = collectGuardianStudentIds(guardian);
+          const attendedQuery = {
+            'student.guardianId': guardian._id,
+            status: { $in: ['attended', 'missed_by_student'] }
+          };
+          if (studentIds.length > 0) {
+            attendedQuery['student.studentId'] = { $in: studentIds };
+          }
+          const attendedCount = await Class.countDocuments(attendedQuery).exec();
+          hasAttendedClasses = attendedCount > 0;
+        } catch (aErr) {
+          console.warn('Failed to check attended classes for guardian', guardian._id, aErr && aErr.message);
+        }
+
+        if (!hasAttendedClasses) {
+          enqueueSkipped({
+            guardian,
+            reasonCode: 'no_attended_classes',
+            reasonLabel: 'Guardian has not attended any classes yet',
+            details: 'No completed lessons yet; the first charge will come from the first-lesson invoice.'
+          });
+          continue;
+        }
+
         // If guardian has no future classes and has zero hours exactly, skip creating invoice
         // Use the effective total (stored override if present, otherwise recalculated)
         const effectiveTotal = Number.isFinite(Number(analysis.effectiveTotalHours))

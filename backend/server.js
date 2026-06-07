@@ -473,6 +473,27 @@ const startDatabaseDependentJobs = () => {
     console.warn('Failed to schedule mark-unreported-classes job:', e && e.message);
   }
 
+  // Schedule zero-hour invoice generation (hourly at minute 30).
+  // Without this, guardians whose prepaid hours hit zero (from already-billed
+  // classes) get no new invoice until an admin manually clicks "check for zero
+  // hours". Runs at :30 so the :15 mark-unreported job settles class statuses /
+  // hours first. The startup run clears any existing backlog. The underlying
+  // check only creates for guardians with totalHours <= 0 and skips any that
+  // already have an active unpaid / auto-payg invoice, so it is idempotent.
+  try {
+    const cron = require('node-cron');
+    const InvoiceService = require('./services/invoiceService');
+    cron.schedule('30 * * * *', async () => {
+      try {
+        await InvoiceService.checkAndCreateZeroHourInvoices();
+      } catch (e) { console.error('Scheduled zero-hour invoice check failed:', e && e.message); }
+    });
+    // Run once at startup (non-blocking) to catch up guardians already at zero hours.
+    InvoiceService.checkAndCreateZeroHourInvoices().catch((e) => console.warn('Initial zero-hour invoice check failed:', e && e.message));
+  } catch (e) {
+    console.warn('Failed to schedule zero-hour invoice check job:', e && e.message);
+  }
+
   // Schedule teacher invoice generation job (monthly on 1st at 00:05)
   try {
     const cron = require('node-cron');

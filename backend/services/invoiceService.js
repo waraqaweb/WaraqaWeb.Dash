@@ -2665,6 +2665,22 @@ class InvoiceService {
         let usedMinutes = 0;
 
         for (const entry of candidates) {
+          // Ineligible items (e.g. a billed class later cancelled_by_student) are
+          // already credited on paid invoices and must NOT consume coverage
+          // capacity. Counting their minutes makes a paid invoice look "full" and
+          // evicts a real delivered class, which then spawns a premature duplicate
+          // invoice. Retain the existing line for history/credit display, but free
+          // its capacity so delivered classes can occupy the coverage already paid for.
+          const entryClass = entry.classDoc || classMap.get(entry.classId);
+          const entryEligible = entryClass
+            ? isClassEligibleForDynamicInvoice(entryClass, new Date())
+            : true;
+          if (!entryEligible) {
+            if (existingItemMap.has(entry.classId)) {
+              selectedIds.add(entry.classId); // keep the item, but consume no capacity
+            }
+            continue;
+          }
           if (capMinutes !== null && usedMinutes + entry.duration > capMinutes + 0.001) {
             overflow.push(entry);
             continue;

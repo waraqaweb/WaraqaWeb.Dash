@@ -491,6 +491,18 @@ async function resolveUninvoicedLessons(options = {}) {
         continue;
       }
 
+      // Guard: a guardian holding positive prepaid account-hour credit has already
+      // paid for this delivered class. Creating a fresh invoice here is the
+      // premature-duplicate bug (a new invoice spawned while a paid invoice / credit
+      // still covers the period). Leave the class flagged — it attaches naturally
+      // once the prepaid credit is consumed and a real zero-hour invoice is due.
+      const prepaidCreditHours = Number(guardian.guardianInfo?.totalHours || 0);
+      if (prepaidCreditHours > 0.001) {
+        summary.skipped += 1;
+        summary.details.push({ classId: String(classId), action: 'skipped', reason: `Covered by ${prepaidCreditHours.toFixed(2)}h prepaid account credit`, studentName, guardianName });
+        continue;
+      }
+
       const newInvoice = await InvoiceService.createInvoiceForFirstLesson(guardian, classDoc, {
         createdBy: adminUserId || null
       });

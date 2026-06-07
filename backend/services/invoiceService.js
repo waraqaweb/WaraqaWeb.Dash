@@ -677,8 +677,20 @@ class InvoiceService {
             ? Number(analysis.recalculatedTotalHours)
             : 0;
 
-        const shouldTriggerBase = analysis.zeroStudents.length > 0 || effectiveTotal <= 0;
-        if (!shouldTriggerBase) continue;
+        // Trigger only when the guardian's AGGREGATE prepaid balance is depleted
+        // (zero or negative). Do NOT trigger just because a single student hit zero
+        // while the guardian still holds positive prepaid hours overall — those hours
+        // can still cover that student's lessons, so no top-up invoice is due yet.
+        const shouldTriggerBase = effectiveTotal <= 0;
+        if (!shouldTriggerBase) {
+          enqueueSkipped({
+            guardian,
+            reasonCode: 'positive_aggregate_balance',
+            reasonLabel: 'Guardian still has prepaid hours',
+            details: `Aggregate balance is ${Number(effectiveTotal.toFixed(2))}h (> 0); no top-up invoice is due yet.`
+          });
+          continue;
+        }
 
         // If guardian has no future classes AND the effective total hours is exactly zero, skip creating an invoice.
         // If effective total is negative (guardian owes hours) and no future classes exist, create a due-only invoice.
@@ -823,7 +835,9 @@ class InvoiceService {
             console.warn('Failed to check future classes inside transaction for guardian', guardianDoc._id, err && err.message);
           }
 
-          const shouldCreate = zeroStudents.length > 0 || effectiveTotal <= 0;
+          // Re-check inside the transaction with the same aggregate-balance rule:
+          // only create when the guardian's overall prepaid balance is depleted.
+          const shouldCreate = effectiveTotal <= 0;
           if (!shouldCreate) return null;
 
           // If no future classes and effective total is exactly zero -> skip

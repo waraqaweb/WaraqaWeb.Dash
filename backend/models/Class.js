@@ -1196,13 +1196,28 @@ classSchema.statics.findPatternsNeedingGeneration = function() {
   return this.find({
     isRecurring: true,
     status: 'pattern',
-    'recurrence.endDate': { $gte: now },
-    $or: [
-      { 'recurrence.lastGenerated': { $exists: false } },
-      { 
-        'recurrence.lastGenerated': { 
-          $lte: new Date(now.getTime() - 24 * 60 * 60 * 1000) // 24 hours ago
-        } 
+    $and: [
+      {
+        // Open-ended schedules (no recurrence.endDate) must keep generating
+        // indefinitely; bounded schedules only generate while the series has
+        // not ended yet. The previous `endDate >= now` filter silently
+        // excluded every open-ended pattern (endDate missing), which stopped
+        // recurring class generation entirely once the initial window lapsed.
+        $or: [
+          { 'recurrence.endDate': { $exists: false } },
+          { 'recurrence.endDate': null },
+          { 'recurrence.endDate': { $gte: now } }
+        ]
+      },
+      {
+        $or: [
+          { 'recurrence.lastGenerated': { $exists: false } },
+          {
+            'recurrence.lastGenerated': {
+              $lte: new Date(now.getTime() - 24 * 60 * 60 * 1000) // 24 hours ago
+            }
+          }
+        ]
       }
     ]
   });

@@ -5,7 +5,7 @@
 From `E:\waraqa`, run:
 
 ```powershell
-.\scripts\push-and-deploy.ps1 -WhatChanged "student registration funnel"
+.\scripts\push-and-deploy.ps1 -WhatChanged "invoices scheduled classes issue"
 ```
 
 Optional examples:

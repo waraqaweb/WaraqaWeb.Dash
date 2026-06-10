@@ -41,7 +41,7 @@ If it fails:
 ```powershell
 git status
 git add -A
-git commit -m "public invoice included cancelled classes"
+git commit -m "befoere copy meeting details"
 git push origin main
 ```
 

@@ -196,6 +196,11 @@ const shouldSkipGlobalLimits = (req) => {
   const p = req.path || '';
   // Auth endpoints have their own specific limiters.
   if (p.startsWith('/api/auth')) return true;
+  // The inbound website booking webhook authenticates by HMAC signature (not a
+  // session) and arrives from the website's single server IP. Anonymous IP
+  // rate-limiting must not drop it, since the website treats any non-2xx as a
+  // permanent failure and does not retry.
+  if (p === '/api/meetings/webhook/website-booking') return true;
   // Health/version should never be rate-limited.
   return p === '/api/health' || p === '/api/version';
 };
@@ -249,8 +254,13 @@ const authLimiter = rateLimit({
 app.use(anonLimiter);
 app.use(authLimiter);
 
-// Parse JSON bodies
-app.use(express.json({ limit: '10mb' }));
+// Parse JSON bodies. Capture the exact raw bytes on req.rawBody so routes that
+// authenticate with an HMAC signature (e.g. the inbound website booking webhook)
+// can verify the signature over the unmodified payload.
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => { req.rawBody = buf; }
+}));
 app.use(express.urlencoded({ extended: true }));
 
 // Connect to MongoDB

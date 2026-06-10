@@ -69,6 +69,12 @@ services:
       # Optional library download link signing
       LIBRARY_DOWNLOAD_SECRET: ${LIBRARY_DOWNLOAD_SECRET}
 
+      # Inbound website booking webhook (waraqaweb.com -> dashboard).
+      # WEBSITE_WEBHOOK_SECRET must equal the website's DASHBOARD_WEBHOOK_SECRET.
+      WEBSITE_WEBHOOK_SECRET: ${WEBSITE_WEBHOOK_SECRET}
+      WEBHOOK_DEFAULT_ADMIN_EMAIL: ${WEBHOOK_DEFAULT_ADMIN_EMAIL}
+      WEBHOOK_DEFAULT_ADMIN_ID: ${WEBHOOK_DEFAULT_ADMIN_ID}
+
       # Persist local library assets across container rebuilds
       LIBRARY_LOCAL_ASSET_DIR: /data/library-assets
       LIBRARY_UPLOAD_TMP_DIR: /data/library-uploads

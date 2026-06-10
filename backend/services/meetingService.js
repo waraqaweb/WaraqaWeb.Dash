@@ -1309,6 +1309,7 @@ const adminCreateMeeting = async ({
     calendarPreference,
     meetingLink,
     status,
+    sourceBookingId,
   } = payload;
 
   ensureMeetingType(meetingType);
@@ -1387,6 +1388,7 @@ const adminCreateMeeting = async ({
       showInCalendar: true,
       displayColor: MEETING_COLORS.background,
     },
+    ...(sourceBookingId ? { sourceBookingId: String(sourceBookingId) } : {}),
   });
 
   await meeting.save();

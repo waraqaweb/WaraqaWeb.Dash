@@ -248,6 +248,14 @@ const meetingSchema = new mongoose.Schema({
     showInCalendar: { type: Boolean, default: true },
     displayColor: { type: String, default: '#FEF9C3' }
   },
+  // Stable id of the originating booking on the public website (waraqaweb.com).
+  // Set when a meeting is imported via the inbound booking webhook so repeated
+  // deliveries of the same booking are idempotent (see the unique sparse index
+  // below). Absent for meetings created through the dashboard UI.
+  sourceBookingId: {
+    type: String,
+    trim: true
+  },
   // Lightweight onboarding-funnel state used when this evaluation meeting is the
   // canonical funnel row — i.e. the website booking exists before any
   // registration lead or guardian account. Mirrors RegistrationLead.onboarding:
@@ -273,6 +281,10 @@ const meetingSchema = new mongoose.Schema({
 meetingSchema.index({ meetingType: 1, scheduledStart: 1 });
 meetingSchema.index({ guardianId: 1, 'quotaKeys.monthKey': 1 });
 meetingSchema.index({ teacherId: 1, 'quotaKeys.monthKey': 1 });
+// Inbound website bookings are deduplicated on this id. Sparse so the many
+// dashboard-created meetings (which have no sourceBookingId) do not collide on a
+// shared null value under the unique constraint.
+meetingSchema.index({ sourceBookingId: 1 }, { unique: true, sparse: true });
 
 meetingSchema.pre('validate', function ensureDuration(next) {
   if (this.scheduledStart && this.scheduledEnd) {

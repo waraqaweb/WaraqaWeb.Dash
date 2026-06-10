@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const {
   authenticateToken,
@@ -6,6 +7,8 @@ const {
   requireAdmin
 } = require('../middleware/auth');
 const meetingService = require('../services/meetingService');
+const Meeting = require('../models/Meeting');
+const User = require('../models/User');
 const { MEETING_TYPES } = require('../constants/meetingConstants');
 
 const sendError = (res, error) => {
@@ -22,6 +25,173 @@ const parseAdminId = (req) => {
   if (req.user && req.user.role === 'admin') return req.user._id;
   return null;
 };
+
+// --- Inbound website booking webhook ---------------------------------------
+// The public marketing site (waraqaweb.com) POSTs a signed JSON payload here
+// whenever a visitor confirms a booking. The route is unauthenticated at the
+// session level and instead verifies an HMAC signature; on success it feeds the
+// same meetingService.adminCreateMeeting flow used by the admin "Create from
+// paste" dialog.
+
+// Map the website's meetingType values onto the internal meeting-type enum.
+const WEBHOOK_MEETING_TYPE_MAP = {
+  evaluation: MEETING_TYPES.NEW_STUDENT_EVALUATION,
+  new_student_evaluation: MEETING_TYPES.NEW_STUDENT_EVALUATION,
+  follow_up: MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP,
+  current_student_follow_up: MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP,
+};
+
+const mapWebhookMeetingType = (raw) => {
+  const key = String(raw || '').trim().toLowerCase();
+  return WEBHOOK_MEETING_TYPE_MAP[key] || MEETING_TYPES.NEW_STUDENT_EVALUATION;
+};
+
+// Verify the HMAC-SHA256 signature the website attaches to each delivery. The
+// signature is computed over `${timestamp}.${rawBody}` with the shared secret.
+// Rejects requests with a missing/old timestamp (replay protection: +/- 5 min)
+// and uses a constant-time comparison. Returns true only on an exact match.
+const verifyWebhookSignature = (req, secret) => {
+  const ts = req.get('X-Waraqa-Timestamp');
+  const sigHeader = req.get('X-Waraqa-Signature') || '';
+  if (!ts || !sigHeader) return false;
+  if (!/^\d+$/.test(String(ts))) return false;
+  // Replay protection: reject anything older (or newer) than 5 minutes.
+  if (Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) > 300) return false;
+  const raw = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
+  const expected = crypto.createHmac('sha256', secret).update(`${ts}.${raw}`).digest('hex');
+  const provided = sigHeader.replace(/^sha256=/, '');
+  let a;
+  let b;
+  try {
+    a = Buffer.from(expected, 'hex');
+    b = Buffer.from(provided, 'hex');
+  } catch (e) {
+    return false;
+  }
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
+// Resolve the admin account that owns webhook-created meetings. There is no
+// logged-in user, so look it up from env (id preferred, then email). Returns
+// null when neither is configured or matches an admin.
+const resolveWebhookAdmin = async () => {
+  const adminId = process.env.WEBHOOK_DEFAULT_ADMIN_ID;
+  const adminEmail = process.env.WEBHOOK_DEFAULT_ADMIN_EMAIL;
+  if (adminId) {
+    const byId = await User.findById(adminId).catch(() => null);
+    if (byId && byId.role === 'admin') return byId;
+  }
+  if (adminEmail) {
+    const byEmail = await User.findOne({
+      email: String(adminEmail).trim().toLowerCase(),
+      role: 'admin',
+    });
+    if (byEmail) return byEmail;
+  }
+  return null;
+};
+
+// Translate the website booking payload into the shape adminCreateMeeting wants.
+// schedule.startAt / endAt are absolute ISO-8601 UTC strings; courses are folded
+// into each student's notes (mirroring the "Create from paste" mapping).
+const mapWebsiteBookingToMeetingPayload = (booking) => {
+  const guardian = booking.guardian || {};
+  const schedule = booking.schedule || {};
+  const guardianName = guardian.fullName
+    || [guardian.firstName, guardian.lastName].filter(Boolean).join(' ').trim()
+    || guardian.email
+    || '';
+  const students = Array.isArray(booking.students) ? booking.students : [];
+
+  return {
+    meetingType: mapWebhookMeetingType(booking.meetingType),
+    startTime: schedule.startAt,
+    endTime: schedule.endAt || undefined,
+    timezone: schedule.scheduleTimezone || undefined,
+    guardian: {
+      guardianName,
+      guardianFirstName: guardian.firstName || '',
+      guardianLastName: guardian.lastName || '',
+      guardianEmail: guardian.email || '',
+      guardianPhone: guardian.whatsapp || guardian.phone || '',
+      timezone: schedule.studentTimezone || undefined,
+    },
+    students: students.map((s) => {
+      const name = [s.firstName, s.lastName].filter(Boolean).join(' ').trim();
+      const courseLines = Array.isArray(s.courses) ? s.courses.filter(Boolean).join('\n') : '';
+      const studentNotes = [s.notes, courseLines].filter(Boolean).join('\n\n');
+      return {
+        studentName: name || 'Student',
+        notes: studentNotes || undefined,
+      };
+    }),
+    notes: booking.notes || '',
+    meetingLink: booking.meetingLink || undefined,
+    sourceBookingId: booking.id,
+  };
+};
+
+// Public (HMAC-authenticated) endpoint. Final URL: /api/meetings/webhook/website-booking
+router.post('/webhook/website-booking', async (req, res) => {
+  const bookingId = req.body && req.body.booking && req.body.booking.id;
+  try {
+    const secret = process.env.WEBSITE_WEBHOOK_SECRET;
+    if (!secret) {
+      console.error('[webhook:website-booking] WEBSITE_WEBHOOK_SECRET is not configured');
+      return res.status(500).json({ ok: false, error: 'webhook not configured' });
+    }
+
+    if (!verifyWebhookSignature(req, secret)) {
+      return res.status(401).json({ ok: false, error: 'invalid signature' });
+    }
+
+    const booking = req.body && req.body.booking;
+    if (!booking || !booking.id) {
+      return res.status(400).json({ ok: false, error: 'missing booking payload' });
+    }
+    if (!booking.schedule || !booking.schedule.startAt) {
+      return res.status(400).json({ ok: false, error: 'missing schedule.startAt' });
+    }
+
+    // Idempotency: if this booking was already imported, do not create a second
+    // meeting. Always return 2xx so the website considers the delivery handled.
+    const existing = await Meeting.findOne({ sourceBookingId: booking.id }).select('_id');
+    if (existing) {
+      return res.status(200).json({ ok: true, duplicate: true, meetingId: existing._id });
+    }
+
+    const admin = await resolveWebhookAdmin();
+    if (!admin) {
+      console.error('[webhook:website-booking] could not resolve default admin; set WEBHOOK_DEFAULT_ADMIN_ID or WEBHOOK_DEFAULT_ADMIN_EMAIL');
+      return res.status(500).json({ ok: false, error: 'default admin not configured' });
+    }
+
+    const payload = mapWebsiteBookingToMeetingPayload(booking);
+    const result = await meetingService.adminCreateMeeting({
+      adminId: admin._id,
+      requester: admin,
+      payload,
+    });
+
+    const meetingId = result.meeting && (result.meeting._id || result.meeting.id);
+    return res.status(201).json({ ok: true, meetingId });
+  } catch (error) {
+    // Concurrent deliveries can both pass the idempotency check and then collide
+    // on the unique sourceBookingId index — treat that as a successful duplicate.
+    if (error && error.code === 11000 && bookingId) {
+      const existing = await Meeting.findOne({ sourceBookingId: bookingId }).select('_id').catch(() => null);
+      if (existing) {
+        return res.status(200).json({ ok: true, duplicate: true, meetingId: existing._id });
+      }
+    }
+    const status = error && error.status;
+    if (status && status >= 400 && status < 500) {
+      return res.status(status).json({ ok: false, error: error.message || 'invalid payload' });
+    }
+    console.error('[webhook:website-booking] failed to import booking:', error);
+    return res.status(500).json({ ok: false, error: 'internal error' });
+  }
+});
 
 router.get('/availability/slots', authenticateToken, requireAdmin, async (req, res) => {
   try {

@@ -1623,23 +1623,20 @@ const fetchClasses = useCallback(async () => {
       for (let page = 2; page <= normalizedTotalPages; page += 1) {
         pages.push(page);
       }
-      const pageResults = [];
-      for (const page of pages) {
-        if (requestId !== fetchClassesRequestIdRef.current) {
-          return;
-        }
-        const pageRes = await api.get(
-          "/classes",
-          {
+      // Fetch the remaining pages in parallel instead of a serial waterfall so the
+      // "all pages" modes (report filters) stay fast as the classes collection grows.
+      const pageResponses = await Promise.all(
+        pages.map((page) =>
+          api.get("/classes", {
             params: { ...params, page },
             signal: controller.signal
-          }
-        );
-        if (requestId !== fetchClassesRequestIdRef.current) {
-          return;
-        }
-        pageResults.push(pageRes.data?.classes || []);
+          })
+        )
+      );
+      if (requestId !== fetchClassesRequestIdRef.current) {
+        return;
       }
+      const pageResults = pageResponses.map((pageRes) => pageRes.data?.classes || []);
       resolvedClasses = mergeClasses([resolvedClasses, ...pageResults].flat());
       loadedClassPagesRef.current = new Set(pages.concat(1));
     } else {

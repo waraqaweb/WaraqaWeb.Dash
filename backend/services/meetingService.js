@@ -539,7 +539,11 @@ const buildCalendarLinks = (meeting, admin) => {
 
 const formatMeetingResponse = (meeting) => {
   if (!meeting) return null;
-  const payload = meeting.toObject({ virtuals: true });
+  // Accept both hydrated Mongoose documents and plain objects (e.g. lean query
+  // results), so list endpoints can skip full-document hydration.
+  const payload = typeof meeting.toObject === 'function'
+    ? meeting.toObject({ virtuals: true })
+    : meeting;
   payload.calendar = payload.calendar || {};
   payload.visibility = payload.visibility || { displayColor: MEETING_COLORS.background };
   return payload;
@@ -943,7 +947,8 @@ const listMeetings = async ({ requester, filters = {} }) => {
   const limit = Math.min(Number(filters.limit) || 50, 200);
   const meetings = await Meeting.find(query)
     .sort({ scheduledStart: 1 })
-    .limit(limit);
+    .limit(limit)
+    .lean();
   return meetings.map(formatMeetingResponse);
 };
 

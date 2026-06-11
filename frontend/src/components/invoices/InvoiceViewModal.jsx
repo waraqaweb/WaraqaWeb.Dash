@@ -8,6 +8,7 @@ import * as XLSX from 'xlsx';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatDateDDMMMYYYY } from '../../utils/date';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
+import { DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
 import {
   X,
   Copy,
@@ -66,35 +67,33 @@ const formatNoteText = (text) => {
   });
 };
 
-// Format date as "Tue, 15 Jan 2025"
-const formatDateWithDay = (date) => {
+// Format date as "Tue, 15 Jan 2025" in the given timezone (falls back to local).
+const formatDateWithDay = (date, timeZone) => {
   if (!date || !(date instanceof Date) || isNaN(date.getTime())) return '-';
-  
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  
-  const dayName = days[date.getDay()];
-  const day = date.getDate();
-  const month = months[date.getMonth()];
-  const year = date.getFullYear();
-  
-  return `${dayName}, ${day < 10 ? '0' + day : day} ${month} ${year}`;
+  return date.toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    ...(timeZone ? { timeZone } : {}),
+  });
 };
 
-const formatClassDateLine = (value) => {
+const formatClassDateLine = (value, timeZone) => {
   if (!value || !(value instanceof Date) || Number.isNaN(value.getTime())) return '-';
   return value.toLocaleDateString('en-GB', {
     weekday: 'short',
     day: '2-digit',
     month: 'short',
-    year: 'numeric'
+    year: 'numeric',
+    ...(timeZone ? { timeZone } : {}),
   });
 };
 
-const formatClassTimeLine = (value) => {
+const formatClassTimeLine = (value, timeZone) => {
   if (!value || !(value instanceof Date) || Number.isNaN(value.getTime())) return '-';
   return value
-    .toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    .toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, ...(timeZone ? { timeZone } : {}) })
     .toLowerCase();
 };
 
@@ -190,6 +189,7 @@ const isEditableElement = (element) => {
 const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClose, onInvoiceUpdate, onOpenRecordPayment }) => {
   const { user, socket } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const userTimezone = user?.timezone || DEFAULT_TIMEZONE;
   const navigate = useNavigate();
   const handleClose = onClose || (() => navigate(-1));
 
@@ -771,9 +771,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           studentName,
           teacherName,
           subject,
-          date: formatDateWithDay(dateObj),
+          date: formatDateWithDay(dateObj, userTimezone),
           rawDate: dateObj,
-          time: Number.isNaN(dateObj.getTime()) ? '-' : dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          time: Number.isNaN(dateObj.getTime()) ? '-' : dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: userTimezone }),
           duration: durationMinutes || 0,
           status: actualStatus,
           reportSubmissionStatus,
@@ -796,7 +796,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     setPriorInvoices(Array.isArray(invoice?.dynamicClasses?.priorInvoices) ? invoice.dynamicClasses.priorInvoices : []);
     initialClassesFetchedRef.current = true;
     setClassesLoading(false);
-  }, [invoice, isRefillOnlyInvoice]);
+  }, [invoice, isRefillOnlyInvoice, userTimezone]);
 
   const endDateBoundary = useMemo(() => {
     if (!customEndDate) return null;
@@ -3066,8 +3066,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                               <td className="px-4 py-3 text-center text-slate-500">{index + 1}</td>
                               <td className="px-4 py-3 text-slate-700">
                                 <span className="flex items-center justify-between gap-3 whitespace-nowrap" title={`${c.date} ${c.time}`}>
-                                  <span className="min-w-0 truncate text-[13px] font-medium">{formatClassDateLine(c.rawDate)}</span>
-                                  <span className="w-[64px] shrink-0 text-right text-xs text-slate-500">{formatClassTimeLine(c.rawDate)}</span>
+                                  <span className="min-w-0 truncate text-[13px] font-medium">{formatClassDateLine(c.rawDate, userTimezone)}</span>
+                                  <span className="w-[64px] shrink-0 text-right text-xs text-slate-500">{formatClassTimeLine(c.rawDate, userTimezone)}</span>
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-slate-700">

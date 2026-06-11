@@ -33,6 +33,37 @@ const formatDate = (value) => {
   return date.toLocaleDateString();
 };
 
+// The public invoice link is opened by unauthenticated visitors, so class
+// times must render in the *viewer's* current timezone (their browser),
+// not the UTC value pre-formatted by the backend snapshot.
+const VIEWER_TIMEZONE = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch (err) {
+    return 'UTC';
+  }
+})();
+
+const formatClassDateTime = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  try {
+    return date.toLocaleString('en-GB', {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: VIEWER_TIMEZONE,
+    });
+  } catch (err) {
+    return date.toLocaleString();
+  }
+};
+
 const maskEmail = (email) => {
   if (!email || typeof email !== 'string') return null;
   const [local, domain] = email.split('@');
@@ -341,7 +372,7 @@ const InvoicePublicPage = () => {
                 <tbody className="divide-y divide-slate-50">
                   {items.map((item, idx) => (
                     <tr key={`${item.description}-${idx}`} className="bg-white">
-                      <td className="px-4 py-3 text-slate-700">{item.date?.formatted || formatDate(item.date?.iso)}</td>
+                      <td className="px-4 py-3 text-slate-700">{item.date?.iso ? formatClassDateTime(item.date.iso) : (item.date?.formatted || formatDate(item.date?.iso))}</td>
                       <td className="px-4 py-3 text-slate-900">{item.student?.name || '—'}</td>
                       <td className="px-4 py-3 text-slate-700">{item.teacher?.name || '—'}</td>
                       <td className="px-4 py-3"><ClassStatusBadge status={item.classStatus || item.attendanceStatus} /></td>

@@ -285,6 +285,13 @@ meetingSchema.index({ teacherId: 1, 'quotaKeys.monthKey': 1 });
 // dashboard-created meetings (which have no sourceBookingId) do not collide on a
 // shared null value under the unique constraint.
 meetingSchema.index({ sourceBookingId: 1 }, { unique: true, sparse: true });
+// Dashboard list queries (services/meetingService.listMeetings) filter by the
+// owning role id plus a scheduledStart range and sort by scheduledStart. As the
+// meetings collection grows, these compound indexes avoid a full collection
+// scan + in-memory sort.
+meetingSchema.index({ adminId: 1, scheduledStart: 1 });
+meetingSchema.index({ guardianId: 1, scheduledStart: 1 });
+meetingSchema.index({ teacherId: 1, scheduledStart: 1 });
 
 meetingSchema.pre('validate', function ensureDuration(next) {
   if (this.scheduledStart && this.scheduledEnd) {

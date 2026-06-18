@@ -7,6 +7,7 @@ import LibraryGrid from '../../components/library/LibraryGrid';
 const ShareRequestModal = React.lazy(() => import('../../components/library/ShareRequestModal'));
 const DocumentViewer = React.lazy(() => import('../../components/library/DocumentViewer'));
 const WhiteboardModal = React.lazy(() => import('../../components/library/WhiteboardModal'));
+const TicTacToeModal = React.lazy(() => import('../../components/library/TicTacToeModal'));
 const AddFileModal = React.lazy(() => import('../../components/library/admin/AddFileModal'));
 const FolderModal = React.lazy(() => import('../../components/library/admin/FolderModal'));
 const RenameModal = React.lazy(() => import('../../components/library/admin/RenameModal'));
@@ -34,6 +35,7 @@ const LibraryDashboardContent = () => {
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [activeModal, setActiveModal] = useState(null);
   const [pendingAdminCount, setPendingAdminCount] = useState(0);
+  const [ticTacToeOpen, setTicTacToeOpen] = useState(false);
   const {
     tree,
     folders,
@@ -349,6 +351,7 @@ const LibraryDashboardContent = () => {
               onCreateFolder={handleCreateFolderOpen}
               onManageAccess={handleManageAccessOpen}
               onOpenWhiteboard={() => setWhiteboardOpen(true)}
+              onOpenTicTacToe={() => setTicTacToeOpen(true)}
             />
           </div>
 
@@ -441,6 +444,7 @@ const LibraryDashboardContent = () => {
 
       {viewerItem && <DocumentViewer item={viewerItem} onClose={() => setViewerItem(null)} />}
       {whiteboardOpen && <WhiteboardModal open onClose={() => setWhiteboardOpen(false)} />}
+      {ticTacToeOpen && <TicTacToeModal open onClose={() => setTicTacToeOpen(false)} />}
       </React.Suspense>
     </div>
   );

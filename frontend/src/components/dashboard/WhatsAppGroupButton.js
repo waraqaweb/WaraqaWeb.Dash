@@ -3,6 +3,7 @@ import api from '../../api/axios';
 import { MessageCircle, Loader2, CheckCircle2, X } from 'lucide-react';
 
 const QR_POLL_INTERVAL = 2000;
+const MAX_QR_POLL_ATTEMPTS = 60;
 
 /**
  * WhatsApp group-creation button with inline QR auth flow.
@@ -14,16 +15,23 @@ export default function WhatsAppGroupButton({ classId }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const pollRef = useRef(null);
+  const pollInFlightRef = useRef(false);
+  const pollCountRef = useRef(0);
   const mountedRef = useRef(true);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+    pollInFlightRef.current = false;
+    pollCountRef.current = 0;
+  }, []);
 
   useEffect(() => () => {
     mountedRef.current = false;
-    if (pollRef.current) clearInterval(pollRef.current);
-  }, []);
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  }, []);
+    stopPolling();
+  }, [stopPolling]);
 
   const createGroup = useCallback(async () => {
     setStatus('creating');
@@ -42,21 +50,45 @@ export default function WhatsAppGroupButton({ classId }) {
 
   const pollQr = useCallback(() => {
     stopPolling();
-    pollRef.current = setInterval(async () => {
+    const pollOnce = async () => {
+      if (!mountedRef.current || pollInFlightRef.current) return;
+      pollRef.current = null;
+      pollInFlightRef.current = true;
       try {
         const { data } = await api.get('/whatsapp/qr');
         if (!mountedRef.current) return stopPolling();
+
+        pollCountRef.current += 1;
+
         if (data.ready) {
           stopPolling();
           createGroup();
+          return;
         } else if (data.qr) {
           setQrImg(data.qr);
           setStatus('qr');
+        } else {
+          setStatus('qr');
+        }
+
+        if (pollCountRef.current >= MAX_QR_POLL_ATTEMPTS) {
+          stopPolling();
+          setError('WhatsApp link timed out. Please click Retry WhatsApp to start again.');
+          setStatus('error');
+          return;
         }
       } catch {
         // ignore polling errors
+      } finally {
+        pollInFlightRef.current = false;
       }
-    }, QR_POLL_INTERVAL);
+
+      if (mountedRef.current && !pollRef.current) {
+        pollRef.current = setTimeout(pollOnce, QR_POLL_INTERVAL);
+      }
+    };
+
+    pollRef.current = setTimeout(pollOnce, QR_POLL_INTERVAL);
   }, [stopPolling, createGroup]);
 
   const handleClick = async () => {
@@ -80,6 +112,8 @@ export default function WhatsAppGroupButton({ classId }) {
       }
       if (init.qr) {
         setQrImg(init.qr);
+        setStatus('qr');
+      } else {
         setStatus('qr');
       }
       // Poll for QR updates / ready
@@ -124,7 +158,13 @@ export default function WhatsAppGroupButton({ classId }) {
           </button>
           <p className="text-base font-semibold text-gray-800 mb-1 text-center">Link Waraqa to WhatsApp</p>
           <p className="text-xs text-gray-500 mb-3 text-center">This QR is for WhatsApp Linked Devices. It links Waraqa first, then the actual group is created automatically.</p>
-          <img src={qrImg} alt="WhatsApp QR" className="mx-auto w-56 h-56 rounded-lg border" />
+          {qrImg ? (
+            <img src={qrImg} alt="WhatsApp QR" className="mx-auto w-56 h-56 rounded-lg border" />
+          ) : (
+            <div className="mx-auto flex h-56 w-56 items-center justify-center rounded-lg border bg-gray-50 text-center text-xs text-gray-500 px-4">
+              Waiting for a QR code from WhatsApp. Keep your phone ready in Linked Devices.
+            </div>
+          )}
           <ol className="mt-4 text-xs text-gray-600 list-decimal pl-5 space-y-1">
             <li>Open <span className="font-medium">WhatsApp</span> on your phone.</li>
             <li>Tap <span className="font-medium">Settings</span> (or the three dots menu on Android).</li>

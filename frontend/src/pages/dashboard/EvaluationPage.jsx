@@ -45,6 +45,8 @@ import { buildTeacherSummaryMessage, formatAvailability, addMinutesToTime, surah
 
 const WhiteboardModal = React.lazy(() => import('../../components/library/WhiteboardModal'));
 
+const evaluationActionButtonClass = 'inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white/85 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-sm transition hover:bg-white hover:text-emerald-950';
+
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Constants & helpers                                                       */
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -283,9 +285,12 @@ const EvaluationPage = ({ isActive = true }) => {
         if (latest) {
           setSession({ ...latest, students: latest.students?.length ? latest.students : [emptyStudent()] });
         } else {
-          const { data: created } = await api.post('/evaluations', { title: '' });
-          if (cancel) return;
-          setSession({ ...created.session, students: [emptyStudent()] });
+          setSession({
+            _id: null,
+            title: '',
+            status: 'active',
+            students: [emptyStudent()],
+          });
         }
       } catch (err) {
         console.error('Failed to load evaluation session', err);
@@ -298,24 +303,46 @@ const EvaluationPage = ({ isActive = true }) => {
   }, [isActive]);
 
   // ── Debounced autosave ────────────────────────────────────────────────────
+  const saveSessionNow = useCallback(async (snapshot, { status } = {}) => {
+    if (!snapshot) return null;
+
+    const payload = {
+      title: snapshot.title || '',
+      status: status || snapshot.status || 'active',
+      students: snapshot.students || [],
+    };
+
+    let sessionId = snapshot._id || null;
+    let createdSession = null;
+
+    if (!sessionId) {
+      const { data } = await api.post('/evaluations', { title: payload.title });
+      createdSession = data?.session || null;
+      sessionId = createdSession?._id || null;
+    }
+
+    if (!sessionId) return null;
+
+    const { data } = await api.put(`/evaluations/${sessionId}`, payload);
+    const savedSession = data?.session || createdSession || { ...snapshot, _id: sessionId };
+    setSession((prev) => ({ ...(prev || {}), ...savedSession, _id: sessionId }));
+    return { ...savedSession, _id: sessionId };
+  }, []);
+
   const persist = useCallback((next) => {
-    if (!next?._id) return;
+    if (!next) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
         setSaving(true);
-        await api.put(`/evaluations/${next._id}`, {
-          title: next.title,
-          status: next.status,
-          students: next.students || [],
-        });
+        await saveSessionNow(next);
       } catch (err) {
         console.error('Autosave failed', err);
       } finally {
         setSaving(false);
       }
     }, 600);
-  }, []);
+  }, [saveSessionNow]);
 
   const updateSession = useCallback((mutator) => {
     setSession((prev) => {
@@ -446,23 +473,20 @@ const EvaluationPage = ({ isActive = true }) => {
   };
 
   const endTest = async () => {
-    if (!session?._id) return;
+    if (!session) return;
     if (!window.confirm('Finish this evaluation and open a fresh one for a new student?')) return;
     try {
-      // Persist completion immediately (bypass the debounced autosave) so the
-      // finished session is saved before we swap to a brand-new blank one.
+      // Persist completion immediately so the finished session stays open for
+      // feedback actions without forcing the user into a fresh blank draft.
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      await api.put(`/evaluations/${session._id}`, {
-        title: session.title,
-        status: 'completed',
-        students: session.students || [],
-      });
+      await saveSessionNow(session, { status: 'completed' });
     } catch (err) {
       console.error('Failed to finalize evaluation', err);
       showToast('Could not save before finishing');
+      return;
     }
-    await startNewSession();
-    showToast('Started a fresh evaluation');
+    setSession((prev) => (prev ? { ...prev, status: 'completed' } : prev));
+    showToast('Evaluation finished. You can send feedback now or start a new session from history.');
   };
 
   // ── History drawer ────────────────────────────────────────────────────────
@@ -601,6 +625,10 @@ const EvaluationPage = ({ isActive = true }) => {
         activeStudentIdx={activeStudentIdx}
         onPickStudent={(i) => setActiveStudentIdx(i)}
         onAddStudent={() => addStudentInline()}
+        sideMenuHidden={sideMenuHidden}
+        onToggleSideMenu={() => setSideMenuHidden((x) => !x)}
+        onOpenWelcome={() => setWelcomeShown(true)}
+        onOpenWhiteboard={() => setWhiteboardOpen(true)}
       />
 
       {!welcomeShown && (
@@ -786,39 +814,6 @@ const EvaluationPage = ({ isActive = true }) => {
           )}
         </main>
 
-        {/* Right rail — actions */}
-        <aside className="eval-rail-right">
-          <button
-            type="button"
-            className="rail-btn"
-            title={sideMenuHidden ? 'Show dashboard menu' : 'Hide dashboard menu'}
-            onClick={() => setSideMenuHidden((x) => !x)}
-          >
-            {sideMenuHidden ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
-            <span className="rb-cap">{sideMenuHidden ? 'Show' : 'Hide'}</span>
-          </button>
-          <button type="button" className="rail-btn" title="Welcome / pick subjects" onClick={() => setWelcomeShown(true)}>
-            <Sparkles className="h-5 w-5" />
-            <span className="rb-cap">Welcome</span>
-          </button>
-          <button type="button" className="rail-btn" title={editorOn ? 'Stop editing' : 'Customize items'} onClick={() => setEditorOn((x) => !x)}>
-            <Pencil className="h-5 w-5" />
-            <span className="rb-cap">{editorOn ? 'Done' : 'Edit'}</span>
-          </button>
-          <button type="button" className="rail-btn" title="Open interactive whiteboard" onClick={() => setWhiteboardOpen(true)}>
-            <PenTool className="h-5 w-5" />
-            <span className="rb-cap">Board</span>
-          </button>
-          <button type="button" className="rail-btn" title="Past sessions" onClick={openHistory}>
-            <History className="h-5 w-5" />
-            <span className="rb-cap">History</span>
-          </button>
-          <button type="button" className="rail-btn" title={fullscreen ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen}>
-            {fullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
-            <span className="rb-cap">{fullscreen ? 'Exit' : 'Full'}</span>
-          </button>
-          <div className="flex-1" />
-        </aside>
       </div>
 
       {historyOpen && (
@@ -846,9 +841,13 @@ const EvaluationPage = ({ isActive = true }) => {
 const BrandedHeader = ({
   branding, adminName, saving, sessionStatus,
   students, activeStudentIdx, onPickStudent, onAddStudent,
+  sideMenuHidden, onToggleSideMenu,
+  onOpenWelcome, onToggleEditor, editorOn,
+  onOpenWhiteboard, onOpenHistory,
+  fullscreen, onToggleFullscreen,
 }) => (
   <header className="eval-topbar px-4 py-2.5">
-    <div className="mx-auto max-w-[1400px] flex items-center gap-3 flex-wrap">
+    <div className="mx-auto max-w-[1400px] flex items-center gap-3 flex-nowrap overflow-x-auto">
       <div className="flex items-center gap-3">
         {branding.logoUrl ? (
           <img src={branding.logoUrl} alt="" className="h-10 w-10 rounded-xl shadow ring-1 ring-emerald-200 bg-white object-contain floaty" />
@@ -863,7 +862,34 @@ const BrandedHeader = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 ms-auto flex-wrap">
+      <div className="flex items-center gap-1.5 flex-nowrap">
+        <button type="button" className={evaluationActionButtonClass} onClick={onToggleSideMenu} title={sideMenuHidden ? 'Show dashboard sidebar' : 'Hide dashboard sidebar'}>
+          {sideMenuHidden ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          {sideMenuHidden ? 'Show' : 'Hide'}
+        </button>
+        <button type="button" className={evaluationActionButtonClass} onClick={onOpenWelcome} title="Open welcome slide">
+          <Sparkles className="h-4 w-4" />
+          Welcome
+        </button>
+        <button type="button" className={evaluationActionButtonClass} onClick={onToggleEditor} title={editorOn ? 'Stop editing' : 'Customize items'}>
+          <Pencil className="h-4 w-4" />
+          Edit
+        </button>
+        <button type="button" className={evaluationActionButtonClass} onClick={onOpenWhiteboard} title="Open interactive whiteboard">
+          <PenTool className="h-4 w-4" />
+          Board
+        </button>
+        <button type="button" className={evaluationActionButtonClass} onClick={onOpenHistory} title="Past sessions">
+          <History className="h-4 w-4" />
+          History
+        </button>
+        <button type="button" className={evaluationActionButtonClass} onClick={onToggleFullscreen} title={fullscreen ? 'Exit full screen' : 'Full screen'}>
+          {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          Full
+        </button>
+      </div>
+
+      <div className="flex items-center gap-1.5 ms-auto flex-nowrap">
         <Users className="h-4 w-4 text-emerald-700" />
         {(students || []).map((s, i) => (
           <button
@@ -887,7 +913,7 @@ const BrandedHeader = ({
         >
           <Plus className="h-3.5 w-3.5" /> Student
         </button>
-        <div className="hidden sm:block text-[11px] text-emerald-700/70 ms-2 font-display-en">
+        <div className="hidden lg:block text-[11px] text-emerald-700/70 ms-2 font-display-en">
           <bdi>{saving ? 'Saving…' : 'All saved'} · {sessionStatus}</bdi>
         </div>
       </div>
@@ -4122,56 +4148,95 @@ const AvailabilitySlotsEditor = ({ student, onChange }) => {
 
 /* ─── History drawer ───────────────────────────────────────────────────── */
 
-const HistoryDrawer = ({ history, loading, currentId, onClose, onOpen, onNew, onDelete }) => (
-  <div className="fixed inset-0 z-50 flex">
-    <div className="flex-1 bg-black/40" onClick={onClose} />
-    <aside className="w-full max-w-md bg-white h-full flex flex-col shadow-xl">
-      <header className="flex items-center justify-between px-4 py-3 border-b border-emerald-200 bg-gradient-to-r from-emerald-700 to-teal-700 text-white">
-        <div className="flex items-center gap-2"><History className="h-4 w-4" /><h3 className="font-semibold">Past evaluations</h3></div>
-        <button type="button" onClick={onClose} className="text-sm opacity-90 hover:opacity-100">Close</button>
-      </header>
-      <div className="p-3 border-b border-emerald-100">
-        <button type="button" onClick={onNew}
-          className="w-full px-3 py-2 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-sm inline-flex items-center justify-center gap-1">
-          <Plus className="h-4 w-4" /> New session
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {loading && <div className="p-6 text-sm text-emerald-700 text-center">Loading…</div>}
-        {!loading && history.length === 0 && (
-          <div className="p-6 text-sm text-emerald-700 text-center">No sessions yet.</div>
-        )}
-        {!loading && history.map((s) => {
-          const isCurrent = s._id === currentId;
-          const studentsCount = (s.students || []).length;
-          const feedbackCount = (s.students || []).filter((st) => st.feedback?.submittedAt).length;
-          const when = s.endedAt || s.updatedAt || s.createdAt;
-          return (
-            <div key={s._id} className={`px-4 py-3 border-b border-emerald-100 ${isCurrent ? 'bg-emerald-50' : ''}`}>
-              <div className="flex items-start justify-between gap-2">
-                <button type="button" onClick={() => onOpen(s._id)} className="text-left flex-1">
-                  <div className="font-medium text-sm text-emerald-900 truncate">{s.title || 'Untitled'}</div>
-                  <div className="text-xs text-emerald-700 mt-0.5">
-                    {studentsCount} student{studentsCount === 1 ? '' : 's'} · {feedbackCount} feedback ·{' '}
-                    <span className={s.status === 'active' ? 'text-emerald-700' : 'text-zinc-600'}>{s.status}</span>
+const HistoryDrawer = ({ history, loading, currentId, onClose, onOpen, onNew, onDelete }) => {
+  const [query, setQuery] = useState('');
+
+  const filteredHistory = useMemo(() => {
+    const normalizedQuery = String(query || '').trim().toLowerCase();
+    if (!normalizedQuery) return history || [];
+
+    return (history || []).filter((session) => {
+      const studentText = (session.students || [])
+        .map((student) => [student.name, student.contactName, student.contactEmail, student.contactPhone, student.generalNotes]
+          .filter(Boolean)
+          .join(' '))
+        .join(' ')
+        .toLowerCase();
+      const haystack = [session.title, session.status, studentText, session.endedAt, session.updatedAt, session.createdAt]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [history, query]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/40" onClick={onClose} />
+      <aside className="flex h-full w-full max-w-md flex-col bg-white shadow-xl">
+        <header className="flex items-center justify-between border-b border-emerald-200 bg-gradient-to-r from-emerald-700 to-teal-700 px-4 py-3 text-white">
+          <div className="flex items-center gap-2"><History className="h-4 w-4" /><h3 className="font-semibold">Past evaluations</h3></div>
+          <button type="button" onClick={onClose} className="text-sm opacity-90 hover:opacity-100">Close</button>
+        </header>
+        <div className="border-b border-emerald-100 p-3 space-y-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search title, student, phone, notes..."
+            className="w-full rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+          />
+          <button type="button" onClick={onNew}
+            className="w-full inline-flex items-center justify-center gap-1 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 px-3 py-2 text-sm text-white">
+            <Plus className="h-4 w-4" /> New session
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {loading && <div className="p-6 text-sm text-emerald-700 text-center">Loading…</div>}
+          {!loading && filteredHistory.length === 0 && (
+            <div className="p-6 text-sm text-emerald-700 text-center">No sessions yet.</div>
+          )}
+          {!loading && filteredHistory.map((s) => {
+            const isCurrent = s._id === currentId;
+            const studentsCount = (s.students || []).length;
+            const feedbackCount = (s.students || []).filter((st) => st.feedback?.submittedAt).length;
+            const when = s.endedAt || s.updatedAt || s.createdAt;
+            const primaryStudent = (s.students || [])[0] || {};
+            const accentClass = s.status === 'completed'
+              ? 'border-sky-200 bg-sky-50/70'
+              : 'border-emerald-200 bg-emerald-50/70';
+
+            return (
+              <div key={s._id} className={`border-b ${isCurrent ? 'bg-emerald-50' : ''}`}>
+                <div className={`mx-3 my-3 rounded-2xl border p-3 shadow-sm ${accentClass}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <button type="button" onClick={() => onOpen(s._id)} className="min-w-0 flex-1 text-left">
+                      <div className="truncate text-base font-semibold text-slate-900">{s.title || 'Untitled evaluation'}</div>
+                      <div className="mt-1 text-xs font-medium text-slate-700">
+                        {studentsCount} student{studentsCount === 1 ? '' : 's'} · {feedbackCount} feedback · <span className={s.status === 'active' ? 'text-emerald-700' : 'text-sky-700'}>{s.status}</span>
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-500">{when ? new Date(when).toLocaleString() : ''}</div>
+                      <div className="mt-2 space-y-1">
+                        <div className="text-sm font-semibold text-slate-800">{primaryStudent.name || 'Student'}</div>
+                        <div className="text-[11px] text-slate-600">
+                          {[primaryStudent.contactName, primaryStudent.contactEmail, primaryStudent.contactPhone].filter(Boolean).join(' · ') || 'No contact details saved'}
+                        </div>
+                        {primaryStudent.generalNotes && (
+                          <div className="line-clamp-2 text-[11px] leading-relaxed text-slate-600">{primaryStudent.generalNotes}</div>
+                        )}
+                      </div>
+                    </button>
+                    <button type="button" onClick={() => onDelete(s._id)} className="rounded-full p-1.5 text-rose-600 transition hover:bg-white hover:text-rose-700" title="Delete">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
-                  <div className="text-[11px] text-emerald-700/70 mt-0.5">
-                    {when ? new Date(when).toLocaleString() : ''}
-                  </div>
-                  {(s.students || []).slice(0, 3).map((st, i) => (
-                    <div key={i} className="text-[11px] text-emerald-700/70 truncate">• {st.name}</div>
-                  ))}
-                </button>
-                <button type="button" onClick={() => onDelete(s._id)} className="text-rose-600 hover:text-rose-700 p-1" title="Delete">
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
-    </aside>
-  </div>
-);
+            );
+          })}
+        </div>
+      </aside>
+    </div>
+  );
+};
 
 export default EvaluationPage;

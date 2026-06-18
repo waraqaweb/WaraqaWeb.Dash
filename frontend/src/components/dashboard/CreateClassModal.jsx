@@ -196,6 +196,7 @@ const buildWhatsAppMessage = ({
     studentOption,
     fallback: 'Student',
   });
+  const whatsappGroupName = `Waraqa: ${studentName}`;
   const guardianTimezone = getOptionTimezone(guardianOption, fallbackTimezone || DEFAULT_TIMEZONE);
   const teacherTimezone = getOptionTimezone(teacherOption, classForm?.timezone || fallbackTimezone || DEFAULT_TIMEZONE);
   const sourceTimezone = classForm?.timezone || fallbackTimezone || DEFAULT_TIMEZONE;
@@ -253,18 +254,21 @@ const buildWhatsAppMessage = ({
     parts.push('');
   }
 
+  parts.push(`WhatsApp group name: ${whatsappGroupName}`);
+  parts.push('');
+
   parts.push('Looking forward to starting!');
   parts.push('Thank you');
 
   return parts.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 };
 
-const classModalSectionClass = "rounded-[20px] border border-slate-200/80 bg-white/80 p-3.5 shadow-[0_14px_40px_rgba(15,23,42,0.06)] backdrop-blur-sm sm:rounded-[24px] sm:p-4";
+const classModalSectionClass = "rounded-[20px] border border-slate-200/80 bg-white/80 p-3 shadow-[0_14px_40px_rgba(15,23,42,0.06)] backdrop-blur-sm sm:rounded-[24px] sm:p-3.5";
 const classModalSectionTitleClass = "text-sm font-semibold text-slate-900";
 const classModalSectionHintClass = "mt-1 text-[11px] leading-relaxed text-slate-500 sm:text-xs";
 const classModalLabelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500";
 const classModalInputClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100 sm:px-3.5";
-const classModalTextareaClass = `${classModalInputClass} min-h-[96px] resize-y`;
+const classModalTextareaClass = `${classModalInputClass} resize-none leading-5`;
 const classModalNoteClass = "mt-1 text-[11px] text-slate-500";
 const classModalSecondaryButtonClass = "inline-flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 sm:w-auto";
 const classModalPrimaryButtonClass = "inline-flex w-full items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(59,130,246,0.24)] transition hover:bg-primary/90 sm:w-auto";
@@ -343,6 +347,8 @@ export default function CreateClassModal({
   const [selectedGuardianOption, setSelectedGuardianOption] = useState(null);
   const [selectedStudentOption, setSelectedStudentOption] = useState(null);
   const duplicateActionRef = useRef(null);
+  const modalScrollRef = useRef(null);
+  const successBannerRef = useRef(null);
 
   // Use local state if no external state is provided (standalone mode)
   // NOTE: Never rely on Function#toString() for behavior; prod builds can minify it.
@@ -388,6 +394,15 @@ export default function CreateClassModal({
       setShareMessage('');
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!successMessage && !shareMessage) return;
+    const banner = successBannerRef.current;
+    if (!banner) return;
+    requestAnimationFrame(() => {
+      banner.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [successMessage, shareMessage]);
 
   // Hydrate from session draft on open (once per open cycle).
   useEffect(() => {
@@ -1025,19 +1040,17 @@ export default function CreateClassModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-[6px] sm:items-center sm:p-4">
-      <div className="relative h-[100dvh] w-full max-w-3xl max-h-[100dvh] overflow-y-auto overscroll-contain rounded-none border border-white/70 bg-slate-50 shadow-[0_32px_90px_rgba(15,23,42,0.28)] sm:max-h-[92vh] sm:rounded-[28px]" style={{ WebkitOverflowScrolling: 'touch' }}>
+      <div ref={modalScrollRef} className="relative h-[100dvh] w-full max-w-3xl max-h-[100dvh] overflow-y-auto overscroll-contain rounded-none border border-white/70 bg-slate-50 shadow-[0_32px_90px_rgba(15,23,42,0.28)] sm:max-h-[92vh] sm:rounded-[28px]" style={{ WebkitOverflowScrolling: 'touch' }}>
         <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.22),_transparent_58%),radial-gradient(circle_at_top_right,_rgba(16,185,129,0.18),_transparent_46%)]" />
         <div className="relative p-3.5 sm:p-6">
           {/* Header */}
-          <div className="mb-5 flex items-start justify-between gap-3 sm:mb-6 sm:gap-4">
+          <div className="mb-4 flex items-start justify-between gap-3 sm:mb-5 sm:gap-4">
             <div className="min-w-0">
               <div className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-700 sm:px-3 sm:py-1 sm:text-[11px]">
                 Scheduling
               </div>
               <h2 className="mt-3 text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Create {modalHeading}</h2>
-              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600 sm:text-sm">
-                Build the class, review conflicts clearly, and keep this draft available while you check the teacher schedule.
-              </p>
+              
             </div>
             <button
               type="button"
@@ -1062,7 +1075,7 @@ export default function CreateClassModal({
               if (shareMessage) setShareMessage('');
               if (duplicatePrompt) setDuplicatePrompt(null);
             }}
-            className="space-y-5"
+            className="space-y-4"
           >
             {/* Class Type Toggle as tabs */}
             <div className="inline-flex w-full rounded-[18px] bg-slate-100/90 p-1.5 shadow-[inset_0_1px_2px_rgba(15,23,42,0.08)] sm:rounded-[22px]">
@@ -1198,11 +1211,11 @@ export default function CreateClassModal({
             )}
 
             {successMessage && (
-              <div data-success-banner="true" className="flex flex-col items-start justify-between gap-3 rounded-[20px] border border-emerald-200/80 bg-emerald-50/95 p-3.5 text-sm text-emerald-900 shadow-[0_12px_30px_rgba(5,150,105,0.10)] sm:flex-row sm:items-center sm:rounded-[22px] sm:p-4">
+              <div ref={successBannerRef} data-success-banner="true" className="flex flex-col items-start justify-between gap-3 rounded-[20px] border border-emerald-200/80 bg-emerald-50/95 p-3.5 text-sm text-emerald-900 shadow-[0_12px_30px_rgba(5,150,105,0.10)] sm:flex-row sm:items-center sm:rounded-[22px] sm:p-4">
                 <div className="min-w-0">
                   <p className="font-semibold">{successMessage}</p>
                   {shareMessage && (
-                    <p className="mt-1 text-xs leading-relaxed text-emerald-800">WhatsApp confirmation is ready to copy without re-submitting the form.</p>
+                    <p className="mt-1 text-xs leading-relaxed text-emerald-800">WhatsApp confirmation is ready to copy without re-submitting the form. Group name format: Waraqa: student full name.</p>
                   )}
                 </div>
                 {shareMessage && (
@@ -1218,12 +1231,12 @@ export default function CreateClassModal({
             )}
            
             {/* Participants */}
-            <section className={classModalSectionClass}>
+            <section className={`${classModalSectionClass} relative z-30`}>
               <div className="mb-4">
                 <h3 className={classModalSectionTitleClass}>Participants</h3>
-                <p className={classModalSectionHintClass}>Choose the teacher, guardian, and student before shaping the schedule.</p>
+                
               </div>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <SearchSelect
                   label="Teacher *"
                   placeholder="Search teachers..."
@@ -1261,16 +1274,18 @@ export default function CreateClassModal({
             {/* Single Class Fields */}
             <section className={classModalSectionClass}>
               <div className="mb-4">
-                <h3 className={classModalSectionTitleClass}>Schedule</h3>
-                <p className={classModalSectionHintClass}>
+                <h3 className={classModalSectionTitleClass}>Schedule
+                  <p className={classModalSectionHintClass}>
                   {currentNewClass.isRecurring
-                    ? 'Set the weekly pattern, generation window, and slot durations in one place.'
-                    : 'Choose the exact date, start time, and duration for this single session.'}
+                    ? 'Set the weekly pattern'
+                    : 'Choose the exact date and time'}
                 </p>
+                </h3>
+                
               </div>
 
             {!currentNewClass.isRecurring && (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
                   <label className={classModalLabelClass}>
                     Date & Time *
@@ -1326,7 +1341,7 @@ export default function CreateClassModal({
 
             {/* Recurring Class Fields */}
             {currentNewClass.isRecurring && (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div>
                   <div className="hidden gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 md:grid md:[grid-template-columns:1fr_1fr_1fr_1fr_auto]">
                     <div className="min-w-0">Months</div>
@@ -1468,9 +1483,8 @@ export default function CreateClassModal({
             <section className={classModalSectionClass}>
               <div className="mb-4">
                 <h3 className={classModalSectionTitleClass}>Class Details</h3>
-                <p className={classModalSectionHintClass}>Define the class type, subject, and any billing overrides before saving.</p>
               </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <label className={classModalLabelClass}>
                   Class Type *
@@ -1516,7 +1530,7 @@ export default function CreateClassModal({
               <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-white/70">
                 Rate Overrides (optional)
               </summary>
-              <div className="grid grid-cols-1 gap-4 px-4 pb-4 pt-1 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 px-4 pb-4 pt-1 md:grid-cols-2">
                 <div>
                   <label className={classModalLabelClass}>
                     Guardian Rate ($/hr)
@@ -1565,9 +1579,9 @@ export default function CreateClassModal({
             <section className={classModalSectionClass}>
               <div className="mb-4">
                 <h3 className={classModalSectionTitleClass}>Logistics & Notes</h3>
-                <p className={classModalSectionHintClass}>Confirm the timezone, attach the meeting link, and leave any internal notes.</p>
+                
               </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <label className={classModalLabelClass}>
                   Timezone
@@ -1618,9 +1632,7 @@ export default function CreateClassModal({
 
             {/* Form Actions */}
             <div className="flex flex-col gap-3 border-t border-slate-200/80 pt-4 pb-[calc(0.25rem+env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:pb-0">
-              <p className="text-xs leading-relaxed text-slate-500">
-                The draft stays in this browser tab for up to 24 hours and clears after a successful create.
-              </p>
+             
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
               <button
                 type="button"

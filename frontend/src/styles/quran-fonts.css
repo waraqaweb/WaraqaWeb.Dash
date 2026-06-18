@@ -354,14 +354,11 @@ button.letter-tile:focus-visible {
   flex: 1 1 auto;
   min-height: 0; /* critical for inner overflow */
   display: grid;
-  grid-template-columns: minmax(0,1fr) 80px;
-  gap: 12px;
+  grid-template-columns: 1fr;
+  gap: 0;
   padding: 10px 12px 12px;
   position: relative;
   z-index: 1;
-}
-@media (max-width: 1100px) {
-  .eval-body { grid-template-columns: minmax(0,1fr) 72px; gap: 10px; padding: 8px 10px 10px; }
 }
 @media (max-width: 880px) {
   .eval-body { grid-template-columns: 1fr; }

@@ -132,7 +132,7 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [focusMode, setFocusMode] = useState(false);
+  const [focusMode, setFocusMode] = useState(() => String(window.location?.pathname || '').replace(/\/+$/, '') === '/dashboard/evaluation');
   useEffect(() => {
     const handler = (e) => setFocusMode(!!e.detail);
     window.addEventListener('dashboard:set-focus-mode', handler);

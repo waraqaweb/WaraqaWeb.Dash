@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { XCircle, Trash2, Plus, Clock, Copy, Check } from "lucide-react";
@@ -29,7 +29,7 @@ const adjustDurationByStep = (rawValue, direction = 1, step = 10) => {
   return Math.max(1, Math.round(next));
 };
 const CLASS_TYPE_OPTIONS = ['One on one', 'Group classes', 'Public lecture'];
-const sectionCardClass = 'rounded-[20px] border border-slate-200/80 bg-slate-50/85 p-3.5 shadow-[0_8px_24px_rgba(15,23,42,0.05)] sm:rounded-2xl md:p-5';
+const sectionCardClass = 'rounded-[20px] border border-slate-200/80 bg-slate-50/85 p-3 shadow-[0_8px_24px_rgba(15,23,42,0.05)] sm:rounded-2xl md:p-4';
 const sectionTitleClass = 'text-sm font-semibold tracking-tight text-slate-900';
 const sectionDescriptionClass = 'mt-1 text-[11px] leading-5 text-slate-500 sm:text-xs';
 const fieldLabelClass = 'mb-1.5 block text-[13px] font-semibold text-slate-700 sm:text-sm';
@@ -90,11 +90,22 @@ export default function EditClassModal({
   const [dstWarning, setDstWarning] = useState(null);
   const [msgCopied, setMsgCopied] = useState(false);
   const [showSuggestedTimes, setShowSuggestedTimes] = useState(false);
+  const modalScrollRef = useRef(null);
+  const updateBannerRef = useRef(null);
 
   // Hide suggested times by default whenever a new availability warning appears.
   useEffect(() => {
     setShowSuggestedTimes(false);
   }, [availabilityWarning?.title, availabilityWarning?.details]);
+
+  useEffect(() => {
+    if (!updateResult?.teacherChangeMsg) return;
+    const banner = updateBannerRef.current;
+    if (!banner) return;
+    requestAnimationFrame(() => {
+      banner.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [updateResult?.teacherChangeMsg]);
   const fetchTeacherOptions = useCallback((term = '') => searchTeachers(term), []);
   const fetchTeacherById = useCallback((id) => getTeacherById(id), []);
   const fetchGuardianOptions = useCallback((term = '') => searchGuardians(term), []);
@@ -246,7 +257,7 @@ export default function EditClassModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-      <div className="relative h-[100dvh] w-full max-w-4xl max-h-[100dvh] overflow-y-auto overscroll-contain rounded-none border border-white/70 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.24)] sm:max-h-[92vh] sm:rounded-[28px]" style={{ WebkitOverflowScrolling: 'touch' }}>
+      <div ref={modalScrollRef} className="relative h-[100dvh] w-full max-w-4xl max-h-[100dvh] overflow-y-auto overscroll-contain rounded-none border border-white/70 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.24)] sm:max-h-[92vh] sm:rounded-[28px]" style={{ WebkitOverflowScrolling: 'touch' }}>
         <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_top_left,rgba(125,211,252,0.35),transparent_45%),radial-gradient(circle_at_top_right,rgba(196,181,253,0.22),transparent_40%)]" />
         <div className="relative p-3.5 md:p-6">
           {/* Header */}
@@ -255,13 +266,11 @@ export default function EditClassModal({
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-sky-700 sm:text-[11px]">Class Editor</p>
                 <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Edit {modalHeading}</h2>
-                <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-600 sm:text-sm sm:leading-6">
-                  Adjust participants, schedule, and communication details without losing context.
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
+                
+                
                   <span className={pillClass}>{editClass.isRecurring ? 'Recurring schedule' : 'Single session'}</span>
                   <span className={pillClass}>{editClass.timezone || user?.timezone || DEFAULT_TIMEZONE}</span>
-                </div>
+                
               </div>
               <button type="button" onClick={handleClose} className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/80 text-slate-500 shadow-sm transition hover:text-slate-900 hover:shadow-md">
                 <XCircle className="h-5 w-5" />
@@ -271,7 +280,7 @@ export default function EditClassModal({
 
           {/* Teacher change result banner */}
           {updateResult?.teacherChangeMsg && (
-            <div className="mb-4 rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-emerald-50 p-4 shadow-sm">
+            <div ref={updateBannerRef} className="mb-4 rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-emerald-50 p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-emerald-900">{updateResult.message}</p>
@@ -340,7 +349,7 @@ export default function EditClassModal({
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {/* Class Type Tabs (moved to top) */}
             <div className={toggleGroupClass}>
               <button
@@ -365,12 +374,11 @@ export default function EditClassModal({
 
             
             {/* Participants */}
-            <div className={sectionCardClass}>
+            <div className={`${sectionCardClass} relative z-30`}>
               <div className="mb-4">
                 <h3 className={sectionTitleClass}>Participants</h3>
-                <p className={sectionDescriptionClass}>Update teacher and student assignments here before changing the schedule.</p>
               </div>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <SearchSelect
                   label="Teacher *"
                   placeholder="Search teachers..."
@@ -400,7 +408,7 @@ export default function EditClassModal({
                   onChange={handleStudentSelect}
                   fetchOptions={fetchStudentOptions}
                   fetchById={fetchStudentById}
-                  helperText={editClass.student?.guardianId ? 'Filtered by guardian' : ''}
+                  helperText={editClass.student?.guardianId ? '' : ''}
                   required
                 />
               </div>
@@ -418,7 +426,7 @@ export default function EditClassModal({
                   </div>
                   <span className={pillClass}>One session</span>
                 </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
                     <label className={fieldLabelClass}>
                     Date & Time *
@@ -491,7 +499,6 @@ export default function EditClassModal({
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
                     <h3 className={sectionTitleClass}>Weekly schedule</h3>
-                    <p className={sectionDescriptionClass}>Refine the recurring pattern, generation window, and slot durations before saving.</p>
                   </div>
                   <span className={pillClass}>Series update</span>
                 </div>
@@ -604,9 +611,8 @@ export default function EditClassModal({
             <div className={sectionCardClass}>
               <div className="mb-4">
                 <h3 className={sectionTitleClass}>Class details</h3>
-                <p className={sectionDescriptionClass}>Update subject, billing overrides, timezone, and supporting notes here.</p>
               </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <label className={fieldLabelClass}>Class Type *</label>
                 <select
@@ -648,7 +654,7 @@ export default function EditClassModal({
               <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-white/70">
                 Rate Overrides (optional)
               </summary>
-              <div className="grid grid-cols-1 gap-4 px-4 pb-4 pt-2 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 px-4 pb-4 pt-2 md:grid-cols-2">
                 <div>
                   <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                     Guardian Rate ($/hr)
@@ -693,7 +699,7 @@ export default function EditClassModal({
             </details>
 
             {/* Additional Fields */}
-            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <label className={fieldLabelClass}>
                   Timezone * 
@@ -726,8 +732,8 @@ export default function EditClassModal({
               <textarea
                 value={editClass.description || ""}
                 onChange={(e) => setEditClass((prev) => ({ ...prev, description: e.target.value }))}
-                rows={2}
-                className={`${textInputClass} min-h-[72px] resize-y`}
+                rows={1}
+                className={`${textInputClass} resize-none leading-5`}
                 placeholder="Optional notes..."
               />
             </div>

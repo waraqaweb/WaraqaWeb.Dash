@@ -22,7 +22,8 @@ const LibraryToolbar = ({
   onAddFile,
   onCreateFolder,
   onManageAccess,
-  onOpenWhiteboard
+  onOpenWhiteboard,
+  onOpenTicTacToe,
 }) => {
   const pendingBadge = pendingRequests?.length
     ? pendingRequests.filter((req) => req.status === 'pending').length
@@ -80,6 +81,17 @@ const LibraryToolbar = ({
         >
           <PenSquare className="h-4 w-4" />
           Whiteboard
+        </button>
+      )}
+
+      {onOpenTicTacToe && (
+        <button
+          type="button"
+          onClick={onOpenTicTacToe}
+          className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted"
+        >
+          <LayoutGrid className="h-4 w-4" />
+          Tic Tac Toe
         </button>
       )}
 

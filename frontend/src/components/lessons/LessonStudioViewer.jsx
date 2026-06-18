@@ -23,6 +23,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api/axios';
 import WhiteboardModal from '../library/WhiteboardModal';
+import TicTacToeModal from '../library/TicTacToeModal';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 
 const LessonStudioViewer = ({ lesson, onClose }) => {
@@ -45,6 +46,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [studentsError, setStudentsError] = useState('');
   const [studentOptions, setStudentOptions] = useState([]);
+  const [ticTacToeOpen, setTicTacToeOpen] = useState(false);
   const studentInputRef = useRef(null);
   const [hadithText, setHadithText] = useState('');
   const [activePanel, setActivePanel] = useState('explanation');
@@ -1295,6 +1297,14 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
               <PenSquare className="h-5 w-5" />
               <span className="text-[10px]">Board</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setTicTacToeOpen(true)}
+              className="flex flex-col items-center gap-1 rounded-2xl border border-slate-300 px-2.5 py-2.5 text-xs font-semibold hover:bg-white"
+            >
+              <LayoutGrid className="h-5 w-5" />
+              <span className="text-[10px]">Game</span>
+            </button>
               </aside>
             </div>
           </div>
@@ -1328,6 +1338,7 @@ const LessonStudioViewer = ({ lesson, onClose }) => {
           <div className="text-xs" style={{ color: '#000' }}>Waraqa 2026 copyright</div>
         </div>
       </footer>
+      {ticTacToeOpen && <TicTacToeModal open onClose={() => setTicTacToeOpen(false)} />}
     </div>
   );
 };

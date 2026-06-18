@@ -497,13 +497,18 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
 
     // 3) Scheduled evaluation meetings = the booking entry point of the funnel.
     //    "later I will wire the website to the dashboard": for now we read any
-    //    evaluation meeting that is upcoming or recently happened.
+    //    evaluation meeting that is upcoming, recently happened, or has already
+    //    been processed into the historical evaluation flow.
     // Include cancelled meetings too: a meeting that was actively worked in the
     // funnel (then cancelled) must still surface in the Cancelled tab so it can
     // be restored. Stale cancelled no-shows are filtered out below by progress.
     const meetingDocs = await Meeting.find({
       meetingType: MEETING_TYPES.NEW_STUDENT_EVALUATION,
-      scheduledStart: { $gte: since },
+      $or: [
+        { scheduledStart: { $gte: since } },
+        { 'onboarding.completedAt': { $exists: true, $ne: null } },
+        { 'report.submittedAt': { $exists: true, $ne: null } },
+      ],
     })
       .sort({ scheduledStart: -1 })
       .populate('guardianId', 'firstName lastName email phone timezone isActive createdAt guardianInfo.students registrationFollowUp')

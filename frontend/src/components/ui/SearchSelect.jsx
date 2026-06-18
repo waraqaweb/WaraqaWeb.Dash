@@ -335,8 +335,8 @@ const SearchSelect = ({
       )}
 
       {isOpen && !disabled && (
-        <div className="relative z-30">
-          <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
+        <div className="relative z-[140]">
+          <div className="absolute left-0 right-0 z-[140] mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
             {isLoading ? (
               <div className="flex items-center justify-center py-4 text-sm text-gray-500">
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />

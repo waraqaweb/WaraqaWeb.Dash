@@ -174,7 +174,11 @@ router.post('/webhook/website-booking', async (req, res) => {
     });
 
     const meetingId = result.meeting && (result.meeting._id || result.meeting.id);
-    return res.status(201).json({ ok: true, meetingId });
+    return res.status(201).json({
+      ok: true,
+      meetingId,
+      calendar: result.calendarLinks || null,
+    });
   } catch (error) {
     // Concurrent deliveries can both pass the idempotency check and then collide
     // on the unique sourceBookingId index — treat that as a successful duplicate.
@@ -365,7 +369,11 @@ router.post('/admin-create', authenticateToken, requireAdmin, async (req, res) =
       requester: req.user,
       payload: req.body || {},
     });
-    res.status(201).json({ message: 'Meeting created', meeting: result.meeting });
+    res.status(201).json({
+      message: 'Meeting created',
+      meeting: result.meeting,
+      calendar: result.calendarLinks || null,
+    });
   } catch (error) {
     sendError(res, error);
   }

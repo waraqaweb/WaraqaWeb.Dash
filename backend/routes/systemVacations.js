@@ -361,6 +361,10 @@ router.post('/:id/send-email', requireAuth, requireAdmin, async (req, res) => {
       return res.status(404).json({ message: 'System vacation not found' });
     }
 
+    const template = req.body?.template && typeof req.body.template === 'object'
+      ? req.body.template
+      : {};
+
     const recipients = await User.find(audienceConfig.query)
       .select('firstName lastName email role timezone guardianInfo.epithet emailPreferences.globalEnabled')
       .lean();
@@ -387,6 +391,7 @@ router.post('/:id/send-email', requireAuth, requireAdmin, async (req, res) => {
         recipient,
         vacation: systemVacation,
         branding,
+        template,
       });
 
       // Enqueue instead of sending inline so vacation broadcasts use the shared email delivery pipeline.
@@ -418,6 +423,58 @@ router.post('/:id/send-email', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error sending system vacation emails:', err);
     return res.status(500).json({ message: 'Failed to queue system vacation emails' });
+  }
+});
+
+// Send a test system-vacation email to the requesting admin only
+router.post('/:id/test-email', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const template = req.body?.template && typeof req.body.template === 'object'
+      ? req.body.template
+      : {};
+
+    const systemVacation = await SystemVacation.findById(id).lean();
+    if (!systemVacation) {
+      return res.status(404).json({ message: 'System vacation not found' });
+    }
+
+    const admin = await User.findById(req.user._id)
+      .select('firstName lastName email timezone emailPreferences.globalEnabled')
+      .lean();
+
+    const email = String(admin?.email || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ message: 'Your account does not have an email address to receive a test message.' });
+    }
+
+    const branding = await loadBrandingAndLogo();
+    const tpl = buildSystemVacationNoticeEmail({
+      recipient: admin,
+      vacation: systemVacation,
+      branding,
+      template,
+    });
+
+    await enqueueEmail({
+      to: email,
+      subject: tpl.subject,
+      html: tpl.html,
+      text: tpl.text,
+      type: 'systemVacationNoticeTest',
+      userId: admin._id,
+      relatedId: systemVacation._id,
+      priority: 1,
+    });
+
+    return res.json({
+      message: `Queued a test email for ${email}.`,
+      email,
+      subject: tpl.subject,
+    });
+  } catch (err) {
+    console.error('Error sending system vacation test email:', err);
+    return res.status(500).json({ message: 'Failed to queue test email' });
   }
 });
 

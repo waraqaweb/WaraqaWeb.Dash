@@ -585,9 +585,16 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
       <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900">
-            Edit Student Information
-          </h2>
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">
+              Edit Student Information
+            </h2>
+            {isAdmin() && (student?.evaluationImportSource?.sessionTitle || student?.studentInfo?.evaluationImportSource?.sessionTitle) && (
+              <div className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
+                Linked evaluation: {student?.evaluationImportSource?.sessionTitle || student?.studentInfo?.evaluationImportSource?.sessionTitle}
+              </div>
+            )}
+          </div>
           <button
             onClick={handleClose}
             className="text-gray-400 hover:text-gray-600 transition-colors"

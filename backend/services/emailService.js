@@ -971,30 +971,43 @@ function buildVacationGuardianNoticeEmail({ guardian, teacher, vacation, brandin
   return { subject: `Teacher absence — ${tName}`, html: baseEmailTemplate({ preheader: `Teacher absent: ${from}–${to}`, body, icon: _ICONS.vacation, branding }), text };
 }
 
-function buildSystemVacationNoticeEmail({ recipient, vacation, branding }) {
+function buildSystemVacationNoticeEmail({ recipient, vacation, branding, template = {} }) {
   const tz = recipient?.timezone || vacation?.timezone || 'Africa/Cairo';
   const title = String(vacation?.name || 'System vacation').trim() || 'System vacation';
   const messageBody = String(vacation?.message || '').trim();
   const start = vacation?.startDate ? formatInTimezone(vacation.startDate, tz) : 'N/A';
   const end = vacation?.endDate ? formatInTimezone(vacation.endDate, tz) : 'N/A';
   const timezoneLabel = _tzLabel(tz);
+  const subjectPrefix = String(template?.subjectPrefix || 'Vacation notice').trim() || 'Vacation notice';
+  const intro = String(template?.intro || 'A system vacation notice has been shared for your account.').trim();
+  const ctaLabel = String(template?.ctaLabel || 'Open Vacation Management').trim() || 'Open Vacation Management';
+  const rawCtaUrl = String(template?.ctaUrl || '').trim();
+  const ctaUrl = rawCtaUrl
+    ? (/^https?:\/\//i.test(rawCtaUrl) ? rawCtaUrl : _dashUrl(rawCtaUrl.startsWith('/') ? rawCtaUrl : `/${rawCtaUrl}`))
+    : _dashUrl('/vacations');
+  const footer = String(template?.footer || `These dates are shown in your timezone (${timezoneLabel}).`).trim();
+  const customHeadline = String(template?.headline || '').trim();
+  const customBody = String(template?.body || '').trim();
   const rows =
     _infoRow('Vacation', escapeHtml(title)) +
     _infoRow('Begins', start) +
     _infoRow('Ends', end) +
     _infoRow('Timezone', timezoneLabel);
-  const messageCard = messageBody
-    ? _card(`<div style="font-size:14px;line-height:1.7;color:#374151;">${formatMultilineHtml(messageBody)}</div>`)
+  const messageCard = (customHeadline || customBody || messageBody)
+    ? _card(`
+      ${customHeadline ? `<div style="margin-bottom:10px;font-size:18px;font-weight:700;color:#111827;">${escapeHtml(customHeadline)}</div>` : ''}
+      <div style="font-size:14px;line-height:1.7;color:#374151;">${formatMultilineHtml(customBody || messageBody)}</div>
+    `)
     : '';
   const body = `${_hi(recipient)}
-    <p style="margin:0 0 14px;color:#374151;">A system vacation notice has been shared for your account.</p>
+    <p style="margin:0 0 14px;color:#374151;">${escapeHtml(intro)}</p>
     ${messageCard}
     ${_card(_infoTable(rows))}
-    ${_alert(`These dates are shown in your timezone (${timezoneLabel}).`, '#eff6ff', '#3b82f6', '#1e3a8a')}
-    ${_btn('Open Vacation Management', _dashUrl('/vacations'))}`;
-  const text = `Hi ${formatPersonName(recipient)},\n\n${title}\n\n${messageBody ? `${messageBody}\n\n` : ''}Begins: ${start}\nEnds: ${end}\nTimezone: ${timezoneLabel}\n\nOpen dashboard: ${_dashUrl('/vacations')}`;
+    ${_alert(escapeHtml(footer), '#eff6ff', '#3b82f6', '#1e3a8a')}
+    ${_btn(escapeHtml(ctaLabel), ctaUrl)}`;
+  const text = `Hi ${formatPersonName(recipient)},\n\n${customHeadline || title}\n\n${customBody || messageBody ? `${customBody || messageBody}\n\n` : ''}Begins: ${start}\nEnds: ${end}\nTimezone: ${timezoneLabel}\n\nOpen dashboard: ${ctaUrl}`;
   return {
-    subject: `Vacation notice — ${title}`,
+    subject: `${subjectPrefix} — ${title}`,
     html: baseEmailTemplate({ preheader: `${title}: ${_dateOnly(vacation?.startDate, tz)}–${_dateOnly(vacation?.endDate, tz)}`, body, icon: _ICONS.vacation, branding }),
     text,
   };

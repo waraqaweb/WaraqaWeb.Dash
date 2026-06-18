@@ -42,6 +42,18 @@ const VACATION_WHATSAPP_COPY = {
   thanksLabel: 'Thank you',
 };
 
+const buildSystemVacationTemplateDefaults = (vacation = {}) => ({
+  subjectPrefix: 'Vacation notice',
+  intro: 'A system vacation notice has been shared for your account.',
+  headline: vacation?.name || 'System vacation',
+  body: vacation?.message || '',
+  footer: 'These dates are shown in your timezone.',
+  ctaLabel: 'Open Vacation Management',
+  ctaUrl: '/vacations',
+  whatsappGreeting: VACATION_WHATSAPP_COPY.greetingPrefix,
+  whatsappClosing: VACATION_WHATSAPP_COPY.thanksLabel,
+});
+
 const normalizeWhatsappPhone = (value) => String(value || '').replace(/\D+/g, '');
 
 const validateWhatsappPhone = (value) => {
@@ -133,6 +145,8 @@ const VacationManagementPage = () => {
   const [whatsappDraftSession, setWhatsappDraftSession] = useState(null);
   const [visibleWhatsappReportVacationId, setVisibleWhatsappReportVacationId] = useState(null);
   const [sendingVacationEmail, setSendingVacationEmail] = useState(null);
+  const [selectedSystemVacationId, setSelectedSystemVacationId] = useState(null);
+  const [systemVacationTemplate, setSystemVacationTemplate] = useState(() => buildSystemVacationTemplateDefaults());
   const whatsappDraftWindowRef = useRef(null);
   const whatsappDraftTimerRef = useRef(null);
   const whatsappDraftSessionRef = useRef(null);
@@ -188,6 +202,39 @@ const VacationManagementPage = () => {
     if (!vacation?._id || !whatsappDraftReport?.vacationId) return false;
     return String(whatsappDraftReport.vacationId) === String(vacation._id);
   }, [whatsappDraftReport]);
+
+  const selectedSystemVacation = useMemo(() => {
+    if (!selectedSystemVacationId) return systemVacations[0] || null;
+    return systemVacations.find((vacation) => String(vacation?._id) === String(selectedSystemVacationId)) || null;
+  }, [selectedSystemVacationId, systemVacations]);
+
+  useEffect(() => {
+    if (!selectedSystemVacationId && Array.isArray(systemVacations) && systemVacations.length > 0) {
+      setSelectedSystemVacationId(systemVacations[0]._id);
+      setSystemVacationTemplate(buildSystemVacationTemplateDefaults(systemVacations[0]));
+    }
+  }, [selectedSystemVacationId, systemVacations]);
+
+  useEffect(() => {
+    if (!selectedSystemVacation) return;
+    setSystemVacationTemplate((prev) => {
+      if (prev?._vacationId && String(prev._vacationId) === String(selectedSystemVacation._id)) {
+        return prev;
+      }
+      return {
+        ...buildSystemVacationTemplateDefaults(selectedSystemVacation),
+        _vacationId: selectedSystemVacation._id,
+      };
+    });
+  }, [selectedSystemVacation]);
+
+  const updateSystemVacationTemplate = useCallback((field, value) => {
+    setSystemVacationTemplate((prev) => ({
+      ...prev,
+      [field]: value,
+      _vacationId: prev?._vacationId || selectedSystemVacation?._id || null,
+    }));
+  }, [selectedSystemVacation]);
 
   const toggleVacationWhatsappReport = useCallback((vacationId) => {
     if (!vacationId) return;
@@ -657,7 +704,7 @@ const VacationManagementPage = () => {
     }
   }, [userTimezone]);
 
-  const buildVacationWhatsappMessage = useCallback((vacation, recipient) => {
+  const buildVacationWhatsappMessage = useCallback((vacation, recipient, template = {}) => {
     const recipientTimezone = recipient?.timezone || vacation?.timezone || userTimezone;
     const recipientTimezoneLabel = formatWhatsappTimezoneLabel(recipientTimezone) || 'your local';
     const epithet = formatRecipientEpithet(recipient?.epithet);
@@ -666,18 +713,26 @@ const VacationManagementPage = () => {
       || 'there';
     const startLabel = formatDateTimeForTimezone(vacation.startDate, recipientTimezone, false);
     const endLabel = formatDateTimeForTimezone(vacation.endDate, recipientTimezone, false);
-    const messageBody = String(vacation.message || '').trim();
-    const title = `${VACATION_WHATSAPP_COPY.titlePrefix}${vacation?.name ? ` ${vacation.name}` : ''} ${VACATION_WHATSAPP_COPY.titleSuffix}`.replace(/\s+/g, ' ').trim();
+    const headline = String(template?.headline || vacation?.name || 'System vacation').trim();
+    const body = String(template?.body || vacation.message || '').trim();
+    const intro = String(template?.intro || 'A system vacation notice has been shared for your account.').trim();
+    const closing = String(template?.whatsappClosing || VACATION_WHATSAPP_COPY.thanksLabel).trim();
+    const greeting = String(template?.whatsappGreeting || VACATION_WHATSAPP_COPY.greetingPrefix).trim();
+    const title = `${VACATION_WHATSAPP_COPY.titlePrefix}${headline ? ` ${headline}` : ''} ${VACATION_WHATSAPP_COPY.titleSuffix}`.replace(/\s+/g, ' ').trim();
 
     const lines = [
       title,
       '',
-      `${VACATION_WHATSAPP_COPY.greetingPrefix} ${greetingName},`,
+      `${greeting} ${greetingName},`,
       '',
     ];
 
-    if (messageBody) {
-      lines.push(messageBody, '');
+    if (intro) {
+      lines.push(intro, '');
+    }
+
+    if (body) {
+      lines.push(body, '');
     }
 
     lines.push(
@@ -685,11 +740,32 @@ const VacationManagementPage = () => {
       `${VACATION_WHATSAPP_COPY.endsLabel}: ${endLabel}`,
       `This is in ${recipientTimezoneLabel} timezone.`,
       '',
-      VACATION_WHATSAPP_COPY.thanksLabel,
+      closing,
     );
 
     return lines.join('\n');
   }, [formatDateTimeForTimezone, userTimezone]);
+
+  const buildVacationEmailPreview = useCallback((vacation, template = {}) => {
+    const subjectPrefix = String(template?.subjectPrefix || 'Vacation notice').trim() || 'Vacation notice';
+    const headline = String(template?.headline || vacation?.name || 'System vacation').trim();
+    const body = String(template?.body || vacation?.message || '').trim();
+    const intro = String(template?.intro || 'A system vacation notice has been shared for your account.').trim();
+    const footer = String(template?.footer || 'These dates are shown in your timezone.').trim();
+    const ctaLabel = String(template?.ctaLabel || 'Open Vacation Management').trim() || 'Open Vacation Management';
+    const ctaUrl = String(template?.ctaUrl || '/dashboard/vacations').trim() || '/dashboard/vacations';
+    const title = String(vacation?.name || 'System vacation').trim() || 'System vacation';
+
+    return {
+      subject: `${subjectPrefix} — ${title}`,
+      intro,
+      headline,
+      body,
+      footer,
+      ctaLabel,
+      ctaUrl,
+    };
+  }, []);
 
   const fetchWhatsappRecipients = useCallback(async (audience) => {
     const res = await api.get('/settings/whatsapp-recipients', { params: { audience } });
@@ -825,7 +901,7 @@ const VacationManagementPage = () => {
       return false;
     }
 
-    const message = buildVacationWhatsappMessage(session.vacation, recipient);
+    const message = buildVacationWhatsappMessage(session.vacation, recipient, session.template || systemVacationTemplate);
     popup.location.href = `https://wa.me/${validation.normalized}?text=${encodeURIComponent(message)}`;
 
     setWhatsappDraftSession((prev) => {
@@ -857,7 +933,7 @@ const VacationManagementPage = () => {
     }, 3000);
 
     return true;
-  }, [buildVacationWhatsappMessage, clearVacationWhatsappTimer, finalizeVacationWhatsappSession, openVacationWhatsappWindow, updateQueueStatus]);
+  }, [buildVacationWhatsappMessage, clearVacationWhatsappTimer, finalizeVacationWhatsappSession, openVacationWhatsappWindow, systemVacationTemplate, updateQueueStatus]);
 
   const advanceVacationWhatsappSession = useCallback((session, startIndex = 0, autoOpenCurrent = false) => {
     if (!session) return;
@@ -1031,7 +1107,7 @@ const VacationManagementPage = () => {
     }
   }, [openVacationWhatsappDraftForRecipient, whatsappDraftSession]);
 
-  const handleLaunchVacationWhatsAppDrafts = useCallback(async (vacation, audience) => {
+  const handleLaunchVacationWhatsAppDrafts = useCallback(async (vacation, audience, templateOverride = null) => {
     if (!vacation?._id) {
       setWhatsappDraftReport({
         timestamp: new Date().toISOString(),
@@ -1095,6 +1171,7 @@ const VacationManagementPage = () => {
         vacationId: vacation?._id || null,
         vacationName: vacation?.name || 'System vacation',
         audience,
+        template: templateOverride || systemVacationTemplate,
         recipients,
         currentIndex: 0,
         currentRecipient: null,
@@ -1137,9 +1214,9 @@ const VacationManagementPage = () => {
     } finally {
       // progress stays active until the operator finishes the in-app send session
     }
-  }, [advanceVacationWhatsappSession, fetchWhatsappRecipients, finalizeVacationWhatsappSession, openVacationWhatsappDraftForRecipient, openVacationWhatsappWindow]);
+  }, [advanceVacationWhatsappSession, fetchWhatsappRecipients, finalizeVacationWhatsappSession, openVacationWhatsappDraftForRecipient, openVacationWhatsappWindow, systemVacationTemplate]);
 
-  const handleSendVacationEmail = useCallback(async (vacation, audience) => {
+  const handleSendVacationEmail = useCallback(async (vacation, audience, templateOverride = null) => {
     if (!vacation?._id) {
       alert('This vacation is missing a valid id.');
       return;
@@ -1147,7 +1224,7 @@ const VacationManagementPage = () => {
 
     setSendingVacationEmail({ vacationId: vacation._id, audience });
     try {
-      const res = await api.post(`/system-vacations/${vacation._id}/send-email`, { audience });
+      const res = await api.post(`/system-vacations/${vacation._id}/send-email`, { audience, template: templateOverride || systemVacationTemplate });
       const stats = res?.data?.stats || {};
       alert([
         res?.data?.message || 'Vacation emails queued.',
@@ -1161,7 +1238,25 @@ const VacationManagementPage = () => {
     } finally {
       setSendingVacationEmail(null);
     }
-  }, []);
+  }, [systemVacationTemplate]);
+
+  const handleSendVacationTestEmail = useCallback(async (vacation) => {
+    if (!vacation?._id) {
+      alert('This vacation is missing a valid id.');
+      return;
+    }
+
+    setSendingVacationEmail({ vacationId: vacation._id, audience: 'test' });
+    try {
+      const res = await api.post(`/system-vacations/${vacation._id}/test-email`, { template: systemVacationTemplate });
+      alert(res?.data?.message || 'Test email queued.');
+    } catch (err) {
+      console.error('Error sending test vacation email:', err);
+      alert(err?.response?.data?.message || 'Failed to queue test email');
+    } finally {
+      setSendingVacationEmail(null);
+    }
+  }, [systemVacationTemplate]);
 
   const filteredIndividualVacations = individualVacations.filter(vacation => {
     const teacherFirst = vacation.user?.firstName || vacation.teacher?.firstName || '';
@@ -1693,6 +1788,190 @@ const VacationManagementPage = () => {
         </div>
       )}
 
+      {user?.role === 'admin' && selectedSystemVacation && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">Message composer</h3>
+              <p className="text-sm text-slate-600">
+                Edit the phrasing once, preview the message, then send WhatsApp or email from the same copy.
+              </p>
+            </div>
+            <div className="min-w-[240px]">
+              <label className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">Vacation</label>
+              <select
+                value={selectedSystemVacationId || selectedSystemVacation._id}
+                onChange={(e) => setSelectedSystemVacationId(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+              >
+                {systemVacations.map((vacation) => (
+                  <option key={vacation._id} value={vacation._id}>{vacation.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">Email subject prefix</span>
+                  <input
+                    value={systemVacationTemplate.subjectPrefix || ''}
+                    onChange={(e) => updateSystemVacationTemplate('subjectPrefix', e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">Email intro</span>
+                  <input
+                    value={systemVacationTemplate.intro || ''}
+                    onChange={(e) => updateSystemVacationTemplate('intro', e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">Headline</span>
+                  <input
+                    value={systemVacationTemplate.headline || ''}
+                    onChange={(e) => updateSystemVacationTemplate('headline', e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">CTA label</span>
+                  <input
+                    value={systemVacationTemplate.ctaLabel || ''}
+                    onChange={(e) => updateSystemVacationTemplate('ctaLabel', e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">Body</span>
+                <textarea
+                  value={systemVacationTemplate.body || ''}
+                  onChange={(e) => updateSystemVacationTemplate('body', e.target.value)}
+                  rows={5}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm leading-6"
+                />
+              </label>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">Footer note</span>
+                  <input
+                    value={systemVacationTemplate.footer || ''}
+                    onChange={(e) => updateSystemVacationTemplate('footer', e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">CTA link</span>
+                  <input
+                    value={systemVacationTemplate.ctaUrl || ''}
+                    onChange={(e) => updateSystemVacationTemplate('ctaUrl', e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">WhatsApp greeting</span>
+                  <input
+                    value={systemVacationTemplate.whatsappGreeting || ''}
+                    onChange={(e) => updateSystemVacationTemplate('whatsappGreeting', e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-[0.2em] text-slate-500">WhatsApp closing</span>
+                  <input
+                    value={systemVacationTemplate.whatsappClosing || ''}
+                    onChange={(e) => updateSystemVacationTemplate('whatsappClosing', e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Email preview</div>
+                {(() => {
+                  const preview = buildVacationEmailPreview(selectedSystemVacation, systemVacationTemplate);
+                  return (
+                    <div className="mt-3 space-y-3">
+                      <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Subject</div>
+                        <div className="mt-1 font-medium text-slate-900">{preview.subject}</div>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-700 whitespace-pre-wrap">
+                        {preview.intro}
+                        {'\n\n'}
+                        {preview.headline}
+                        {'\n\n'}
+                        {preview.body || selectedSystemVacation.message}
+                        {'\n\n'}
+                        {preview.footer}
+                        {'\n'}
+                        {preview.ctaLabel}: {preview.ctaUrl}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">WhatsApp preview</div>
+                <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-700 whitespace-pre-wrap">
+                  {buildVacationWhatsappMessage(
+                    selectedSystemVacation,
+                    { firstName: 'Guardian', lastName: 'Name', timezone: userTimezone },
+                    systemVacationTemplate
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleLaunchVacationWhatsAppDrafts(selectedSystemVacation, 'guardians')}
+                  disabled={Boolean(whatsappDraftProgress)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Send className="h-4 w-4" />
+                  WhatsApp guardians
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendVacationEmail(selectedSystemVacation, 'guardians')}
+                  disabled={Boolean(sendingVacationEmail)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Mail className="h-4 w-4" />
+                  Email guardians
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendVacationTestEmail(selectedSystemVacation)}
+                  disabled={Boolean(sendingVacationEmail)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <CheckCircle className="h-4 w-4" />
+                  Send test email to me
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* System Vacation List */}
       <div className="bg-white rounded-lg shadow">
         {loading ? (
@@ -1769,7 +2048,7 @@ const VacationManagementPage = () => {
                     <div className="mt-4 flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => handleLaunchVacationWhatsAppDrafts(vacation, 'guardians')}
+                        onClick={() => handleLaunchVacationWhatsAppDrafts(vacation, 'guardians', buildSystemVacationTemplateDefaults(vacation))}
                         disabled={Boolean(whatsappDraftProgress)}
                         className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -1778,7 +2057,7 @@ const VacationManagementPage = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleLaunchVacationWhatsAppDrafts(vacation, 'teachers')}
+                        onClick={() => handleLaunchVacationWhatsAppDrafts(vacation, 'teachers', buildSystemVacationTemplateDefaults(vacation))}
                         disabled={Boolean(whatsappDraftProgress)}
                         className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -1787,7 +2066,7 @@ const VacationManagementPage = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleLaunchVacationWhatsAppDrafts(vacation, 'all')}
+                        onClick={() => handleLaunchVacationWhatsAppDrafts(vacation, 'all', buildSystemVacationTemplateDefaults(vacation))}
                         disabled={Boolean(whatsappDraftProgress)}
                         className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -1806,7 +2085,7 @@ const VacationManagementPage = () => {
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => handleSendVacationEmail(vacation, 'guardians')}
+                        onClick={() => handleSendVacationEmail(vacation, 'guardians', buildSystemVacationTemplateDefaults(vacation))}
                         disabled={Boolean(sendingVacationEmail)}
                         className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -1815,7 +2094,7 @@ const VacationManagementPage = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleSendVacationEmail(vacation, 'teachers')}
+                        onClick={() => handleSendVacationEmail(vacation, 'teachers', buildSystemVacationTemplateDefaults(vacation))}
                         disabled={Boolean(sendingVacationEmail)}
                         className="inline-flex items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -1824,7 +2103,7 @@ const VacationManagementPage = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleSendVacationEmail(vacation, 'all')}
+                        onClick={() => handleSendVacationEmail(vacation, 'all', buildSystemVacationTemplateDefaults(vacation))}
                         disabled={Boolean(sendingVacationEmail)}
                         className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >

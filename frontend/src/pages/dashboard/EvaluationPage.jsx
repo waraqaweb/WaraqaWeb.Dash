@@ -36,14 +36,15 @@ import {
   XCircle, MinusCircle, Send, Link as LinkIcon, Users,
   History, Maximize2, Minimize2, Shuffle, Pencil, Save,
   ArrowUp, ArrowDown, RefreshCw, BookOpen, Flag, Sparkles,
-   PanelLeftClose, PanelLeftOpen, MessageCircle, CalendarClock, Wand2,
+   PanelLeftClose, PanelLeftOpen, MessageCircle, CalendarClock, Wand2, Trophy,
   PenTool, Tag,
 } from 'lucide-react';
-import { getCurrentAdminMeeting } from '../../api/meetings';
+import { getCurrentAdminMeeting, listMeetings } from '../../api/meetings';
 import { TIMEZONE_LIST, DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
 import { buildTeacherSummaryMessage, formatAvailability, addMinutesToTime, surahNameFor } from '../../utils/evaluationMessage';
 
 const WhiteboardModal = React.lazy(() => import('../../components/library/WhiteboardModal'));
+const TicTacToeModal = React.lazy(() => import('../../components/library/TicTacToeModal'));
 
 const evaluationActionButtonClass = 'inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white/85 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-sm transition hover:bg-white hover:text-emerald-950';
 
@@ -180,16 +181,21 @@ const EvaluationPage = ({ isActive = true }) => {
   const [fullscreen, setFullscreen] = useState(false);
   const [editorOn, setEditorOn] = useState(false);
   const [whiteboardOpen, setWhiteboardOpen] = useState(false);
+  const [ticTacToeOpen, setTicTacToeOpen] = useState(false);
   const [branding, setBranding] = useState({ title: 'Waraqa', slogan: '', logoUrl: null });
   const [customContent, setCustomContent] = useState(() => loadCustom(adminId));
   const [selectedSections, setSelectedSections] = useState([]);
   const [welcomeShown, setWelcomeShown] = useState(true);
+  const [welcomeStepHint, setWelcomeStepHint] = useState('evaluator');
   const [sideMenuHidden, setSideMenuHidden] = useState(false);
   const [evalLinks, setEvalLinks] = useState([]);
   const [linksLoaded, setLinksLoaded] = useState(false);
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [currentMeeting, setCurrentMeeting] = useState(null);
   const [meetingPrefilled, setMeetingPrefilled] = useState(false);
+  const [meetingPickerOpen, setMeetingPickerOpen] = useState(false);
+  const [meetingChoices, setMeetingChoices] = useState([]);
+  const [meetingChoicesLoading, setMeetingChoicesLoading] = useState(false);
 
   const shellRef = useRef(null);
   const saveTimer = useRef(null);
@@ -325,7 +331,15 @@ const EvaluationPage = ({ isActive = true }) => {
 
     const { data } = await api.put(`/evaluations/${sessionId}`, payload);
     const savedSession = data?.session || createdSession || { ...snapshot, _id: sessionId };
-    setSession((prev) => ({ ...(prev || {}), ...savedSession, _id: sessionId }));
+    // Only propagate _id and server-generated metadata back — never overwrite
+    // the user's current in-memory content with a stale server echo.
+    setSession((prev) => {
+      if (!prev) return { ...(savedSession || {}), _id: sessionId };
+      const patch = { _id: sessionId };
+      if (savedSession?.updatedAt) patch.updatedAt = savedSession.updatedAt;
+      if (savedSession?.createdAt && !prev.createdAt) patch.createdAt = savedSession.createdAt;
+      return { ...prev, ...patch };
+    });
     return { ...savedSession, _id: sessionId };
   }, []);
 
@@ -392,21 +406,21 @@ const EvaluationPage = ({ isActive = true }) => {
   }, []);
 
   // ── Prefill the active student from the current meeting ──────────────────
-  const prefillFromMeeting = useCallback(() => {
-    if (!currentMeeting) return;
-    const payload = currentMeeting.bookingPayload || {};
-    const guardianName = currentMeeting.guardianName
+  const prefillFromMeetingSource = useCallback((meeting, toastLabel = 'Filled from selected meeting') => {
+    if (!meeting) return;
+    const payload = meeting.bookingPayload || {};
+    const guardianName = meeting.guardianName
       || payload.guardianName
-      || currentMeeting.attendees?.guardianName
+      || meeting.attendees?.guardianName
       || '';
-    const guardianEmail = currentMeeting.guardianEmail
+    const guardianEmail = meeting.guardianEmail
       || payload.guardianEmail
       || '';
-    const guardianPhone = currentMeeting.guardianPhone
+    const guardianPhone = meeting.guardianPhone
       || payload.guardianPhone
       || '';
-    const studentsFromMeeting = Array.isArray(currentMeeting.students) && currentMeeting.students.length
-      ? currentMeeting.students
+    const studentsFromMeeting = Array.isArray(meeting.students) && meeting.students.length
+      ? meeting.students
       : (Array.isArray(payload.students) ? payload.students : []);
     updateSession((prev) => {
       if (!prev) return prev;
@@ -424,7 +438,7 @@ const EvaluationPage = ({ isActive = true }) => {
                 ? existing.desiredSubjects
                 : (Array.isArray(m.courses) ? m.courses : []),
               generalNotes: existing.generalNotes
-                || [m.notes, payload.notes, currentMeeting.notes].filter(Boolean).join('\n').trim(),
+                || [m.notes, payload.notes, meeting.notes].filter(Boolean).join('\n').trim(),
             };
           })
         : (prev.students || []);
@@ -432,8 +446,48 @@ const EvaluationPage = ({ isActive = true }) => {
       return { ...prev, title, students: baseStudents.length ? baseStudents : prev.students };
     });
     setMeetingPrefilled(true);
-    showToast('Filled from current meeting');
-  }, [currentMeeting, updateSession]);
+    showToast(toastLabel);
+  }, [updateSession]);
+
+  const prefillFromMeeting = useCallback(() => {
+    if (!currentMeeting) return;
+    prefillFromMeetingSource(currentMeeting, 'Filled from current meeting');
+  }, [currentMeeting, prefillFromMeetingSource]);
+
+  const openMeetingPicker = useCallback(async () => {
+    setMeetingPickerOpen(true);
+    setMeetingChoicesLoading(true);
+    try {
+      const now = new Date();
+      const rangeStart = new Date(now.getTime() - (14 * 24 * 60 * 60 * 1000)).toISOString();
+      const rangeEnd = new Date(now.getTime() + (14 * 24 * 60 * 60 * 1000)).toISOString();
+      const rows = await listMeetings({
+        meetingType: 'new_student_evaluation',
+        rangeStart,
+        rangeEnd,
+        limit: 80,
+      });
+      const unique = [];
+      const seen = new Set();
+      (rows || []).forEach((m) => {
+        const id = String(m?._id || '');
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        unique.push(m);
+      });
+      unique.sort((a, b) => {
+        const ta = new Date(a?.scheduledStart || 0).getTime();
+        const tb = new Date(b?.scheduledStart || 0).getTime();
+        return Math.abs(ta - now.getTime()) - Math.abs(tb - now.getTime());
+      });
+      setMeetingChoices(unique.slice(0, 14));
+    } catch (err) {
+      console.error('Failed to load meeting choices', err);
+      showToast('Could not load scheduled meetings');
+    } finally {
+      setMeetingChoicesLoading(false);
+    }
+  }, []);
 
   const upsertAnswer = useCallback((entry) => {
     updateStudent((s) => {
@@ -471,6 +525,17 @@ const EvaluationPage = ({ isActive = true }) => {
     setWelcomeShown(false);
     setSectionIdx(0);
   };
+
+  const openWelcomeStudentStep = useCallback(() => {
+    setWelcomeStepHint('student');
+    setWelcomeShown(true);
+  }, []);
+
+  const pickStudentFromHeader = useCallback((idx) => {
+    setActiveStudentIdx(idx);
+    setWelcomeStepHint('student');
+    setWelcomeShown(true);
+  }, []);
 
   const endTest = async () => {
     if (!session) return;
@@ -623,12 +688,15 @@ const EvaluationPage = ({ isActive = true }) => {
         onToggleEditor={() => setEditorOn((x) => !x)}
         students={session.students || []}
         activeStudentIdx={activeStudentIdx}
-        onPickStudent={(i) => setActiveStudentIdx(i)}
+        onPickStudent={pickStudentFromHeader}
         onAddStudent={() => addStudentInline()}
         sideMenuHidden={sideMenuHidden}
         onToggleSideMenu={() => setSideMenuHidden((x) => !x)}
-        onOpenWelcome={() => setWelcomeShown(true)}
+        onOpenWelcome={openWelcomeStudentStep}
         onOpenWhiteboard={() => setWhiteboardOpen(true)}
+        onOpenGame={() => setTicTacToeOpen(true)}
+        onOpenMeetingPicker={openMeetingPicker}
+        hasMeetingContext={Boolean(currentMeeting)}
       />
 
       {!welcomeShown && (
@@ -654,6 +722,7 @@ const EvaluationPage = ({ isActive = true }) => {
               <WelcomeSlide
                 branding={branding}
                 adminName={adminName}
+                initialStep={welcomeStepHint}
                 bio={bio}
                 onBioChange={setBio}
                 activeStudent={activeStudent}
@@ -832,6 +901,23 @@ const EvaluationPage = ({ isActive = true }) => {
           <WhiteboardModal open onClose={() => setWhiteboardOpen(false)} />
         </React.Suspense>
       )}
+      {ticTacToeOpen && (
+        <React.Suspense fallback={null}>
+          <TicTacToeModal open onClose={() => setTicTacToeOpen(false)} />
+        </React.Suspense>
+      )}
+      {meetingPickerOpen && (
+        <MeetingPickerModal
+          loading={meetingChoicesLoading}
+          meetings={meetingChoices}
+          onClose={() => setMeetingPickerOpen(false)}
+          onPick={(meeting) => {
+            prefillFromMeetingSource(meeting);
+            setCurrentMeeting(meeting);
+            setMeetingPickerOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 };
@@ -843,7 +929,8 @@ const BrandedHeader = ({
   students, activeStudentIdx, onPickStudent, onAddStudent,
   sideMenuHidden, onToggleSideMenu,
   onOpenWelcome, onToggleEditor, editorOn,
-  onOpenWhiteboard, onOpenHistory,
+  onOpenWhiteboard, onOpenHistory, onOpenGame,
+  onOpenMeetingPicker, hasMeetingContext,
   fullscreen, onToggleFullscreen,
 }) => (
   <header className="eval-topbar px-4 py-2.5">
@@ -878,6 +965,19 @@ const BrandedHeader = ({
         <button type="button" className={evaluationActionButtonClass} onClick={onOpenWhiteboard} title="Open interactive whiteboard">
           <PenTool className="h-4 w-4" />
           Board
+        </button>
+        <button type="button" className={evaluationActionButtonClass} onClick={onOpenGame} title="Open Tic Tac Toe game">
+          <Trophy className="h-4 w-4" />
+          Game
+        </button>
+        <button
+          type="button"
+          className={evaluationActionButtonClass}
+          onClick={onOpenMeetingPicker}
+          title={hasMeetingContext ? 'Fill fields from a scheduled meeting (or current one)' : 'Fill fields from a scheduled meeting'}
+        >
+          <CalendarClock className="h-4 w-4" />
+          Fill meeting
         </button>
         <button type="button" className={evaluationActionButtonClass} onClick={onOpenHistory} title="Past sessions">
           <History className="h-4 w-4" />
@@ -1066,15 +1166,23 @@ const Stepper = ({ sections, activeIdx, onJump }) => (
 /* ─── Welcome (multi-student + ordered subjects) ───────────────────────── */
 
 const WelcomeSlide = ({
+  initialStep = 'evaluator',
   branding, adminName, bio, onBioChange,
   activeStudent, onUpdateStudent,
   students, activeStudentIdx,
   onPickStudent, onAddStudent, onRenameStudent, onRemoveStudent,
   allSections, selected, onToggle, onStart,
 }) => {
-  const [step, setStep] = useState('evaluator'); // 'evaluator' | 'student' | 'subjects'
+  const [step, setStep] = useState(initialStep); // 'evaluator' | 'student' | 'subjects'
   const [newName, setNewName] = useState('');
   const [editingBio, setEditingBio] = useState(false);
+
+  useEffect(() => {
+    if (initialStep === 'evaluator' || initialStep === 'student' || initialStep === 'subjects') {
+      setStep(initialStep);
+    }
+  }, [initialStep]);
+
   const handleAdd = () => {
     const v = (newName || '').trim();
     if (!v) return;
@@ -1091,17 +1199,17 @@ const WelcomeSlide = ({
 
   const StepChips = (
     <div className="welcome-steps">
-      <span className={`welcome-step ${step === 'evaluator' ? 'is-on' : 'is-done'}`}>
+      <button type="button" onClick={() => setStep('evaluator')} className={`welcome-step ${step === 'evaluator' ? 'is-on' : 'is-done'}`}>
         <span className="num">1</span> <bdi>Meet evaluator</bdi>
-      </span>
+      </button>
       <span className="welcome-step-sep" />
-      <span className={`welcome-step ${step === 'student' ? 'is-on' : step === 'subjects' ? 'is-done' : ''}`}>
+      <button type="button" onClick={() => setStep('student')} className={`welcome-step ${step === 'student' ? 'is-on' : step === 'subjects' ? 'is-done' : ''}`}>
         <span className="num">2</span> <bdi>About you</bdi>
-      </span>
+      </button>
       <span className="welcome-step-sep" />
-      <span className={`welcome-step ${step === 'subjects' ? 'is-on' : ''}`}>
+      <button type="button" onClick={() => setStep('subjects')} className={`welcome-step ${step === 'subjects' ? 'is-on' : ''}`}>
         <span className="num">3</span> <bdi>Subjects</bdi>
-      </span>
+      </button>
     </div>
   );
 
@@ -3500,6 +3608,79 @@ const MeetingPrefillBanner = ({ meeting, onPrefill, onDismiss }) => {
   );
 };
 
+const MeetingPickerModal = ({ loading, meetings, onClose, onPick }) => {
+  const formatRange = (meeting) => {
+    const start = meeting?.scheduledStart ? new Date(meeting.scheduledStart) : null;
+    const end = meeting?.scheduledEnd ? new Date(meeting.scheduledEnd) : null;
+    if (!start) return 'No time';
+    const day = start.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const from = start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const to = end ? end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    return `${day} · ${from}${to ? ` - ${to}` : ''}`;
+  };
+
+  const guardianNameOf = (meeting) => (
+    meeting?.guardianName
+    || meeting?.bookingPayload?.guardianName
+    || meeting?.attendees?.guardianName
+    || 'Guardian'
+  );
+
+  const studentsLabelOf = (meeting) => {
+    const arr = Array.isArray(meeting?.students) && meeting.students.length
+      ? meeting.students
+      : (meeting?.bookingPayload?.students || []);
+    return arr.map((s) => s.studentName || s.name).filter(Boolean).join(', ');
+  };
+
+  return (
+    <div className="fixed inset-0 z-[230] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-2xl border border-emerald-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 border-b border-emerald-100 px-4 py-3">
+          <div>
+            <h3 className="text-sm font-semibold text-emerald-900">Pick a scheduled evaluation meeting</h3>
+            <p className="text-xs text-emerald-700/80">Use this when the evaluation starts earlier than the booked slot.</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full border border-slate-200 bg-white p-2 text-slate-500 hover:text-slate-800" aria-label="Close meeting picker">
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="max-h-[60vh] overflow-y-auto p-3">
+          {loading ? (
+            <div className="py-10 text-center text-sm text-emerald-700">Loading meetings...</div>
+          ) : meetings.length === 0 ? (
+            <div className="py-10 text-center text-sm text-emerald-700/80">No nearby evaluation meetings found.</div>
+          ) : (
+            <div className="space-y-2">
+              {meetings.map((meeting) => {
+                const key = String(meeting?._id || Math.random());
+                const students = studentsLabelOf(meeting);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => onPick(meeting)}
+                    className="w-full rounded-xl border border-emerald-200 bg-white px-3 py-2.5 text-left transition hover:border-emerald-400 hover:bg-emerald-50"
+                  >
+                    <div className="text-sm font-semibold text-emerald-900">
+                      <bdi>{guardianNameOf(meeting)}</bdi>
+                    </div>
+                    <div className="mt-0.5 text-xs text-emerald-700/90">
+                      {formatRange(meeting)}
+                      {students ? <> · Students: <bdi>{students}</bdi></> : null}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 /* ─── Links ────────────────────────────────────────────────────────────── */
 
 // Where guardians are sent to create their account + add students (the
@@ -4151,6 +4332,37 @@ const AvailabilitySlotsEditor = ({ student, onChange }) => {
 const HistoryDrawer = ({ history, loading, currentId, onClose, onOpen, onNew, onDelete }) => {
   const [query, setQuery] = useState('');
 
+  const formatSessionDate = useCallback((value) => {
+    if (!value) return '';
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return '';
+    const day = dt.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    });
+    const time = dt.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+    return `${day} ${time}`;
+  }, []);
+
+  const studentHoverText = useCallback((student = {}, idx = 0) => {
+    const lines = [];
+    lines.push(student.name || `Student ${idx + 1}`);
+    const contacts = [
+      student.contactName ? `Guardian: ${student.contactName}` : '',
+      student.contactEmail ? `Email: ${student.contactEmail}` : '',
+      student.contactPhone ? `Phone: ${student.contactPhone}` : '',
+    ].filter(Boolean);
+    if (contacts.length) lines.push(contacts.join(' · '));
+    if (student.generalNotes) lines.push(`Notes: ${student.generalNotes}`);
+    if (!contacts.length && !student.generalNotes) lines.push('No extra details saved');
+    return lines.join('\n');
+  }, []);
+
   const filteredHistory = useMemo(() => {
     const normalizedQuery = String(query || '').trim().toLowerCase();
     if (!normalizedQuery) return history || [];
@@ -4200,7 +4412,9 @@ const HistoryDrawer = ({ history, loading, currentId, onClose, onOpen, onNew, on
             const studentsCount = (s.students || []).length;
             const feedbackCount = (s.students || []).filter((st) => st.feedback?.submittedAt).length;
             const when = s.endedAt || s.updatedAt || s.createdAt;
-            const primaryStudent = (s.students || [])[0] || {};
+            const displayDate = formatSessionDate(when);
+            const isAutoTitle = /^Evaluation\s+\d{4}-\d{2}-\d{2}/i.test(String(s.title || ''));
+            const displayTitle = isAutoTitle ? 'Evaluation session' : (s.title || 'Untitled evaluation');
             const accentClass = s.status === 'completed'
               ? 'border-sky-200 bg-sky-50/70'
               : 'border-emerald-200 bg-emerald-50/70';
@@ -4210,18 +4424,23 @@ const HistoryDrawer = ({ history, loading, currentId, onClose, onOpen, onNew, on
                 <div className={`mx-3 my-3 rounded-2xl border p-3 shadow-sm ${accentClass}`}>
                   <div className="flex items-start justify-between gap-2">
                     <button type="button" onClick={() => onOpen(s._id)} className="min-w-0 flex-1 text-left">
-                      <div className="truncate text-base font-semibold text-slate-900">{s.title || 'Untitled evaluation'}</div>
+                      <div className="truncate text-base font-semibold text-slate-900">{displayTitle}</div>
                       <div className="mt-1 text-xs font-medium text-slate-700">
                         {studentsCount} student{studentsCount === 1 ? '' : 's'} · {feedbackCount} feedback · <span className={s.status === 'active' ? 'text-emerald-700' : 'text-sky-700'}>{s.status}</span>
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-500">{when ? new Date(when).toLocaleString() : ''}</div>
-                      <div className="mt-2 space-y-1">
-                        <div className="text-sm font-semibold text-slate-800">{primaryStudent.name || 'Student'}</div>
-                        <div className="text-[11px] text-slate-600">
-                          {[primaryStudent.contactName, primaryStudent.contactEmail, primaryStudent.contactPhone].filter(Boolean).join(' · ') || 'No contact details saved'}
-                        </div>
-                        {primaryStudent.generalNotes && (
-                          <div className="line-clamp-2 text-[11px] leading-relaxed text-slate-600">{primaryStudent.generalNotes}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">{displayDate}</div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {(s.students || []).map((student, idx) => (
+                          <span
+                            key={`${student._id || student.name || 'student'}-${idx}`}
+                            title={studentHoverText(student, idx)}
+                            className="inline-flex max-w-full cursor-help items-center rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[11px] font-medium text-emerald-900"
+                          >
+                            <span className="truncate">{student.name || `Student ${idx + 1}`}</span>
+                          </span>
+                        ))}
+                        {studentsCount === 0 && (
+                          <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-600">Student</span>
                         )}
                       </div>
                     </button>

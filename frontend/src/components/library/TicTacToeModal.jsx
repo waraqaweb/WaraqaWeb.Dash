@@ -37,6 +37,10 @@ const TicTacToeModal = ({ open, onClose }) => {
     : isTie
       ? 'It is a tie. Start the next round.'
       : `${currentSymbol}'s turn`;
+  const gameOver = Boolean(winner || isTie);
+  const overlayText = winner
+    ? `${winner} wins!`
+    : 'Tie game';
 
   useEffect(() => {
     if (!open) return;
@@ -64,7 +68,7 @@ const TicTacToeModal = ({ open, onClose }) => {
   return ReactDOM.createPortal(
     <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-full max-w-xl overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.35)]"
+        className="relative flex h-[92vh] w-full max-w-[1200px] flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.35)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-emerald-50 via-white to-amber-50 px-4 py-3">
@@ -73,7 +77,7 @@ const TicTacToeModal = ({ open, onClose }) => {
               <Trophy className="h-5 w-5 text-emerald-700" />
               <h2 className="text-lg font-semibold">Tic Tac Toe</h2>
             </div>
-            <p className="mt-1 text-xs text-slate-500">Use numbers to guide the move if one student cannot control the screen.</p>
+            <p className="mt-1 text-xs text-slate-500">Board-first mode for screen sharing.</p>
           </div>
           <button
             type="button"
@@ -84,88 +88,88 @@ const TicTacToeModal = ({ open, onClose }) => {
             <X className="h-4 w-4" />
           </button>
         </div>
-
-        <div className="grid gap-4 p-4 md:grid-cols-[1fr_240px]">
-          <div className="grid grid-cols-3 gap-2 rounded-[24px] bg-slate-50 p-3 shadow-inner">
-            {board.map((cell, index) => {
-              const isWinningCell = winner && WIN_LINES.some((line) => line.includes(index) && board[line[0]] === winner);
-              return (
-                <button
-                  key={index}
-                  type="button"
-                  onClick={() => setCell(index)}
-                  className={`group flex aspect-square items-center justify-center rounded-2xl border text-2xl font-semibold transition ${
-                    isWinningCell
-                      ? 'border-emerald-300 bg-emerald-100 text-emerald-800 shadow-sm'
-                      : 'border-slate-200 bg-white text-slate-900 hover:border-emerald-300 hover:bg-emerald-50'
-                  }`}
-                >
-                  {cell ? (
-                    <span className="text-4xl leading-none">{cell}</span>
-                  ) : (
-                    <span className="text-sm font-semibold tracking-[0.2em] text-slate-400 transition group-hover:text-emerald-700">{index + 1}</span>
-                  )}
-                </button>
-              );
-            })}
+        <div className="relative flex flex-1 flex-col items-center justify-between gap-3 p-3 sm:p-4">
+          <div className="flex w-full flex-1 items-center justify-center">
+            <div
+              className="grid grid-cols-3 gap-1 rounded-[24px] bg-slate-100 p-2 shadow-inner"
+              style={{ width: 'min(82vmin, 92vw)', height: 'min(82vmin, 92vw)' }}
+            >
+              {board.map((cell, index) => {
+                const isWinningCell = winner && WIN_LINES.some((line) => line.includes(index) && board[line[0]] === winner);
+                return (
+                  <button
+                    key={index}
+                    type="button"
+                    onClick={() => setCell(index)}
+                    className={`group flex items-center justify-center rounded-xl border text-3xl font-semibold transition sm:text-5xl ${
+                      isWinningCell
+                        ? 'border-emerald-300 bg-emerald-100 text-emerald-800 shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-900 hover:border-emerald-300 hover:bg-emerald-50'
+                    }`}
+                  >
+                    {cell ? (
+                      <span className="leading-none">{cell}</span>
+                    ) : (
+                      <span className="text-base font-semibold tracking-[0.16em] text-slate-400 transition group-hover:text-emerald-700 sm:text-xl">{index + 1}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="rounded-2xl bg-slate-50 p-3">
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Status</div>
-              <div className="mt-1 text-base font-semibold text-slate-900">{statusText}</div>
-            </div>
-
-            <div className="grid gap-3">
-              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                Player one label
+          <div className="w-full rounded-2xl border border-slate-200 bg-white px-2.5 py-2.5 shadow-sm">
+            <div className="grid grid-cols-1 items-end gap-2 md:grid-cols-[170px_170px_1fr_auto]">
+              <label className="text-[10px] font-semibold uppercase tracking-[0.17em] text-slate-500">
+                P1
                 <input
                   type="text"
                   value={playerOne}
                   onChange={(event) => setPlayerOne(event.target.value.slice(0, 2))}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                  className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
                   placeholder="X"
                 />
               </label>
-              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                Player two label
+              <label className="text-[10px] font-semibold uppercase tracking-[0.17em] text-slate-500">
+                P2
                 <input
                   type="text"
                   value={playerTwo}
                   onChange={(event) => setPlayerTwo(event.target.value.slice(0, 2))}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                  className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
                   placeholder="O"
                 />
               </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-center">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Player one</div>
-                <div className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-slate-900">
-                  <Circle className="h-4 w-4 text-emerald-600" /> {playerOne || 'X'}
-                </div>
+              <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
+                <span className="inline-flex items-center gap-1">
+                  <Circle className="h-4 w-4 text-emerald-600" />
+                  {statusText}
+                </span>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-center">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Player two</div>
-                <div className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-slate-900">
-                  <X className="h-4 w-4 text-rose-600" /> {playerTwo || 'O'}
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={resetGame}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-emerald-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
+              >
+                <RotateCcw className="h-4 w-4" /> Repeat
+              </button>
             </div>
-
-            <button
-              type="button"
-              onClick={resetGame}
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
-            >
-              <RotateCcw className="h-4 w-4" /> Repeat game
-            </button>
-
-            <p className="text-xs leading-relaxed text-slate-500">
-              The board stays simple and readable on screen share. Use the numbered empty boxes to call out moves.
-            </p>
           </div>
+
+          {gameOver && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-950/45">
+              <div className="pointer-events-auto mx-4 w-full max-w-lg rounded-3xl border border-white/70 bg-white/95 px-6 py-8 text-center shadow-2xl">
+                <div className="text-5xl font-black tracking-tight text-emerald-800 sm:text-7xl">{overlayText}</div>
+                <button
+                  type="button"
+                  onClick={resetGame}
+                  className="mt-5 inline-flex items-center justify-center gap-2 rounded-full bg-emerald-700 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
+                >
+                  <RotateCcw className="h-4 w-4" /> Play again
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>,

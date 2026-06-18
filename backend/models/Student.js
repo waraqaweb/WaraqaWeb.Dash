@@ -83,6 +83,27 @@ const studentSchema = new mongoose.Schema({
     maxlength: 2000,
     default: "",
   },
+
+  evaluationImportSource: {
+    sessionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'EvaluationSession',
+      default: null,
+    },
+    sessionTitle: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    sessionStudentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+    linkedAt: {
+      type: Date,
+      default: null,
+    },
+  },
   
   // Profile Information
   dateOfBirth: {

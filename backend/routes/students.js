@@ -10,6 +10,7 @@ const { body, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Student = require('../models/Student');
+const EvaluationSession = require('../models/EvaluationSession');
 const Class = require('../models/Class');
 const Guardian = require('../models/Guardian');
 const notificationService = require('../services/notificationService');
@@ -31,6 +32,201 @@ const buildStudentProfilePictureFromGuardian = (guardian) => {
     publicId: guardian.profilePicturePublicId || null,
     thumbnail: guardian.profilePictureThumbnail || guardian.profilePicture || null,
     thumbnailPublicId: guardian.profilePictureThumbnailPublicId || null,
+  };
+};
+
+const normalizeNameKey = (value = '') => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z]/g, '');
+
+const splitNameParts = (value = '') => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .split(/\s+/)
+  .map((part) => part.replace(/[^a-z]/g, ''))
+  .filter(Boolean);
+
+const stripVowels = (value = '') => String(value || '').replace(/[aeiou]/g, '');
+
+const consonantSkeleton = (value = '') => normalizeNameKey(value).replace(/[aeiou]/g, '');
+
+const escapeRegex = (value = '') => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const levenshteinDistance = (a = '', b = '') => {
+  const s = String(a);
+  const t = String(b);
+  if (s === t) return 0;
+  if (!s.length) return t.length;
+  if (!t.length) return s.length;
+  const rows = s.length + 1;
+  const cols = t.length + 1;
+  const matrix = Array.from({ length: rows }, () => Array(cols).fill(0));
+  for (let i = 0; i < rows; i += 1) matrix[i][0] = i;
+  for (let j = 0; j < cols; j += 1) matrix[0][j] = j;
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost,
+      );
+    }
+  }
+  return matrix[s.length][t.length];
+};
+
+const similarityScore = (a = '', b = '') => {
+  const aa = normalizeNameKey(a);
+  const bb = normalizeNameKey(b);
+  if (!aa || !bb) return 0;
+  if (aa === bb) return 1;
+  const maxLen = Math.max(aa.length, bb.length) || 1;
+  const base = 1 - (levenshteinDistance(aa, bb) / maxLen);
+  const av = consonantSkeleton(aa);
+  const bv = consonantSkeleton(bb);
+  const vow = av && bv
+    ? 1 - (levenshteinDistance(av, bv) / Math.max(av.length, bv.length, 1))
+    : 0;
+  return Math.max(base, vow * 0.95);
+};
+
+const tokenOverlapScore = (a = '', b = '') => {
+  const aa = new Set(splitNameParts(a));
+  const bb = new Set(splitNameParts(b));
+  if (!aa.size || !bb.size) return 0;
+  let overlap = 0;
+  for (const token of aa) {
+    if (bb.has(token)) overlap += 1;
+  }
+  return overlap / Math.max(Math.min(aa.size, bb.size), 1);
+};
+
+const formatEvalDate = (value) => {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const buildEvaluationSummaryText = ({ session, sessionStudent }) => {
+  const marker = `[[EVAL_SYNC:${session._id}:${sessionStudent._id}]]`;
+  const lines = [marker];
+  const when = formatEvalDate(session.endedAt || session.updatedAt || session.createdAt);
+  lines.push(`Evaluation imported from ${session.title || 'Evaluation session'}${when ? ` (${when})` : ''}.`);
+  lines.push(`Matched evaluation student: ${sessionStudent.name || 'Student'}.`);
+
+  const recLevels = Array.isArray(sessionStudent.recommendedLevels) ? sessionStudent.recommendedLevels.filter(Boolean) : [];
+  if (recLevels.length) lines.push(`Recommended levels: ${recLevels.join(', ')}.`);
+  else if (sessionStudent.recommendedLevel) lines.push(`Recommended level: ${sessionStudent.recommendedLevel}.`);
+
+  const strengths = Array.isArray(sessionStudent.strengths) ? sessionStudent.strengths.filter(Boolean) : [];
+  if (strengths.length) lines.push(`Strengths: ${strengths.slice(0, 5).join(', ')}.`);
+
+  const weaknesses = Array.isArray(sessionStudent.weaknesses)
+    ? sessionStudent.weaknesses.map((w) => w?.area).filter(Boolean)
+    : [];
+  if (weaknesses.length) lines.push(`Weakness focus: ${weaknesses.slice(0, 6).join(', ')}.`);
+
+  if (sessionStudent.adminSummary) lines.push(`Admin summary: ${sessionStudent.adminSummary}`);
+  if (sessionStudent.generalNotes) lines.push(`Evaluation notes: ${sessionStudent.generalNotes}`);
+
+  return lines.join('\n');
+};
+
+const mergeAdminEvaluationSummary = ({ existing = '', incoming = '' }) => {
+  const current = String(existing || '').trim();
+  const next = String(incoming || '').trim();
+  if (!next) return current;
+  const marker = next.split('\n')[0];
+  if (marker && current.includes(marker)) return current;
+  if (!current) return next;
+  return `${current}\n\n${next}`;
+};
+
+const findBestEvaluationSummaryForStudent = async ({ guardian, firstName, lastName }) => {
+  const guardianEmail = String(guardian?.email || '').trim().toLowerCase();
+  const guardianName = `${guardian?.firstName || ''} ${guardian?.lastName || ''}`.trim();
+  const targetFullName = `${firstName || ''} ${lastName || ''}`.trim();
+  const targetFirstName = String(firstName || '').trim();
+  const targetFirstNameKey = normalizeNameKey(targetFirstName);
+  const firstRegex = targetFirstNameKey ? new RegExp(`^${escapeRegex(targetFirstName)}`, 'i') : null;
+
+  const baseOr = [];
+  if (guardianEmail) baseOr.push({ 'students.contactEmail': guardianEmail });
+  if (firstRegex) baseOr.push({ 'students.name': firstRegex });
+  if (!baseOr.length) return null;
+
+  const sessions = await EvaluationSession.find({
+    status: 'completed',
+    $or: baseOr,
+  })
+    .sort({ endedAt: -1, updatedAt: -1 })
+    .limit(120)
+    .select('title endedAt updatedAt createdAt students.name students.contactName students.contactEmail students.adminSummary students.generalNotes students.recommendedLevel students.recommendedLevels students.weaknesses students.strengths')
+    .lean();
+
+  let best = null;
+  for (const session of sessions) {
+    for (const sessionStudent of (session.students || [])) {
+      let score = 0;
+      let strongSignal = false;
+      const contactEmail = String(sessionStudent.contactEmail || '').trim().toLowerCase();
+      if (guardianEmail && contactEmail && contactEmail === guardianEmail) {
+        score += 6;
+        strongSignal = true;
+      }
+
+      if (guardianName && sessionStudent.contactName) {
+        const guardianSim = similarityScore(guardianName, sessionStudent.contactName);
+        if (guardianSim >= 0.82) {
+          score += 2.75;
+          strongSignal = true;
+        }
+      }
+
+      const fullSim = similarityScore(targetFullName, sessionStudent.name || '');
+      const firstSim = similarityScore(targetFirstName || '', (sessionStudent.name || '').split(/\s+/)[0] || '');
+      const tokenSim = tokenOverlapScore(targetFullName, sessionStudent.name || '');
+      const skeletonSim = similarityScore(consonantSkeleton(targetFullName), consonantSkeleton(sessionStudent.name || ''));
+
+      score += (fullSim * 6.5) + (firstSim * 3.25) + (tokenSim * 1.75) + (skeletonSim * 2.25);
+
+      if (fullSim >= 0.88 || skeletonSim >= 0.92 || tokenSim >= 0.5) {
+        strongSignal = true;
+      }
+
+      if (!strongSignal && fullSim < 0.55 && firstSim < 0.62 && skeletonSim < 0.75) continue;
+
+      if (!best || score > best.score) {
+        best = { score, session, sessionStudent };
+      }
+    }
+  }
+
+  if (!best || best.score < 8.25) return null;
+
+  return {
+    summaryText: buildEvaluationSummaryText({
+      session: best.session,
+      sessionStudent: best.sessionStudent,
+    }),
+    source: {
+      sessionId: best.session._id,
+      sessionTitle: best.session.title || 'Evaluation session',
+      sessionStudentId: best.sessionStudent._id || null,
+      linkedAt: new Date(),
+      score: best.score,
+    },
   };
 };
 
@@ -300,6 +496,17 @@ router.post('/', authenticateToken, [
       }
     };
 
+    const importedEvaluationMatch = await findBestEvaluationSummaryForStudent({
+      guardian,
+      firstName,
+      lastName,
+    });
+    const importedEvaluationSummary = importedEvaluationMatch?.summaryText || '';
+    const mergedEvaluationSummary = mergeAdminEvaluationSummary({
+      existing: evaluationSummary || '',
+      incoming: importedEvaluationSummary || '',
+    });
+
     if (isSelfEnrollment) {
       // Check if guardian already enrolled themselves
       const existingSelfEnrollment = await Student.findOne({
@@ -329,7 +536,8 @@ router.post('/', authenticateToken, [
         timezone: timezone || guardian.timezone || 'UTC',
         subjects: Array.isArray(subjects) ? subjects : [],
         learningPreferences: learningPreferences || '',
-        evaluationSummary: evaluationSummary || '',
+        evaluationSummary: mergedEvaluationSummary,
+        evaluationImportSource: importedEvaluationMatch?.source || undefined,
         notes: notes || '',
         hoursRemaining: typeof hoursRemaining === 'number' ? hoursRemaining : 0,
         isActive: typeof isActive === 'boolean' ? isActive : true,
@@ -376,7 +584,8 @@ router.post('/', authenticateToken, [
         timezone: timezone || 'UTC',
         subjects: Array.isArray(subjects) ? subjects : [],
         learningPreferences: learningPreferences || '',
-        evaluationSummary: evaluationSummary || '',
+        evaluationSummary: mergedEvaluationSummary,
+        evaluationImportSource: importedEvaluationMatch?.source || undefined,
         notes: notes || '',
         hoursRemaining: typeof hoursRemaining === 'number' ? hoursRemaining : 0,
         dateOfBirth: dateOfBirth || null,

@@ -707,6 +707,12 @@ router.get('/whatsapp-recipients', authenticateToken, requireAdmin, async (req, 
         country: countryValue,
         phone,
       };
+    }).sort((a, b) => {
+      const nameA = `${a.firstName || ''} ${a.lastName || ''}`.trim().toLowerCase();
+      const nameB = `${b.firstName || ''} ${b.lastName || ''}`.trim().toLowerCase();
+      if (nameA !== nameB) return nameA.localeCompare(nameB);
+      if (a.role !== b.role) return String(a.role || '').localeCompare(String(b.role || ''));
+      return String(a.id || '').localeCompare(String(b.id || ''));
     });
 
     if (updates.length) {

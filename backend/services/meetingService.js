@@ -1396,8 +1396,23 @@ const adminCreateMeeting = async ({
     ...(sourceBookingId ? { sourceBookingId: String(sourceBookingId) } : {}),
   });
 
+  const calendarLinks = buildCalendarLinks(meeting, admin);
+  meeting.calendar = {
+    ...(meeting.calendar || {}),
+    icsUid: `meeting-${meeting._id}@waraqa`,
+    googleCalendarLink: calendarLinks.googleCalendarLink,
+    outlookCalendarLink: calendarLinks.outlookCalendarLink,
+  };
+
   await meeting.save();
-  return { meeting: formatMeetingResponse(meeting) };
+
+  await notificationService.notifyMeetingScheduled({
+    meeting,
+    adminUser: admin,
+    triggeredBy: requester,
+  });
+
+  return { meeting: formatMeetingResponse(meeting), calendarLinks };
 };
 
 /**

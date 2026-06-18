@@ -506,6 +506,8 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
       meetingType: MEETING_TYPES.NEW_STUDENT_EVALUATION,
       $or: [
         { scheduledStart: { $gte: since } },
+        { status: MEETING_STATUSES.COMPLETED },
+        { attendanceStatus: 'attended' },
         { 'onboarding.completedAt': { $exists: true, $ne: null } },
         { 'report.submittedAt': { $exists: true, $ne: null } },
       ],
@@ -583,7 +585,10 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
       const stepsMap = ob.steps && typeof ob.steps === 'object' ? ob.steps : {};
       const hasProgress = Object.keys(stepsMap).some((k) => k !== 'booked')
         || (Array.isArray(ob.notes) && ob.notes.length > 0)
-        || Boolean(ob.completedAt);
+        || Boolean(ob.completedAt)
+        || Boolean(m.report?.submittedAt)
+        || m.status === MEETING_STATUSES.COMPLETED
+        || m.attendanceStatus === 'attended';
       const isFuture = m.scheduledStart && new Date(m.scheduledStart) >= now;
       if (!isFuture && !hasProgress) return;
 

@@ -888,6 +888,11 @@ const StudentsPage = () => {
                               {student.studentInfo.evaluationSummary}
                             </span>
                           )}
+                          {(isAdmin() && (student.studentInfo?.evaluationImportSource?.sessionTitle || student.evaluationImportSource?.sessionTitle)) && (
+                            <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800">
+                              Linked to {student.studentInfo?.evaluationImportSource?.sessionTitle || student.evaluationImportSource?.sessionTitle}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

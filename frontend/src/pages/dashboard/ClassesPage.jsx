@@ -2231,10 +2231,14 @@ fetchClassesRef.current = fetchClasses;
           const lastSlot = (prev.recurrenceDetails || [])[prev.recurrenceDetails.length - 1] || {};
           const lastDay = Number.isInteger(Number(lastSlot.dayOfWeek)) ? Number(lastSlot.dayOfWeek) : 1;
           const nextDay = (lastDay + 1) % 7;
+          const lastDuration = Number(lastSlot.duration);
+          const fallbackDuration = Number(prev.duration);
           return {
             dayOfWeek: nextDay,
             time: lastSlot.time || "18:00",
-            duration: 30,
+            duration: Number.isFinite(lastDuration) && lastDuration > 0
+              ? lastDuration
+              : (Number.isFinite(fallbackDuration) && fallbackDuration > 0 ? fallbackDuration : 30),
             timezone: lastSlot.timezone || prev.timezone || adminTimezone
           };
         })()

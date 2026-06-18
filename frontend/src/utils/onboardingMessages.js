@@ -27,6 +27,36 @@ const fmtClassTime = (value) => {
   } catch { return ''; }
 };
 
+const formatTimezoneLabel = (value = '') => String(value || '').trim().replace(/_/g, ' ') || 'student timezone';
+
+const formatTimePartsForTimezone = (value, timezone) => {
+  if (!value || !timezone) return null;
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    const parts = new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: timezone,
+    }).formatToParts(date);
+    const get = (type) => parts.find((p) => p.type === type)?.value || '';
+    const weekday = get('weekday');
+    const hour = get('hour');
+    const minute = get('minute');
+    const dayPeriod = get('dayPeriod');
+    if (!hour || !minute || !dayPeriod) return null;
+    return {
+      weekday,
+      timeUpper: `${hour}:${minute} ${dayPeriod.toUpperCase()}`,
+      timeLower: `${hour}:${minute} ${dayPeriod.toLowerCase()}`,
+    };
+  } catch {
+    return null;
+  }
+};
+
 // Small, high-confidence name lists for a best-effort gender guess. When a name
 // is not listed we stay generic rather than risk an incorrect honorific.
 const FEMALE_NAMES = new Set([
@@ -177,17 +207,45 @@ Please let me know which slots work for you so we can confirm with the family. J
 };
 
 // 4) First-class reminder for the WhatsApp group on the day of the first class.
-export const firstClassReminderMessage = ({ recipient = {}, classAt = null } = {}) => {
-  const whose = recipient.isSelf ? 'your' : `${recipient.studentLabel || 'your child'}'s`;
-  const subject = recipient.isSelf ? 'you are' : `${recipient.studentLabel || 'your child'} is`;
-  const when = fmtClassTime(classAt);
-  const timePart = when ? `today (${when} Cairo time)` : 'today';
+export const firstClassReminderMessage = ({
+  recipient = {},
+  classAt = null,
+  teacherName = '',
+  studentTimezone = '',
+  studentTimezoneLabel = '',
+} = {}) => {
+
+  const studentName = recipient?.studentFirsts?.[0] || '';
+  const studentRef = recipient.isSelf ? 'your' : (studentName || 'your child');
+  const classOwnerPhrase = recipient.isSelf ? 'your' : `${studentRef}'s`;
+  const teacherRef = teacherName || 'the teacher';
+  const localParts = formatTimePartsForTimezone(classAt, studentTimezone || CAIRO_TZ);
+  const cairoParts = formatTimePartsForTimezone(classAt, CAIRO_TZ);
+  const localTzLabel = formatTimezoneLabel(studentTimezoneLabel || studentTimezone);
+
+  const localLine = localParts
+    ? `*today ${localParts.timeLower} (${localTzLabel})*`
+    : '*today (student timezone)*';
+  const cairoLine = cairoParts
+    ? `*${cairoParts.weekday} ${cairoParts.timeUpper} Cairo time.*`
+    : '*Cairo time.*';
+
+  const readiness = recipient.isSelf
+    ? 'Please make sure you are ready a few minutes early with a stable internet connection.'
+    : `Please make sure ${studentRef} is ready a few minutes early with a stable internet connection.`;
+
   return (
 `Assalamu alaikum 🌟
 
-Just a friendly reminder that ${whose} first class with us is ${timePart}. Please make sure ${subject} ready a few minutes early with a stable internet connection.
+Just a friendly reminder that ${studentRef}'s first class with ${teacherRef} is
+Just a friendly reminder that ${classOwnerPhrase} first class with ${teacherRef} is
+${localLine}
+${cairoLine}
 
-May Allah make it a blessed and productive start! If you need anything, we're right here to help.`
+${readiness}
+
+May Allah make it a blessed and productive start!
+If you need anything, we're right here to help.`
   );
 };
 

@@ -989,10 +989,14 @@ export default function CreateClassModal({
           const lastSlot = (prev.recurrenceDetails || [])[prev.recurrenceDetails.length - 1] || {};
           const lastDay = Number.isInteger(Number(lastSlot.dayOfWeek)) ? Number(lastSlot.dayOfWeek) : 1;
           const nextDay = (lastDay + 1) % 7;
+          const lastDuration = Number(lastSlot.duration);
+          const fallbackDuration = Number(prev.duration);
           return {
             dayOfWeek: nextDay,
             time: lastSlot.time || '18:00',
-            duration: lastSlot.duration || 30,
+            duration: Number.isFinite(lastDuration) && lastDuration > 0
+              ? lastDuration
+              : (Number.isFinite(fallbackDuration) && fallbackDuration > 0 ? fallbackDuration : 30),
             timezone: lastSlot.timezone || prev.timezone || DEFAULT_TIMEZONE
           };
         })()
@@ -1631,7 +1635,7 @@ export default function CreateClassModal({
 
 
             {/* Form Actions */}
-            <div className="flex flex-col gap-3 border-t border-slate-200/80 pt-4 pb-[calc(0.25rem+env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:pb-0">
+            <div className="flex flex-col gap-3 border-t border-slate-200/80 pt-4 pb-[calc(0.25rem+env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-end sm:pb-0">
              
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
               <button

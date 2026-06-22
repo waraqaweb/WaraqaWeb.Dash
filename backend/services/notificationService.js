@@ -516,6 +516,104 @@ async function notifyClassEvent({
   }
 }
 
+/**
+ * Consolidated notification for a bulk class cancellation.
+ * Instead of one message per class, every affected teacher and guardian gets
+ * a SINGLE in-app notification (and a single email) summarizing all of the
+ * classes that were cancelled in the batch.
+ */
+async function notifyBulkClassCancellation({ classes = [], actor = null, reason = '' }) {
+  if (!Array.isArray(classes) || classes.length === 0) return { success: true, recipients: 0 };
+
+  // Group cancelled classes by recipient (teacher + guardian).
+  const groups = new Map(); // userId string -> { userId, role, items: [] }
+  const addItem = (userRef, role, item) => {
+    const uid = normalizeObjectId(userRef);
+    if (!uid) return;
+    const key = String(uid);
+    if (!groups.has(key)) groups.set(key, { userId: uid, role, items: [] });
+    groups.get(key).items.push(item);
+  };
+
+  for (const cls of classes) {
+    const item = {
+      subject: cls.subject || 'Class',
+      scheduledDate: cls.scheduledDate || cls.dateTime || null,
+      duration: cls.duration || null,
+      studentName: cls?.student?.studentName || cls?.studentSnapshot?.studentName || cls?.student?.firstName || '',
+      classId: cls._id,
+    };
+    if (cls.teacher) addItem(cls.teacher, 'teacher', item);
+    if (cls?.student?.guardianId) addItem(cls.student.guardianId, 'guardian', item);
+  }
+
+  if (groups.size === 0) return { success: true, recipients: 0 };
+
+  let branding = null;
+  try { branding = await require('./emailService').loadBrandingAndLogo(); } catch (_) {}
+  const reasonClean = String(reason || '').replace(/^Reason:\s*/i, '').trim();
+
+  for (const grp of groups.values()) {
+    try {
+      const userDoc = await User.findById(grp.userId).select('email firstName lastName timezone').lean();
+      const tz = userDoc?.timezone || DEFAULT_TIMEZONE;
+      const count = grp.items.length;
+      grp.items.sort((a, b) => new Date(a.scheduledDate || 0) - new Date(b.scheduledDate || 0));
+
+      const lines = grp.items.slice(0, 5).map((it) => {
+        const when = it.scheduledDate ? formatTimeInTimezone(it.scheduledDate, tz, 'DD MMM YYYY hh:mm A') : 'TBD';
+        const who = it.studentName ? ` (${it.studentName})` : '';
+        return `• ${it.subject}${who} — ${when}`;
+      });
+      const more = count > 5 ? `\n…and ${count - 5} more.` : '';
+      const title = `${count} ${count === 1 ? 'class' : 'classes'} cancelled`;
+      const message = `${count} ${count === 1 ? 'class has' : 'classes have'} been cancelled.${reasonClean ? ` Reason: ${reasonClean}.` : ''}\n${lines.join('\n')}${more}`;
+
+      await module.exports.createNotification({
+        userId: grp.userId,
+        title,
+        message,
+        type: 'class',
+        relatedTo: 'class',
+        relatedId: grp.items[0].classId,
+        metadata: { kind: 'bulk_class_cancelled', eventType: 'cancelled', count },
+      });
+
+      if (userDoc?.email) {
+        try {
+          const { enqueueEmail, buildBulkClassCancelledEmail } = require('./emailService');
+          const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
+          const canSend = await shouldSendEmail(grp.userId, 'classCancelled').catch(() => true);
+          if (canSend) {
+            const tpl = buildBulkClassCancelledEmail({
+              recipient: { firstName: userDoc.firstName, lastName: userDoc.lastName, email: userDoc.email, timezone: tz },
+              role: grp.role,
+              classes: grp.items,
+              reason: reasonClean,
+              branding,
+            });
+            await enqueueEmail({
+              to: userDoc.email,
+              subject: tpl.subject,
+              html: tpl.html,
+              text: tpl.text,
+              type: 'classCancelled',
+              userId: grp.userId,
+              priority: 2,
+            });
+          }
+        } catch (mailErr) {
+          console.warn('[notifyBulkClassCancellation] email failed:', mailErr.message);
+        }
+      }
+    } catch (grpErr) {
+      console.error('[notifyBulkClassCancellation] recipient failed:', grpErr.message);
+    }
+  }
+
+  return { success: true, recipients: groups.size };
+}
+
 // --- INVOICE EVENTS ---
 async function notifyInvoiceEvent({ invoice, eventType }) {
   // eventType: 'created', 'paid', 'reminder'
@@ -1318,6 +1416,7 @@ module.exports = {
   notifyStudentCreated,
   notifyProfileIncomplete,
   notifyClassEvent,
+  notifyBulkClassCancellation,
   notifyInvoiceEvent,
   notifyFeedbackSubmitted,
   notifyRequestEvent,

@@ -134,6 +134,11 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   // propagate the new subject to future classes in the same series.
   const [subjectScopePrompt, setSubjectScopePrompt] = useState(null); // { newSubject, currentSubject, pendingEvent }
   const applyToFutureRef = useRef(false);
+  // One-time guard for prefilling the subject with the last reported subject.
+  const smartSubjectAppliedRef = useRef(false);
+  // The subject the form defaulted to (class subject or last reported subject).
+  // Used so the "apply to future" prompt only fires on an active subject change.
+  const defaultSubjectRef = useRef('');
 
   useEffect(() => {
     let cancelled = false;
@@ -343,6 +348,7 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
   useEffect(() => {
     hasInitializedState.current = false;
+    smartSubjectAppliedRef.current = false;
   }, [derivedClassId]);
 
   useEffect(() => {
@@ -398,7 +404,9 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
   useEffect(() => {
     if (hasInitializedState.current) return;
     if (!derivedClassId) {
-      setClassReport(defaultReportState(classData));
+      const base = defaultReportState(classData);
+      defaultSubjectRef.current = (base.subject || '').trim();
+      setClassReport(base);
       hasInitializedState.current = true;
       return;
     }
@@ -406,18 +414,22 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     const draft = loadDraft(derivedClassId);
     if (draft) {
       const normalizedAttendance = normalizeAttendance(draft.attendance || classData?.classReport?.attendance);
-      setClassReport({
+      const merged = {
         ...defaultReportState(classData),
         ...draft,
         attendance: normalizedAttendance,
         cancelledBy: draft.cancelledBy || (normalizedAttendance === "cancelled" ? deriveCancelledBy(draft.attendance) : "teacher"),
-      });
+      };
+      defaultSubjectRef.current = (merged.subject || '').trim();
+      setClassReport(merged);
       hasInitializedState.current = true;
       return;
     }
 
     if (classData) {
-      setClassReport(defaultReportState(classData));
+      const base = defaultReportState(classData);
+      defaultSubjectRef.current = (base.subject || '').trim();
+      setClassReport(base);
       hasInitializedState.current = true;
     }
   }, [classData, derivedClassId]);
@@ -464,9 +476,54 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
     if (!classData?.subject) return;
     setClassReport((prev) => {
       if (!prev || prev.subject) return prev;
+      defaultSubjectRef.current = (classData.subject || '').trim();
       return { ...prev, subject: classData.subject };
     });
   }, [classData?.subject]);
+
+  // ✅ Prefill the subject with the one reported in the last class of the
+  // series, so teachers don't have to re-pick it each time. Only applies to a
+  // brand-new report (not yet submitted, no saved draft) and never overrides a
+  // subject the teacher already changed.
+  useEffect(() => {
+    if (smartSubjectAppliedRef.current) return;
+    if (!derivedClassId || !classData) return;
+    const alreadySubmitted = !!classData?.classReport?.submittedAt;
+    const hasDraft = !!loadDraft(derivedClassId);
+    if (alreadySubmitted || hasDraft) {
+      smartSubjectAppliedRef.current = true;
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get(`/classes/${derivedClassId}/last-subject`);
+        const suggested = (res.data?.subject || '').trim();
+        if (cancelled || !suggested) return;
+        setClassReport((prev) => {
+          if (!prev) return prev;
+          const current = (prev.subject || '').trim();
+          const classDefault = (classData?.subject || '').trim();
+          // Respect a subject the teacher already changed away from the default.
+          if (current && current !== classDefault) return prev;
+          if (current === suggested) {
+            defaultSubjectRef.current = suggested;
+            return prev;
+          }
+          defaultSubjectRef.current = suggested;
+          return { ...prev, subject: suggested };
+        });
+      } catch (e) {
+        // ignore – fall back to the class default
+      } finally {
+        smartSubjectAppliedRef.current = true;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [derivedClassId, classData]);
 
   // ✅ Submit Report
   const [hoverScore, setHoverScore] = useState(0);
@@ -477,11 +534,19 @@ const ClassReportPage = ({ reportClass, reportClassId, onClose, onSuccess }) => 
 
     // If the teacher selected a subject that differs from the class's current
     // subject, ask whether to apply just to this class or also to future
-    // classes in the series. We pause here and let the user pick before submit.
+    // classes in the series. We only prompt when they actively changed the
+    // subject away from the prefilled default (not when it was auto-filled).
     if (userRole === 'teacher' && classReport.attendance === 'attended' && !subjectScopePrompt) {
       const chosen = (classReport.subject || '').trim();
       const current = (classData?.subject || '').trim();
-      if (chosen && current && chosen !== current && applyToFutureRef.current === false) {
+      const prefilled = (defaultSubjectRef.current || '').trim();
+      if (
+        chosen &&
+        current &&
+        chosen !== current &&
+        chosen !== prefilled &&
+        applyToFutureRef.current === false
+      ) {
         setSubjectScopePrompt({ newSubject: chosen, currentSubject: current });
         return;
       }

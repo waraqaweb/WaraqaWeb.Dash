@@ -2214,7 +2214,7 @@ router.post(
    Role-aware cancellation with limits and notifications
    ------------------------- */
 router.post(
-  "/:id/cancel",
+  "/:id([0-9a-fA-F]{24})/cancel",
   authenticateToken,
   requireRole(["teacher", "guardian", "admin"]),
   [
@@ -4624,6 +4624,58 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
       console.warn("⚠️ Failed to propagate subject to future classes:", subjErr.message);
     }
 
+    // 🟦 Auto-propagate a subject change to the whole series when the teacher
+    // reports the SAME new subject for 3 consecutive classes, even without
+    // ticking "Apply to future classes". This keeps the series subject in sync
+    // with what is actually being taught.
+    try {
+      const isSeriesInstance = !!classDoc.parentRecurringClass;
+      const reportedSubject =
+        typeof reportPayload.subject === "string" ? reportPayload.subject.trim() : "";
+      if (attendanceValue === "attended" && isSeriesInstance && reportedSubject) {
+        const seriesRoot = classDoc.parentRecurringClass;
+        const CONSECUTIVE_REQUIRED = 3;
+
+        // The most recent reported (attended) classes in this series.
+        const recentReported = await Class.find({
+          $or: [{ _id: seriesRoot }, { parentRecurringClass: seriesRoot }],
+          "classReport.attendance": "attended",
+          "classReport.subject": { $exists: true, $nin: [null, ""] },
+        })
+          .sort({ scheduledDate: -1 })
+          .limit(CONSECUTIVE_REQUIRED)
+          .select("classReport.subject")
+          .lean();
+
+        const hasStreak =
+          recentReported.length === CONSECUTIVE_REQUIRED &&
+          recentReported.every(
+            (c) => (c.classReport?.subject || "").trim() === reportedSubject
+          );
+
+        if (hasStreak) {
+          const rootDoc = await Class.findById(seriesRoot).select("subject").lean();
+          const seriesSubject = (rootDoc?.subject || "").trim();
+          if (seriesSubject !== reportedSubject) {
+            const cutoff = new Date(classDoc.scheduledDate || Date.now());
+            try { await Class.updateOne({ _id: seriesRoot }, { $set: { subject: reportedSubject } }); } catch (e) { /* ignore */ }
+            await Class.updateMany(
+              {
+                $or: [{ _id: seriesRoot }, { parentRecurringClass: seriesRoot }],
+                scheduledDate: { $gt: cutoff },
+                status: { $nin: ["attended", "missed_by_student", "absent", "cancelled", "cancelled_by_teacher", "cancelled_by_student", "no_show_both"] },
+                _id: { $ne: classDoc._id },
+              },
+              { $set: { subject: reportedSubject } }
+            );
+            console.log(`📚 Auto-updated series ${seriesRoot} subject to "${reportedSubject}" after ${CONSECUTIVE_REQUIRED} consecutive reports`);
+          }
+        }
+      }
+    } catch (autoSubjErr) {
+      console.warn("⚠️ Failed to auto-update series subject:", autoSubjErr.message);
+    }
+
     // ✅ Emit socket event
     try {
       const io = req.app.get("io");
@@ -4958,6 +5010,41 @@ router.post("/:id/check-can-submit", authenticateToken, async (req, res) => {
   }
 });
 
+// Best default subject for a fresh class report: the subject reported in the
+// most recent prior class of the same series, so teachers don't have to
+// re-pick it every time. Falls back to the class's own scheduled subject.
+router.get("/:id([0-9a-fA-F]{24})/last-subject", authenticateToken, requireRole(["admin", "teacher"]), async (req, res) => {
+  try {
+    const classDoc = await Class.findById(req.params.id)
+      .select("subject parentRecurringClass scheduledDate teacher")
+      .lean();
+    if (!classDoc) return res.json({ subject: "" });
+
+    // Teachers may only look up their own classes.
+    if (req.user.role === "teacher" && String(classDoc.teacher) !== String(req.user._id)) {
+      return res.status(403).json({ subject: "" });
+    }
+
+    const seriesRoot = classDoc.parentRecurringClass || classDoc._id;
+    const last = await Class.findOne({
+      _id: { $ne: classDoc._id },
+      $or: [{ _id: seriesRoot }, { parentRecurringClass: seriesRoot }],
+      "classReport.attendance": "attended",
+      "classReport.subject": { $exists: true, $nin: [null, ""] },
+      ...(classDoc.scheduledDate ? { scheduledDate: { $lte: new Date(classDoc.scheduledDate) } } : {}),
+    })
+      .sort({ scheduledDate: -1 })
+      .select("classReport.subject")
+      .lean();
+
+    const subject = (last?.classReport?.subject || "").trim() || (classDoc.subject || "").trim();
+    return res.json({ subject });
+  } catch (err) {
+    console.error("Error fetching last reported subject:", err);
+    return res.json({ subject: "" });
+  }
+});
+
 // generateRecurringClasses implementation moved to utils/generateRecurringClasses.js
 // (kept for historical reference) -- use require('../utils/generateRecurringClasses')
 
@@ -4996,6 +5083,49 @@ router.post('/bulk/delete', authenticateToken, requireRole(['admin']), async (re
   }
 });
 
+// Remove/credit a just-cancelled class from any invoice it was billed in.
+// Mirrors the single-cancel handler so bulk cancel keeps billing correct.
+async function removeCancelledClassFromInvoice(saved, actorId) {
+  if (!saved?.billedInInvoiceId) return;
+  const Invoice = require("../models/Invoice");
+  const billedInvoice = await Invoice.findById(saved.billedInInvoiceId);
+  if (!billedInvoice || ['cancelled', 'refunded'].includes(billedInvoice.status)) return;
+
+  const classIdStr = String(saved._id);
+  const itemMatches = (it) => {
+    const itId = it.class ? String(it.class) : (it.lessonId || null);
+    return itId === classIdStr;
+  };
+  const removedItem = (billedInvoice.items || []).find(itemMatches);
+  if (!removedItem) return;
+
+  const hours = Number(removedItem.duration || 0) / 60;
+  const amount = Number(removedItem.amount || 0);
+
+  if (billedInvoice.status === 'paid') {
+    await InvoiceService.createPaidInvoiceAdjustment({
+      invoiceId: billedInvoice._id,
+      type: 'credit',
+      reason: 'class_cancelled',
+      classDoc: saved,
+      description: `Cancelled class on ${new Date(saved.scheduledDate || saved.dateTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} removed — not delivered`,
+      hoursDelta: -hours,
+      amountDelta: -amount,
+      actorId,
+    });
+    billedInvoice.items = billedInvoice.items.filter(it => !itemMatches(it));
+    billedInvoice.markModified('items');
+    billedInvoice._skipRecalculate = true;
+    await billedInvoice.save();
+  } else {
+    billedInvoice.items = billedInvoice.items.filter(it => !itemMatches(it));
+    billedInvoice.markModified('items');
+    await billedInvoice.save();
+  }
+
+  await Class.updateOne({ _id: saved._id }, { $unset: { billedInInvoiceId: 1, billedAt: 1 } });
+}
+
 // Bulk cancel classes (Admin)
 router.post('/bulk/cancel', authenticateToken, requireRole(['admin']), async (req, res) => {
   try {
@@ -5005,19 +5135,47 @@ router.post('/bulk/cancel', authenticateToken, requireRole(['admin']), async (re
 
     const classes = await Class.find({
       _id: { $in: ids },
-      status: { $nin: ['cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian'] }
-    });
+      status: { $nin: ['pattern', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_guardian', 'cancelled_by_student'] }
+    })
+      .populate('teacher', 'firstName lastName email timezone')
+      .populate('student.guardianId', 'firstName lastName email timezone');
 
     const results = { cancelled: 0, failed: [] };
+    const cancelledClasses = [];
 
     for (const classDoc of classes) {
       try {
         classDoc.lastModifiedBy = req.user._id;
         classDoc.lastModifiedAt = new Date();
         await classDoc.cancelClass(reason, req.user._id, 'admin', false);
+        cancelledClasses.push(classDoc);
         results.cancelled++;
       } catch (e) {
         results.failed.push({ id: String(classDoc._id), error: e.message });
+      }
+    }
+
+    // Credit any cancelled classes that were already billed in an invoice.
+    for (const cls of cancelledClasses) {
+      try {
+        await removeCancelledClassFromInvoice(cls, req.user._id);
+      } catch (invErr) {
+        console.warn('[bulk cancel] invoice cleanup failed:', invErr.message);
+      }
+    }
+
+    // Send ONE consolidated notification/email per affected recipient
+    // instead of a separate message for each cancelled class.
+    if (cancelledClasses.length) {
+      try {
+        const notificationService = require('../services/notificationService');
+        await notificationService.notifyBulkClassCancellation({
+          classes: cancelledClasses,
+          actor: req.user,
+          reason,
+        });
+      } catch (notifyErr) {
+        console.warn('[bulk cancel] consolidated notification failed:', notifyErr.message);
       }
     }
 

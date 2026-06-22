@@ -706,6 +706,34 @@ function buildClassCancelledEmail({ recipient, classObj, student, role, reason, 
   return { subject: `Class cancelled — ${subj}${sName ? ` (${sName})` : ''}`, html: baseEmailTemplate({ preheader: `Cancelled: ${subj} on ${date}`, body, icon: _ICONS.classCancelled, branding }), text };
 }
 
+// One consolidated email for several classes cancelled together (bulk cancel).
+function buildBulkClassCancelledEmail({ recipient, classes = [], role, reason, branding }) {
+  const tz    = recipient.timezone || 'Africa/Cairo';
+  const count = classes.length;
+  const sorted = [...classes].sort((a, b) => new Date(a.scheduledDate || 0) - new Date(b.scheduledDate || 0));
+  const intro = role === 'teacher'
+    ? `<strong>${count}</strong> ${count === 1 ? 'class assigned to you has' : 'classes assigned to you have'} been <strong>cancelled</strong>.`
+    : `<strong>${count}</strong> of your ${count === 1 ? 'class has' : 'classes have'} been <strong>cancelled</strong>.`;
+  const rowsHtml = sorted.map((c) => {
+    const when = c.scheduledDate ? formatInTimezone(c.scheduledDate, tz) : 'N/A';
+    const subj = c.subject || 'Class';
+    const who  = c.studentName ? ` <span style="color:#6b7280;">— ${c.studentName}</span>` : '';
+    return `<tr><td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;color:#374151;font-size:13px;">${subj}${who}</td><td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;color:#6b7280;font-size:13px;white-space:nowrap;text-align:right;">${when}</td></tr>`;
+  }).join('');
+  const table = `<table style="width:100%;border-collapse:collapse;">${rowsHtml}</table>`;
+  const body = `${_hi(recipient)}
+    <p style="margin:0 0 14px;color:#374151;">${intro}</p>
+    ${_card(`<h3 style="margin:0 0 10px;font-size:15px;color:#111827;">Cancelled classes (${count})</h3>${table}`)}
+    ${reason ? _alert(`Reason: ${reason}`, '#fef2f2', '#ef4444', '#991b1b') : _alert('If you have questions or need to reschedule, please contact us via the dashboard.', '#fef2f2', '#ef4444', '#991b1b')}
+    ${_btn('Open Dashboard', _dashUrl())}`;
+  const textLines = sorted.map((c) => {
+    const when = c.scheduledDate ? formatInTimezone(c.scheduledDate, tz) : 'N/A';
+    return `- ${c.subject || 'Class'}${c.studentName ? ` (${c.studentName})` : ''}: ${when} (${_tzLabel(tz)})`;
+  }).join('\n');
+  const text = `Hi ${formatPersonName(recipient)},\n\n${count} ${count === 1 ? 'class' : 'classes'} cancelled.\n${textLines}\n${reason ? `\nReason: ${reason}\n` : ''}`;
+  return { subject: `${count} ${count === 1 ? 'class' : 'classes'} cancelled`, html: baseEmailTemplate({ preheader: `${count} ${count === 1 ? 'class' : 'classes'} cancelled`, body, icon: _ICONS.classCancelled, branding }), text };
+}
+
 function buildClassRescheduledEmail({ recipient, classObj, oldDate, teacher, student, role, reason, branding }) {
   const tz     = recipient.timezone || 'Africa/Cairo';
   const oldStr = oldDate ? formatInTimezone(oldDate, tz) : null;
@@ -1305,6 +1333,7 @@ module.exports = {
   // Template builders
   buildClassCreatedEmail,
   buildClassCancelledEmail,
+  buildBulkClassCancelledEmail,
   buildClassRescheduledEmail,
   buildRegistrationWelcomeEmail,
   buildNewStudentEmail,

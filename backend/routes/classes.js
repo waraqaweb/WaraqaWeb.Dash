@@ -1298,8 +1298,12 @@ router.get("/series", authenticateToken, requireRole(["admin"]), async (req, res
     const countMap = new Map(childCounts.map((row) => [String(row._id), row]));
     const series = patterns.map((p) => {
       const c = countMap.get(String(p._id));
+      const endDate = p.recurrence?.endDate ? new Date(p.recurrence.endDate) : null;
+      const deactivated = Boolean(endDate && !Number.isNaN(endDate.getTime()) && endDate.getTime() <= now.getTime());
       return {
         ...p,
+        deactivated,
+        deactivatedAt: p.recurrence?.deactivatedAt || null,
         instanceCounts: {
           total: c?.totalInstances || 0,
           futureActive: c?.futureActiveInstances || 0,
@@ -1349,6 +1353,147 @@ router.post("/series/:id/recreate", authenticateToken, requireRole(["admin"]), a
   } catch (err) {
     console.error('POST /api/classes/series/:id/recreate error:', err);
     return res.status(500).json({ message: 'Failed to recreate series instances' });
+  }
+});
+
+/* -------------------------
+   POST /api/classes/series/:id/deactivate
+   - Admin-only
+   - Ends a recurring series and marks the pattern as deactivated
+     (recurrence.endDate = now) so the startup/daily generation jobs never
+     revive it. The pattern row is kept for history and can be re-activated.
+   - Body { mode }:
+       'cancel' (default) → soft-cancel upcoming, not-yet-conducted instances
+                  (status = cancelled_by_admin). Records are KEPT and any
+                  already-conducted / reported / cancelled class is left
+                  untouched, so previously submitted classes are preserved.
+       'delete'           → permanently remove upcoming instances (legacy).
+   - Body { reason }: optional cancellation note used in cancel mode.
+   Returns: { patternId, mode, cancelledCount, deletedCount, deactivated: true }
+   ------------------------- */
+router.post("/series/:id/deactivate", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  try {
+    const pattern = await Class.findById(req.params.id);
+    if (!pattern) return res.status(404).json({ message: 'Series not found' });
+    if (pattern.status !== 'pattern') return res.status(400).json({ message: 'Target class is not a series pattern' });
+
+    // Default to the non-destructive "cancel" path that preserves history.
+    const mode = req.body?.mode === 'delete' ? 'delete' : 'cancel';
+    const reason = (typeof req.body?.reason === 'string' && req.body.reason.trim())
+      ? req.body.reason.trim().slice(0, 500)
+      : 'Series cancelled by admin';
+    const now = new Date();
+
+    // Only ever act on upcoming instances. In cancel mode we further restrict to
+    // not-yet-conducted classes (scheduled / in_progress) so any class that was
+    // already attended, completed, missed or reported is preserved as-is.
+    const baseFilter = { parentRecurringClass: pattern._id, scheduledDate: { $gte: now } };
+    const targetFilter = mode === 'cancel'
+      ? { ...baseFilter, status: { $in: ['scheduled', 'in_progress'] } }
+      : baseFilter;
+
+    const toProcess = await Class.find(targetFilter).lean();
+
+    // Credit any affected classes already billed in a paid invoice.
+    try {
+      const Invoice = require('../models/Invoice');
+      const billedClasses = toProcess.filter(c => c.billedInInvoiceId);
+      const adjReason = mode === 'cancel' ? 'class_cancelled' : 'class_deleted';
+      const adjVerb = mode === 'cancel' ? 'cancelled' : 'deleted';
+      for (const cls of billedClasses) {
+        const inv = await Invoice.findById(cls.billedInInvoiceId).select('status paidAmount').lean();
+        if (inv && (inv.status === 'paid' || inv.paidAmount > 0)) {
+          const gDoc = await User.findById(cls.student?.guardianId).select('guardianInfo.hourlyRate').lean();
+          const rate = gDoc?.guardianInfo?.hourlyRate || 10;
+          const dur = Number(cls.duration || 60);
+          const hrs = dur / 60;
+          const amt = Math.round((hrs * rate) * 100) / 100;
+          const dateStr = cls.scheduledDate ? new Date(cls.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'unknown date';
+          await InvoiceService.createPaidInvoiceAdjustment({
+            invoiceId: cls.billedInInvoiceId, type: 'credit', reason: adjReason, classDoc: cls,
+            description: `Class on ${dateStr} (${cls.subject || 'Class'}) ${adjVerb} — ${hrs.toFixed(2)}h credit`,
+            hoursDelta: -hrs, amountDelta: -amt, previousDuration: dur, actorId: req.user._id
+          });
+        }
+      }
+    } catch (adjErr) { console.error('Series deactivate adjustment error:', adjErr.message); }
+
+    const ids = toProcess.map(d => d._id);
+    let cancelledCount = 0;
+    let deletedCount = 0;
+
+    if (mode === 'cancel') {
+      const upd = await Class.updateMany(targetFilter, {
+        $set: {
+          status: 'cancelled_by_admin',
+          'cancellation.reason': reason,
+          'cancellation.cancelledAt': now,
+          'cancellation.cancelledBy': req.user._id,
+          'cancellation.cancelledByRole': 'admin',
+        },
+        $unset: { pendingReschedule: 1 },
+      });
+      cancelledCount = upd.modifiedCount || 0;
+      try { const io = req.app.get("io"); if (io) io.emit("class:updated", { ids, parentId: pattern._id, scope: "future", status: 'cancelled_by_admin' }); } catch (e) {}
+    } else {
+      if (toProcess.length) {
+        await saveMultipleToTrash({
+          itemType: 'class',
+          docs: toProcess,
+          labelFn: (s) => `${s.subject || 'Class'} — ${s.scheduledDate ? new Date(s.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}`,
+          metaFn: (s) => ({ subject: s.subject, scheduledDate: s.scheduledDate, duration: s.duration }),
+          userId: req.user._id,
+        });
+      }
+      const result = await Class.deleteMany(baseFilter);
+      deletedCount = result.deletedCount;
+      try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { ids, parentId: pattern._id, scope: "future" }); } catch (e) {}
+    }
+
+    await Class.deactivatePattern(pattern._id, { cutoffDate: now, adminId: req.user._id });
+
+    return res.json({
+      patternId: pattern._id,
+      mode,
+      cancelledCount,
+      deletedCount,
+      deactivated: true,
+    });
+  } catch (err) {
+    console.error('POST /api/classes/series/:id/deactivate error:', err);
+    return res.status(500).json({ message: 'Failed to deactivate series' });
+  }
+});
+
+/* -------------------------
+   POST /api/classes/series/:id/activate
+   - Admin-only
+   - Re-activates a previously deactivated series (clears recurrence.endDate)
+     and regenerates upcoming instances.
+   Returns: { patternId, createdCount, deactivated: false }
+   ------------------------- */
+router.post("/series/:id/activate", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  try {
+    const reactivated = await Class.reactivatePattern(req.params.id);
+    if (!reactivated) return res.status(404).json({ message: 'Series not found' });
+    if (reactivated.status !== 'pattern') return res.status(400).json({ message: 'Target class is not a series pattern' });
+
+    const perDayMap = buildPerDayMap(reactivated.recurrenceDetails || []);
+    const created = await generateRecurringClasses(
+      reactivated,
+      reactivated.recurrence?.generationPeriodMonths || 2,
+      perDayMap,
+      { throwOnError: true }
+    );
+
+    return res.json({
+      patternId: reactivated._id,
+      createdCount: Array.isArray(created) ? created.length : 0,
+      deactivated: false,
+    });
+  } catch (err) {
+    console.error('POST /api/classes/series/:id/activate error:', err);
+    return res.status(500).json({ message: 'Failed to activate series' });
   }
 });
 
@@ -3717,6 +3862,15 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
           userId: req.user._id,
         });
         const result = await Class.deleteMany(filter);
+        // For future/all scopes, end the recurring series so the generator does
+        // not revive these removed classes on the next run.
+        if (scope === "future" || scope === "all") {
+          try {
+            await Class.deactivatePattern(parentId, { cutoffDate: new Date(), adminId: req.user._id });
+          } catch (deErr) {
+            console.error('Idempotent delete: failed to deactivate series:', deErr.message);
+          }
+        }
         try {
           const io = req.app.get("io");
           if (io && ids.length) io.emit("class:deleted", { ids, parentId, scope });
@@ -3833,6 +3987,13 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
       });
       const ids = toDelete.map(d => d._id);
       const result = await Class.deleteMany({ parentRecurringClass: parentId, scheduledDate: { $gte: baseDate } });
+      // End the recurring series at the cutoff so the startup/daily generation
+      // jobs never revive these removed upcoming classes.
+      try {
+        await Class.deactivatePattern(parentId, { cutoffDate: baseDate, adminId: req.user._id });
+      } catch (deErr) {
+        console.error('Future delete: failed to deactivate series:', deErr.message);
+      }
       try { const io = req.app.get("io"); if (io) io.emit("class:deleted", { ids, parentId }); } catch (e) {}
       await refreshParticipantsFromSchedule(teacherId, guardianId, studentId);
       return res.json({ message: `Deleted ${result.deletedCount} future class(es)`, count: result.deletedCount, deletedIds: ids });

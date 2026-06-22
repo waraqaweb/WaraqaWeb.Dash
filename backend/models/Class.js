@@ -211,6 +211,16 @@ const classSchema = new mongoose.Schema({
     lastGenerated: {
       type: Date,
     },
+    // Deactivation audit. When an admin ends/kills a recurring series (e.g. by
+    // removing its upcoming classes), `recurrence.endDate` is set to the cutoff
+    // so no further instances are generated. These fields record who/when.
+    deactivatedAt: {
+      type: Date,
+    },
+    deactivatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
   },
   
   // Parent recurring class reference (for individual instances)
@@ -1221,6 +1231,45 @@ classSchema.statics.findPatternsNeedingGeneration = function() {
       }
     ]
   });
+};
+
+// Deactivate (end) a recurring pattern so the generator stops creating new
+// instances for it. Sets recurrence.endDate to the cutoff (defaults to now),
+// which is honored by findPatternsNeedingGeneration and generateRecurringClasses
+// across every generation vector (startup run, daily cron, recreate-all).
+classSchema.statics.deactivatePattern = function(patternId, { cutoffDate, adminId } = {}) {
+  if (!patternId) return Promise.resolve(null);
+  const cutoff = cutoffDate instanceof Date && !Number.isNaN(cutoffDate.getTime())
+    ? cutoffDate
+    : new Date();
+  return this.findOneAndUpdate(
+    { _id: patternId, status: 'pattern' },
+    {
+      $set: {
+        'recurrence.endDate': cutoff,
+        'recurrence.deactivatedAt': new Date(),
+        'recurrence.deactivatedBy': adminId || null,
+      },
+    },
+    { new: true }
+  );
+};
+
+// Reactivate a previously deactivated pattern by clearing its end date and
+// deactivation audit so generation can resume.
+classSchema.statics.reactivatePattern = function(patternId) {
+  if (!patternId) return Promise.resolve(null);
+  return this.findOneAndUpdate(
+    { _id: patternId, status: 'pattern' },
+    {
+      $unset: {
+        'recurrence.endDate': 1,
+        'recurrence.deactivatedAt': 1,
+        'recurrence.deactivatedBy': 1,
+      },
+    },
+    { new: true }
+  );
 };
 
 // 💰 PRE-DELETE MIDDLEWARE: Handle invoice recalculation when classes are deleted

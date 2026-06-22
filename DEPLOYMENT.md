@@ -11,7 +11,7 @@ From `E:\waraqa`, run:
 Optional examples:
 
 ```powershell
-.\scripts\push-and-deploy.ps1 -WhatChanged "fix class modal spacing"
+.\scripts\push-and-deploy.ps1 -WhatChanged "the message "
 .\scripts\push-and-deploy.ps1 -WhatChanged "deploy invoice changes" -ChangeNumber 42
 .\scripts\push-and-deploy.ps1 -WhatChanged "backend-only hotfix" -SkipLocalBuild
 .\scripts\push-and-deploy.ps1 -WhatChanged "force full rebuild" -DeployMode all

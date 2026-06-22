@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { X, Search, Pencil, Trash2, RotateCcw, AlertCircle, ChevronDown } from "lucide-react";
+import { X, Search, Pencil, Trash2, RotateCcw, AlertCircle, ChevronDown, Power, PowerOff } from "lucide-react";
 
 const normalize = (value) => String(value || "").toLowerCase().trim();
 
@@ -71,18 +71,28 @@ function FilterDropdown({ value, onChange, options, placeholder }) {
 }
 
 /* ---- series row ---- */
-function SeriesRow({ item, onEdit, onDelete, onRecreate, recreatingId, showRecreate }) {
+function SeriesRow({ item, onEdit, onDelete, onRecreate, recreatingId, showRecreate, onDeactivate, onReactivate, deactivatingId, isActive }) {
   const teacher = item?.teacher;
   const guardian = item?.student?.guardianId;
   const futureActive = item?.instanceCounts?.futureActive ?? 0;
   const total = item?.instanceCounts?.total ?? 0;
   const isEmpty = Number(futureActive) === 0;
+  const isDeactivated = Boolean(item?.deactivated);
   const isRecreating = Boolean(recreatingId) && String(recreatingId) === String(item?._id);
+  const isDeactivating = Boolean(deactivatingId) && String(deactivatingId) === String(item?._id);
 
   return (
     <tr className="hover:bg-gray-50/60 transition-colors">
       <td className="px-4 py-3">
-        <div className="text-sm font-semibold text-gray-900">{item?.subject || item?.title || "(Untitled)"}</div>
+        <div className="flex items-center gap-2">
+          <div className="text-sm font-semibold text-gray-900">{item?.subject || item?.title || "(Untitled)"}</div>
+          {isDeactivated && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500" title="Series ended — generation stopped">
+              <PowerOff className="h-2.5 w-2.5" />
+              Deactivated
+            </span>
+          )}
+        </div>
         <div className="mt-0.5 font-mono text-[10px] text-gray-400">{item?._id}</div>
       </td>
       <td className="px-4 py-3 text-sm text-gray-700">
@@ -116,6 +126,16 @@ function SeriesRow({ item, onEdit, onDelete, onRecreate, recreatingId, showRecre
           <button type="button" onClick={() => onEdit?.(item)} className="rounded-full border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-100" title="Edit series">
             <Pencil className="h-3.5 w-3.5" />
           </button>
+          {isActive && (
+            <button type="button" onClick={() => onDeactivate?.(item)} disabled={isDeactivating} className="rounded-full border border-gray-200 p-1.5 text-amber-600 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50" title="Deactivate series (cancel upcoming classes, keep history)">
+              <PowerOff className={`h-3.5 w-3.5 ${isDeactivating ? "animate-pulse" : ""}`} />
+            </button>
+          )}
+          {!isActive && isDeactivated && (
+            <button type="button" onClick={() => onReactivate?.(item)} disabled={isDeactivating} className="rounded-full border border-gray-200 p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50" title="Reactivate series (resume future classes)">
+              <Power className={`h-3.5 w-3.5 ${isDeactivating ? "animate-pulse" : ""}`} />
+            </button>
+          )}
           <button type="button" onClick={() => onDelete?.(item)} className="rounded-full border border-gray-200 p-1.5 text-red-500 hover:bg-red-50" title="Delete series">
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -146,6 +166,9 @@ export default function SeriesScannerModal({
   onRecreateAll,
   recreatingAll,
   recreateAllResult,
+  onDeactivate,
+  onReactivate,
+  deactivatingId,
 }) {
   const [tab, setTab] = useState("active"); // "active" | "inactive"
   const [teacherFilter, setTeacherFilter] = useState("all");
@@ -180,8 +203,10 @@ export default function SeriesScannerModal({
     const inactive = [];
     for (const item of list) {
       const futureActive = Number(item?.instanceCounts?.futureActive ?? 0);
-      if (futureActive > 0) active.push(item);
-      else inactive.push(item);
+      // Deactivated (ended) series always live in the Inactive tab, even if a
+      // stray future instance lingers, so they don't appear "active" again.
+      if (item?.deactivated || futureActive <= 0) inactive.push(item);
+      else active.push(item);
     }
     return { activeList: active, inactiveList: inactive };
   }, [series]);
@@ -357,6 +382,10 @@ export default function SeriesScannerModal({
                     onRecreate={onRecreate}
                     recreatingId={recreatingId}
                     showRecreate={isActive}
+                    onDeactivate={onDeactivate}
+                    onReactivate={onReactivate}
+                    deactivatingId={deactivatingId}
+                    isActive={isActive}
                   />
                 ))
               )}

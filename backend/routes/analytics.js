@@ -332,12 +332,12 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
       ]),
       // Revenue this month (from paid guardian invoices)
       Invoice.aggregate([
-        { $match: { status: 'paid', paidAt: { $gte: monthStart, $lt: monthEnd } } },
+        { $match: { status: 'paid', paidDate: { $gte: monthStart, $lt: monthEnd } } },
         { $group: { _id: null, totalRevenue: { $sum: '$total' }, invoiceCount: { $sum: 1 } } }
       ]),
       // Previous month revenue
       Invoice.aggregate([
-        { $match: { status: 'paid', paidAt: { $gte: prevMonthStart, $lt: monthStart } } },
+        { $match: { status: 'paid', paidDate: { $gte: prevMonthStart, $lt: monthStart } } },
         { $group: { _id: null, totalRevenue: { $sum: '$total' }, invoiceCount: { $sum: 1 } } }
       ]),
       // Teacher costs this month
@@ -351,9 +351,9 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
       MonthlyExchangeRates.findOne({}).sort({ year: -1, month: -1 }).lean(),
       // Last 12 months revenue trend
       Invoice.aggregate([
-        { $match: { status: 'paid', paidAt: { $gte: twelveMonthsAgo } } },
+        { $match: { status: 'paid', paidDate: { $gte: twelveMonthsAgo } } },
         { $group: {
-          _id: { year: { $year: '$paidAt' }, month: { $month: '$paidAt' } },
+          _id: { year: { $year: '$paidDate' }, month: { $month: '$paidDate' } },
           totalRevenue: { $sum: '$total' },
           invoiceCount: { $sum: 1 }
         }},
@@ -372,7 +372,7 @@ router.get('/business-intelligence', authenticateToken, requireRole(['admin']), 
       ]),
       // DYNAMIC: Actual charge rate from recent invoices (last 3 months)
       Invoice.aggregate([
-        { $match: { status: 'paid', paidAt: { $gte: threeMonthsAgo } } },
+        { $match: { status: 'paid', paidDate: { $gte: threeMonthsAgo } } },
         { $unwind: '$items' },
         { $match: { 'items.rate': { $gt: 0 }, 'items.duration': { $gt: 0 } } },
         { $group: {
@@ -888,7 +888,7 @@ router.get('/bi-hub', authenticateToken, requireRole(['admin']), async (req, res
         { $group: { _id: null, min: { $sum: '$duration' }, cnt: { $sum: 1 } } }
       ]),
       Invoice.aggregate([
-        { $match: { status: 'paid', paidAt: { $gte: periodStart, $lt: periodEnd } } },
+        { $match: { status: 'paid', paidDate: { $gte: periodStart, $lt: periodEnd } } },
         { $group: { _id: null, total: { $sum: '$total' }, cnt: { $sum: 1 } } }
       ]),
       tiCurr
@@ -899,7 +899,7 @@ router.get('/bi-hub', authenticateToken, requireRole(['admin']), async (req, res
         : Promise.resolve([]),
       Class.distinct('student.studentId', { scheduledDate: { $gte: periodStart, $lt: periodEnd }, status: { $in: COMPLETED }, 'student.studentId': { $ne: null } }),
       Class.distinct('teacher', { scheduledDate: { $gte: periodStart, $lt: periodEnd }, status: { $in: COMPLETED }, teacher: { $ne: null } }),
-      Invoice.distinct('guardian', { status: 'paid', paidAt: { $gte: periodStart, $lt: periodEnd } }),
+      Invoice.distinct('guardian', { status: 'paid', paidDate: { $gte: periodStart, $lt: periodEnd } }),
       Student.countDocuments({ createdAt: { $gte: periodStart, $lt: periodEnd } }),
       Class.aggregate([
         { $match: { scheduledDate: { $gte: periodStart, $lt: periodEnd }, status: { $in: CANCELLED } } },
@@ -914,7 +914,7 @@ router.get('/bi-hub', authenticateToken, requireRole(['admin']), async (req, res
         { $group: { _id: null, min: { $sum: '$duration' }, cnt: { $sum: 1 } } }
       ]),
       Invoice.aggregate([
-        { $match: { status: 'paid', paidAt: { $gte: prevStart, $lt: prevEnd } } },
+        { $match: { status: 'paid', paidDate: { $gte: prevStart, $lt: prevEnd } } },
         { $group: { _id: null, total: { $sum: '$total' }, cnt: { $sum: 1 } } }
       ]),
       tiPrev
@@ -924,10 +924,10 @@ router.get('/bi-hub', authenticateToken, requireRole(['admin']), async (req, res
           ])
         : Promise.resolve([]),
       Class.distinct('student.studentId', { scheduledDate: { $gte: prevStart, $lt: prevEnd }, status: { $in: COMPLETED }, 'student.studentId': { $ne: null } }),
-      Invoice.distinct('guardian', { status: 'paid', paidAt: { $gte: prevStart, $lt: prevEnd } }),
+      Invoice.distinct('guardian', { status: 'paid', paidDate: { $gte: prevStart, $lt: prevEnd } }),
       User.countDocuments({ role: 'guardian', createdAt: { $gte: periodStart, $lt: periodEnd } }),
       Invoice.aggregate([
-        { $match: { status: 'paid', paidAt: { $gte: periodStart, $lt: periodEnd } } },
+        { $match: { status: 'paid', paidDate: { $gte: periodStart, $lt: periodEnd } } },
         { $group: { _id: '$guardian', total: { $sum: '$total' }, cnt: { $sum: 1 } } },
         { $sort: { total: -1 } }, { $limit: 10 },
         { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'u' } },
@@ -969,9 +969,9 @@ router.get('/bi-hub', authenticateToken, requireRole(['admin']), async (req, res
         { $sort: { '_id.y': 1, '_id.m': 1 } }
       ]),
       Invoice.aggregate([
-        { $match: { status: 'paid', paidAt: { $gte: histStart } } },
+        { $match: { status: 'paid', paidDate: { $gte: histStart } } },
         { $group: {
-          _id: { y: { $year: '$paidAt' }, m: { $month: '$paidAt' } },
+          _id: { y: { $year: '$paidDate' }, m: { $month: '$paidDate' } },
           total: { $sum: '$total' }, guardians: { $addToSet: '$guardian' }
         }},
         { $sort: { '_id.y': 1, '_id.m': 1 } }

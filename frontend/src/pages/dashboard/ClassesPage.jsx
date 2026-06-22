@@ -435,6 +435,7 @@ const ClassesPage = ({ isActive = true }) => {
   const [seriesScannerList, setSeriesScannerList] = useState([]);
   const [seriesScannerSearch, setSeriesScannerSearch] = useState("");
   const [seriesRecreatingId, setSeriesRecreatingId] = useState(null);
+  const [seriesDeactivatingId, setSeriesDeactivatingId] = useState(null);
   const [seriesRecreatingAll, setSeriesRecreatingAll] = useState(false);
   const [seriesRecreateAllResult, setSeriesRecreateAllResult] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -606,6 +607,39 @@ const ClassesPage = ({ isActive = true }) => {
       alert(err?.response?.data?.message || 'Failed to recreate series instances');
     } finally {
       setSeriesRecreatingId(null);
+    }
+  }, [fetchSeriesScannerList]);
+
+  const handleDeactivateSeries = useCallback(async (pattern) => {
+    const patternId = pattern?._id;
+    if (!patternId) return;
+    if (!window.confirm('Deactivate this series? Upcoming classes will be cancelled (kept as history, not deleted) and no new ones will be generated until you reactivate it. Already conducted or reported classes are not affected.')) return;
+    setSeriesDeactivatingId(patternId);
+    try {
+      await api.post(`/classes/series/${patternId}/deactivate`, { mode: 'cancel' });
+      await fetchSeriesScannerList();
+      await fetchClassesRef.current?.();
+    } catch (err) {
+      console.error('Failed to deactivate series:', err);
+      alert(err?.response?.data?.message || 'Failed to deactivate series');
+    } finally {
+      setSeriesDeactivatingId(null);
+    }
+  }, [fetchSeriesScannerList]);
+
+  const handleReactivateSeries = useCallback(async (pattern) => {
+    const patternId = pattern?._id;
+    if (!patternId) return;
+    setSeriesDeactivatingId(patternId);
+    try {
+      await api.post(`/classes/series/${patternId}/activate`);
+      await fetchSeriesScannerList();
+      await fetchClassesRef.current?.();
+    } catch (err) {
+      console.error('Failed to reactivate series:', err);
+      alert(err?.response?.data?.message || 'Failed to reactivate series');
+    } finally {
+      setSeriesDeactivatingId(null);
     }
   }, [fetchSeriesScannerList]);
 
@@ -4800,6 +4834,9 @@ fetchClassesRef.current = fetchClasses;
         onRecreateAll={handleRecreateAllSeriesInstances}
         recreatingAll={seriesRecreatingAll}
         recreateAllResult={seriesRecreateAllResult}
+        onDeactivate={handleDeactivateSeries}
+        onReactivate={handleReactivateSeries}
+        deactivatingId={seriesDeactivatingId}
       />
       )}
 

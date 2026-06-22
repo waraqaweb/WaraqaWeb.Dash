@@ -4,7 +4,8 @@ import { fetchBIHub } from '../../api/businessIntelligence';
 import {
   X, RefreshCcw, DollarSign, Users, TrendingUp, TrendingDown, Minus,
   Target, BarChart3, Award, Lightbulb, AlertTriangle, ChevronDown,
-  Download, Edit3, Check, BookOpen, ShieldCheck, Activity, Globe, Layers
+  Download, Edit3, Check, BookOpen, ShieldCheck, Activity, Globe, Layers,
+  PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
 
 const SECTIONS = [
@@ -126,10 +127,10 @@ function KPICard({ label, value, sub, target, prev, warn, highlight, className =
   const toTarget = target ? delta(numVal, target) : null;
   const isRed = warn ? warn(numVal) : false;
   return (
-    <div className={`rounded-2xl border border-border bg-card p-3 flex flex-col gap-1 ${className}`}>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-      <div className={`text-2xl font-bold leading-none ${isRed ? 'text-rose-500' : highlight ? 'text-emerald-600' : 'text-foreground'}`}>{value}</div>
-      {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
+    <div className={`rounded-xl border border-border bg-card p-2.5 flex flex-col gap-0.5 ${className}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground leading-tight">{label}</div>
+      <div className={`text-xl font-bold leading-none ${isRed ? 'text-rose-500' : highlight ? 'text-emerald-600' : 'text-foreground'}`}>{value}</div>
+      {sub && <div className="text-[10px] text-muted-foreground leading-tight">{sub}</div>}
       {prev != null && <TrendBadge curr={numVal} prev={prev} />}
       {target != null && (
         <div className="flex items-center gap-1 mt-0.5">
@@ -194,8 +195,8 @@ function ScoreGauge({ score, label }) {
 }
 
 function Grid({ cols = 2, children }) {
-  const cn = cols === 3 ? 'grid-cols-3' : cols === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2';
-  return <div className={`grid ${cn} gap-3`}>{children}</div>;
+  const cn = cols === 3 ? 'grid-cols-2 sm:grid-cols-3' : cols === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2';
+  return <div className={`grid ${cn} gap-2`}>{children}</div>;
 }
 
 function HistoryBar({ data, dataKey, color = '#6366f1', height = 80 }) {
@@ -681,6 +682,7 @@ export default function BusinessIntelligenceModal({ open, onClose }) {
   const [targets,     setTargets]     = useState(() => loadTargets());
   const [wi,          setWI]          = useState({ ownerSalary: 0, otherExpenses: 0, paypalRate: 3.5 });
   const [wiMode,      setWIMode]      = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(false);
 
   useEffect(() => {
     if (data && !wiMode) setWI(p => ({
@@ -713,6 +715,9 @@ export default function BusinessIntelligenceModal({ open, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background">
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border bg-background shrink-0 flex-wrap">
+        <button type="button" onClick={() => setNavCollapsed(v => !v)} title={navCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-label="Toggle sidebar" className="hidden md:inline-flex p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground">
+          {navCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+        </button>
         <BarChart3 className="h-5 w-5 text-primary shrink-0" />
         <span className="font-semibold text-sm">Business Intelligence</span>
         {data && <span className="text-xs text-muted-foreground">{data.periodLabel}</span>}
@@ -724,12 +729,13 @@ export default function BusinessIntelligenceModal({ open, onClose }) {
         </div>
       </div>
       <div className="flex flex-1 overflow-hidden">
-        <nav className="w-48 shrink-0 border-r border-border overflow-y-auto py-2 hidden md:flex flex-col gap-0.5 px-2 bg-background">
+        <nav className={`${navCollapsed ? 'w-14' : 'w-48'} shrink-0 border-r border-border overflow-y-auto py-2 hidden md:flex flex-col gap-0.5 px-2 bg-background transition-[width] duration-200`}>
           {SECTIONS.map(s => {
             const Icon = s.icon; const active = section === s.id;
             return <button key={s.id} type="button" onClick={() => setSection(s.id)}
-              className={`w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left text-sm transition ${active?'bg-primary/10 text-primary font-semibold':'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
-              <Icon className="h-4 w-4 shrink-0" /><span>{s.id}. {s.label}</span>
+              title={navCollapsed ? `${s.id}. ${s.label}` : undefined}
+              className={`w-full flex items-center ${navCollapsed ? 'justify-center px-0' : 'gap-2 px-2'} py-2 rounded-xl text-left text-sm transition ${active?'bg-primary/10 text-primary font-semibold':'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
+              <Icon className="h-4 w-4 shrink-0" />{!navCollapsed && <span>{s.id}. {s.label}</span>}
             </button>;
           })}
         </nav>

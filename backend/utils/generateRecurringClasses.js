@@ -16,9 +16,21 @@ const User = require('../models/User');
  */
 async function generateRecurringClasses(recurringPattern, periodMonths = 2, perDayMapParam, options = {}) {
   const generated = [];
-  const { throwOnError = false } = options || {};
+  const { throwOnError = false, respectCancelledInstances = false } = options || {};
   try {
     const pattern = recurringPattern.toObject ? recurringPattern.toObject() : recurringPattern;
+
+    // If the series has been ended/deactivated (recurrence.endDate already in the
+    // past), do not generate anything. This is the lever used to "kill" a series
+    // when its upcoming classes are removed, so the startup/daily generation jobs
+    // never revive the removed classes.
+    if (pattern.recurrence?.endDate) {
+      const seriesEnd = new Date(pattern.recurrence.endDate);
+      if (!Number.isNaN(seriesEnd.getTime()) && seriesEnd.getTime() <= Date.now()) {
+        return generated;
+      }
+    }
+
     let teacherDoc = null;
     let guardianDoc = null;
     if (pattern?.teacher) {
@@ -160,7 +172,13 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
           // Avoid duplicates when the rolling generation job runs repeatedly.
           // Use a 90-minute tolerance window to catch DST-shifted instances
           // (same local time can map to different UTC after a DST change).
+          // When respectCancelledInstances is set (used by the scheduled job),
+          // a cancelled instance at this slot also counts as "already exists" so
+          // deliberately-cancelled occurrences are not regenerated/duplicated.
           const DST_TOLERANCE_MS = 90 * 60 * 1000;
+          const dedupeExcludedStatuses = respectCancelledInstances
+            ? ['pattern']
+            : ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'];
           const alreadyExists = await Class.exists({
             parentRecurringClass: recurringPattern._id,
             scheduledDate: {
@@ -168,7 +186,7 @@ async function generateRecurringClasses(recurringPattern, periodMonths = 2, perD
               $lte: new Date(instanceDate.getTime() + DST_TOLERANCE_MS),
             },
             duration: instanceDuration,
-            status: { $nin: ['pattern', 'cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian'] },
+            status: { $nin: dedupeExcludedStatuses },
           });
           if (alreadyExists) continue;
 

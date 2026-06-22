@@ -18,7 +18,9 @@ async function runGenerateRecurringClasses(options = {}) {
         }
       }
 
-      const generated = await generateRecurringClasses(p, p.recurrence?.generationPeriodMonths || 2, perDayMap);
+      // respectCancelledInstances: do not regenerate occurrences that were
+      // deliberately cancelled (prevents revived duplicates of cancelled classes).
+      const generated = await generateRecurringClasses(p, p.recurrence?.generationPeriodMonths || 2, perDayMap, { respectCancelledInstances: true });
       totalCreated += generated.length;
     } catch (err) {
       console.error('Error generating classes for pattern', p._id, err && err.message);

@@ -702,29 +702,11 @@ const NotificationCenter = () => {
 
                         {user?.role === 'admin' && isUninvoicedWarning(notification) && (
                           <div className="mt-2 text-xs text-gray-600">
-                            {uninvoicedLessonsState.loading ? (
-                              <p className="text-gray-400">Loading details...</p>
-                            ) : uninvoicedLessonsState.error ? (
+                            {uninvoicedLessonsState.error ? (
                               <p className="text-red-600">{uninvoicedLessonsState.error}</p>
-                            ) : uninvoicedLessonsState.total === 0 ? (
+                            ) : uninvoicedLessonsState.total === 0 && !uninvoicedLessonsState.loading ? (
                               <p className="text-green-600">All lessons are now invoiced.</p>
-                            ) : (
-                              <>
-                                <ul className="mt-1 space-y-0.5">
-                                  {uninvoicedLessonsState.lessons.slice(0, 5).map((lesson) => (
-                                    <li key={lesson.classId} className="text-gray-600">
-                                      {formatDateTimeDDMMMYYYYhhmmA(lesson.scheduledDate, { timeZone: userTimezone })}
-                                      {' · '}{lesson?.teacher?.name || '?'}
-                                      {' · '}{lesson?.student?.name || '?'}
-                                      {' · '}{lesson?.guardian?.name || '?'}
-                                    </li>
-                                  ))}
-                                </ul>
-                                {uninvoicedLessonsState.total > 5 && (
-                                  <p className="mt-1 text-gray-400">+{uninvoicedLessonsState.total - 5} more</p>
-                                )}
-                              </>
-                            )}
+                            ) : null}
                             <div className="mt-2 flex flex-wrap items-center gap-2">
                               <button
                                 type="button"

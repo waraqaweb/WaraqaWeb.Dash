@@ -27,7 +27,13 @@ const fmtClassTime = (value) => {
   } catch { return ''; }
 };
 
-const formatTimezoneLabel = (value = '') => String(value || '').trim().replace(/_/g, ' ') || 'student timezone';
+// Friendly city label from an IANA timezone (e.g. "America/New_York" -> "New York").
+const formatTimezoneLabel = (value = '') => {
+  const tz = String(value || '').trim();
+  if (!tz) return '';
+  const city = tz.includes('/') ? tz.split('/').pop() : tz;
+  return city.replace(/_/g, ' ');
+};
 
 const formatTimePartsForTimezone = (value, timezone) => {
   if (!value || !timezone) return null;
@@ -55,6 +61,30 @@ const formatTimePartsForTimezone = (value, timezone) => {
   } catch {
     return null;
   }
+};
+
+// Calendar day (YYYY-MM-DD) of a date as seen in a given timezone.
+const ymdInTimezone = (date, timezone) => {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(date);
+  } catch {
+    return '';
+  }
+};
+
+// "today" / "tomorrow" relative to now in the given timezone, else the weekday.
+const relativeDayLabel = (date, timezone, fallbackWeekday = '') => {
+  const todayYmd = ymdInTimezone(new Date(), timezone);
+  const targetYmd = ymdInTimezone(date, timezone);
+  if (!todayYmd || !targetYmd) return fallbackWeekday;
+  const diff = Math.round(
+    (Date.parse(`${targetYmd}T00:00:00Z`) - Date.parse(`${todayYmd}T00:00:00Z`)) / 86400000
+  );
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'tomorrow';
+  return fallbackWeekday;
 };
 
 // Small, high-confidence name lists for a best-effort gender guess. When a name
@@ -219,28 +249,34 @@ export const firstClassReminderMessage = ({
   const studentRef = recipient.isSelf ? 'your' : (studentName || 'your child');
   const classOwnerPhrase = recipient.isSelf ? 'your' : `${studentRef}'s`;
   const teacherRef = teacherName || 'the teacher';
-  const localParts = formatTimePartsForTimezone(classAt, studentTimezone || CAIRO_TZ);
+
+  const tz = studentTimezone || CAIRO_TZ;
+  const localParts = formatTimePartsForTimezone(classAt, tz);
   const cairoParts = formatTimePartsForTimezone(classAt, CAIRO_TZ);
   const localTzLabel = formatTimezoneLabel(studentTimezoneLabel || studentTimezone);
 
-  const localLine = localParts
-    ? `*today ${localParts.timeLower} (${localTzLabel})*`
-    : '*today (student timezone)*';
+  let localLine = '';
+  if (localParts) {
+    const relDay = classAt ? relativeDayLabel(new Date(classAt), tz, localParts.weekday) : localParts.weekday;
+    const tzSuffix = localTzLabel ? `${localTzLabel} time` : 'local time';
+    localLine = `*${relDay} ${localParts.timeLower} (${tzSuffix})*`;
+  }
   const cairoLine = cairoParts
     ? `*${cairoParts.weekday} ${cairoParts.timeUpper} Cairo time.*`
-    : '*Cairo time.*';
+    : '';
+
+  const timeBlock = [localLine, cairoLine].filter(Boolean).join('\n');
+  const intro = `Just a friendly reminder that ${classOwnerPhrase} first class with ${teacherRef} is`;
+  const body = timeBlock ? `${intro}\n\n${timeBlock}` : `${intro} coming up soon.`;
 
   const readiness = recipient.isSelf
     ? 'Please make sure you are ready a few minutes early with a stable internet connection.'
     : `Please make sure ${studentRef} is ready a few minutes early with a stable internet connection.`;
 
   return (
-`Assalamu alaikum 🌟
+`Assalamu alaikum,
 
-Just a friendly reminder that ${studentRef}'s first class with ${teacherRef} is
-Just a friendly reminder that ${classOwnerPhrase} first class with ${teacherRef} is
-${localLine}
-${cairoLine}
+${body}
 
 ${readiness}
 

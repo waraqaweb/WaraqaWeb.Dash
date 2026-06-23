@@ -833,6 +833,51 @@ router.post('/registration/:kind/:id/complete', authenticateToken, requireAdmin,
 const firstNameOf = (value = '') => String(value || '').trim().split(/\s+/)[0] || '';
 const escapeRegExp = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Tolerant name matching for the onboarding reminder: registrations frequently
+// hold only a first name, sometimes mis-spelled (e.g. "Mohamed" vs "Mohammed",
+// "Ahmed" vs "Ahmad"). We normalise away case/diacritics/punctuation and allow
+// a prefix match or a small edit distance so the right class is still found.
+const normalizeName = (value = '') =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const nameEditDistance = (a = '', b = '') => {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const prev = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let prevDiag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(
+        prev[j] + 1,
+        prev[j - 1] + 1,
+        prevDiag + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+      prevDiag = tmp;
+    }
+  }
+  return prev[b.length];
+};
+
+const namesMatch = (a = '', b = '') => {
+  const na = normalizeName(a);
+  const nb = normalizeName(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  // Partial names: one side is just the first part of the other.
+  if (na.length >= 3 && nb.length >= 3 && (na.startsWith(nb) || nb.startsWith(na))) return true;
+  // Spelling variants: allow up to 2 edits on longer names, 1 on short ones.
+  const threshold = Math.min(na.length, nb.length) >= 6 ? 2 : 1;
+  return nameEditDistance(na, nb) <= threshold;
+};
+
 router.get('/registration/:kind/:id/details', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const found = await loadRegistration(req.params.kind, req.params.id);
@@ -901,27 +946,47 @@ router.get('/registration/:kind/:id/details', authenticateToken, requireAdmin, a
     const existingSet = new Set(existingFirstNames);
 
     let classesByStudent = [];
+    let firstUpcomingClass = null;
     if (guardianUserId && names.length) {
       const classes = await Class.find({
         'student.guardianId': guardianUserId,
-        status: { $nin: ['cancelled'] },
+        status: { $nin: ['cancelled', 'cancelled_by_admin', 'cancelled_by_teacher', 'cancelled_by_student', 'cancelled_by_guardian', 'pattern'] },
       })
-        .select('student.studentName scheduledDate status')
+        .select('student.studentName scheduledDate status timezone')
         .sort({ scheduledDate: 1 })
         .lean();
 
+      const now = new Date();
+      const isExistingStudentClass = (c) => existingSet.has(firstNameOf(c.student?.studentName).toLowerCase());
+
       classesByStudent = names.map((fn) => {
-        const matched = classes.filter((c) => firstNameOf(c.student?.studentName).toLowerCase() === fn.toLowerCase());
-        const upcoming = matched.filter((c) => c.scheduledDate && new Date(c.scheduledDate) >= new Date());
+        const matched = classes.filter((c) => namesMatch(c.student?.studentName, fn));
+        const upcoming = matched.filter((c) => c.scheduledDate && new Date(c.scheduledDate) >= now);
+        const next = upcoming[0] || matched[0] || null;
         return {
           name: fn,
           isExistingStudent: existingSet.has(fn.toLowerCase()),
           hasClasses: matched.length > 0,
           totalCount: matched.length,
           upcomingCount: upcoming.length,
-          nextClassAt: (upcoming[0] || matched[0])?.scheduledDate || null,
+          nextClassAt: next?.scheduledDate || null,
+          timezone: next?.timezone || null,
         };
       });
+
+      // The onboarding reminder is about the FIRST class. Find the earliest
+      // upcoming class for this guardian, preferring a newly-added student
+      // (returning guardians may already have ongoing classes for older kids).
+      const upcomingAll = classes.filter((c) => c.scheduledDate && new Date(c.scheduledDate) >= now);
+      const newStudentUpcoming = upcomingAll.filter((c) => !isExistingStudentClass(c));
+      const firstDoc = newStudentUpcoming[0] || upcomingAll[0] || classes[0] || null;
+      if (firstDoc) {
+        firstUpcomingClass = {
+          scheduledDate: firstDoc.scheduledDate,
+          timezone: firstDoc.timezone || 'Africa/Cairo',
+          studentName: firstDoc.student?.studentName || '',
+        };
+      }
     } else {
       classesByStudent = names.map((fn) => ({
         name: fn,
@@ -930,6 +995,7 @@ router.get('/registration/:kind/:id/details', authenticateToken, requireAdmin, a
         totalCount: 0,
         upcomingCount: 0,
         nextClassAt: null,
+        timezone: null,
       }));
     }
 
@@ -939,6 +1005,7 @@ router.get('/registration/:kind/:id/details', authenticateToken, requireAdmin, a
         ? { _id: evaluation._id, title: evaluation.title || '', status: evaluation.status || '', students: evalStudents }
         : null,
       classesByStudent,
+      firstUpcomingClass,
     });
   } catch (error) {
     console.error('Registration details error:', error);

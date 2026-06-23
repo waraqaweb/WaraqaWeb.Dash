@@ -14,6 +14,9 @@ async function runUninvoicedLessonsAudit(options = {}) {
   const sinceDays = Number(process.env.AUDIT_SINCE_DAYS || options.sinceDays || 90);
   const includeCancelled = String(process.env.AUDIT_INCLUDE_CANCELLED || options.includeCancelled || 'false').toLowerCase() === 'true';
   const notifyAdmins = String(process.env.AUDIT_NOTIFY_ADMINS || options.notifyAdmins || 'true').toLowerCase() === 'true';
+  // Only surface a fresh admin notification once every N days so it isn't noisy.
+  // (An existing unread notification is always refreshed in place regardless.)
+  const throttleDays = Math.max(1, Number(process.env.AUDIT_NOTIFY_THROTTLE_DAYS || options.throttleDays || 3));
 
   try {
     const uninvoiced = await findUninvoicedLessons({ sinceDays, includeCancelled });
@@ -68,9 +71,11 @@ async function runUninvoicedLessonsAudit(options = {}) {
         const relatedTo = 'system';
         const relatedId = 'uninvoiced-lessons';
         const metadata = { category: 'audit', kind: 'uninvoiced_lessons', sinceDays, total };
+        const throttleSince = new Date(Date.now() - throttleDays * 24 * 60 * 60 * 1000);
 
         await Promise.allSettled(
           adminIds.map(async (adminId) => {
+            // Prefer refreshing an existing unread notification in place (not noisy).
             const existing = await Notification.findOne({
               user: adminId,
               relatedTo,
@@ -87,6 +92,19 @@ async function runUninvoicedLessonsAudit(options = {}) {
               await existing.save();
               return existing;
             }
+
+            // No unread notification means the admin already saw/dismissed the last
+            // one. Stay quiet until the throttle window elapses so it only resurfaces
+            // once every few days instead of every daily run / deploy.
+            const recent = await Notification.findOne({
+              user: adminId,
+              relatedTo,
+              relatedId,
+              'metadata.kind': 'uninvoiced_lessons',
+              createdAt: { $gte: throttleSince }
+            }).select('_id').lean();
+
+            if (recent) return null;
 
             return notificationService.createNotification({
               userId: adminId,

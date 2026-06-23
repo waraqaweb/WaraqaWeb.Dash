@@ -430,7 +430,13 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
 
   const evalStudents = details?.evaluation?.students || [];
   const classesByStudent = details?.classesByStudent || [];
-  const nextClassAt = classesByStudent.find((c) => c.nextClassAt)?.nextClassAt || null;
+  const firstUpcomingClass = details?.firstUpcomingClass || null;
+  const nextClassAt = firstUpcomingClass?.scheduledDate
+    || classesByStudent.find((c) => c.nextClassAt)?.nextClassAt
+    || null;
+  const nextClassTimezone = firstUpcomingClass?.timezone
+    || classesByStudent.find((c) => c.nextClassAt && c.timezone)?.timezone
+    || '';
 
   const startDateLabel = (s) => (s?.expectedStartDate ? new Date(s.expectedStartDate).toLocaleDateString() : '');
 
@@ -450,7 +456,7 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
         if (!s) return '';
         return teacherAvailabilityMessage({ studentName: s.name, slots: s.availabilitySlots, timezone: s.availabilityTimezone, expectedStartDate: startDateLabel(s) });
       }
-      case 'reminder': return firstClassReminderMessage({ recipient, classAt: nextClassAt });
+      case 'reminder': return firstClassReminderMessage({ recipient, classAt: nextClassAt, studentTimezone: nextClassTimezone });
       case 'feedback': return firstClassFeedbackMessage(recipient);
       default: return '';
     }

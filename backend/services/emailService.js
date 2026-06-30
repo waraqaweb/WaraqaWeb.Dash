@@ -503,7 +503,7 @@ function formatPersonName(person, { includeLastName = false, fallback = 'there' 
   if (!person) return fallback;
   if (typeof person === 'string') return person || fallback;
 
-  const epithet = formatRecipientEpithet(person?.guardianInfo?.epithet || person?.epithet);
+  const epithet = formatRecipientEpithet(person?.guardianInfo?.epithet || person?.teacherInfo?.epithet || person?.epithet);
   const parts = [
     epithet,
     person?.firstName || '',

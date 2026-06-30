@@ -5,7 +5,7 @@
 From `E:\waraqa`, run:
 
 ```powershell
-.\scripts\push-and-deploy.ps1 -WhatChanged "invoices scheduled classes issue"
+.\scripts\push-and-deploy.ps1 -WhatChanged "classes series cancellation issue and BI fixes"
 ```
 
 Optional examples:

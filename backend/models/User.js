@@ -273,6 +273,10 @@ const userSchema = new mongoose.Schema({
   
   // Teacher-specific Information (only for role: 'teacher')
   teacherInfo: {
+    epithet: {
+      type: String,
+      trim: true
+    },
     subjects: [
       {
         type: String,

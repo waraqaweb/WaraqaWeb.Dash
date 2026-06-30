@@ -245,6 +245,8 @@ export default function OnboardingTodoPanel() {
         ) : (
           <div className="flex gap-3 overflow-x-auto pb-2">
             {boardColumns.map((cards, idx) => {
+              // Only surface phases that actually hold students — hide empty columns.
+              if (cards.length === 0) return null;
               const isReady = idx === PHASES.length;
               const head = isReady ? { label: 'Ready to close', tone: READY_TONE } : PHASES[idx];
               return (
@@ -442,8 +444,8 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
 
   // Personalization: is the guardian the learner, and which honorific to use.
   const recipient = useMemo(
-    () => buildRecipient({ guardianName: name, students: row.students }),
-    [name, row.students]
+    () => buildRecipient({ guardianName: name, students: row.students, epithet: row.personalInfo?.epithet }),
+    [name, row.students, row.personalInfo?.epithet]
   );
 
   // Build the copy-ready message attached to a step (or '' if none).

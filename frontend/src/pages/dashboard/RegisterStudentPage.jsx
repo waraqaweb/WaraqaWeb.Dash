@@ -27,6 +27,9 @@ import { getBrowserTimezone } from '../../utils/timezone';
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DURATIONS = [30, 45, 60, 90, 120];
 
+// How the person prefers to be addressed in emails & WhatsApp messages.
+const EPITHET_OPTIONS = ['Mr', 'Mrs', 'Ms', 'Brother', 'Sister'];
+
 const STEPS = [
   { key: 'guardian', label: 'About you', icon: User, description: 'Tell us about you, the parent or guardian. You will add the student(s) in the next step.' },
   { key: 'students', label: 'Students', icon: Users, description: 'Add the student(s) who will take classes — this can be your child, yourself, or both.' },
@@ -78,6 +81,7 @@ const RegisterStudentPage = () => {
   // Guardian
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [epithet, setEpithet] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [timezone, setTimezone] = useState(detectedTimezone || 'Africa/Cairo');
@@ -200,6 +204,7 @@ const RegisterStudentPage = () => {
       guardianName: `${firstName.trim()} ${lastName.trim()}`.trim(),
       email: email.trim().toLowerCase(),
       phone: phone.trim(),
+      epithet: epithet.trim(),
       timezone,
     },
     address: { city: city.trim(), state: '', country: country.trim() },
@@ -328,6 +333,20 @@ const RegisterStudentPage = () => {
             <div className="grid sm:grid-cols-2 gap-3">
               <Input label="First name *" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
               <Input label="Last name *" value={lastName} onChange={(e) => setLastName(e.target.value)} />
+              <div className="flex flex-col gap-1 sm:col-span-2">
+                <span className="text-xs font-medium text-slate-600">What should we call you in messages?</span>
+                <select
+                  value={epithet}
+                  onChange={(e) => setEpithet(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+                >
+                  <option value="">None</option>
+                  {EPITHET_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-slate-400">Used to greet you in emails and WhatsApp messages.</span>
+              </div>
               <Input label="Email *" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="sm:col-span-2" />
               <Input label="Phone (WhatsApp)" value={phone} onChange={(e) => setPhone(e.target.value)} />
               <div className="flex flex-col gap-1">

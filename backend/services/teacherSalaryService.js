@@ -854,6 +854,73 @@ class TeacherSalaryService {
                     ), 0);
                     const roundedHours = Math.round(addedHours * 1000) / 1000;
 
+                    // The earlier invoice for this month is already paid, so we cannot
+                    // modify it. The teacher's rate tier, however, must reflect the FULL
+                    // monthly volume (all countable classes this month, including the
+                    // already-paid ones) — not just the hours on this adjustment. We
+                    // therefore: (1) rate the new hours at the full-month tier, and
+                    // (2) add a "true-up" extra that pays the rate difference on the hours
+                    // that were already billed at a lower tier. Net result: the whole
+                    // month settles at the correct tier. A locked custom rate is preserved.
+                    let adjustmentRateSnapshot = existing.rateSnapshot;
+                    let tierTrueUpUSD = 0;
+                    let tierTrueUpReason = '';
+                    // Stable marker so successive late-submission runs can recognise (and
+                    // avoid double-paying) true-ups they themselves added in earlier runs.
+                    const TIER_TRUE_UP_PREFIX = 'Tier true-up:';
+                    if (existing.rateSnapshot?.partition !== 'custom') {
+                      try {
+                        const tierHours = Math.max(Number(fullMonthHours || 0), Number(roundedHours || 0));
+                        const fullMonthRate = await this.getTeacherRate(teacher, tierHours);
+                        if (fullMonthRate && Number.isFinite(Number(fullMonthRate.rate))) {
+                          adjustmentRateSnapshot = {
+                            partition: fullMonthRate.partition,
+                            rate: fullMonthRate.rate,
+                            effectiveFrom: existing.rateSnapshot?.effectiveFrom || new Date(),
+                            description: fullMonthRate.description
+                          };
+
+                          // Sum everything already billed for this month (regular invoice
+                          // plus any prior adjustments). The new adjustment is not saved yet,
+                          // so it is naturally excluded from this query.
+                          const priorInvoices = await TeacherInvoice.find({
+                            teacher: teacher._id,
+                            month,
+                            year,
+                            deleted: { $ne: true }
+                          }).select('grossAmountUSD totalHours extras').lean();
+
+                          const priorBilledHours = priorInvoices.reduce((sum, inv) => sum + Number(inv.totalHours || 0), 0);
+                          // Hourly compensation already accounted for = base gross (hours × rate)
+                          // PLUS any earlier tier true-ups, so re-running across several late
+                          // batches never pays the same margin twice.
+                          let priorBilledGrossUSD = 0;
+                          for (const inv of priorInvoices) {
+                            priorBilledGrossUSD += Number(inv.grossAmountUSD || 0);
+                            for (const ex of (inv.extras || [])) {
+                              if (ex && typeof ex.reason === 'string' && ex.reason.startsWith(TIER_TRUE_UP_PREFIX)) {
+                                priorBilledGrossUSD += Number(ex.amountUSD || 0);
+                              }
+                            }
+                          }
+
+                          const fullRate = Number(fullMonthRate.rate);
+                          // Top-up owed on previously billed hours = (priorHours × fullRate) − alreadyPaid.
+                          // Combined with this adjustment's own gross (newHours × fullRate), the month's
+                          // total hourly pay becomes fullMonthHours × fullRate.
+                          const trueUp = Math.round((priorBilledHours * fullRate - priorBilledGrossUSD) * 100) / 100;
+                          if (Math.abs(trueUp) >= 0.01) {
+                            tierTrueUpUSD = trueUp;
+                            tierTrueUpReason = `${TIER_TRUE_UP_PREFIX} ${priorBilledHours.toFixed(2)}h re-rated to $${fullRate}/hr (full-month ${Number(fullMonthHours || 0).toFixed(2)}h tier)`;
+                          }
+                        }
+                      } catch (rateErr) {
+                        console.warn('[generateMonthlyInvoices] Failed to compute full-month tier for adjustment invoice; falling back to prior rate:', rateErr?.message || rateErr);
+                        adjustmentRateSnapshot = existing.rateSnapshot;
+                        tierTrueUpUSD = 0;
+                      }
+                    }
+
                     const adjustmentInvoice = new TeacherInvoice({
                       teacher: teacher._id,
                       month,
@@ -865,13 +932,29 @@ class TeacherSalaryService {
                       totalHours: roundedHours,
                       lockedMonthlyHours: roundedHours,
                       classIds: newClassIds,
-                      rateSnapshot: existing.rateSnapshot,
+                      rateSnapshot: adjustmentRateSnapshot,
                       exchangeRateSnapshot: existing.exchangeRateSnapshot,
                       transferFeeSnapshot: existing.transferFeeSnapshot,
                       createdBy: userId,
                       updatedBy: userId,
-                      notes: `Late submission adjustment for ${existing.invoiceNumber || existing._id}`
+                      notes: tierTrueUpUSD !== 0
+                        ? `Late submission adjustment for ${existing.invoiceNumber || existing._id}. New hours billed at the full-month tier ($${Number(adjustmentRateSnapshot?.rate || 0)}/hr) and a tier true-up settles the rate difference on previously billed hours. The already-paid invoice is left unchanged.`
+                        : `Late submission adjustment for ${existing.invoiceNumber || existing._id}`
                     });
+
+                    if (tierTrueUpUSD !== 0) {
+                      const cat = tierTrueUpUSD < 0 ? 'penalty' : 'reimbursement';
+                      let reason = tierTrueUpReason || 'Tier true-up for full-month rate';
+                      if (reason.length < 5) reason = 'Tier true-up for full-month rate';
+                      if (reason.length > 200) reason = reason.slice(0, 200);
+                      adjustmentInvoice.extras.push({
+                        category: cat,
+                        amountUSD: tierTrueUpUSD,
+                        reason,
+                        addedAt: new Date(),
+                        addedBy: userId || teacher._id
+                      });
+                    }
 
                     adjustmentInvoice.calculateAmounts();
                     await adjustmentInvoice.save();
@@ -883,7 +966,8 @@ class TeacherSalaryService {
                       teacherId: teacher._id,
                       teacherName: `${teacher.firstName} ${teacher.lastName}`,
                       addedHours: roundedHours,
-                      classCount: newClassIds.length
+                      classCount: newClassIds.length,
+                      tierTrueUpUSD
                     });
                     results.summary.adjustmentsCreated++;
                   }
@@ -1441,6 +1525,96 @@ class TeacherSalaryService {
       return teacher;
     } catch (error) {
       console.error('[setCustomRate] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Enable/disable a teacher's fixed (custom) hourly rate override.
+   *
+   * When enabled, the teacher is paid `rateUSD` per hour for ALL their hours and the
+   * tier/partition system (and tier true-up) is bypassed for that teacher's future
+   * invoices (see getTeacherRate -> partition 'custom'). When disabled, the teacher is
+   * treated exactly like everyone else and the fixed rate is ignored entirely.
+   *
+   * Existing invoices are never touched — only future invoice generation is affected.
+   *
+   * @param {ObjectId|String} teacherId - Teacher ID
+   * @param {Object} payload - { enabled: Boolean, rateUSD?: Number, reason?: String }
+   * @param {ObjectId|String} userId - Admin performing the action
+   * @returns {Promise<Object>} Updated teacher
+   */
+  static async setCustomRateOverride(teacherId, payload = {}, userId) {
+    try {
+      const teacher = await User.findById(teacherId);
+      if (!teacher || teacher.role !== 'teacher') {
+        throw new Error('Invalid teacher ID');
+      }
+
+      const enabled = payload.enabled === true;
+      const reason = typeof payload.reason === 'string' ? payload.reason.trim().slice(0, 200) : undefined;
+
+      // Validate the rate ONLY when enabling. A bad rate while enabled would later break
+      // invoice generation (getTeacherRate throws on NaN/negative), so reject it up front.
+      let rateUSD;
+      if (enabled) {
+        rateUSD = Number(payload.rateUSD);
+        if (!Number.isFinite(rateUSD) || rateUSD <= 0) {
+          throw new Error('A valid fixed hourly rate greater than 0 (USD) is required to enable the override.');
+        }
+        rateUSD = Math.round(rateUSD * 100) / 100;
+      } else {
+        // Preserve the previous numeric value for reference (it is ignored while disabled).
+        const prev = Number(teacher.teacherInfo?.customRateOverride?.rateUSD);
+        rateUSD = Number.isFinite(prev) ? prev : undefined;
+      }
+
+      if (!teacher.teacherInfo) teacher.teacherInfo = {};
+
+      const before = teacher.teacherInfo?.customRateOverride
+        ? (typeof teacher.teacherInfo.customRateOverride.toObject === 'function'
+            ? teacher.teacherInfo.customRateOverride.toObject()
+            : teacher.teacherInfo.customRateOverride)
+        : null;
+
+      teacher.teacherInfo.customRateOverride = {
+        enabled,
+        rateUSD,
+        setBy: userId,
+        setAt: new Date(),
+        reason
+      };
+
+      // effectiveRate is a display snapshot only; reflect the fixed rate when enabling.
+      if (enabled) {
+        teacher.teacherInfo.effectiveRate = rateUSD;
+      }
+
+      await teacher.save();
+
+      try {
+        await TeacherSalaryAudit.logAction({
+          action: 'rate_update',
+          entityType: 'User',
+          entityId: teacher._id,
+          actor: userId,
+          actorRole: 'admin',
+          before,
+          after: teacher.teacherInfo.customRateOverride,
+          reason,
+          metadata: {
+            teacherName: `${teacher.firstName} ${teacher.lastName}`,
+            enabled,
+            rateUSD: enabled ? rateUSD : null
+          }
+        });
+      } catch (auditErr) {
+        console.warn('[setCustomRateOverride] Failed to write audit log:', auditErr?.message || auditErr);
+      }
+
+      return teacher;
+    } catch (error) {
+      console.error('[setCustomRateOverride] Error:', error);
       throw error;
     }
   }

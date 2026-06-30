@@ -1,3 +1,5 @@
+import { TIMEZONE_LIST } from './timezoneUtils';
+
 const HONORIFIC_MAP = {
   mr: 'Mr',
   mister: 'Mr',
@@ -15,6 +17,13 @@ const cleanText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim(
 
 const resolveRaw = (value) => value?.raw || value || {};
 
+// Region prefixes that mark a string as a plausible IANA timezone (e.g. "America/New_York").
+// Anything else (like a stray person name) is treated as "not a timezone".
+const IANA_REGION_PREFIXES = new Set([
+  'Africa', 'America', 'Antarctica', 'Arctic', 'Asia', 'Atlantic',
+  'Australia', 'Europe', 'Indian', 'Pacific', 'Etc',
+]);
+
 export const formatMessageEpithet = (epithet) => {
   const normalized = cleanText(epithet).toLowerCase();
   if (!normalized || normalized === 'none') return '';
@@ -31,14 +40,24 @@ export const getTimezoneLocationLabel = (timezone, fallback = '') => {
   const normalized = cleanText(timezone);
   if (!normalized) return fallback;
 
+  // Prefer a curated, human-friendly city from the shared timezone list.
+  const known = TIMEZONE_LIST.find((tz) => tz.value === normalized);
+  if (known?.city) return known.city;
+
+  // Otherwise derive the city from a valid IANA identifier (e.g. "America/New_York").
   const parts = normalized.split('/').filter(Boolean);
-  const candidate = parts.length ? parts[parts.length - 1] : normalized;
-  return cleanText(candidate.replace(/_/g, ' ')) || fallback || normalized;
+  if (parts.length >= 2 && IANA_REGION_PREFIXES.has(parts[0])) {
+    const candidate = parts[parts.length - 1].replace(/_/g, ' ');
+    return cleanText(candidate) || fallback || normalized;
+  }
+
+  // Not a recognizable timezone (e.g. a stray name) — fall back gracefully.
+  return fallback;
 };
 
 export const getTimezoneHeadingLabel = (timezone, fallback = 'Class') => {
   const location = getTimezoneLocationLabel(timezone, fallback);
-  return `${location} timezone`;
+  return `${location} Timezone`;
 };
 
 export const getTeacherMessageName = (teacher, fallback = 'teacher') => {
@@ -58,7 +77,7 @@ export const getTeacherMessageName = (teacher, fallback = 'teacher') => {
 export const getTeacherMessageLabel = (teacher, fallback = 'teacher') => {
   const name = getTeacherMessageName(teacher, '');
   if (!name) return fallback;
-  return `teacher (${name})`;
+  return `teacher ${name}`;
 };
 
 export const getStudentMessageName = ({ student, studentOption, fallback = 'Student' } = {}) => {

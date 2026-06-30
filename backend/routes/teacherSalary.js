@@ -356,6 +356,55 @@ router.post('/admin/release-linked-classes', authenticateToken, requireAdmin, as
 });
 
 /**
+ * Enable/disable a teacher's fixed (custom) hourly rate override.
+ * PUT /api/teacher-salary/admin/teachers/:id/custom-rate
+ * Body: { enabled: Boolean, rateUSD?: Number, reason?: String }
+ *
+ * Admin only. When enabled the teacher is paid a flat USD/hour rate (tiers bypassed);
+ * when disabled the teacher follows the standard tier system. Only affects FUTURE invoices.
+ */
+router.put('/admin/teachers/:id/custom-rate', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { enabled, rateUSD, reason } = req.body || {};
+
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled (boolean) is required' });
+    }
+
+    if (enabled) {
+      const parsed = Number(rateUSD);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return res.status(400).json({ error: 'A valid fixed hourly rate greater than 0 (USD) is required to enable the override.' });
+      }
+    }
+
+    const teacher = await TeacherSalaryService.setCustomRateOverride(
+      id,
+      { enabled, rateUSD, reason },
+      req.user._id
+    );
+
+    return res.json({
+      success: true,
+      message: enabled ? 'Fixed hourly rate enabled' : 'Fixed hourly rate disabled',
+      customRateOverride: teacher.teacherInfo?.customRateOverride || null
+    });
+  } catch (error) {
+    console.error('[PUT /admin/teachers/:id/custom-rate] Error:', error);
+    const message = error?.message || 'Failed to update fixed hourly rate';
+    const lower = message.toLowerCase();
+    if (lower.includes('invalid teacher')) {
+      return res.status(404).json({ error: message });
+    }
+    if (lower.includes('valid fixed hourly rate')) {
+      return res.status(400).json({ error: message });
+    }
+    return res.status(500).json({ error: message });
+  }
+});
+
+/**
  * Get all invoices for a month
  * GET /api/teacher-salary/admin/invoices?month=10&year=2025&status=draft
  */

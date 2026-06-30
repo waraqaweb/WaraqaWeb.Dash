@@ -9,6 +9,7 @@ const FirstClassFeedbackModal = React.lazy(() => import('../../components/feedba
 const MonthlyFeedbackModal = React.lazy(() => import('../../components/feedback/MonthlyFeedbackModal'));
 const GuardianFollowUpModal = React.lazy(() => import('../../components/meetings/GuardianFollowUpModal'));
 const TeacherSyncModal = React.lazy(() => import('../../components/meetings/TeacherSyncModal'));
+const PasteMeetingModal = React.lazy(() => import('../../components/features/meetings/PasteMeetingModal'));
 import Toast from '../../components/ui/Toast';
 import {
   Users,
@@ -21,6 +22,7 @@ import {
   RefreshCcw,
   TrendingUp,
   GraduationCap,
+  ClipboardPaste,
 } from "lucide-react";
 
 import StatCard from '../../components/dashboard/widgets/StatCard';
@@ -431,6 +433,7 @@ const DashboardHome = ({ isActive = true }) => {
   const { user, isAdmin, isTeacher, isGuardian, isStudent } = useAuth();
   const [compactAdmin, setCompactAdmin] = React.useState(false);
   const [biModalOpen, setBiModalOpen] = React.useState(false);
+  const [pasteMeetingOpen, setPasteMeetingOpen] = React.useState(false);
   const [requestsTab, setRequestsTab] = React.useState('teachers');
   const [hijriOffset, setHijriOffset] = React.useState({ default: 0, byRegion: {} });
   const [decorationConfig, setDecorationConfig] = useState({
@@ -998,6 +1001,18 @@ const DashboardHome = ({ isActive = true }) => {
     }
   }, [fetchStats, user?._id]);
 
+  // Guardians should only be offered the admin follow-up once their relationship has had
+  // time to mature: 14 days after they booked their very first class. Before that (e.g. a
+  // brand-new self-signup that just registered), the prompt and banner stay hidden.
+  const FOLLOW_UP_UNLOCK_DAYS = 14;
+  const guardianFollowUpUnlocked = (() => {
+    const firstClassBookedAt = stats.data?.followUpPrompt?.guardianFollowUp?.firstClassBookedAt;
+    if (!firstClassBookedAt) return false;
+    const bookedMs = new Date(firstClassBookedAt).getTime();
+    if (!Number.isFinite(bookedMs)) return false;
+    return (Date.now() - bookedMs) >= FOLLOW_UP_UNLOCK_DAYS * 24 * 60 * 60 * 1000;
+  })();
+
   useEffect(() => {
     if (!isActive || !meetingFollowupPrompts || !user?._id) return;
     if (showWelcome || isFirstVisit) return;
@@ -1041,7 +1056,7 @@ const DashboardHome = ({ isActive = true }) => {
     };
 
     if (isGuardian && typeof isGuardian === 'function' && isGuardian()) {
-      if (!showGuardianFollowUpModal) {
+      if (!showGuardianFollowUpModal && guardianFollowUpUnlocked) {
         const lastMeetingAt = stats.data?.followUpPrompt?.guardianFollowUp?.lastMeetingAt || null;
         if (shouldPrompt({ typeKey: 'guardian', settings: meetingFollowupPrompts.guardian, lastMeetingAt })) {
           setShowGuardianFollowUpModal(true);
@@ -1065,6 +1080,7 @@ const DashboardHome = ({ isActive = true }) => {
     showGuardianFollowUpModal,
     showTeacherSyncModal,
     stats.data,
+    guardianFollowUpUnlocked,
     user?._id,
     showWelcome,
     isFirstVisit,
@@ -1341,6 +1357,16 @@ const DashboardHome = ({ isActive = true }) => {
                     >
                       <TrendingUp className="h-3.5 w-3.5" />
                       <span className="hidden sm:inline">BI</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Paste meeting"
+                      title="Create a meeting from a pasted booking summary"
+                      className="ml-1 inline-flex items-center gap-1 rounded-full text-white bg-gradient-to-r from-emerald-500 to-teal-600 shadow-sm hover:opacity-95 h-7 px-2.5 text-[11px] font-medium"
+                      onClick={() => setPasteMeetingOpen(true)}
+                    >
+                      <ClipboardPaste className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Paste meeting</span>
                     </button>
                     <button
                       aria-label="Refresh"
@@ -1889,7 +1915,7 @@ const DashboardHome = ({ isActive = true }) => {
 
 
 
-          <div className="lg:col-span-2 lg:row-span-1 rounded-2xl border border-yellow-300/70 bg-yellow-50 p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between shadow-sm">
+          <div className="lg:col-span-2 lg:row-span-1 rounded-2xl border border-yellow-300/70 bg-yellow-50 p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between shadow-sm" style={{ display: guardianFollowUpUnlocked ? undefined : 'none' }}>
             <div className="min-w-0">
               <p className="text-[11px] font-medium tracking-[0.25em] text-yellow-700 uppercase">Need a check-in?</p>
               <h3 className="text-base sm:text-lg font-semibold text-yellow-950">Schedule an admin follow-up</h3>
@@ -2211,6 +2237,19 @@ const DashboardHome = ({ isActive = true }) => {
       {isAdmin() && (
         <React.Suspense fallback={null}>
           <BusinessIntelligenceModal open={biModalOpen} onClose={() => setBiModalOpen(false)} />
+        </React.Suspense>
+      )}
+      {isAdmin() && pasteMeetingOpen && (
+        <React.Suspense fallback={null}>
+          <PasteMeetingModal
+            open={pasteMeetingOpen}
+            onClose={() => setPasteMeetingOpen(false)}
+            onCreated={() => {
+              setPasteMeetingOpen(false);
+              setFeedbackToast({ show: true, message: 'Meeting added to scheduled meetings.', type: 'success' });
+              fetchStats();
+            }}
+          />
         </React.Suspense>
       )}
       {isTeacher() && renderTeacherDashboard()}

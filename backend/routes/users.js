@@ -2275,6 +2275,16 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
       }
     }
 
+    // Defense in depth: the teacher's fixed (custom) hourly rate and effective rate are
+    // sensitive salary fields. They must ONLY be changed through the dedicated admin-only
+    // endpoint (PUT /api/teacher-salary/admin/teachers/:id/custom-rate), never via the
+    // general profile update — this prevents teachers self-assigning a rate and prevents
+    // accidental corruption of invoice generation. Strip them if present in the payload.
+    if (updates.teacherInfo && typeof updates.teacherInfo === 'object') {
+      delete updates.teacherInfo.customRateOverride;
+      delete updates.teacherInfo.effectiveRate;
+    }
+
     // Apply updates onto the Mongoose document to run hooks/validators
     Object.keys(updates).forEach((key) => {
       // Avoid accidentally nulling entire guardianInfo

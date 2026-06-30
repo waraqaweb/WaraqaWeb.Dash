@@ -93,6 +93,13 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
         formData.vacationAllowanceDefaultDaysPerYear = vacationAllowance.defaultDaysPerYear ?? '';
         formData.vacationAllowanceCurrentYearDays = currentYearOverride?.days ?? '';
         formData.vacationAllowanceYearlyOverrides = yearlyOverrides;
+
+        // Fixed (custom) hourly rate override — admin only. Defaults: disabled + empty rate.
+        const customRateOverride = targetUser.teacherInfo?.customRateOverride || {};
+        formData.customRateEnabled = !!customRateOverride.enabled;
+        formData.customRateUSD = (customRateOverride.rateUSD !== undefined && customRateOverride.rateUSD !== null)
+          ? customRateOverride.rateUSD
+          : '';
       } else if (targetUser.role === 'guardian') {
         // Extract guardian-specific fields (guardians do not receive bank details in the edit form)
         if (targetUser.guardianInfo?.spokenLanguages !== undefined) {
@@ -454,6 +461,67 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
     if (!form || !targetUser) return;
     setLoading(true);
     try {
+      // ---- Fixed (custom) hourly rate override (admin + teacher only) ----
+      // This is a sensitive salary field handled through its own admin-only endpoint.
+      // Detect a change, require explicit confirmation, validate, then apply it BEFORE
+      // the rest of the profile so an aborted/failed rate change never partially saves.
+      if (form.role === 'teacher' && isAdmin) {
+        const origOverride = targetUser.teacherInfo?.customRateOverride || {};
+        const origEnabled = !!origOverride.enabled;
+        const origRate = (origOverride.rateUSD === undefined || origOverride.rateUSD === null)
+          ? null
+          : Number(origOverride.rateUSD);
+
+        const newEnabled = !!form.customRateEnabled;
+        const newRate = (form.customRateUSD === '' || form.customRateUSD === null || form.customRateUSD === undefined)
+          ? null
+          : Number(form.customRateUSD);
+
+        const rateChanged = newEnabled
+          ? (origRate === null || Number(origRate) !== Number(newRate))
+          : false;
+        const customRateChanged = (origEnabled !== newEnabled) || rateChanged;
+
+        if (customRateChanged) {
+          // Validate before asking for confirmation.
+          if (newEnabled && !(Number.isFinite(newRate) && newRate > 0)) {
+            setLoading(false);
+            try { alert('Please enter a fixed hourly rate greater than 0 (USD) before enabling the override.'); } catch (e) {}
+            return;
+          }
+
+          const teacherName = `${form.firstName || ''} ${form.lastName || ''}`.trim() || 'this teacher';
+          let confirmMsg;
+          if (newEnabled && !origEnabled) {
+            confirmMsg = `Enable a FIXED hourly rate of $${Number(newRate).toFixed(2)}/hr for ${teacherName}?\n\nThis overrides the tier system for ALL of this teacher's future invoices. Existing invoices are not affected.`;
+          } else if (!newEnabled && origEnabled) {
+            confirmMsg = `Disable the fixed hourly rate for ${teacherName}?\n\nThis teacher will go back to the standard tier system for future invoices.`;
+          } else {
+            confirmMsg = `Change the fixed hourly rate for ${teacherName} to $${Number(newRate).toFixed(2)}/hr?\n\nThis applies to future invoices only.`;
+          }
+
+          const confirmed = window.confirm(confirmMsg);
+          if (!confirmed) {
+            setLoading(false);
+            return;
+          }
+
+          try {
+            await api.put(`/teacher-salary/admin/teachers/${targetUser._id}/custom-rate`, {
+              enabled: newEnabled,
+              rateUSD: newEnabled ? Number(newRate) : (newRate ?? 0),
+              reason: 'Updated from teacher profile'
+            });
+            bumpDomainVersion('teachers');
+          } catch (rateErr) {
+            console.error('Failed updating fixed hourly rate', rateErr);
+            setLoading(false);
+            try { alert('Failed updating fixed hourly rate: ' + (rateErr.response?.data?.error || rateErr.response?.data?.message || rateErr.message || 'Unknown error')); } catch (e) {}
+            return;
+          }
+        }
+      }
+
       // Build payload with only editable keys
       const payload = {};
       // Top-level simple fields (excluding bio which is role-specific)
@@ -950,6 +1018,43 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                               placeholder="Leave empty to use future years value"
                             />
                             <p className="mt-1 text-xs text-muted-foreground">Leave this empty if {currentYear} should use the future-years number.</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {isAdmin && (
+                      <div className="md:col-span-2 rounded-lg border border-border p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <h5 className="font-medium text-foreground">Fixed hourly rate (override)</h5>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              When ON, this teacher is paid the fixed USD rate below for every hour and the tier system is ignored.
+                              When OFF, the teacher follows the standard tier system. Only affects future invoices — existing invoices are untouched.
+                            </p>
+                          </div>
+                          <Toggle
+                            checked={!!form.customRateEnabled}
+                            onChange={(v) => setField('customRateEnabled', v)}
+                          />
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-medium text-muted-foreground mb-1">Fixed rate (USD per hour)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
+                              value={form.customRateUSD ?? ''}
+                              onChange={(e) => setField('customRateUSD', e.target.value === '' ? '' : Number(e.target.value))}
+                              disabled={!form.customRateEnabled}
+                              placeholder="e.g. 15"
+                            />
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {form.customRateEnabled
+                                ? 'Required and must be greater than 0 while the override is enabled.'
+                                : 'Turn the toggle ON to set a fixed rate. Ignored while OFF.'}
+                            </p>
                           </div>
                         </div>
                       </div>

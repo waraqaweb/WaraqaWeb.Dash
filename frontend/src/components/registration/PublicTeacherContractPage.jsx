@@ -32,6 +32,7 @@ export default function PublicTeacherContractPage() {
     gender: '',
     nationality: '',
     occupation: '',
+    epithet: '',
   });
 
   const wordCount = useMemo(() => form.introEssay.trim() ? form.introEssay.trim().split(/\s+/).filter(Boolean).length : 0, [form.introEssay]);
@@ -220,6 +221,14 @@ export default function PublicTeacherContractPage() {
                 </select>
                 <input className={inputClass} placeholder="Nationality *" value={form.nationality} onChange={(e) => updateField('nationality', e.target.value)} />
                 <input className={inputClass} placeholder="Occupation" value={form.occupation} onChange={(e) => updateField('occupation', e.target.value)} />
+                <select className={inputClass} value={form.epithet} onChange={(e) => updateField('epithet', e.target.value)} title="What should we call you in messages?">
+                  <option value="">What should we call you in messages? (None)</option>
+                  <option value="Mr">Mr</option>
+                  <option value="Mrs">Mrs</option>
+                  <option value="Ms">Ms</option>
+                  <option value="Brother">Brother</option>
+                  <option value="Sister">Sister</option>
+                </select>
               </div>
             </section>
           ) : null}

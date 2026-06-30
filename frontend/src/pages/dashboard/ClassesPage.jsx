@@ -878,11 +878,14 @@ const ClassesPage = ({ isActive = true }) => {
       const hours = Number(teacherReportWindowHours) || 72;
       deadlineMs = classEndMs + Math.max(1, hours) * 60 * 60 * 1000;
     }
-    // Active admin extension → show 'admin_extended' instead of 'missed_report'
+    // Active admin extension → show 'admin_extended' (display label "Extended") for as long
+    // as the extension is valid and working, regardless of the stored reportSubmission.status.
+    // This is purely cosmetic — it mirrors the backend's isAdminExtensionActive rule and does
+    // NOT change invoice eligibility (the backend decides that independently).
     const adminExt = classItem?.reportSubmission?.adminExtension;
-    if (adminExt?.granted && classItem?.reportSubmission?.status === 'admin_extended') {
+    if (adminExt?.granted) {
       const expiresAt = adminExt.expiresAt ? new Date(adminExt.expiresAt).getTime() : Infinity;
-      if (now < expiresAt) return 'admin_extended';
+      if (now <= expiresAt) return 'admin_extended';
     }
 
     const statusUnreported = classItem?.reportSubmission?.status === 'unreported';

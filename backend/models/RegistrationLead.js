@@ -39,6 +39,7 @@ const registrationLeadSchema = new mongoose.Schema({
     guardianName: { type: String, trim: true, maxlength: 160 },
     email: { type: String, trim: true, required: true, lowercase: true, maxlength: 160, index: true },
     phone: { type: String, trim: true, maxlength: 80 },
+    epithet: { type: String, trim: true, maxlength: 40 },
     timezone: { type: String, trim: true, required: true, default: 'Africa/Cairo' },
   },
   address: {

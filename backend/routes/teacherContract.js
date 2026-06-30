@@ -209,6 +209,7 @@ router.post('/public', fileFields, async (req, res) => {
       gender: String(req.body.gender || '').trim(),
       nationality: String(req.body.nationality || '').trim(),
       occupation: String(req.body.occupation || '').trim(),
+      epithet: String(req.body.epithet || '').trim(),
     };
     const wordCount = introEssay ? introEssay.split(/\s+/).filter(Boolean).length : 0;
     const files = req.files || {};
@@ -309,6 +310,7 @@ router.post('/me', authenticateToken, requireTeacherOrAdmin, fileFields, async (
       gender: String(req.body.gender || '').trim(),
       nationality: String(req.body.nationality || '').trim(),
       occupation: String(req.body.occupation || '').trim(),
+      epithet: String(req.body.epithet || '').trim(),
     };
 
     const wordCount = introEssay ? introEssay.split(/\s+/).filter(Boolean).length : 0;
@@ -382,6 +384,9 @@ router.post('/me', authenticateToken, requireTeacherOrAdmin, fileFields, async (
           city: personalInfo.address?.city || '',
           country: personalInfo.address?.country || 'Egypt',
         };
+        if (personalInfo.epithet) {
+          user.teacherInfo = { ...(user.teacherInfo || {}), epithet: personalInfo.epithet };
+        }
         await user.save();
       }
     } catch (syncError) {

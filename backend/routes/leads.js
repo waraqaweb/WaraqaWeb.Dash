@@ -130,6 +130,7 @@ const normalizePublicLeadPayload = (payload = {}, req) => {
         guardianName: guardianDisplayName,
         email: personalInfo.email,
         phone: personalInfo.phone || '',
+        epithet: (personalInfo.epithet || '').trim(),
         timezone: personalInfo.timezone,
       },
       address: {
@@ -318,6 +319,7 @@ router.post('/:leadId/convert', authenticateToken, requireAdmin, async (req, res
         },
         guardianInfo: {
           relationship: 'parent',
+          epithet: (lead.personalInfo.epithet || '').trim(),
           students: [],
         },
         isActive: true,
@@ -326,6 +328,10 @@ router.post('/:leadId/convert', authenticateToken, requireAdmin, async (req, res
 
     if (!guardianUser.guardianInfo) {
       guardianUser.guardianInfo = { relationship: 'parent', students: [] };
+    }
+    // Carry the preferred epithet onto the guardian account so emails/WhatsApp greet them correctly.
+    if (lead.personalInfo.epithet && !guardianUser.guardianInfo.epithet) {
+      guardianUser.guardianInfo.epithet = lead.personalInfo.epithet.trim();
     }
     if (!Array.isArray(guardianUser.guardianInfo.students)) {
       guardianUser.guardianInfo.students = [];

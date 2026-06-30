@@ -878,6 +878,19 @@ router.get('/stats', authenticateToken, async (req, res) => {
         return null;
       })();
 
+      // Earliest class the guardian ever booked (by booking/creation time). Used to gate
+      // the "schedule a follow-up" prompt so it only surfaces 14 days after the first class.
+      let firstClassBookedAt = null;
+      try {
+        const firstBookedClass = await Class.findOne({ 'student.guardianId': guardianId })
+          .sort({ createdAt: 1 })
+          .select('createdAt')
+          .lean();
+        firstClassBookedAt = firstBookedClass?.createdAt || null;
+      } catch (e) {
+        firstClassBookedAt = null;
+      }
+
       // Support both real mongoose Query objects and test stubs that return promises/arrays
       let upcomingClasses = [];
       try {
@@ -1184,13 +1197,13 @@ router.get('/stats', authenticateToken, async (req, res) => {
         }));
 
         // attach to data for guardian view
-        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, recentLastClasses, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList, followUpPrompt: { guardianFollowUp: { lastMeetingAt: guardianFollowUpLastMeetingAt, lastScheduledAt: guardianFollowUpScheduledAt, lastCreatedAt: guardianFollowUpCreatedAt } } } });
+        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, recentLastClasses, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList, followUpPrompt: { guardianFollowUp: { lastMeetingAt: guardianFollowUpLastMeetingAt, lastScheduledAt: guardianFollowUpScheduledAt, lastCreatedAt: guardianFollowUpCreatedAt, firstClassBookedAt } } } });
       } catch (e) {
         console.warn('dashboard: failed to build recentLastClasses', e && e.message);
-        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList, followUpPrompt: { guardianFollowUp: { lastMeetingAt: guardianFollowUpLastMeetingAt, lastScheduledAt: guardianFollowUpScheduledAt, lastCreatedAt: guardianFollowUpCreatedAt } } } });
+        return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList, followUpPrompt: { guardianFollowUp: { lastMeetingAt: guardianFollowUpLastMeetingAt, lastScheduledAt: guardianFollowUpScheduledAt, lastCreatedAt: guardianFollowUpCreatedAt, firstClassBookedAt } } } });
       }
 
-      return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList, followUpPrompt: { guardianFollowUp: { lastMeetingAt: guardianFollowUpLastMeetingAt, lastScheduledAt: guardianFollowUpScheduledAt, lastCreatedAt: guardianFollowUpCreatedAt } } } });
+      return res.json({ success: true, role: 'guardian', stats: { upcomingClassesCount, upcomingClasses, pendingPaymentsCount, pendingInvoices, monthlyBill, nextClass, myChildren, guardianHours, lastPaidInfo, recentStudentHours, totalHoursLast30, studentsOnVacationCount: studentsOnVacationList.length, studentsOnVacationList, followUpPrompt: { guardianFollowUp: { lastMeetingAt: guardianFollowUpLastMeetingAt, lastScheduledAt: guardianFollowUpScheduledAt, lastCreatedAt: guardianFollowUpCreatedAt, firstClassBookedAt } } } });
     }
 
     // Student (embedded under guardian) or other roles: provide lightweight view

@@ -48,6 +48,7 @@ const teacherContractSubmissionSchema = new mongoose.Schema({
     gender: { type: String, trim: true, default: '' },
     nationality: { type: String, trim: true, default: '' },
     occupation: { type: String, trim: true, default: '' },
+    epithet: { type: String, trim: true, default: '', maxlength: 40 },
   },
   submittedAt: { type: Date, default: null },
   lastSavedAt: { type: Date, default: Date.now },

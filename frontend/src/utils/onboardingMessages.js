@@ -127,7 +127,7 @@ const guessGender = (firstName = '') => {
  * Build a personalization context from a registration row.
  * @param {{ guardianName?: string, students?: Array<{firstName?:string,lastName?:string,gender?:string}> }} input
  */
-export const buildRecipient = ({ guardianName = '', students = [] } = {}) => {
+export const buildRecipient = ({ guardianName = '', students = [], epithet = '' } = {}) => {
   const list = (Array.isArray(students) ? students : []).filter(Boolean);
   const guardianFirst = firstNameOf(guardianName);
   const guardianLast = lastNameOf(guardianName);
@@ -148,7 +148,9 @@ export const buildRecipient = ({ guardianName = '', students = [] } = {}) => {
   let gender = '';
   if (isSelf && list[0]?.gender) gender = list[0].gender;
   if (!gender) gender = guessGender(guardianFirst);
-  const honorific = gender === 'male' ? 'Mr.' : gender === 'female' ? 'Ms.' : '';
+  // Prefer an explicit epithet chosen during registration; otherwise infer from gender.
+  const chosenEpithet = String(epithet || '').trim();
+  const honorific = chosenEpithet || (gender === 'male' ? 'Mr.' : gender === 'female' ? 'Ms.' : '');
 
   const studentFirsts = list.map((s) => firstNameOf(s.firstName)).filter(Boolean);
   const childWord = list.length > 1 ? 'children' : 'child';
@@ -171,9 +173,15 @@ export const buildRecipient = ({ guardianName = '', students = [] } = {}) => {
 };
 
 // Greeting name: "Mr. Smith" / "Ms. Smith" when we know gender, else first name.
+// Title-style honorifics (Mr/Mrs/Ms) read best with the last name; relational
+// ones (Brother/Sister) read best with the first name.
 const greetName = (recipient = {}) => {
   if (recipient.honorific) {
-    return `${recipient.honorific} ${recipient.guardianLast || recipient.guardianFirst}`.trim();
+    const titleStyle = /^(mr|mrs|ms|miss|dr|sheikh|ustadh|ustadha)\.?$/i.test(recipient.honorific.trim());
+    const namePart = titleStyle
+      ? (recipient.guardianLast || recipient.guardianFirst)
+      : (recipient.guardianFirst || recipient.guardianLast);
+    return `${recipient.honorific} ${namePart}`.trim();
   }
   return recipient.guardianFirst || 'there';
 };

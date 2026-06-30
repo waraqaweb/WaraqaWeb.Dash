@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, ClipboardPaste, FileText, RefreshCw, Trash2, Users, Pencil, XCircle, UserCheck, UserX, Ban, Bell } from 'lucide-react';
+import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, ClipboardPaste, FileText, RefreshCw, Trash2, Users, Pencil, XCircle, UserCheck, UserX, Ban, Bell, History, X } from 'lucide-react';
 import { listMeetings, rescheduleMeeting, deleteMeeting, hardDeleteMeeting, updateMeetingAttendance, sendMeetingReminder } from '../../../api/meetings';
 import { MEETING_TYPE_LABELS, MEETING_TYPE_TONES } from '../../../constants/meetingConstants';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
@@ -43,6 +43,25 @@ const toLocalDatetimeInput = (value) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+// Split the full meeting list into "all upcoming" + "past that were attended or cancelled",
+// regardless of how far in the future/past they are.
+const partitionAllMeetings = (list = []) => {
+  const now = Date.now();
+  const upcoming = [];
+  const pastHistory = [];
+  (list || []).forEach((m) => {
+    const startMs = m?.scheduledStart ? new Date(m.scheduledStart).getTime() : NaN;
+    const isFuture = Number.isFinite(startMs) ? startMs >= now : true;
+    if (isFuture) { upcoming.push(m); return; }
+    const attended = m?.attendanceStatus === 'attended';
+    const cancelled = m?.status === 'cancelled' || m?.attendanceStatus === 'cancelled_no_penalty';
+    if (attended || cancelled) pastHistory.push(m);
+  });
+  upcoming.sort((a, b) => new Date(a.scheduledStart) - new Date(b.scheduledStart));
+  pastHistory.sort((a, b) => new Date(b.scheduledStart) - new Date(a.scheduledStart));
+  return { upcoming, pastHistory };
+};
+
 export default function MeetingActivityPanel({ timezone }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -57,6 +76,10 @@ export default function MeetingActivityPanel({ timezone }) {
   const [scheduledPage, setScheduledPage] = useState(1);
   const [reportedPage, setReportedPage] = useState(1);
   const [pasteOpen, setPasteOpen] = useState(false);
+  const [allOpen, setAllOpen] = useState(false);
+  const [allItems, setAllItems] = useState([]);
+  const [allLoading, setAllLoading] = useState(false);
+  const [allError, setAllError] = useState('');
 
   const load = async () => {
     try {
@@ -182,12 +205,24 @@ export default function MeetingActivityPanel({ timezone }) {
     setItems((prev) => prev.map((m) => (m._id === updated._id ? { ...m, ...updated } : m)));
   };
 
-  const sendReminder = async (meetingId) => {
+  const sendReminder = async (meeting) => {
+    const meetingId = typeof meeting === 'object' ? meeting?._id : meeting;
+    if (!meetingId) return;
+    const m = typeof meeting === 'object' ? meeting : (items.find((x) => x._id === meetingId) || {});
+    const recipient = m?.bookingPayload?.guardianEmail || 'the contact on file';
+    // No prerequisites: emailing is always allowed. We only surface a confirmation so an
+    // accidental click can be cancelled, and we flag anything unusual (cancelled / past).
+    const warnings = [];
+    if (m?.status === 'cancelled') warnings.push('this meeting is cancelled');
+    if (m?.scheduledStart && new Date(m.scheduledStart) < new Date()) warnings.push('this meeting is in the past');
+    const warnText = warnings.length ? `\n\nHeads up: ${warnings.join(' and ')}.` : '';
+    if (!window.confirm(`Send the meeting email now to ${recipient}?${warnText}`)) return;
     setBusyId(meetingId);
     try {
       const data = await sendMeetingReminder(meetingId);
       if (data?.meeting?._id) {
-        setItems((prev) => prev.map((m) => (m._id === data.meeting._id ? { ...m, ...data.meeting } : m)));
+        setItems((prev) => prev.map((x) => (x._id === data.meeting._id ? { ...x, ...data.meeting } : x)));
+        setAllItems((prev) => prev.map((x) => (x._id === data.meeting._id ? { ...x, ...data.meeting } : x)));
       }
       const failed = (data?.results || []).filter((r) => !r.ok);
       if (failed.length) {
@@ -200,6 +235,25 @@ export default function MeetingActivityPanel({ timezone }) {
     } finally {
       setBusyId('');
     }
+  };
+
+  // Load the complete meeting history (no time window) for the "All meetings" modal.
+  const loadAllMeetings = async () => {
+    setAllLoading(true);
+    setAllError('');
+    try {
+      const data = await listMeetings({ limit: 200 });
+      setAllItems(data || []);
+    } catch (err) {
+      setAllError(err?.response?.data?.message || 'Failed to load meetings');
+    } finally {
+      setAllLoading(false);
+    }
+  };
+
+  const openAllMeetings = () => {
+    setAllOpen(true);
+    loadAllMeetings();
   };
 
   const iconBtn = (cls) => `inline-flex items-center justify-center h-8 w-8 rounded-full border text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed ${cls}`;
@@ -291,10 +345,10 @@ export default function MeetingActivityPanel({ timezone }) {
             ) : null}
             <button
               type="button"
-              title="Send reminder email"
-              aria-label="Send reminder email"
+              title="Send meeting email"
+              aria-label="Send meeting email"
               disabled={busyId === meeting._id}
-              onClick={(e) => { e.stopPropagation(); sendReminder(meeting._id); }}
+              onClick={(e) => { e.stopPropagation(); sendReminder(meeting); }}
               className={iconBtn('border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100')}
             >
               <Bell className="h-4 w-4" />
@@ -418,7 +472,14 @@ export default function MeetingActivityPanel({ timezone }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={openAllMeetings}
+          className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+        >
+          <History className="h-3.5 w-3.5" /> All meetings
+        </button>
         <button
           type="button"
           onClick={() => setPasteOpen(true)}
@@ -461,6 +522,107 @@ export default function MeetingActivityPanel({ timezone }) {
           load();
         }}
       />
+      {allOpen ? (
+        <AllMeetingsModal
+          items={allItems}
+          loading={allLoading}
+          error={allError}
+          timezone={timezone}
+          onRefresh={loadAllMeetings}
+          onClose={() => setAllOpen(false)}
+          onSendEmail={sendReminder}
+          busyId={busyId}
+        />
+      ) : null}
     </div>
   );
 }
+
+const AllMeetingRow = ({ meeting, timezone, onSendEmail, busyId }) => {
+  const studentNames = (meeting?.bookingPayload?.students || []).map((s) => s.studentName).filter(Boolean);
+  const contactName = meeting?.attendees?.teacherName || meeting?.bookingPayload?.guardianName;
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${toneByStatus[meeting.status] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+            {meeting.status || 'scheduled'}
+          </span>
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${MEETING_TYPE_TONES[meeting.meetingType] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+            {MEETING_TYPE_LABELS[meeting.meetingType] || 'Meeting'}
+          </span>
+          {meeting?.attendanceStatus ? (
+            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+              {attendanceLabels[meeting.attendanceStatus] || meeting.attendanceStatus}
+            </span>
+          ) : null}
+        </div>
+        <div className="text-sm font-semibold text-slate-900">{formatWhen(meeting.scheduledStart, timezone || meeting.timezone)}</div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          {studentNames.length ? <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" />{studentNames.join(', ')}</span> : null}
+          {contactName ? <span>{contactName}</span> : null}
+        </div>
+      </div>
+      <button
+        type="button"
+        title="Send meeting email"
+        aria-label="Send meeting email"
+        disabled={busyId === meeting._id}
+        onClick={() => onSendEmail(meeting)}
+        className="inline-flex items-center justify-center h-8 w-8 flex-shrink-0 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <Bell className="h-4 w-4" />
+      </button>
+    </div>
+  );
+};
+
+const AllMeetingsModal = ({ items, loading, error, timezone, onRefresh, onClose, onSendEmail, busyId }) => {
+  const { upcoming, pastHistory } = useMemo(() => partitionAllMeetings(items), [items]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+      <div className="w-full max-w-2xl max-h-[88vh] overflow-hidden flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-sky-50">
+          <div className="flex items-center gap-2">
+            <History className="h-5 w-5 text-sky-700" />
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">All meetings</h2>
+              <p className="text-[11px] text-slate-500">Every upcoming meeting, plus past meetings that were attended or cancelled.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button type="button" onClick={onRefresh} title="Refresh" className="rounded-full p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700">
+              <RefreshCw className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={onClose} title="Close" className="rounded-full p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+          {loading ? <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Loading meetings…</div> : (
+            <>
+              <section className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                  <CalendarClock className="h-4 w-4 text-sky-600" />Upcoming <span className="text-xs font-normal text-slate-500">({upcoming.length})</span>
+                </div>
+                {upcoming.length ? upcoming.map((m) => (
+                  <AllMeetingRow key={m._id} meeting={m} timezone={timezone} onSendEmail={onSendEmail} busyId={busyId} />
+                )) : <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-500">No upcoming meetings.</div>}
+              </section>
+              <section className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />Past (attended / cancelled) <span className="text-xs font-normal text-slate-500">({pastHistory.length})</span>
+                </div>
+                {pastHistory.length ? pastHistory.map((m) => (
+                  <AllMeetingRow key={m._id} meeting={m} timezone={timezone} onSendEmail={onSendEmail} busyId={busyId} />
+                )) : <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-500">No past attended or cancelled meetings.</div>}
+              </section>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

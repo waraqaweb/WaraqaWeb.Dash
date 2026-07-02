@@ -1067,8 +1067,9 @@ const RefreshSummaryPanel = ({ summary, onDismiss, formatCurrency, formatDate })
               {summary.addedClassDetails.map((c, idx) => (
                 <div key={idx} className="flex items-center justify-between py-1 text-xs text-slate-600">
                   <span className="truncate">
-                    {c.date ? formatDate(c.date) : '—'}
-                    {c.subject ? ` · ${c.subject}` : ''}
+                    {c.studentName ? <strong className="text-slate-700">{c.studentName}</strong> : '—'}
+                    {c.date ? ` · ${formatDate(c.date)}` : ''}
+                    {c.time ? ` · ${c.time}` : ''}
                     {c.status ? ` · ${c.status}` : ''}
                   </span>
                   <span className="font-medium text-slate-700 whitespace-nowrap ml-2">{num(c.hours).toFixed(2)}h</span>

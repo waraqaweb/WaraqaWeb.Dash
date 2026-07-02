@@ -844,9 +844,29 @@ router.post('/admin/invoices/:id/sync', authenticateToken, requireAdmin, async (
 });
 
 /**
- * Remove bonus from invoice
- * DELETE /api/teacher-salary/admin/invoices/:id/bonuses/:bonusId
+ * Refresh ALL unpaid (draft/published) invoices for a billing period at once.
+ * Body: { month, year }. Returns an aggregated summary. Individual invoice
+ * failures are reported per-invoice and never abort the batch.
+ * POST /api/teacher-salary/admin/invoices/sync-all
  */
+router.post('/admin/invoices/sync-all', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const month = req.body?.month != null ? Number(req.body.month) : null;
+    const year = req.body?.year != null ? Number(req.body.year) : null;
+
+    const summary = await TeacherSalaryService.syncAllUnpaidInvoices(month, year, req.user._id);
+
+    res.json({
+      success: true,
+      message: `Refreshed ${summary.processed} unpaid invoice${summary.processed === 1 ? '' : 's'} · ${summary.updated} updated${summary.failed ? ` · ${summary.failed} failed` : ''}`,
+      summary
+    });
+  } catch (error) {
+    console.error('[POST /admin/invoices/sync-all] Error:', error);
+    res.status(500).json({ error: error?.message || 'Failed to refresh invoices' });
+  }
+});
+
 router.delete('/admin/invoices/:id/bonuses/:bonusId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const invoice = await TeacherInvoice.findById(req.params.id);

@@ -69,6 +69,7 @@ const TeacherInvoices = () => {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [refreshingAll, setRefreshingAll] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const { start: startDeleteCountdown } = useDeleteActionCountdown();
@@ -267,6 +268,51 @@ const TeacherInvoices = () => {
     }
   };
 
+  // Refresh ALL unpaid invoices for the currently-filtered month (or every
+  // month when no month filter is set). Appends new classes and attaches
+  // pending guardian tips/adjustments to each draft/published invoice.
+  const handleRefreshAllUnpaid = async () => {
+    let month = null;
+    let year = null;
+    let label = 'all months';
+    if (filters.month) {
+      const [y, m] = filters.month.split('-').map(Number);
+      if (Number.isFinite(y) && Number.isFinite(m)) {
+        year = y;
+        month = m;
+        label = filters.month;
+      }
+    }
+
+    if (!window.confirm(
+      `Refresh all unpaid invoices${month ? ` for ${label}` : ''}?\n\nThis appends newly-eligible classes and attaches any pending guardian tips and cross-month adjustments to every draft/published invoice. Paid invoices are untouched.`
+    )) {
+      return;
+    }
+
+    try {
+      setRefreshingAll(true);
+      setError(null);
+
+      const { data } = await api.post('/teacher-salary/admin/invoices/sync-all', { month, year });
+      const s = data.summary || {};
+      const bonuses = s.totals?.bonusesApplied || 0;
+      setSuccessMessage(
+        `✓ Refreshed ${s.processed || 0} unpaid invoice${s.processed === 1 ? '' : 's'} · ${s.updated || 0} updated` +
+        (bonuses ? ` · ${bonuses} bonus${bonuses === 1 ? '' : 'es'} applied` : '') +
+        (s.failed ? ` · ⚠ ${s.failed} failed` : '')
+      );
+
+      fetchInvoices();
+      setTimeout(() => setSuccessMessage(null), 6000);
+    } catch (err) {
+      console.error('Error refreshing all invoices:', err);
+      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to refresh invoices');
+    } finally {
+      setRefreshingAll(false);
+    }
+  };
+
   // Handle sort change
   const handleSort = (field) => {
     if (sortBy === field) {
@@ -443,6 +489,18 @@ const TeacherInvoices = () => {
                 <Settings className="w-4 h-4" />
                 Settings
               </button>
+              {statusTab === 'unpaid' && (
+                <button
+                  type="button"
+                  onClick={handleRefreshAllUnpaid}
+                  disabled={refreshingAll || generating}
+                  title="Append new classes and attach pending guardian tips/adjustments to every unpaid invoice"
+                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 shadow-sm hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`w-4 h-4 ${refreshingAll ? 'animate-spin' : ''}`} />
+                  {refreshingAll ? 'Refreshing...' : 'Refresh all unpaid'}
+                </button>
+              )}
               <button
                 onClick={handleGenerateInvoices}
                 disabled={generating}

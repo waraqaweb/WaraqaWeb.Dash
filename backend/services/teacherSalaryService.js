@@ -237,7 +237,7 @@ class TeacherSalaryService {
         status: { $in: ['attended', 'missed_by_student', 'completed', 'absent'] }, // Countable statuses
         deleted: { $ne: true }
       })
-        .select('_id scheduledDate duration subject status student billedInTeacherInvoiceId teacherPremium')
+        .select('_id scheduledDate duration subject status student timezone billedInTeacherInvoiceId teacherPremium')
         .lean();
 
       console.log(`[aggregateTeacherHours] Found ${classes.length} countable classes`);
@@ -1373,12 +1373,18 @@ class TeacherSalaryService {
       const addedHours = addedClasses.reduce((sum, cls) => sum + (Number(cls.duration || 0) / 60), 0);
       const roundedAddedHours = Math.round(addedHours * 1000) / 1000;
 
-      changes.addedClassDetails = addedClasses.map((cls) => ({
-        date: cls.scheduledDate || null,
-        subject: cls.subject || '',
-        status: cls.status || '',
-        hours: Math.round((Number(cls.duration || 0) / 60) * 1000) / 1000
-      }));
+      changes.addedClassDetails = addedClasses.map((cls) => {
+        const durationMin = Number(cls.duration || 0);
+        const tz = cls.timezone || CAIRO_TZ;
+        const time = cls.scheduledDate ? dayjs(cls.scheduledDate).tz(tz).format('h:mm A') : '';
+        return {
+          studentName: (cls.student && cls.student.studentName) || '',
+          date: cls.scheduledDate || null,
+          time,
+          status: cls.status || '',
+          hours: Math.round((durationMin / 60) * 1000) / 1000
+        };
+      });
 
       invoice.classIds.push(...newClassIds);
       invoice.totalHours = Math.round((Number(invoice.totalHours || 0) + roundedAddedHours) * 1000) / 1000;
@@ -1472,6 +1478,77 @@ class TeacherSalaryService {
     );
 
     return { invoice: finalInvoice, changes };
+  }
+
+  /**
+   * Refresh EVERY unpaid (draft/published, non-adjustment) invoice for a given
+   * billing period in one pass. Runs syncDraftInvoice for each and returns an
+   * aggregated summary. Individual failures are captured per-invoice so one bad
+   * invoice never aborts the whole batch.
+   * @param {Number} month - Billing month (1-12)
+   * @param {Number} year - Billing year
+   * @param {ObjectId|String} userId - Admin performing the action
+   * @returns {Promise<Object>} Aggregated result
+   */
+  static async syncAllUnpaidInvoices(month, year, userId) {
+    const query = {
+      deleted: { $ne: true },
+      isAdjustment: { $ne: true },
+      status: { $in: ['draft', 'published'] }
+    };
+    if (Number.isFinite(Number(month)) && Number.isFinite(Number(year))) {
+      query.month = Number(month);
+      query.year = Number(year);
+    }
+
+    const invoices = await TeacherInvoice.find(query).select('_id invoiceNumber').lean();
+
+    const results = [];
+    let updatedCount = 0;
+    let failedCount = 0;
+    let totalAddedClasses = 0;
+    let totalBonusesApplied = 0;
+    let totalBonusesAmountUSD = 0;
+    let totalCrossMonthAdjustments = 0;
+
+    for (const inv of invoices) {
+      try {
+        const { changes } = await this.syncDraftInvoice(inv._id, userId);
+        if (changes.hasChanges) updatedCount += 1;
+        totalAddedClasses += Number(changes.addedClasses || 0);
+        totalBonusesApplied += Number(changes.bonusesApplied || 0);
+        totalBonusesAmountUSD = Math.round((totalBonusesAmountUSD + Number(changes.bonusesAmountUSD || 0)) * 100) / 100;
+        totalCrossMonthAdjustments += Number(changes.crossMonthAdjustmentsApplied || 0);
+        results.push({
+          invoiceId: inv._id,
+          invoiceNumber: inv.invoiceNumber,
+          hasChanges: changes.hasChanges,
+          addedClasses: changes.addedClasses,
+          bonusesApplied: changes.bonusesApplied,
+          bonusesAmountUSD: changes.bonusesAmountUSD
+        });
+      } catch (err) {
+        failedCount += 1;
+        results.push({
+          invoiceId: inv._id,
+          invoiceNumber: inv.invoiceNumber,
+          error: err?.message || 'Failed to refresh invoice'
+        });
+      }
+    }
+
+    return {
+      processed: invoices.length,
+      updated: updatedCount,
+      failed: failedCount,
+      totals: {
+        addedClasses: totalAddedClasses,
+        bonusesApplied: totalBonusesApplied,
+        bonusesAmountUSD: totalBonusesAmountUSD,
+        crossMonthAdjustments: totalCrossMonthAdjustments
+      },
+      results
+    };
   }
 
   /**

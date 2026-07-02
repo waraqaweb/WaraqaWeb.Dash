@@ -30,7 +30,8 @@ import {
   Link,
   Edit3,
   Save,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 
 const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
@@ -45,7 +46,8 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
   const { start: startDeleteCountdown } = useDeleteActionCountdown();
   const [deleting, setDeleting] = useState(false);
   const [copiedKey, setCopiedKey] = useState(null);
-
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshSummary, setRefreshSummary] = useState(null);
   const copyToClipboard = (text, key) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedKey(key);
@@ -234,6 +236,41 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
       setError(err.response?.data?.error || err.response?.data?.message || 'Failed to save overrides');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRefreshInvoice = async () => {
+    if (user?.role !== 'admin') return;
+    if (!invoiceId) return;
+    if (!invoice) return;
+
+    const isUnpaid = ['draft', 'published'].includes(invoice.status);
+    if (!isUnpaid || invoice.isAdjustment) return;
+
+    try {
+      setRefreshing(true);
+      setError(null);
+
+      const { data } = await api.post(`/teacher-salary/admin/invoices/${invoiceId}/sync`);
+      const changes = data?.changes || {};
+
+      // Reload the invoice to reflect appended classes / bonuses / re-rated totals.
+      const endpoint = user?.role === 'admin'
+        ? `/teacher-salary/admin/invoices/${invoiceId}`
+        : `/teacher-salary/teacher/invoices/${invoiceId}`;
+      const response = await api.get(endpoint);
+      setInvoice(response.data.invoice);
+
+      if (onUpdate) onUpdate();
+
+      // Show an in-modal change summary (old -> new). It lives only while the
+      // modal is open and does not alter the invoice document itself.
+      setRefreshSummary({ ...changes, refreshedAt: new Date() });
+    } catch (err) {
+      console.error('Error refreshing invoice:', err);
+      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to refresh invoice');
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -449,6 +486,18 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
               <PrimaryButton onClick={handleExportExcel} variant="subtle" size="sm" title="Excel" circle>
                 <FileSpreadsheet className="w-4 h-4" />
               </PrimaryButton>
+              {user?.role === 'admin' && !invoice.isAdjustment && ['draft', 'published'].includes(invoice.status) && (
+                <PrimaryButton
+                  onClick={handleRefreshInvoice}
+                  variant="subtle"
+                  size="sm"
+                  title="Refresh invoice: pull in newly-eligible classes, re-rate hours, and apply any pending guardian tip bonuses — without deleting and recreating the invoice."
+                  circle
+                  disabled={saving || deleting || refreshing}
+                >
+                  <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                </PrimaryButton>
+              )}
               {user?.role === 'admin' && (
                 <PrimaryButton
                   onClick={handleDeleteInvoice}
@@ -533,6 +582,15 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
         
         {/* Content - Classes Table */}
         <div className="flex-1 overflow-y-auto p-6">
+        {/* Refresh change summary (session-only; clears on close or dismiss) */}
+          {refreshSummary && (
+            <RefreshSummaryPanel
+              summary={refreshSummary}
+              onDismiss={() => setRefreshSummary(null)}
+              formatCurrency={formatCurrency}
+              formatDate={formatDateDDMMMYYYY}
+            />
+          )}
         {/* Financial Breakdown (compact) */}
           <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-3 border border-blue-200 shadow-sm mb-4">
             <div className="flex items-center justify-between mb-2">
@@ -920,6 +978,130 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
           <div className="text-xs text-slate-500">Created {formatDateDDMMMYYYY(invoice.createdAt)}</div>
           <PrimaryButton variant="subtle" onClick={onClose}>Close</PrimaryButton>
         </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Renders a temporary "what changed" summary after an admin refreshes a draft
+ * invoice. It is session-only (state in the parent) — it never mutates the
+ * invoice document and disappears when dismissed or when the modal closes.
+ */
+const RefreshSummaryPanel = ({ summary, onDismiss, formatCurrency, formatDate }) => {
+  if (!summary) return null;
+
+  const before = summary.before || {};
+  const after = summary.after || {};
+
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const changed = (a, b) => Math.abs(num(a) - num(b)) >= 0.001;
+
+  const usd = (v) => `$${num(v).toFixed(2)}`;
+  const egp = (v) => formatCurrency(num(v), 'EGP');
+
+  const rows = [
+    { key: 'totalHours', label: 'Total hours', fmt: (v) => num(v).toFixed(2) },
+    { key: 'rate', label: 'Hourly rate (USD)', fmt: usd },
+    { key: 'grossAmountUSD', label: 'Gross (USD)', fmt: usd },
+    { key: 'bonusesUSD', label: 'Tip bonuses (USD)', fmt: usd },
+    { key: 'extrasUSD', label: 'Extras (USD)', fmt: usd },
+    { key: 'totalUSD', label: 'Total (USD)', fmt: usd },
+    { key: 'netAmountEGP', label: 'Net payout (EGP)', fmt: egp }
+  ].filter((r) => changed(before[r.key], after[r.key]));
+
+  const hasChanges = summary.hasChanges || rows.length > 0 || summary.addedClasses > 0 || summary.bonusesApplied > 0 || summary.crossMonthAdjustmentsApplied > 0;
+
+  return (
+    <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 bg-emerald-100/70 border-b border-emerald-200">
+        <div className="flex items-center gap-2 text-emerald-800">
+          <Info className="w-4 h-4" />
+          <h4 className="text-sm font-semibold">Invoice refreshed — what changed</h4>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="inline-flex items-center gap-1 text-[11px] text-emerald-700 hover:text-emerald-900 transition-colors"
+          title="Dismiss"
+        >
+          <X className="w-3.5 h-3.5" />
+          Dismiss
+        </button>
+      </div>
+
+      <div className="p-3 space-y-3">
+        {!hasChanges && (
+          <p className="text-sm text-emerald-800">No changes were needed — the invoice was already up to date.</p>
+        )}
+
+        {(summary.addedClasses > 0 || summary.bonusesApplied > 0 || summary.crossMonthAdjustmentsApplied > 0) && (
+          <ul className="text-sm text-slate-700 space-y-1">
+            {summary.addedClasses > 0 && (
+              <li className="flex items-center gap-2">
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span><strong>{summary.addedClasses}</strong> class{summary.addedClasses === 1 ? '' : 'es'} added
+                  {' '}(<strong>+{num(summary.addedHours).toFixed(2)}h</strong>)</span>
+              </li>
+            )}
+            {summary.bonusesApplied > 0 && (
+              <li className="flex items-center gap-2">
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span><strong>{summary.bonusesApplied}</strong> tip bonus{summary.bonusesApplied === 1 ? '' : 'es'} applied
+                  {' '}(<strong>{usd(summary.bonusesAmountUSD)}</strong>)</span>
+              </li>
+            )}
+            {summary.crossMonthAdjustmentsApplied > 0 && (
+              <li className="flex items-center gap-2">
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span><strong>{summary.crossMonthAdjustmentsApplied}</strong> cross-month adjustment{summary.crossMonthAdjustmentsApplied === 1 ? '' : 's'} applied</span>
+              </li>
+            )}
+          </ul>
+        )}
+
+        {Array.isArray(summary.addedClassDetails) && summary.addedClassDetails.length > 0 && (
+          <div className="rounded-md border border-emerald-200 bg-white/70 p-2">
+            <div className="text-[11px] font-semibold uppercase text-slate-500 mb-1">Classes added</div>
+            <div className="max-h-32 overflow-y-auto divide-y divide-slate-100">
+              {summary.addedClassDetails.map((c, idx) => (
+                <div key={idx} className="flex items-center justify-between py-1 text-xs text-slate-600">
+                  <span className="truncate">
+                    {c.date ? formatDate(c.date) : '—'}
+                    {c.subject ? ` · ${c.subject}` : ''}
+                    {c.status ? ` · ${c.status}` : ''}
+                  </span>
+                  <span className="font-medium text-slate-700 whitespace-nowrap ml-2">{num(c.hours).toFixed(2)}h</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {rows.length > 0 && (
+          <div className="rounded-md border border-emerald-200 bg-white/70 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[11px] uppercase text-slate-500 bg-slate-50">
+                  <th className="text-left font-semibold px-2 py-1">Figure</th>
+                  <th className="text-right font-semibold px-2 py-1">Old</th>
+                  <th className="text-center font-semibold px-1 py-1"></th>
+                  <th className="text-right font-semibold px-2 py-1">New</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((r) => (
+                  <tr key={r.key}>
+                    <td className="px-2 py-1 text-slate-600">{r.label}</td>
+                    <td className="px-2 py-1 text-right text-slate-400 line-through">{r.fmt(before[r.key])}</td>
+                    <td className="px-1 py-1 text-center text-slate-400">→</td>
+                    <td className="px-2 py-1 text-right font-semibold text-emerald-700">{r.fmt(after[r.key])}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

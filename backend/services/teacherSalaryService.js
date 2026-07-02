@@ -38,12 +38,41 @@ class TeacherSalaryService {
 
     if (!pending.length) return { appliedCount: 0, appliedAmountUSD: 0 };
 
+    // Reclaim "orphaned" payouts: entries previously marked as applied to a
+    // teacher invoice that has since been deleted (or no longer exists). Their
+    // bonus vanished with the deleted invoice, so they must become eligible
+    // again. This self-heals data where a draft invoice was deleted + recreated
+    // (the recreate never re-applied the tip because the payout still looked
+    // "applied"). We only reclaim entries whose target invoice is gone — a
+    // payout still attached to a live invoice (draft/published/paid) is left
+    // untouched to avoid double-counting the same bonus.
+    const appliedInvoiceIds = Array.from(new Set(
+      pending
+        .filter((entry) => entry && entry.appliedInvoiceId)
+        .map((entry) => String(entry.appliedInvoiceId))
+    ));
+
+    let orphanedAppliedInvoiceIds = new Set();
+    if (appliedInvoiceIds.length) {
+      const liveInvoices = await TeacherInvoice.find({
+        _id: { $in: appliedInvoiceIds },
+        deleted: { $ne: true }
+      }).select('_id').lean();
+      const liveSet = new Set(liveInvoices.map((inv) => String(inv._id)));
+      orphanedAppliedInvoiceIds = new Set(
+        appliedInvoiceIds.filter((id) => !liveSet.has(id))
+      );
+    }
+
     const candidates = pending.filter((entry) => {
       if (!entry) return false;
-      if (entry.appliedAt || entry.appliedInvoiceId) return false;
       const amount = Number(entry.amountUSD || 0);
       if (!Number.isFinite(amount) || amount <= 0) return false;
-      return true;
+      // Never applied yet → eligible.
+      if (!entry.appliedAt && !entry.appliedInvoiceId) return true;
+      // Applied, but its target invoice was deleted/missing → reclaim it.
+      if (entry.appliedInvoiceId && orphanedAppliedInvoiceIds.has(String(entry.appliedInvoiceId))) return true;
+      return false;
     });
 
     if (!candidates.length) return { appliedCount: 0, appliedAmountUSD: 0 };
@@ -111,6 +140,7 @@ class TeacherSalaryService {
       entry.appliedInvoiceId = targetInvoice._id;
       return entry;
     });
+    teacher.markModified('teacherInfo.pendingGuardianPayouts');
     await teacher.save();
 
     return {
@@ -1191,6 +1221,51 @@ class TeacherSalaryService {
 
     if (!preserveHours) {
       await this.unmarkClassesForInvoice(invoice._id, invoice.classIds || []);
+
+      // Un-apply any guardian tip payouts / cross-month adjustments that were
+      // attached to this invoice so they can re-attach to a freshly (re)created
+      // or refreshed invoice. Without this, deleting a draft invoice permanently
+      // orphans the bonus (the payout still looks "applied" to the deleted
+      // invoice and never re-applies). applyPendingGuardianPayoutsToInvoice also
+      // self-heals orphans, but resetting here keeps the teacher record clean and
+      // makes the bonus reappear immediately on the next invoice.
+      try {
+        const teacher = await User.findById(invoice.teacher).select('_id teacherInfo');
+        if (teacher && teacher.teacherInfo) {
+          const invoiceKey = String(invoice._id);
+          let changed = false;
+
+          const payouts = Array.isArray(teacher.teacherInfo.pendingGuardianPayouts)
+            ? teacher.teacherInfo.pendingGuardianPayouts
+            : [];
+          payouts.forEach((entry) => {
+            if (entry && entry.appliedInvoiceId && String(entry.appliedInvoiceId) === invoiceKey) {
+              entry.appliedAt = null;
+              entry.appliedInvoiceId = null;
+              changed = true;
+            }
+          });
+
+          const crossAdjustments = Array.isArray(teacher.teacherInfo.pendingCrossMonthAdjustments)
+            ? teacher.teacherInfo.pendingCrossMonthAdjustments
+            : [];
+          crossAdjustments.forEach((entry) => {
+            if (entry && entry.appliedInvoiceId && String(entry.appliedInvoiceId) === invoiceKey) {
+              entry.appliedAt = null;
+              entry.appliedInvoiceId = null;
+              changed = true;
+            }
+          });
+
+          if (changed) {
+            teacher.markModified('teacherInfo.pendingGuardianPayouts');
+            teacher.markModified('teacherInfo.pendingCrossMonthAdjustments');
+            await teacher.save();
+          }
+        }
+      } catch (unapplyErr) {
+        console.warn('[deleteInvoice] Failed to un-apply pending payouts:', unapplyErr?.message || unapplyErr);
+      }
     }
 
     await TeacherSalaryAudit.logAction({
@@ -1210,6 +1285,193 @@ class TeacherSalaryService {
     });
 
     return invoice;
+  }
+
+  /**
+   * Refresh / synchronise an unpaid (draft or published) teacher invoice with the
+   * latest data WITHOUT deleting and recreating it. This lets an admin pick up:
+   *   1. Newly-eligible classes for the invoice's month (e.g. late-submitted
+   *      reports approved after the invoice was first drafted) — appended as hours.
+   *   2. The correct full-month rate tier for the appended hours.
+   *   3. Pending guardian tip payouts (bonuses) that had not yet been attached.
+   *   4. Pending cross-month hour adjustments.
+   *
+   * Paid and adjustment invoices are intentionally rejected: paid invoices are
+   * immutable (use an adjustment invoice), and adjustment invoices are managed by
+   * the month-end generation flow.
+   *
+   * @param {ObjectId|String} invoiceId
+   * @param {ObjectId|String} userId
+   * @returns {Promise<Object>} { invoice, changes }
+   */
+  static async syncDraftInvoice(invoiceId, userId) {
+    const invoice = await TeacherInvoice.findById(invoiceId);
+    if (!invoice) {
+      throw new Error('Invoice not found');
+    }
+    if (invoice.deleted) {
+      throw new Error('Cannot refresh a deleted invoice');
+    }
+    if (invoice.isAdjustment) {
+      throw new Error('Adjustment invoices cannot be refreshed');
+    }
+    if (!['draft', 'published'].includes(invoice.status)) {
+      throw new Error('Only unpaid (draft/published) invoices can be refreshed. Paid invoices are immutable — create an adjustment invoice instead.');
+    }
+
+    const teacher = await User.findById(invoice.teacher).select('_id firstName lastName teacherInfo');
+    if (!teacher) {
+      throw new Error('Teacher not found');
+    }
+
+    const month = invoice.month;
+    const year = invoice.year;
+
+    // Snapshot the invoice's key figures BEFORE any change so we can report a
+    // clear old -> new diff to the admin.
+    const snapshotFigures = (inv) => ({
+      totalHours: Math.round(Number(inv.totalHours || 0) * 1000) / 1000,
+      rate: Math.round(Number(inv.rateSnapshot?.rate || 0) * 100) / 100,
+      grossAmountUSD: Math.round(Number(inv.grossAmountUSD || 0) * 100) / 100,
+      bonusesUSD: Math.round(Number(inv.bonusesUSD || 0) * 100) / 100,
+      extrasUSD: Math.round(Number(inv.extrasUSD || 0) * 100) / 100,
+      totalUSD: Math.round(Number(inv.totalUSD || 0) * 100) / 100,
+      netAmountEGP: Math.round(Number(inv.netAmountEGP || 0) * 100) / 100
+    });
+    const before = snapshotFigures(invoice);
+
+    const changes = {
+      addedClasses: 0,
+      addedHours: 0,
+      addedClassDetails: [],
+      rateChanged: false,
+      bonusesApplied: 0,
+      bonusesAmountUSD: 0,
+      crossMonthAdjustmentsApplied: 0,
+      before,
+      after: null
+    };
+
+    // 1. Re-aggregate the teacher's countable hours for this billing month.
+    const { totalHours, fullMonthHours, classes } = await this.aggregateTeacherHours(teacher._id, month, year);
+
+    // 2. Determine which countable classes are not yet on THIS invoice and are
+    //    not already billed to another invoice (aggregateTeacherHours only
+    //    returns unbilled/available classes, so anything it returns that is not
+    //    already on this invoice is safe to append).
+    const existingClassIds = Array.isArray(invoice.classIds)
+      ? invoice.classIds.map((id) => id.toString())
+      : [];
+    const existingClassIdSet = new Set(existingClassIds);
+    const newClassIds = (classes || [])
+      .map((cls) => cls._id)
+      .filter((id) => !existingClassIdSet.has(id.toString()));
+
+    if (newClassIds.length > 0) {
+      const newClassIdSet = new Set(newClassIds.map((id) => id.toString()));
+      const addedClasses = (classes || []).filter((cls) => newClassIdSet.has(cls._id.toString()));
+      const addedHours = addedClasses.reduce((sum, cls) => sum + (Number(cls.duration || 0) / 60), 0);
+      const roundedAddedHours = Math.round(addedHours * 1000) / 1000;
+
+      changes.addedClassDetails = addedClasses.map((cls) => ({
+        date: cls.scheduledDate || null,
+        subject: cls.subject || '',
+        status: cls.status || '',
+        hours: Math.round((Number(cls.duration || 0) / 60) * 1000) / 1000
+      }));
+
+      invoice.classIds.push(...newClassIds);
+      invoice.totalHours = Math.round((Number(invoice.totalHours || 0) + roundedAddedHours) * 1000) / 1000;
+
+      changes.addedClasses = newClassIds.length;
+      changes.addedHours = roundedAddedHours;
+    }
+
+    // 3. Re-evaluate the rate tier against the teacher's full monthly volume so the
+    //    invoice bills at the correct tier once all of the month's hours are present.
+    //    A locked custom rate override is preserved untouched.
+    if (invoice.rateSnapshot?.partition !== 'custom') {
+      try {
+        const tierHours = Math.max(
+          Number(fullMonthHours || 0),
+          Number(invoice.totalHours || 0)
+        );
+        const refreshedRate = await this.getTeacherRate(teacher, tierHours);
+        if (refreshedRate && Number.isFinite(Number(refreshedRate.rate))) {
+          if (Number(refreshedRate.rate) !== Number(invoice.rateSnapshot?.rate || 0)) {
+            changes.rateChanged = true;
+          }
+          invoice.rateSnapshot = {
+            partition: refreshedRate.partition,
+            rate: refreshedRate.rate,
+            effectiveFrom: invoice.rateSnapshot?.effectiveFrom || new Date(),
+            description: refreshedRate.description
+          };
+        }
+      } catch (rateErr) {
+        console.warn('[syncDraftInvoice] Failed to refresh rate tier:', rateErr?.message || rateErr);
+      }
+    }
+
+    // 4. Recompute all amounts (handles bonuses, extras, transfer fee, EGP conversion).
+    invoice.calculateAmounts();
+    invoice.updatedBy = userId;
+    await invoice.save();
+
+    if (newClassIds.length > 0) {
+      await this.markClassesAsBilled(newClassIds, invoice._id);
+    }
+
+    // 5. Attach any pending guardian tip payouts (bonuses) that were not yet
+    //    applied — including ones orphaned by a previous delete + recreate.
+    try {
+      const payoutResult = await this.applyPendingGuardianPayoutsToInvoice(teacher._id, month, year, userId);
+      changes.bonusesApplied = payoutResult?.appliedCount || 0;
+      changes.bonusesAmountUSD = payoutResult?.appliedAmountUSD || 0;
+    } catch (pendingErr) {
+      console.warn('[syncDraftInvoice] Failed to apply pending guardian payouts:', pendingErr?.message || pendingErr);
+    }
+
+    // 6. Attach any pending cross-month hour adjustments.
+    try {
+      const crossResult = await this.applyPendingCrossMonthAdjustments(teacher._id, invoice._id);
+      changes.crossMonthAdjustmentsApplied = crossResult?.appliedCount || 0;
+    } catch (crossErr) {
+      console.warn('[syncDraftInvoice] Failed to apply pending cross-month adjustments:', crossErr?.message || crossErr);
+    }
+
+    await TeacherSalaryAudit.logAction({
+      action: 'invoice_recalculate',
+      entityType: 'TeacherInvoice',
+      entityId: invoice._id,
+      actor: userId,
+      actorRole: 'admin',
+      metadata: {
+        invoiceNumber: invoice.invoiceNumber,
+        teacher: invoice.teacher,
+        month,
+        year,
+        refresh: true,
+        ...changes
+      }
+    });
+
+    // Re-fetch so the returned invoice reflects bonuses/adjustments applied by the
+    // load-modify-save helpers above.
+    const refreshed = await TeacherInvoice.findById(invoice._id);
+    const finalInvoice = refreshed || invoice;
+    changes.after = snapshotFigures(finalInvoice);
+
+    // Convenience flag: did anything actually change?
+    changes.hasChanges = Boolean(
+      changes.addedClasses ||
+      changes.bonusesApplied ||
+      changes.crossMonthAdjustmentsApplied ||
+      changes.rateChanged ||
+      JSON.stringify(changes.before) !== JSON.stringify(changes.after)
+    );
+
+    return { invoice: finalInvoice, changes };
   }
 
   /**

@@ -809,6 +809,41 @@ router.delete('/admin/invoices/:id', authenticateToken, requireAdmin, async (req
 });
 
 /**
+ * Refresh / synchronise an unpaid (draft/published) invoice with the latest data:
+ * appends newly-eligible classes, re-rates the full-month tier, and attaches any
+ * pending guardian tip payouts (bonuses) + cross-month adjustments. Does NOT
+ * require deleting and recreating the invoice. Paid invoices are rejected.
+ * POST /api/teacher-salary/admin/invoices/:id/sync
+ */
+router.post('/admin/invoices/:id/sync', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { invoice, changes } = await TeacherSalaryService.syncDraftInvoice(req.params.id, req.user._id);
+
+    res.json({
+      success: true,
+      message: 'Invoice refreshed successfully',
+      changes,
+      invoice
+    });
+  } catch (error) {
+    console.error('[POST /admin/invoices/:id/sync] Error:', error);
+    const message = error?.message || 'Failed to refresh invoice';
+    if (message === 'Invoice not found') {
+      return res.status(404).json({ error: message });
+    }
+    const lower = message.toLowerCase();
+    if (
+      lower.includes('only unpaid') ||
+      lower.includes('adjustment invoices cannot') ||
+      lower.includes('deleted invoice')
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    res.status(500).json({ error: message });
+  }
+});
+
+/**
  * Remove bonus from invoice
  * DELETE /api/teacher-salary/admin/invoices/:id/bonuses/:bonusId
  */

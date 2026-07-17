@@ -8,7 +8,8 @@ const { MEETING_TYPES } = require('../constants/meetingConstants');
 const MEETING_TYPE_LABELS = {
   [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 'Evaluation Session',
   [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 'Guardian Follow-up',
-  [MEETING_TYPES.TEACHER_SYNC]: 'Teacher Sync'
+  [MEETING_TYPES.TEACHER_SYNC]: 'Teacher Sync',
+  [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 'New Teacher Interview'
 };
 
 const formatDisplayName = (person, fallback = 'User') => {

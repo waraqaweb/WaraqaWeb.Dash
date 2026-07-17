@@ -5,7 +5,8 @@
 const MEETING_TYPES = Object.freeze({
   NEW_STUDENT_EVALUATION: 'new_student_evaluation',
   CURRENT_STUDENT_FOLLOW_UP: 'current_student_follow_up',
-  TEACHER_SYNC: 'teacher_sync'
+  TEACHER_SYNC: 'teacher_sync',
+  NEW_TEACHER_INTERVIEW: 'new_teacher_interview'
 });
 
 const MEETING_STATUSES = Object.freeze({
@@ -25,7 +26,8 @@ const MEETING_SOURCES = Object.freeze({
 const MEETING_DEFAULT_DURATIONS = Object.freeze({
   [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 30,
   [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 30,
-  [MEETING_TYPES.TEACHER_SYNC]: 30
+  [MEETING_TYPES.TEACHER_SYNC]: 30,
+  [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 60
 });
 
 const MEETING_COLORS = Object.freeze({

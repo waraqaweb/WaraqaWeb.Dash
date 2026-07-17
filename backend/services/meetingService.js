@@ -140,6 +140,7 @@ const getBufferMinutes = (admin, meetingType) => {
     case MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP:
       return settings.guardianBufferMinutes ?? fallback;
     case MEETING_TYPES.TEACHER_SYNC:
+    case MEETING_TYPES.NEW_TEACHER_INTERVIEW:
       return settings.teacherBufferMinutes ?? fallback;
     default:
       return fallback;
@@ -433,7 +434,8 @@ const buildCalendarLinks = (meeting, admin) => {
   const summary = {
     [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 'Waraqa Evaluation Session',
     [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 'Waraqa Follow-up Meeting',
-    [MEETING_TYPES.TEACHER_SYNC]: 'Waraqa Progress Sync'
+    [MEETING_TYPES.TEACHER_SYNC]: 'Waraqa Progress Sync',
+    [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 'Waraqa New Teacher Interview'
   }[meeting.meetingType] || 'Meeting';
 
   const descriptionParts = [];
@@ -773,8 +775,8 @@ const bookMeeting = async ({
     });
   }
 
-  if (meetingType === MEETING_TYPES.TEACHER_SYNC && !teacherId && !teacherPayload.teacherName && requester?.role !== 'teacher') {
-    throw createError(400, 'Teacher information is required for sync meetings');
+  if ((meetingType === MEETING_TYPES.TEACHER_SYNC || meetingType === MEETING_TYPES.NEW_TEACHER_INTERVIEW) && !teacherId && !teacherPayload.teacherName && requester?.role !== 'teacher') {
+    throw createError(400, 'Teacher information is required for teacher meetings');
   }
 
   const preferredCalendar = calendarPreference

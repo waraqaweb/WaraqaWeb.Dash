@@ -43,6 +43,7 @@ const TeacherContractPage = React.lazy(() => import('./TeacherContractPage'));
 const VacationManagementPage = React.lazy(() => import('./VacationManagementPage'));
 const EvaluationPage = React.lazy(() => import('./EvaluationPage'));
 const ClassChangeRequestsPage = React.lazy(() => import('./ClassChangeRequestsPage'));
+const TeacherOperationsPage = React.lazy(() => import('./TeacherOperationsPage'));
 
 const DeleteCountdownHost = () => {
   const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds, phase } = useDeleteClassCountdown();
@@ -322,6 +323,8 @@ const Dashboard = () => {
         return <VacationManagementPage isActive={isActive} />;
       case 'class-change-requests':
         return <ClassChangeRequestsPage isActive={isActive} />;
+      case 'teacher-operations':
+        return user?.role === 'admin' ? <TeacherOperationsPage isActive={isActive} /> : <DashboardHome isActive={isActive} />;
       case 'evaluation':
         return user?.role === 'admin' ? <EvaluationPage isActive={isActive} /> : <DashboardHome isActive={isActive} />;
       /* Removed 'reports' and 'users' pages from the dashboard: these pages are intentionally
@@ -367,6 +370,8 @@ const Dashboard = () => {
         return user?.role === 'admin' ? 'Meeting Availability' : 'My Availability';
       case 'teacher-contract':
         return 'Teacher Contract';
+      case 'teacher-operations':
+        return 'Teacher Operations';
       case 'library':
         return 'Library';
       default:

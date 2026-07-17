@@ -10,6 +10,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../api/axios';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
+import { getTeacherContractResponseSummary } from '../../api/teacherContract';
 import { 
   Home, 
   Users, 
@@ -24,7 +25,8 @@ import {
   Clock,
   BookOpen,
   X,
-  Monitor
+  Monitor,
+  BriefcaseBusiness
 } from 'lucide-react';
 
 const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
@@ -51,6 +53,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       { id: 'invoices', label: 'Invoices', icon: FileText, roles: ['admin', 'guardian'], link: '/dashboard/invoices' },
       { id: 'salaries', label: 'Salaries', icon: DollarSign, roles: ['admin', 'teacher'], link: salariesLink },
       { id: 'availability', label: isAdmin() ? 'Meetings' : 'My Availability', icon: Clock, roles: ['admin', 'teacher'], link: '/dashboard/availability' },
+      { id: 'teacher-operations', label: 'Teacher Operations', icon: BriefcaseBusiness, roles: ['admin'], link: '/dashboard/teacher-operations' },
       { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
       { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
       { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },
@@ -67,6 +70,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
   const location = useLocation();
   const { socket } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [teacherOperationsCount, setTeacherOperationsCount] = useState(0);
   const lastNavAtRef = useRef(0);
 
   useEffect(() => {
@@ -90,6 +94,27 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       }
     };
     if (isAdmin()) fetchCount();
+
+    const fetchTeacherOperationsCount = async () => {
+      try {
+        const cacheKey = makeCacheKey('teacher-contract:summary', user?._id || 'admin');
+        const cached = readCache(cacheKey, { deps: ['teacher-contract'] });
+        if (cached.hit && typeof cached.value?.unreviewed === 'number') {
+          if (mounted) setTeacherOperationsCount(cached.value.unreviewed || 0);
+          if (cached.ageMs < 30_000) return;
+        }
+
+        const data = await getTeacherContractResponseSummary();
+        if (mounted && data?.success) {
+          setTeacherOperationsCount(data.unreviewed || 0);
+          writeCache(cacheKey, { unreviewed: data.unreviewed || 0 }, { ttlMs: 30_000, deps: ['teacher-contract'] });
+        }
+      } catch (err) {
+        console.error('Failed to fetch teacher operations count', err);
+      }
+    };
+
+    if (isAdmin()) fetchTeacherOperationsCount();
 
     // fetch branding (public)
     (async () => {
@@ -319,6 +344,14 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
                       style={{ color: '#ffffff', textShadow: '0 1px 0 rgba(0,0,0,0.28)', fontWeight: 600 }}
                     >
                       {unreadCount}
+                    </span>
+                  )}
+                  {item.id === 'teacher-operations' && isAdmin() && teacherOperationsCount > 0 && (
+                    <span
+                      className="ml-auto text-xs bg-amber-500 px-2 py-0.5 rounded-full"
+                      style={{ color: '#1f2937', textShadow: '0 1px 0 rgba(255,255,255,0.18)', fontWeight: 700 }}
+                    >
+                      {teacherOperationsCount}
                     </span>
                   )}
                 </button>

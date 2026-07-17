@@ -4241,7 +4241,7 @@ router.patch("/:id/billing-waiver", authenticateToken, requireRole(["admin"]), a
       if (guardianId) {
         try {
           const hoursMap = await computeGuardianHoursFromPaidInvoices([guardianId]);
-          await syncComputedHoursToStorage(hoursMap);
+          await syncComputedHoursToStorage(hoursMap, { syncGuardianTotal: true });
         } catch (hErr) {
           console.warn('[billing-waiver] guardian hours recompute failed:', hErr.message);
         }

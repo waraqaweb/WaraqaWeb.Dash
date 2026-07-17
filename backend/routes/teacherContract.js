@@ -4,7 +4,9 @@ const cloudinary = require('cloudinary').v2;
 const Setting = require('../models/Setting');
 const TeacherContractSubmission = require('../models/TeacherContractSubmission');
 const TeacherContractLead = require('../models/TeacherContractLead');
+const RecruitmentCampaign = require('../models/RecruitmentCampaign');
 const User = require('../models/User');
+const Class = require('../models/Class');
 const { authenticateToken, requireTeacherOrAdmin, requireAdmin } = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
 
@@ -16,15 +18,21 @@ cloudinary.config({
 
 const router = express.Router();
 const storage = multer.memoryStorage();
+// Teacher contract uploads include audio/video (English intro, Quran recitation, teaching demo).
+// Use a dedicated env var with a 100 MB default, separate from the global MAX_FILE_SIZE.
 const upload = multer({
   storage,
-  limits: { fileSize: Number(process.env.MAX_FILE_SIZE || 8 * 1024 * 1024) },
+  limits: { fileSize: Number(process.env.TEACHER_CONTRACT_MAX_FILE_SIZE || 100 * 1024 * 1024) },
 });
 
 const fileFields = upload.fields([
   { name: 'identityDocument', maxCount: 1 },
   { name: 'educationDocuments', maxCount: 1 },
   { name: 'profilePhoto', maxCount: 1 },
+  { name: 'resume', maxCount: 1 },
+  { name: 'englishIntroduction', maxCount: 1 },
+  { name: 'quranRecitation', maxCount: 1 },
+  { name: 'teachingTopicExplanation', maxCount: 1 },
 ]);
 
 const isCloudinaryConfigured = Boolean(
@@ -34,6 +42,15 @@ const isCloudinaryConfigured = Boolean(
 );
 
 const CONTRACT_TEMPLATE_KEY = 'teacher_contract_template_v1';
+const RECRUITMENT_RATINGS = ['not_available', 'weak', 'good', 'very_good', 'excellent'];
+const RECRUITMENT_STATUSES = ['new', 'under_review', 'shortlisted', 'interview_pending', 'interviewed', 'accepted', 'rejected', 'archived'];
+const RATING_SCORE = {
+  not_available: 0,
+  weak: 1,
+  good: 3,
+  very_good: 4,
+  excellent: 5,
+};
 const DEFAULT_CONTRACT_TEMPLATE = `بسم الله الرحمن الرحيم
 
 يسر مؤسسة ورقة لتعليم القرآن الكريم واللغة العربية والدراسات الإسلامية أن تقدم إليك عرضا للانضمام إلى فريقها، سائلين الله التوفيق والسداد.
@@ -67,6 +84,13 @@ const splitName = (value = '') => {
 };
 
 const resolveMeetingLink = (body = {}) => String(body.meetingLink || body.skypeId || '').trim();
+
+const slugifyCampaign = (value = '') => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '')
+  .slice(0, 80);
 
 const toDataUri = (file) => `data:${file.mimetype || 'application/octet-stream'};base64,${file.buffer.toString('base64')}`;
 
@@ -116,16 +140,37 @@ function normalizeTeacherResponse(source, doc) {
   if (!doc) return null;
 
   const plain = typeof doc.toObject === 'function' ? doc.toObject() : doc;
+  const recruitment = plain.recruitment || {};
   return {
     id: String(plain._id),
     source,
-    status: plain.status || 'submitted',
+    status: recruitment.status || 'new',
+    formStatus: plain.status || 'submitted',
     submittedAt: plain.submittedAt || plain.createdAt || plain.updatedAt || null,
     createdAt: plain.createdAt || null,
     updatedAt: plain.updatedAt || null,
     contract: plain.contract || {},
     verification: plain.verification || {},
     personalInfo: plain.personalInfo || {},
+    application: plain.application || {},
+    recruitment: {
+      status: recruitment.status || 'new',
+      reviewed: Boolean(recruitment.reviewed),
+      reviewedAt: recruitment.reviewedAt || null,
+      reviewedBy: recruitment.reviewedBy ? {
+        _id: recruitment.reviewedBy._id || recruitment.reviewedBy,
+        firstName: recruitment.reviewedBy.firstName,
+        lastName: recruitment.reviewedBy.lastName,
+        email: recruitment.reviewedBy.email,
+      } : null,
+      adminNotes: recruitment.adminNotes || '',
+      rejectionCategory: recruitment.rejectionCategory || '',
+      tags: Array.isArray(recruitment.tags) ? recruitment.tags : [],
+      fit: recruitment.fit || {},
+      evaluation: recruitment.evaluation || {},
+      overall: recruitment.overall || {},
+      history: Array.isArray(recruitment.history) ? recruitment.history : [],
+    },
     user: plain.user ? {
       _id: plain.user._id,
       firstName: plain.user.firstName,
@@ -136,6 +181,224 @@ function normalizeTeacherResponse(source, doc) {
   };
 }
 
+const normalizeRecruitmentRating = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return RECRUITMENT_RATINGS.includes(normalized) ? normalized : 'not_available';
+};
+
+const normalizeRecruitmentStatus = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return RECRUITMENT_STATUSES.includes(normalized) ? normalized : 'new';
+};
+
+const normalizeStringArray = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+};
+
+const getBodyArray = (body = {}, key) => {
+  const direct = body[key];
+  const indexed = Object.keys(body)
+    .filter((entry) => entry === key || entry.startsWith(`${key}[`))
+    .sort()
+    .map((entry) => body[entry]);
+  if (Array.isArray(direct)) return normalizeStringArray(direct);
+  if (typeof direct === 'string' && direct.includes(',')) return normalizeStringArray(direct);
+  if (typeof direct === 'string' && direct.trim()) return [direct.trim()];
+  return normalizeStringArray(indexed);
+};
+
+const buildApplicationPayload = (body = {}, files = {}, existingApplication = null, uploadPrefix = '') => {
+  const currentFiles = existingApplication?.files || {};
+  return {
+    positionsInterested: getBodyArray(body, 'positionsInterested'),
+    education: {
+      eligibilityPath: String(body.eligibilityPath || '').trim(),
+      graduationStatus: String(body.graduationStatus || '').trim(),
+      facultyUniversity: String(body.facultyUniversity || '').trim(),
+      degree: String(body.degree || '').trim(),
+      additionalCertificates: String(body.additionalCertificates || '').trim(),
+    },
+    experience: {
+      teachingExperienceLevel: String(body.teachingExperienceLevel || '').trim(),
+      currentJob: String(body.currentJob || '').trim(),
+      profileSummary: String(body.profileSummary || '').trim(),
+      specialRequests: String(body.specialRequests || '').trim(),
+    },
+    technicalSkills: {
+      classTools: String(body.classTools || '').trim(),
+      meetingApps: getBodyArray(body, 'meetingApps'),
+      officeProducts: getBodyArray(body, 'officeProducts'),
+    },
+    teachingProfile: {
+      subjectsCanTeach: getBodyArray(body, 'subjectsCanTeach'),
+      preferredAvailability: String(body.preferredAvailability || '').trim(),
+      alternativeAvailability: String(body.alternativeAvailability || '').trim(),
+    },
+    files: {
+      resume: files.resume?.[0] ? null : (currentFiles.resume || {}),
+      englishIntroduction: files.englishIntroduction?.[0] ? null : (currentFiles.englishIntroduction || {}),
+      quranRecitation: files.quranRecitation?.[0] ? null : (currentFiles.quranRecitation || {}),
+      teachingTopicExplanation: files.teachingTopicExplanation?.[0] ? null : (currentFiles.teachingTopicExplanation || {}),
+    },
+  };
+};
+
+const computeRecruitmentOverall = (evaluation = {}) => {
+  const values = Object.values(evaluation || {}).map((value) => normalizeRecruitmentRating(value));
+  const scored = values.filter((value) => value !== 'not_available').map((value) => RATING_SCORE[value] || 0);
+  if (!scored.length) {
+    return { score: null, label: 'Not rated', recommendation: 'review' };
+  }
+
+  const average = scored.reduce((sum, value) => sum + value, 0) / scored.length;
+  const score = Math.round((average / 5) * 100);
+  const requiredKeys = ['english', 'communication', 'professionalism', 'punctuality'];
+  const hasWeakRequired = requiredKeys.some((key) => {
+    const numeric = RATING_SCORE[normalizeRecruitmentRating(evaluation[key])] || 0;
+    return numeric > 0 && numeric < 3;
+  });
+
+  let label = 'Needs review';
+  if (score >= 85) label = 'Excellent';
+  else if (score >= 70) label = 'Very good';
+  else if (score >= 55) label = 'Good';
+  else if (score >= 35) label = 'Weak';
+
+  let recommendation = 'review';
+  if (hasWeakRequired || score < 40) recommendation = 'reject';
+  else if (score >= 70) recommendation = 'accept';
+
+  return { score, label, recommendation };
+};
+
+const includesAny = (values = [], patterns = []) => {
+  const text = (Array.isArray(values) ? values : []).join(' ').toLowerCase();
+  return patterns.some((pattern) => pattern.test(text));
+};
+
+const buildRecruitmentUpdate = (current = {}, payload = {}, actorId = null) => {
+  const nextStatus = payload.pipelineStatus != null
+    ? normalizeRecruitmentStatus(payload.pipelineStatus)
+    : normalizeRecruitmentStatus(current.status || 'new');
+  const nextEvaluation = {
+    english: normalizeRecruitmentRating(payload?.evaluation?.english ?? current?.evaluation?.english),
+    quran: normalizeRecruitmentRating(payload?.evaluation?.quran ?? current?.evaluation?.quran),
+    arabic: normalizeRecruitmentRating(payload?.evaluation?.arabic ?? current?.evaluation?.arabic),
+    islamicStudies: normalizeRecruitmentRating(payload?.evaluation?.islamicStudies ?? current?.evaluation?.islamicStudies),
+    teachingDemo: normalizeRecruitmentRating(payload?.evaluation?.teachingDemo ?? current?.evaluation?.teachingDemo),
+    communication: normalizeRecruitmentRating(payload?.evaluation?.communication ?? current?.evaluation?.communication),
+    punctuality: normalizeRecruitmentRating(payload?.evaluation?.punctuality ?? current?.evaluation?.punctuality),
+    professionalism: normalizeRecruitmentRating(payload?.evaluation?.professionalism ?? current?.evaluation?.professionalism),
+    flexibility: normalizeRecruitmentRating(payload?.evaluation?.flexibility ?? current?.evaluation?.flexibility),
+  };
+  const overall = computeRecruitmentOverall(nextEvaluation);
+  const reviewed = payload.reviewed == null ? true : Boolean(payload.reviewed);
+  const previousStatus = normalizeRecruitmentStatus(current.status || 'new');
+  const adminNotes = String(payload.adminNotes ?? current.adminNotes ?? '').trim();
+  const noteForHistory = String(payload.historyNote || adminNotes || '').trim().slice(0, 1000);
+  const history = Array.isArray(current.history) ? [...current.history] : [];
+  const statusChanged = previousStatus !== nextStatus;
+
+  history.push({
+    at: new Date(),
+    actor: actorId || current.reviewedBy || null,
+    action: statusChanged ? 'status_changed' : 'review_updated',
+    fromStatus: previousStatus,
+    toStatus: nextStatus,
+    note: noteForHistory,
+  });
+
+  return {
+    status: nextStatus,
+    reviewed,
+    reviewedAt: reviewed ? new Date() : current.reviewedAt || null,
+    reviewedBy: reviewed ? (actorId || current.reviewedBy || null) : current.reviewedBy || null,
+    adminNotes,
+    rejectionCategory: String(payload.rejectionCategory ?? current.rejectionCategory ?? '').trim(),
+    tags: normalizeStringArray(payload.tags ?? current.tags),
+    fit: {
+      campaignId: payload?.fit?.campaignId ?? current?.fit?.campaignId ?? null,
+      subjects: normalizeStringArray(payload?.fit?.subjects ?? current?.fit?.subjects),
+      genderRequirement: String(payload?.fit?.genderRequirement ?? current?.fit?.genderRequirement ?? '').trim(),
+      preferredWindow: String(payload?.fit?.preferredWindow ?? current?.fit?.preferredWindow ?? '').trim(),
+      timezoneNotes: String(payload?.fit?.timezoneNotes ?? current?.fit?.timezoneNotes ?? '').trim(),
+      requiredHoursPerDay: payload?.fit?.requiredHoursPerDay == null
+        ? (current?.fit?.requiredHoursPerDay ?? null)
+        : Number(payload.fit.requiredHoursPerDay) || null,
+    },
+    evaluation: nextEvaluation,
+    overall,
+    history: history.slice(-50),
+  };
+};
+
+const normalizeCampaign = (doc, applicationCount = 0) => {
+  if (!doc) return null;
+  const plain = typeof doc.toObject === 'function' ? doc.toObject() : doc;
+  const now = Date.now();
+  const opensAt = plain.opensAt ? new Date(plain.opensAt) : null;
+  const closesAt = plain.closesAt ? new Date(plain.closesAt) : null;
+  const isOpenWindow = (!opensAt || opensAt.getTime() <= now) && (!closesAt || closesAt.getTime() >= now);
+  return {
+    id: String(plain._id),
+    title: plain.title || '',
+    slug: plain.slug || '',
+    status: plain.status || 'draft',
+    opensAt: plain.opensAt || null,
+    closesAt: plain.closesAt || null,
+    targetApplicants: plain.targetApplicants || 0,
+    targetHires: plain.targetHires || 0,
+    roles: plain.roles || { male: false, female: false },
+    subjects: Array.isArray(plain.subjects) ? plain.subjects : [],
+    preferredWindow: plain.preferredWindow || '',
+    publicHeadline: plain.publicHeadline || '',
+    publicDescription: plain.publicDescription || '',
+    internalNotes: plain.internalNotes || '',
+    reopenLimit: plain.reopenLimit || 0,
+    applicationCount,
+    isOpenWindow,
+  };
+};
+
+const buildCampaignPayload = (payload = {}, actorId = null) => {
+  const title = String(payload.title || '').trim();
+  const slug = slugifyCampaign(payload.slug || payload.title || '');
+  return {
+    title,
+    slug,
+    status: ['draft', 'open', 'closed', 'archived'].includes(String(payload.status || '').trim().toLowerCase())
+      ? String(payload.status || '').trim().toLowerCase()
+      : 'draft',
+    opensAt: payload.opensAt ? new Date(payload.opensAt) : null,
+    closesAt: payload.closesAt ? new Date(payload.closesAt) : null,
+    targetApplicants: Math.max(0, Number(payload.targetApplicants || 0) || 0),
+    targetHires: Math.max(0, Number(payload.targetHires || 0) || 0),
+    roles: {
+      male: Boolean(payload?.roles?.male),
+      female: Boolean(payload?.roles?.female),
+    },
+    subjects: normalizeStringArray(payload.subjects),
+    preferredWindow: String(payload.preferredWindow || '').trim(),
+    publicHeadline: String(payload.publicHeadline || '').trim(),
+    publicDescription: String(payload.publicDescription || '').trim(),
+    internalNotes: String(payload.internalNotes || '').trim(),
+    reopenLimit: Math.max(0, Number(payload.reopenLimit || 0) || 0),
+    updatedBy: actorId || null,
+  };
+};
+
+const resolveResponseModel = (source) => {
+  if (source === 'public') return TeacherContractLead;
+  if (source === 'dashboard') return TeacherContractSubmission;
+  return null;
+};
+
 router.get('/template', async (req, res) => {
   try {
     const value = await getContractTemplateValue();
@@ -143,6 +406,86 @@ router.get('/template', async (req, res) => {
   } catch (error) {
     console.error('Get teacher contract template error:', error);
     return res.status(500).json({ message: 'Failed to load contract template.' });
+  }
+});
+
+router.get('/campaigns/public', async (req, res) => {
+  try {
+    const campaigns = await RecruitmentCampaign.find({ status: 'open' }).sort({ opensAt: -1, createdAt: -1 }).lean();
+    return res.json({ campaigns: campaigns.map((item) => normalizeCampaign(item, 0)) });
+  } catch (error) {
+    console.error('List public recruitment campaigns error:', error);
+    return res.status(500).json({ message: 'Failed to load recruitment campaigns.' });
+  }
+});
+
+router.get('/campaigns', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const campaigns = await RecruitmentCampaign.find({}).sort({ createdAt: -1 }).lean();
+    const campaignIds = campaigns.map((item) => item._id);
+    const [publicCounts, dashboardCounts] = await Promise.all([
+      TeacherContractLead.aggregate([
+        { $match: { 'recruitment.fit.campaignId': { $in: campaignIds } } },
+        { $group: { _id: '$recruitment.fit.campaignId', count: { $sum: 1 } } },
+      ]),
+      TeacherContractSubmission.aggregate([
+        { $match: { 'recruitment.fit.campaignId': { $in: campaignIds }, status: 'submitted' } },
+        { $group: { _id: '$recruitment.fit.campaignId', count: { $sum: 1 } } },
+      ]),
+    ]);
+    const counts = new Map();
+    [...publicCounts, ...dashboardCounts].forEach((row) => {
+      const key = String(row._id || '');
+      counts.set(key, (counts.get(key) || 0) + Number(row.count || 0));
+    });
+    return res.json({ campaigns: campaigns.map((item) => normalizeCampaign(item, counts.get(String(item._id)) || 0)) });
+  } catch (error) {
+    console.error('List recruitment campaigns error:', error);
+    return res.status(500).json({ message: 'Failed to load recruitment campaigns.' });
+  }
+});
+
+router.post('/campaigns', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const payload = buildCampaignPayload(req.body || {}, req.user?._id || null);
+    if (!payload.title || !payload.slug) {
+      return res.status(400).json({ message: 'Campaign title is required.' });
+    }
+    const campaign = await RecruitmentCampaign.create({
+      ...payload,
+      createdBy: req.user?._id || null,
+    });
+    return res.status(201).json({ campaign: normalizeCampaign(campaign, 0) });
+  } catch (error) {
+    console.error('Create recruitment campaign error:', error);
+    if (error?.code === 11000) {
+      return res.status(409).json({ message: 'Campaign slug already exists.' });
+    }
+    return res.status(500).json({ message: 'Failed to create recruitment campaign.' });
+  }
+});
+
+router.put('/campaigns/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const payload = buildCampaignPayload(req.body || {}, req.user?._id || null);
+    if (!payload.title || !payload.slug) {
+      return res.status(400).json({ message: 'Campaign title is required.' });
+    }
+    const campaign = await RecruitmentCampaign.findByIdAndUpdate(req.params.id, { $set: payload }, { new: true, runValidators: true });
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found.' });
+    }
+    const [publicCount, dashboardCount] = await Promise.all([
+      TeacherContractLead.countDocuments({ 'recruitment.fit.campaignId': campaign._id }),
+      TeacherContractSubmission.countDocuments({ status: 'submitted', 'recruitment.fit.campaignId': campaign._id }),
+    ]);
+    return res.json({ campaign: normalizeCampaign(campaign, publicCount + dashboardCount) });
+  } catch (error) {
+    console.error('Update recruitment campaign error:', error);
+    if (error?.code === 11000) {
+      return res.status(409).json({ message: 'Campaign slug already exists.' });
+    }
+    return res.status(500).json({ message: 'Failed to update recruitment campaign.' });
   }
 });
 
@@ -168,10 +511,12 @@ router.get('/responses', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const [publicLeads, dashboardSubmissions] = await Promise.all([
       TeacherContractLead.find({})
+        .populate('recruitment.reviewedBy', 'firstName lastName email')
         .sort({ submittedAt: -1, createdAt: -1 })
         .lean(),
       TeacherContractSubmission.find({ status: 'submitted' })
         .populate('user', 'firstName lastName email phone')
+        .populate('recruitment.reviewedBy', 'firstName lastName email')
         .sort({ submittedAt: -1, createdAt: -1 })
         .lean(),
     ]);
@@ -185,6 +530,189 @@ router.get('/responses', authenticateToken, requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('List teacher contract responses error:', error);
     return res.status(500).json({ message: 'Failed to load teacher responses.' });
+  }
+});
+
+router.get('/responses-summary', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const [publicTotal, dashboardTotal, publicUnread, dashboardUnread] = await Promise.all([
+      TeacherContractLead.countDocuments({}),
+      TeacherContractSubmission.countDocuments({ status: 'submitted' }),
+      TeacherContractLead.countDocuments({ 'recruitment.reviewed': { $ne: true } }),
+      TeacherContractSubmission.countDocuments({ status: 'submitted', 'recruitment.reviewed': { $ne: true } }),
+    ]);
+
+    return res.json({
+      success: true,
+      total: publicTotal + dashboardTotal,
+      unreviewed: publicUnread + dashboardUnread,
+      publicTotal,
+      dashboardTotal,
+    });
+  } catch (error) {
+    console.error('Teacher contract response summary error:', error);
+    return res.status(500).json({ message: 'Failed to load teacher response summary.' });
+  }
+});
+
+router.get('/operations-summary', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+    const next14Days = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const teacherDocs = await User.find({ role: 'teacher', isActive: true })
+      .select('firstName lastName gender timezone teacherInfo')
+      .lean();
+
+    const teacherIds = teacherDocs.map((teacher) => teacher._id).filter(Boolean);
+
+    const [publicRows, dashboardRows, upcomingAgg] = await Promise.all([
+      TeacherContractLead.find({}).select('recruitment').lean(),
+      TeacherContractSubmission.find({ status: 'submitted' }).select('recruitment').lean(),
+      teacherIds.length
+        ? Class.aggregate([
+            {
+              $match: {
+                teacher: { $in: teacherIds },
+                hidden: { $ne: true },
+                status: { $in: ['scheduled', 'in_progress', 'attended'] },
+                scheduledDate: { $gte: now, $lt: next14Days },
+              },
+            },
+            {
+              $group: {
+                _id: '$teacher',
+                hours: { $sum: { $divide: ['$duration', 60] } },
+                classes: { $sum: 1 },
+                students: { $addToSet: '$student.studentId' },
+              },
+            },
+          ])
+        : [],
+    ]);
+
+    const pipelineRows = [...publicRows, ...dashboardRows];
+    const pipeline = {
+      total: pipelineRows.length,
+      unreviewed: pipelineRows.filter((row) => row?.recruitment?.reviewed !== true).length,
+      byStatus: RECRUITMENT_STATUSES.reduce((acc, status) => {
+        acc[status] = pipelineRows.filter((row) => normalizeRecruitmentStatus(row?.recruitment?.status) === status).length;
+        return acc;
+      }, {}),
+    };
+
+    const upcomingByTeacher = new Map(
+      (upcomingAgg || []).map((row) => [
+        String(row._id),
+        {
+          upcomingHours: Number(row.hours || 0),
+          upcomingClasses: Number(row.classes || 0),
+          studentCount: Array.isArray(row.students) ? row.students.length : 0,
+        },
+      ])
+    );
+
+    const teacherRows = teacherDocs.map((teacher) => {
+      const teacherInfo = teacher.teacherInfo || {};
+      const qualifications = Array.isArray(teacherInfo.qualifications) ? teacherInfo.qualifications : [];
+      const subjects = Array.isArray(teacherInfo.subjects) ? teacherInfo.subjects.filter(Boolean) : [];
+      const upcoming = upcomingByTeacher.get(String(teacher._id)) || { upcomingHours: 0, upcomingClasses: 0, studentCount: 0 };
+      return {
+        id: String(teacher._id),
+        name: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher',
+        gender: teacher.gender || '',
+        timezone: teacher.timezone || 'Africa/Cairo',
+        subjects,
+        spokenLanguages: Array.isArray(teacherInfo.spokenLanguages) ? teacherInfo.spokenLanguages.filter(Boolean) : [],
+        monthlyHours: Number(teacherInfo.monthlyHours || 0),
+        hourlyRate: Number(teacherInfo.hourlyRate || 0),
+        availabilityStatus: teacherInfo.availabilityStatus || 'default_24_7',
+        hasGoogleMeetLink: Boolean(teacherInfo.googleMeetLink),
+        qualificationText: qualifications.map((item) => `${item?.degree || ''} ${item?.institution || ''}`.trim()).filter(Boolean),
+        upcomingHours14Days: Number(upcoming.upcomingHours || 0),
+        upcomingClasses14Days: Number(upcoming.upcomingClasses || 0),
+        studentCount14Days: Number(upcoming.studentCount || 0),
+      };
+    });
+
+    const totalMonthlyHours = teacherRows.reduce((sum, teacher) => sum + (teacher.monthlyHours || 0), 0);
+    const totalUpcomingHours14Days = teacherRows.reduce((sum, teacher) => sum + (teacher.upcomingHours14Days || 0), 0);
+    const distinctStudents14Days = teacherRows.reduce((sum, teacher) => sum + (teacher.studentCount14Days || 0), 0);
+    const singleSubjectCount = teacherRows.filter((teacher) => teacher.subjects.length <= 1).length;
+    const multiSubjectCount = teacherRows.filter((teacher) => teacher.subjects.length > 1).length;
+    const quranCount = teacherRows.filter((teacher) => includesAny(teacher.subjects, [/quran/i, /tajweed/i])).length;
+    const arabicCount = teacherRows.filter((teacher) => includesAny(teacher.subjects, [/arabic/i, /noor/i])).length;
+    const islamicStudiesCount = teacherRows.filter((teacher) => includesAny(teacher.subjects, [/islamic/i, /fiqh/i, /hadith/i, /tafsir/i])).length;
+    const englishSpeakingCount = teacherRows.filter((teacher) => includesAny(teacher.spokenLanguages, [/english/i])).length;
+    const azharCount = teacherRows.filter((teacher) => includesAny(teacher.qualificationText, [/azhar/i])).length;
+    const ijazahCount = teacherRows.filter((teacher) => includesAny(teacher.qualificationText, [/ijaz/i])).length;
+
+    return res.json({
+      success: true,
+      generatedAt: new Date().toISOString(),
+      pipeline,
+      teachers: {
+        activeCount: teacherRows.length,
+        totalMonthlyHours: +totalMonthlyHours.toFixed(2),
+        averageMonthlyHours: teacherRows.length ? +(totalMonthlyHours / teacherRows.length).toFixed(2) : 0,
+        totalUpcomingHours14Days: +totalUpcomingHours14Days.toFixed(2),
+        distinctStudents14Days,
+        withUpcomingClasses: teacherRows.filter((teacher) => teacher.upcomingClasses14Days > 0).length,
+        withoutUpcomingClasses: teacherRows.filter((teacher) => teacher.upcomingClasses14Days === 0).length,
+        withCustomAvailability: teacherRows.filter((teacher) => teacher.availabilityStatus === 'custom_set').length,
+        pendingAvailability: teacherRows.filter((teacher) => teacher.availabilityStatus === 'pending_setup').length,
+        defaultAvailability: teacherRows.filter((teacher) => teacher.availabilityStatus === 'default_24_7').length,
+        singleSubjectCount,
+        multiSubjectCount,
+        quranCount,
+        arabicCount,
+        islamicStudiesCount,
+        englishSpeakingCount,
+        azharCount,
+        ijazahCount,
+        googleMeetLinkCount: teacherRows.filter((teacher) => teacher.hasGoogleMeetLink).length,
+      },
+      teacherRows: teacherRows
+        .sort((a, b) => (b.upcomingHours14Days || 0) - (a.upcomingHours14Days || 0) || (b.monthlyHours || 0) - (a.monthlyHours || 0))
+        .slice(0, 12),
+      dataCompleteness: {
+        reserveAvailabilityTracked: false,
+        backupTeacherCoverageTracked: false,
+        note: 'Live teacher reserve hours and backup coverage are not stored yet, so this summary focuses on current pipeline, qualifications, configured availability status, and scheduled class load.',
+      },
+    });
+  } catch (error) {
+    console.error('Teacher operations summary error:', error);
+    return res.status(500).json({ message: 'Failed to load teacher operations summary.' });
+  }
+});
+
+router.patch('/responses/:source/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const source = String(req.params.source || '').trim().toLowerCase();
+    const Model = resolveResponseModel(source);
+    if (!Model) {
+      return res.status(400).json({ message: 'Unsupported response source.' });
+    }
+
+    const doc = await Model.findById(req.params.id)
+      .populate('user', 'firstName lastName email phone')
+      .populate('recruitment.reviewedBy', 'firstName lastName email');
+
+    if (!doc) {
+      return res.status(404).json({ message: 'Teacher response not found.' });
+    }
+
+    doc.recruitment = buildRecruitmentUpdate(doc.recruitment || {}, req.body || {}, req.user?._id || null);
+    await doc.save();
+    await doc.populate('recruitment.reviewedBy', 'firstName lastName email');
+
+    return res.json({
+      message: 'Teacher response updated.',
+      response: normalizeTeacherResponse(source, doc),
+    });
+  } catch (error) {
+    console.error('Update teacher contract response error:', error);
+    return res.status(500).json({ message: 'Failed to update teacher response.' });
   }
 });
 
@@ -211,17 +739,39 @@ router.post('/public', fileFields, async (req, res) => {
       occupation: String(req.body.occupation || '').trim(),
       epithet: String(req.body.epithet || '').trim(),
     };
-    const wordCount = introEssay ? introEssay.split(/\s+/).filter(Boolean).length : 0;
     const files = req.files || {};
+    const campaignId = String(req.body.campaignId || req.query.campaignId || '').trim();
+    const campaignSlug = String(req.body.campaignSlug || req.query.campaign || '').trim().toLowerCase();
+    let campaign = null;
+
+    if (campaignId) {
+      campaign = await RecruitmentCampaign.findById(campaignId).lean();
+    } else if (campaignSlug) {
+      campaign = await RecruitmentCampaign.findOne({ slug: campaignSlug }).lean();
+    }
+
+    const application = buildApplicationPayload(req.body, files);
 
     if (!contractAccepted || !contractFullName) {
       return res.status(400).json({ message: 'Please accept the contract and write the full name.' });
     }
-    if (!introEssay || wordCount > 200) {
-      return res.status(400).json({ message: 'Please add a short English introduction up to 200 words.' });
-    }
     if (!personalInfo.fullName || !personalInfo.email || !personalInfo.birthDate || !personalInfo.mobileNumber || !personalInfo.gender || !personalInfo.nationality) {
       return res.status(400).json({ message: 'Please complete the required personal information.' });
+    }
+    if (!application.positionsInterested.length) {
+      return res.status(400).json({ message: 'Please select at least one position of interest.' });
+    }
+    if (!application.education.eligibilityPath || !application.education.graduationStatus || !application.education.facultyUniversity || !application.education.degree) {
+      return res.status(400).json({ message: 'Please complete the required education information.' });
+    }
+    if (!application.experience.teachingExperienceLevel || !application.experience.currentJob) {
+      return res.status(400).json({ message: 'Please complete the experience section.' });
+    }
+    if (!application.technicalSkills.classTools || !application.technicalSkills.meetingApps.length || !application.technicalSkills.officeProducts.length) {
+      return res.status(400).json({ message: 'Please complete the technical skills section.' });
+    }
+    if (!application.teachingProfile.subjectsCanTeach.length || !application.teachingProfile.preferredAvailability) {
+      return res.status(400).json({ message: 'Please complete the teaching profile section.' });
     }
     if (!files.identityDocument?.[0]) {
       return res.status(400).json({ message: 'Identity document is required.' });
@@ -229,12 +779,22 @@ router.post('/public', fileFields, async (req, res) => {
     if (!files.educationDocuments?.[0]) {
       return res.status(400).json({ message: 'Educational documents are required.' });
     }
+    if (!files.resume?.[0]) {
+      return res.status(400).json({ message: 'Resume or cover letter is required.' });
+    }
+    if (!files.englishIntroduction?.[0] || !files.quranRecitation?.[0] || !files.teachingTopicExplanation?.[0]) {
+      return res.status(400).json({ message: 'Please upload the required introduction, Quran recitation, and teaching explanation records.' });
+    }
 
     const identityDocument = await uploadAsset(files.identityDocument[0], `waraqa/public-teacher-contracts/${Date.now()}/identity`);
     const educationDocuments = await uploadAsset(files.educationDocuments[0], `waraqa/public-teacher-contracts/${Date.now()}/education`);
     const profilePhoto = files.profilePhoto?.[0]
       ? await uploadAsset(files.profilePhoto[0], `waraqa/public-teacher-contracts/${Date.now()}/profile`)
       : {};
+    const resume = await uploadAsset(files.resume[0], `waraqa/public-teacher-contracts/${Date.now()}/resume`);
+    const englishIntroduction = await uploadAsset(files.englishIntroduction[0], `waraqa/public-teacher-contracts/${Date.now()}/english-introduction`);
+    const quranRecitation = await uploadAsset(files.quranRecitation[0], `waraqa/public-teacher-contracts/${Date.now()}/quran-recitation`);
+    const teachingTopicExplanation = await uploadAsset(files.teachingTopicExplanation[0], `waraqa/public-teacher-contracts/${Date.now()}/teaching-topic`);
 
     const lead = await TeacherContractLead.create({
       contract: {
@@ -248,6 +808,18 @@ router.post('/public', fileFields, async (req, res) => {
         profilePhoto: profilePhoto || {},
         introEssay,
       },
+      application: {
+        ...application,
+        files: {
+          resume: resume || {},
+          englishIntroduction: englishIntroduction || {},
+          quranRecitation: quranRecitation || {},
+          teachingTopicExplanation: teachingTopicExplanation || {},
+        },
+      },
+      recruitment: campaign ? {
+        fit: { campaignId: campaign._id },
+      } : undefined,
       personalInfo,
       submittedMeta: {
         ip: req.ip,
@@ -271,6 +843,7 @@ router.post('/public', fileFields, async (req, res) => {
     return res.status(201).json({
       message: 'Teacher contract submitted successfully.',
       leadId: lead._id,
+      campaignId: campaign?._id || null,
     });
   } catch (error) {
     console.error('Public teacher contract submission error:', error);

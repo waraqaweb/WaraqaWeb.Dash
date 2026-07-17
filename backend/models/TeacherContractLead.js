@@ -8,6 +8,88 @@ const assetSchema = new mongoose.Schema({
   size: { type: Number, default: 0 },
 }, { _id: false });
 
+const recruitmentRatingValues = ['not_available', 'weak', 'good', 'very_good', 'excellent'];
+const recruitmentStatusValues = ['new', 'under_review', 'shortlisted', 'interview_pending', 'interviewed', 'accepted', 'rejected', 'archived'];
+
+const recruitmentSchema = new mongoose.Schema({
+  status: {
+    type: String,
+    enum: recruitmentStatusValues,
+    default: 'new',
+  },
+  reviewed: { type: Boolean, default: false },
+  reviewedAt: { type: Date, default: null },
+  reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  adminNotes: { type: String, trim: true, default: '', maxlength: 4000 },
+  rejectionCategory: { type: String, trim: true, default: '', maxlength: 120 },
+  tags: [{ type: String, trim: true, maxlength: 80 }],
+  fit: {
+    campaignId: { type: mongoose.Schema.Types.ObjectId, ref: 'RecruitmentCampaign', default: null },
+    subjects: [{ type: String, trim: true, maxlength: 120 }],
+    genderRequirement: { type: String, trim: true, default: '', maxlength: 40 },
+    preferredWindow: { type: String, trim: true, default: '', maxlength: 200 },
+    timezoneNotes: { type: String, trim: true, default: '', maxlength: 500 },
+    requiredHoursPerDay: { type: Number, default: null, min: 0, max: 24 },
+  },
+  evaluation: {
+    english: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    quran: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    arabic: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    islamicStudies: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    teachingDemo: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    communication: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    punctuality: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    professionalism: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    flexibility: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+  },
+  overall: {
+    score: { type: Number, default: null, min: 0, max: 100 },
+    label: { type: String, trim: true, default: '', maxlength: 40 },
+    recommendation: { type: String, trim: true, default: '', maxlength: 40 },
+  },
+  history: [{
+    at: { type: Date, default: Date.now },
+    actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    action: { type: String, trim: true, default: 'review_updated', maxlength: 120 },
+    fromStatus: { type: String, trim: true, default: '', maxlength: 40 },
+    toStatus: { type: String, trim: true, default: '', maxlength: 40 },
+    note: { type: String, trim: true, default: '', maxlength: 1000 },
+  }],
+}, { _id: false });
+
+const teacherApplicationSchema = new mongoose.Schema({
+  positionsInterested: [{ type: String, trim: true, maxlength: 120 }],
+  education: {
+    eligibilityPath: { type: String, trim: true, default: '', maxlength: 120 },
+    graduationStatus: { type: String, trim: true, default: '', maxlength: 120 },
+    facultyUniversity: { type: String, trim: true, default: '', maxlength: 240 },
+    degree: { type: String, trim: true, default: '', maxlength: 180 },
+    additionalCertificates: { type: String, trim: true, default: '', maxlength: 3000 },
+  },
+  experience: {
+    teachingExperienceLevel: { type: String, trim: true, default: '', maxlength: 120 },
+    currentJob: { type: String, trim: true, default: '', maxlength: 240 },
+    profileSummary: { type: String, trim: true, default: '', maxlength: 4000 },
+    specialRequests: { type: String, trim: true, default: '', maxlength: 2000 },
+  },
+  technicalSkills: {
+    classTools: { type: String, trim: true, default: '', maxlength: 500 },
+    meetingApps: [{ type: String, trim: true, maxlength: 120 }],
+    officeProducts: [{ type: String, trim: true, maxlength: 120 }],
+  },
+  teachingProfile: {
+    subjectsCanTeach: [{ type: String, trim: true, maxlength: 120 }],
+    preferredAvailability: { type: String, trim: true, default: '', maxlength: 500 },
+    alternativeAvailability: { type: String, trim: true, default: '', maxlength: 500 },
+  },
+  files: {
+    resume: { type: assetSchema, default: () => ({}) },
+    englishIntroduction: { type: assetSchema, default: () => ({}) },
+    quranRecitation: { type: assetSchema, default: () => ({}) },
+    teachingTopicExplanation: { type: assetSchema, default: () => ({}) },
+  },
+}, { _id: false });
+
 const teacherContractLeadSchema = new mongoose.Schema({
   source: {
     type: String,
@@ -52,6 +134,8 @@ const teacherContractLeadSchema = new mongoose.Schema({
     ip: { type: String, default: '' },
     userAgent: { type: String, default: '' },
   },
+  recruitment: { type: recruitmentSchema, default: () => ({}) },
+  application: { type: teacherApplicationSchema, default: () => ({}) },
   submittedAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 

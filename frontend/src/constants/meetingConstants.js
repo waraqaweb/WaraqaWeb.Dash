@@ -2,12 +2,14 @@ export const MEETING_TYPES = Object.freeze({
   NEW_STUDENT_EVALUATION: 'new_student_evaluation',
   CURRENT_STUDENT_FOLLOW_UP: 'current_student_follow_up',
   TEACHER_SYNC: 'teacher_sync',
+  NEW_TEACHER_INTERVIEW: 'new_teacher_interview',
 });
 
 export const MEETING_DEFAULT_DURATIONS = Object.freeze({
   [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 30,
   [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 30,
   [MEETING_TYPES.TEACHER_SYNC]: 30,
+  [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 60,
 });
 
 export const MEETING_COLORS = Object.freeze({
@@ -20,6 +22,7 @@ export const MEETING_TYPE_LABELS = Object.freeze({
   [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 'Evaluation Session',
   [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 'Guardian Follow-up',
   [MEETING_TYPES.TEACHER_SYNC]: 'Teacher Sync',
+  [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 'New Teacher Interview',
 });
 
 // Tailwind classes used to color-code meeting-type pills in admin views.
@@ -27,6 +30,7 @@ export const MEETING_TYPE_TONES = Object.freeze({
   [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 'bg-sky-50 text-sky-700 border-sky-200',
   [MEETING_TYPES.TEACHER_SYNC]: 'bg-violet-50 text-violet-700 border-violet-200',
+  [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 'bg-amber-50 text-amber-800 border-amber-200',
 });
 
 export const PUBLIC_BOOKABLE_MEETING_TYPES = Object.freeze([
@@ -37,6 +41,7 @@ export const MEETING_TYPE_DESCRIPTIONS = Object.freeze({
   [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 'Welcome call to learn about your learner and match the right teacher.',
   [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 'Quick check-in to review progress and adjust class plans for existing students.',
   [MEETING_TYPES.TEACHER_SYNC]: 'Monthly teacher sync focused on progress updates and blockers.',
+  [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 'One-hour interview or onboarding call for teacher candidates and newly accepted teachers.',
 });
 
 export const getMeetingLabel = (type) => MEETING_TYPE_LABELS[type] || 'Meeting';

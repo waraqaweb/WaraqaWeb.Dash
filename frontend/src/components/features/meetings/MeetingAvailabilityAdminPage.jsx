@@ -29,7 +29,8 @@ import TeacherResponsesPanel from './TeacherResponsesPanel';
 const MEETING_TYPE_LABELS = {
   new_student_evaluation: 'Evaluations',
   current_student_follow_up: 'Follow ups',
-  teacher_sync: 'Teachers'
+  teacher_sync: 'Teachers',
+  new_teacher_interview: 'New teachers'
 };
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -200,6 +201,10 @@ const MeetingAvailabilityAdminPage = () => {
 
   const publicTeacherSyncLink = useMemo(() => {
     return getPublicAppUrl('/public/meetings/evaluation?type=teacher_sync');
+  }, []);
+
+  const publicTeacherInterviewLink = useMemo(() => {
+    return getPublicAppUrl('/public/meetings/evaluation?type=new_teacher_interview');
   }, []);
 
   const publicRegistrationLink = useMemo(() => {
@@ -1113,6 +1118,16 @@ const MeetingAvailabilityAdminPage = () => {
                 <input type="text" value={publicTeacherSyncLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
                 <div className="flex items-center gap-2 self-end sm:self-auto">
                   <CopyButton text={publicTeacherSyncLink} title="Copy teacher sync link" variant="link" icon="link" className="rounded-xl shadow-sm" />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><Link2 className="w-4 h-4 text-primary" />New teacher interview link</div>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input type="text" value={publicTeacherInterviewLink} readOnly className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" />
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <CopyButton text={publicTeacherInterviewLink} title="Copy new teacher interview link" variant="link" icon="link" className="rounded-xl shadow-sm" />
                 </div>
               </div>
             </div>

@@ -90,9 +90,9 @@ const PublicEvaluationBookingPage = () => {
   const location = useLocation();
   const meetingType = useMemo(() => resolvePublicMeetingType(location.search), [location.search]);
   const detectedTimezone = getBrowserTimezone();
-  const isTeacherSync = meetingType === MEETING_TYPES.TEACHER_SYNC;
+  const isTeacherMeeting = meetingType === MEETING_TYPES.TEACHER_SYNC || meetingType === MEETING_TYPES.NEW_TEACHER_INTERVIEW;
   const isGuardianFollowUp = meetingType === MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP;
-  const requiresStudents = meetingType !== MEETING_TYPES.TEACHER_SYNC;
+  const requiresStudents = !isTeacherMeeting;
   const [timezone, setTimezone] = useState(detectedTimezone);
   const [calendarPreference, setCalendarPreference] = useState(() => getStoredCalendarPreference());
 
@@ -267,7 +267,7 @@ const PublicEvaluationBookingPage = () => {
     const invalidStudent = cleanedStudents.find((student) => (student.firstName || student.lastName || student.age || student.gender || student.notes) && (!student.firstName || !student.lastName));
 
     if (!cleanedGuardianFirstName || !cleanedGuardianLastName) {
-      setError(isTeacherSync ? 'Please enter the teacher\'s first and last name.' : 'Please enter the guardian\'s first and last name.');
+      setError(isTeacherMeeting ? 'Please enter the teacher\'s first and last name.' : 'Please enter the guardian\'s first and last name.');
       return;
     }
     if (!cleanedEmail) {
@@ -313,7 +313,7 @@ const PublicEvaluationBookingPage = () => {
           timezone,
           preferredCalendar: preference,
         },
-        teacher: isTeacherSync ? {
+        teacher: isTeacherMeeting ? {
           teacherName: cleanedGuardianName,
           additionalEmails: cleanedEmail ? [cleanedEmail] : [],
           calendarPreference: preference,

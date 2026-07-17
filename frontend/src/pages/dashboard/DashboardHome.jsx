@@ -1351,12 +1351,12 @@ const DashboardHome = ({ isActive = true }) => {
                     </button>
                     <button
                       aria-label="Business Intelligence"
-                      title="Business Intelligence"
+                      title="Teacher Operations"
                       className="ml-1 inline-flex items-center gap-1 rounded-full text-white bg-gradient-to-r from-indigo-500 to-purple-600 shadow-sm hover:opacity-95 h-7 px-2.5 text-[11px] font-medium"
-                      onClick={() => setBiModalOpen(true)}
+                      onClick={() => navigate('/dashboard/teacher-operations')}
                     >
                       <TrendingUp className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">BI</span>
+                      <span className="hidden sm:inline">Ops</span>
                     </button>
                     <button
                       type="button"

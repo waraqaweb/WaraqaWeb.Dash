@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, RefreshCw, Save, Search, UserRound } from 'lucide-react';
-import { listRecruitmentCampaigns, listTeacherContractResponses, updateTeacherContractResponse } from '../../../api/teacherContract';
+import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, RefreshCw, Save, Search, UserPlus, UserRound } from 'lucide-react';
+import { convertCandidateToTeacher, listRecruitmentCampaigns, listTeacherContractResponses, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
 const formatDate = (value) => {
@@ -125,6 +125,8 @@ export default function TeacherResponsesPanel() {
   const [savingId, setSavingId] = useState('');
   const [notice, setNotice] = useState('');
   const [campaigns, setCampaigns] = useState([]);
+  const [convertingId, setConvertingId] = useState('');
+  const [convertForm, setConvertForm] = useState({});
 
   const load = async () => {
     try {
@@ -177,6 +179,35 @@ export default function TeacherResponsesPanel() {
         [itemId]: updater(current),
       };
     });
+  };
+
+  const handleConvert = async (item) => {
+    const email = String(convertForm[item.id] ?? item.personalInfo?.email ?? '').trim();
+    if (!email) {
+      setError('Email is required to create a teacher account.');
+      return;
+    }
+    if (!window.confirm(`Create a teacher account for "${item.personalInfo?.fullName || email}" with email ${email}?`)) return;
+    try {
+      setConvertingId(item.id);
+      setError('');
+      setNotice('');
+      const result = await convertCandidateToTeacher(item.source, item.id, { email });
+      setNotice(`Teacher account created! Email: ${result.email}. Temporary password: ${result.tempPassword} — share this with the teacher and ask them to change it immediately.`);
+      setItems((prev) => prev.map((entry) =>
+        entry.id === item.id
+          ? { ...entry, recruitment: { ...entry.recruitment, status: 'accepted' } }
+          : entry
+      ));
+    } catch (err) {
+      if (err?.response?.status === 409) {
+        setNotice('A teacher account already exists for this email.');
+      } else {
+        setError(err?.response?.data?.message || 'Failed to create teacher account.');
+      }
+    } finally {
+      setConvertingId('');
+    }
   };
 
   const handleSave = async (item) => {
@@ -487,11 +518,32 @@ export default function TeacherResponsesPanel() {
                       </div>
                     </div>
 
-                    <div className="flex justify-end">
-                      <button type="button" onClick={() => handleSave(item)} disabled={savingId === item.id} className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
-                        <Save className="h-4 w-4" />
-                        <span>{savingId === item.id ? 'Saving…' : 'Save review'}</span>
-                      </button>
+                    <div className="space-y-3">
+                      {(item?.recruitment?.status === 'accepted' || draft.pipelineStatus === 'accepted') ? (
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                          <p className="mb-2 text-sm font-semibold text-emerald-800">Convert to teacher account</p>
+                          <div className="flex gap-2">
+                            <input
+                              type="email"
+                              value={convertForm[item.id] ?? (item.personalInfo?.email || '')}
+                              onChange={(e) => setConvertForm((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                              placeholder="Confirm teacher email"
+                              className="min-w-0 flex-1 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500"
+                            />
+                            <button type="button" onClick={() => handleConvert(item)} disabled={convertingId === item.id} className="inline-flex shrink-0 items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                              <UserPlus className="h-4 w-4" />
+                              <span>{convertingId === item.id ? 'Creating…' : 'Create account'}</span>
+                            </button>
+                          </div>
+                          <p className="mt-1.5 text-xs text-emerald-700">This creates a teacher login with a temporary password. The candidate's status will be marked as accepted.</p>
+                        </div>
+                      ) : null}
+                      <div className="flex justify-end">
+                        <button type="button" onClick={() => handleSave(item)} disabled={savingId === item.id} className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
+                          <Save className="h-4 w-4" />
+                          <span>{savingId === item.id ? 'Saving…' : 'Save review'}</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : null}

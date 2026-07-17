@@ -74,3 +74,50 @@ export async function updateTeacherContractResponse(source, id, payload) {
   const { data } = await api.patch(`${BASE}/responses/${source}/${id}`, payload);
   return data.response || null;
 }
+
+export async function convertCandidateToTeacher(source, id, payload) {
+  const { data } = await api.post(`${BASE}/responses/${source}/${id}/convert-to-teacher`, payload);
+  return data;
+}
+
+// ─── Training Batches ────────────────────────────────────────────────────────
+
+export async function listTrainingBatches() {
+  const { data } = await api.get(`${BASE}/training-batches`);
+  return data.batches || [];
+}
+
+export async function getTrainingBatch(id) {
+  const { data } = await api.get(`${BASE}/training-batches/${id}`);
+  return data.batch || null;
+}
+
+export async function createTrainingBatch(payload) {
+  const { data } = await api.post(`${BASE}/training-batches`, payload);
+  return data.batch || null;
+}
+
+export async function updateTrainingBatch(id, payload) {
+  const { data } = await api.put(`${BASE}/training-batches/${id}`, payload);
+  return data.batch || null;
+}
+
+export async function addCandidateToBatch(batchId, payload) {
+  const { data } = await api.post(`${BASE}/training-batches/${batchId}/candidates`, payload);
+  return data.batch || null;
+}
+
+export async function removeCandidateFromBatch(batchId, candidateId) {
+  const { data } = await api.delete(`${BASE}/training-batches/${batchId}/candidates/${candidateId}`);
+  return data.batch || null;
+}
+
+export async function updateBatchSession(batchId, sessionNumber, payload) {
+  const { data } = await api.put(`${BASE}/training-batches/${batchId}/sessions/${sessionNumber}`, payload);
+  return data.batch || null;
+}
+
+export async function updateCandidateOutcome(batchId, candidateId, payload) {
+  const { data } = await api.patch(`${BASE}/training-batches/${batchId}/candidates/${candidateId}/outcome`, payload);
+  return data.batch || null;
+}

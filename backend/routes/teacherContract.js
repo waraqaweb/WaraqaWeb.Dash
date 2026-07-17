@@ -1,10 +1,13 @@
 const express = require('express');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const Setting = require('../models/Setting');
 const TeacherContractSubmission = require('../models/TeacherContractSubmission');
 const TeacherContractLead = require('../models/TeacherContractLead');
 const RecruitmentCampaign = require('../models/RecruitmentCampaign');
+const TrainingBatch = require('../models/TrainingBatch');
 const User = require('../models/User');
 const Class = require('../models/Class');
 const { authenticateToken, requireTeacherOrAdmin, requireAdmin } = require('../middleware/auth');
@@ -989,6 +992,269 @@ router.post('/me', authenticateToken, requireTeacherOrAdmin, fileFields, async (
       return res.status(409).json({ message: 'This email address is already in use.' });
     }
     return res.status(500).json({ message: 'Failed to save teacher contract form.' });
+  }
+});
+
+// ─── Convert candidate to teacher account ────────────────────────────────────
+router.post('/responses/:source/:id/convert-to-teacher', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { source, id } = req.params;
+    const Model = resolveResponseModel(source);
+    if (!Model) return res.status(400).json({ message: 'Invalid source.' });
+
+    const candidate = await Model.findById(id);
+    if (!candidate) return res.status(404).json({ message: 'Candidate not found.' });
+
+    const personalInfo = candidate.personalInfo || {};
+    const email = String(req.body.email || personalInfo.email || '').trim().toLowerCase();
+    if (!email) return res.status(400).json({ message: 'Email is required to create a teacher account.' });
+
+    const existing = await User.findOne({ email });
+    if (existing) {
+      return res.status(409).json({ message: 'A user with this email already exists.', userId: String(existing._id) });
+    }
+
+    const { firstName, lastName } = splitName(personalInfo.fullName || '');
+    const tempPassword = crypto.randomBytes(8).toString('hex');
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+
+    const newUser = await User.create({
+      firstName: String(req.body.firstName || firstName).trim() || 'Teacher',
+      lastName: String(req.body.lastName || lastName).trim() || 'User',
+      email,
+      password: passwordHash,
+      role: 'teacher',
+      isActive: true,
+      phone: String(personalInfo.phone || '').trim() || undefined,
+      gender: String(personalInfo.gender || '').toLowerCase() === 'female' ? 'female' : 'male',
+      timezone: String(personalInfo.timezone || '').trim() || undefined,
+    });
+
+    // Mark candidate as accepted + record conversion
+    candidate.recruitment = candidate.recruitment || {};
+    candidate.recruitment.status = 'accepted';
+    candidate.recruitment.reviewed = true;
+    candidate.recruitment.reviewedAt = new Date();
+    candidate.recruitment.reviewedBy = req.user._id;
+    if (!Array.isArray(candidate.recruitment.history)) candidate.recruitment.history = [];
+    candidate.recruitment.history.push({
+      at: new Date(),
+      actor: req.user._id,
+      action: 'converted_to_teacher',
+      fromStatus: candidate.recruitment.status || 'accepted',
+      toStatus: 'accepted',
+      note: `Converted to teacher account: ${email}`,
+    });
+    candidate.markModified('recruitment');
+    await candidate.save();
+
+    return res.status(201).json({
+      message: 'Teacher account created successfully.',
+      userId: String(newUser._id),
+      email,
+      tempPassword,
+    });
+  } catch (error) {
+    console.error('Convert candidate to teacher error:', error);
+    if (error?.code === 11000) return res.status(409).json({ message: 'A user with this email already exists.' });
+    return res.status(500).json({ message: 'Failed to create teacher account.' });
+  }
+});
+
+// ─── Training Batches ────────────────────────────────────────────────────────
+
+router.get('/training-batches', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const batches = await TrainingBatch.find({}).sort({ createdAt: -1 }).lean();
+    return res.json({ batches });
+  } catch (error) {
+    console.error('List training batches error:', error);
+    return res.status(500).json({ message: 'Failed to load training batches.' });
+  }
+});
+
+router.get('/training-batches/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const batch = await TrainingBatch.findById(req.params.id).lean();
+    if (!batch) return res.status(404).json({ message: 'Training batch not found.' });
+    return res.json({ batch });
+  } catch (error) {
+    console.error('Get training batch error:', error);
+    return res.status(500).json({ message: 'Failed to load training batch.' });
+  }
+});
+
+router.post('/training-batches', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const title = String(body.title || '').trim();
+    if (!title) return res.status(400).json({ message: 'Batch title is required.' });
+
+    const totalSessions = Math.min(30, Math.max(1, Number(body.totalSessions || 6) || 6));
+    const sessions = Array.from({ length: totalSessions }, (_, i) => ({
+      sessionNumber: i + 1,
+      title: `Session ${i + 1}`,
+      status: 'scheduled',
+    }));
+
+    const batch = await TrainingBatch.create({
+      title,
+      status: 'draft',
+      campaignId: body.campaignId || null,
+      totalSessions,
+      startDate: body.startDate ? new Date(body.startDate) : null,
+      endDate: body.endDate ? new Date(body.endDate) : null,
+      trainerNotes: String(body.trainerNotes || '').trim(),
+      candidates: [],
+      sessions,
+      createdBy: req.user._id,
+      updatedBy: req.user._id,
+    });
+
+    return res.status(201).json({ batch: batch.toObject() });
+  } catch (error) {
+    console.error('Create training batch error:', error);
+    return res.status(500).json({ message: 'Failed to create training batch.' });
+  }
+});
+
+router.put('/training-batches/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const update = { updatedBy: req.user._id };
+
+    if (body.title != null) update.title = String(body.title).trim();
+    if (body.status != null && ['draft', 'active', 'completed', 'cancelled'].includes(body.status)) {
+      update.status = body.status;
+    }
+    if (body.campaignId != null) update.campaignId = body.campaignId || null;
+    if (body.startDate != null) update.startDate = body.startDate ? new Date(body.startDate) : null;
+    if (body.endDate != null) update.endDate = body.endDate ? new Date(body.endDate) : null;
+    if (body.trainerNotes != null) update.trainerNotes = String(body.trainerNotes || '').trim();
+
+    const batch = await TrainingBatch.findByIdAndUpdate(req.params.id, { $set: update }, { new: true, runValidators: true });
+    if (!batch) return res.status(404).json({ message: 'Training batch not found.' });
+    return res.json({ batch: batch.toObject() });
+  } catch (error) {
+    console.error('Update training batch error:', error);
+    return res.status(500).json({ message: 'Failed to update training batch.' });
+  }
+});
+
+// Add/remove a candidate from a training batch
+router.post('/training-batches/:id/candidates', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { candidateId, candidateSource, displayName, email } = req.body || {};
+    if (!candidateId || !candidateSource) {
+      return res.status(400).json({ message: 'candidateId and candidateSource are required.' });
+    }
+    const batch = await TrainingBatch.findById(req.params.id);
+    if (!batch) return res.status(404).json({ message: 'Training batch not found.' });
+
+    const alreadyIn = batch.candidates.some((c) => String(c.candidateId) === String(candidateId));
+    if (alreadyIn) return res.status(409).json({ message: 'Candidate already in this batch.' });
+
+    batch.candidates.push({ candidateId, candidateSource, displayName: displayName || '', email: email || '' });
+    batch.updatedBy = req.user._id;
+    await batch.save();
+    return res.json({ batch: batch.toObject() });
+  } catch (error) {
+    console.error('Add candidate to batch error:', error);
+    return res.status(500).json({ message: 'Failed to add candidate.' });
+  }
+});
+
+router.delete('/training-batches/:id/candidates/:candidateId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const batch = await TrainingBatch.findById(req.params.id);
+    if (!batch) return res.status(404).json({ message: 'Training batch not found.' });
+
+    batch.candidates = batch.candidates.filter((c) => String(c.candidateId) !== String(req.params.candidateId));
+    batch.updatedBy = req.user._id;
+    await batch.save();
+    return res.json({ batch: batch.toObject() });
+  } catch (error) {
+    console.error('Remove candidate from batch error:', error);
+    return res.status(500).json({ message: 'Failed to remove candidate.' });
+  }
+});
+
+// Update a session within a batch (schedule, notes, attendance)
+router.put('/training-batches/:id/sessions/:sessionNumber', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const sessionNum = Number(req.params.sessionNumber);
+    const batch = await TrainingBatch.findById(req.params.id);
+    if (!batch) return res.status(404).json({ message: 'Training batch not found.' });
+
+    const session = batch.sessions.find((s) => s.sessionNumber === sessionNum);
+    if (!session) return res.status(404).json({ message: 'Session not found in this batch.' });
+
+    const body = req.body || {};
+    if (body.title != null) session.title = String(body.title).trim();
+    if (body.scheduledAt != null) session.scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
+    if (body.durationMinutes != null) session.durationMinutes = Math.max(15, Math.min(480, Number(body.durationMinutes) || 60));
+    if (body.meetingLink != null) session.meetingLink = String(body.meetingLink || '').trim();
+    if (body.status != null && ['scheduled', 'completed', 'cancelled'].includes(body.status)) {
+      session.status = body.status;
+    }
+    if (body.trainerNotes != null) session.trainerNotes = String(body.trainerNotes || '').trim();
+    if (Array.isArray(body.materials)) session.materials = body.materials.map((m) => String(m || '').trim()).filter(Boolean);
+
+    // Update per-candidate attendance records
+    if (Array.isArray(body.attendance)) {
+      body.attendance.forEach((entry) => {
+        if (!entry.candidateId) return;
+        const existing = session.attendance.find((a) => String(a.candidateId) === String(entry.candidateId));
+        if (existing) {
+          if (entry.attended != null) existing.attended = Boolean(entry.attended);
+          if (entry.grade != null && ['not_graded', 'weak', 'good', 'very_good', 'excellent'].includes(entry.grade)) {
+            existing.grade = entry.grade;
+          }
+          if (entry.trainerNotes != null) existing.trainerNotes = String(entry.trainerNotes || '').trim();
+        } else {
+          session.attendance.push({
+            candidateId: entry.candidateId,
+            candidateSource: entry.candidateSource || 'lead',
+            attended: Boolean(entry.attended),
+            grade: ['not_graded', 'weak', 'good', 'very_good', 'excellent'].includes(entry.grade) ? entry.grade : 'not_graded',
+            trainerNotes: String(entry.trainerNotes || '').trim(),
+          });
+        }
+      });
+    }
+
+    batch.updatedBy = req.user._id;
+    batch.markModified('sessions');
+    await batch.save();
+    return res.json({ batch: batch.toObject() });
+  } catch (error) {
+    console.error('Update training batch session error:', error);
+    return res.status(500).json({ message: 'Failed to update session.' });
+  }
+});
+
+// Update candidate outcome within a batch (pass/fail/drop)
+router.patch('/training-batches/:id/candidates/:candidateId/outcome', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { outcome, outcomeNotes } = req.body || {};
+    if (!outcome || !['pending', 'passed', 'failed', 'dropped'].includes(outcome)) {
+      return res.status(400).json({ message: 'Valid outcome is required (pending/passed/failed/dropped).' });
+    }
+    const batch = await TrainingBatch.findById(req.params.id);
+    if (!batch) return res.status(404).json({ message: 'Training batch not found.' });
+
+    const candidate = batch.candidates.find((c) => String(c.candidateId) === String(req.params.candidateId));
+    if (!candidate) return res.status(404).json({ message: 'Candidate not found in this batch.' });
+
+    candidate.outcome = outcome;
+    if (outcomeNotes != null) candidate.outcomeNotes = String(outcomeNotes || '').trim();
+    batch.updatedBy = req.user._id;
+    batch.markModified('candidates');
+    await batch.save();
+    return res.json({ batch: batch.toObject() });
+  } catch (error) {
+    console.error('Update candidate outcome error:', error);
+    return res.status(500).json({ message: 'Failed to update candidate outcome.' });
   }
 });
 

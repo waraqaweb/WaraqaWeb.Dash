@@ -3,26 +3,56 @@ import {
   BarChart3,
   BriefcaseBusiness,
   CalendarClock,
+  CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clock3,
   Copy,
   Edit3,
+  GraduationCap,
   Loader2,
   Plus,
   TrendingUp,
   Users,
+  XCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import TeacherResponsesPanel from '../../components/features/meetings/TeacherResponsesPanel';
 import BusinessIntelligenceModal from '../../components/admin/BusinessIntelligenceModal';
-import { createRecruitmentCampaign, getTeacherOperationsSummary, listRecruitmentCampaigns, updateRecruitmentCampaign } from '../../api/teacherContract';
+import {
+  createRecruitmentCampaign,
+  getTeacherOperationsSummary,
+  listRecruitmentCampaigns,
+  updateRecruitmentCampaign,
+  createTrainingBatch,
+  listTrainingBatches,
+  updateTrainingBatch,
+  updateBatchSession,
+  updateCandidateOutcome,
+} from '../../api/teacherContract';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: TrendingUp },
   { id: 'pipeline', label: 'Pipeline', icon: BriefcaseBusiness },
+  { id: 'training', label: 'Training', icon: GraduationCap },
   { id: 'interviews', label: 'Interviews', icon: CalendarClock },
   { id: 'stats', label: 'Stats', icon: BarChart3 },
 ];
+
+const BATCH_STATUS_COLORS = {
+  draft: 'text-muted-foreground',
+  active: 'text-primary',
+  completed: 'text-green-600 dark:text-green-400',
+  cancelled: 'text-red-600 dark:text-red-400',
+};
+
+const OUTCOME_COLORS = {
+  pending: 'text-muted-foreground',
+  passed: 'text-green-600 dark:text-green-400',
+  failed: 'text-red-600 dark:text-red-400',
+  dropped: 'text-muted-foreground',
+};
 
 const staticPolicyCards = [
   {
@@ -99,6 +129,16 @@ export default function TeacherOperationsPage({ isActive }) {
     male: false, female: false, subjects: '', preferredWindow: '', publicHeadline: '', publicDescription: '', internalNotes: '', reopenLimit: '',
   });
 
+  // Training batch state
+  const [batches, setBatches] = useState([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchError, setBatchError] = useState('');
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [expandedBatchId, setExpandedBatchId] = useState(null);
+  const [batchForm, setBatchForm] = useState({ title: '', totalSessions: 6, startDate: '', endDate: '', campaignId: '', trainerNotes: '' });
+  const [sessionEditing, setSessionEditing] = useState(null); // { batchId, sessionNumber }
+  const [sessionForm, setSessionForm] = useState({ title: '', scheduledAt: '', durationMinutes: 60, meetingLink: '', status: 'scheduled', trainerNotes: '' });
+
   const headerCopy = useMemo(() => ({
     title: 'Teacher Operations',
     subtitle: 'A sidebar-native control room for staffing, recruitment, interviews, and teacher capacity.',
@@ -141,6 +181,101 @@ export default function TeacherOperationsPage({ isActive }) {
     load();
     return () => { cancelled = true; };
   }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setBatchLoading(true);
+        setBatchError('');
+        const data = await listTrainingBatches();
+        if (!cancelled) setBatches(data || []);
+      } catch (error) {
+        if (!cancelled) setBatchError(error?.response?.data?.message || 'Failed to load training batches.');
+      } finally {
+        if (!cancelled) setBatchLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [isActive]);
+
+  const handleCreateBatch = async () => {
+    if (!batchForm.title.trim()) return;
+    try {
+      setBatchSaving(true);
+      setBatchError('');
+      const payload = {
+        title: batchForm.title,
+        totalSessions: Number(batchForm.totalSessions) || 6,
+        startDate: batchForm.startDate || null,
+        endDate: batchForm.endDate || null,
+        campaignId: batchForm.campaignId || null,
+        trainerNotes: batchForm.trainerNotes,
+      };
+      const saved = await createTrainingBatch(payload);
+      if (saved) {
+        setBatches((prev) => [saved, ...prev]);
+        setBatchForm({ title: '', totalSessions: 6, startDate: '', endDate: '', campaignId: '', trainerNotes: '' });
+        setExpandedBatchId(saved._id);
+      }
+    } catch (error) {
+      setBatchError(error?.response?.data?.message || 'Failed to create training batch.');
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
+  const handleUpdateBatchStatus = async (batchId, status) => {
+    try {
+      const saved = await updateTrainingBatch(batchId, { status });
+      if (saved) setBatches((prev) => prev.map((b) => b._id === batchId ? saved : b));
+    } catch (error) {
+      setBatchError(error?.response?.data?.message || 'Failed to update batch status.');
+    }
+  };
+
+  const startSessionEdit = (batchId, session) => {
+    setSessionEditing({ batchId, sessionNumber: session.sessionNumber });
+    setSessionForm({
+      title: session.title || '',
+      scheduledAt: session.scheduledAt ? String(session.scheduledAt).slice(0, 16) : '',
+      durationMinutes: session.durationMinutes || 60,
+      meetingLink: session.meetingLink || '',
+      status: session.status || 'scheduled',
+      trainerNotes: session.trainerNotes || '',
+    });
+  };
+
+  const handleSaveSession = async () => {
+    if (!sessionEditing) return;
+    try {
+      setBatchSaving(true);
+      const saved = await updateBatchSession(sessionEditing.batchId, sessionEditing.sessionNumber, {
+        ...sessionForm,
+        scheduledAt: sessionForm.scheduledAt || null,
+        durationMinutes: Number(sessionForm.durationMinutes) || 60,
+      });
+      if (saved) {
+        setBatches((prev) => prev.map((b) => b._id === sessionEditing.batchId ? saved : b));
+        setSessionEditing(null);
+      }
+    } catch (error) {
+      setBatchError(error?.response?.data?.message || 'Failed to save session.');
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
+  const handleCandidateOutcome = async (batchId, candidateId, outcome) => {
+    try {
+      const saved = await updateCandidateOutcome(batchId, candidateId, { outcome });
+      if (saved) setBatches((prev) => prev.map((b) => b._id === batchId ? saved : b));
+    } catch (error) {
+      setBatchError(error?.response?.data?.message || 'Failed to update outcome.');
+    }
+  };
 
   const newTeacherInterviewLink = useMemo(() => `${window.location.origin}/public/meetings/evaluation?type=new_teacher_interview`, []);
 
@@ -517,6 +652,180 @@ export default function TeacherOperationsPage({ isActive }) {
                 <div className="rounded-2xl border border-border bg-background px-4 py-3">Stage-driven invite, reminder, and outcome emails using the existing mail queue.</div>
               </div>
             </SectionCard>
+          </div>
+        ) : null}
+
+        {activeTab === 'training' ? (
+          <div className="grid gap-4">
+            {batchError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{batchError}</div> : null}
+            <div className="grid gap-4 xl:grid-cols-[1fr_1.5fr]">
+              <SectionCard title="Create training batch">
+                <div className="grid gap-3">
+                  <label className="text-sm text-foreground">
+                    <span className="mb-1 block font-medium">Batch title *</span>
+                    <input value={batchForm.title} onChange={(e) => setBatchForm((p) => ({ ...p, title: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" placeholder="e.g. Training Batch — July 2026" />
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="text-sm text-foreground">
+                      <span className="mb-1 block font-medium">Sessions</span>
+                      <input type="number" min="1" max="30" value={batchForm.totalSessions} onChange={(e) => setBatchForm((p) => ({ ...p, totalSessions: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
+                    </label>
+                    <label className="text-sm text-foreground">
+                      <span className="mb-1 block font-medium">Campaign</span>
+                      <select value={batchForm.campaignId} onChange={(e) => setBatchForm((p) => ({ ...p, campaignId: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5">
+                        <option value="">None</option>
+                        {campaigns.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="text-sm text-foreground">
+                      <span className="mb-1 block font-medium">Start date</span>
+                      <input type="date" value={batchForm.startDate} onChange={(e) => setBatchForm((p) => ({ ...p, startDate: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
+                    </label>
+                    <label className="text-sm text-foreground">
+                      <span className="mb-1 block font-medium">End date</span>
+                      <input type="date" value={batchForm.endDate} onChange={(e) => setBatchForm((p) => ({ ...p, endDate: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
+                    </label>
+                  </div>
+                  <label className="text-sm text-foreground">
+                    <span className="mb-1 block font-medium">Trainer notes</span>
+                    <textarea rows={3} value={batchForm.trainerNotes} onChange={(e) => setBatchForm((p) => ({ ...p, trainerNotes: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
+                  </label>
+                  <button type="button" onClick={handleCreateBatch} disabled={batchSaving || !batchForm.title.trim()} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60">
+                    <Plus className="h-4 w-4" />
+                    <span>{batchSaving ? 'Creating…' : 'Create batch'}</span>
+                  </button>
+                </div>
+              </SectionCard>
+
+              <SectionCard title="Training batches">
+                {batchLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading batches…</div> : null}
+                <div className="space-y-3">
+                  {(batches || []).map((batch) => {
+                    const isExpanded = expandedBatchId === batch._id;
+                    const completedSessions = (batch.sessions || []).filter((s) => s.status === 'completed').length;
+                    const passedCount = (batch.candidates || []).filter((c) => c.outcome === 'passed').length;
+                    const failedCount = (batch.candidates || []).filter((c) => c.outcome === 'failed').length;
+                    return (
+                      <div key={batch._id} className="rounded-2xl border border-border bg-background">
+                        <div
+                          className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3"
+                          onClick={() => setExpandedBatchId(isExpanded ? null : batch._id)}
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-foreground">{batch.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              <span className={BATCH_STATUS_COLORS[batch.status] || 'text-muted-foreground'}>{batch.status}</span>
+                              {' • '}{completedSessions}/{batch.totalSessions || 6} sessions
+                              {' • '}{batch.candidates?.length || 0} candidates
+                              {passedCount > 0 ? ` • ${passedCount} passed` : ''}
+                              {failedCount > 0 ? ` • ${failedCount} failed` : ''}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <select
+                              value={batch.status}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => handleUpdateBatchStatus(batch._id, e.target.value)}
+                              className="rounded-lg border border-border bg-card px-2 py-1 text-xs text-foreground"
+                            >
+                              <option value="draft">Draft</option>
+                              <option value="active">Active</option>
+                              <option value="completed">Completed</option>
+                              <option value="cancelled">Cancelled</option>
+                            </select>
+                            {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                          </div>
+                        </div>
+
+                        {isExpanded ? (
+                          <div className="border-t border-border px-4 pb-4 pt-3">
+                            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Sessions</p>
+                            <div className="space-y-2">
+                              {(batch.sessions || []).map((session) => {
+                                const isEditingThis = sessionEditing?.batchId === batch._id && sessionEditing?.sessionNumber === session.sessionNumber;
+                                return (
+                                  <div key={session.sessionNumber} className="rounded-xl border border-border bg-card p-3">
+                                    {isEditingThis ? (
+                                      <div className="grid gap-2">
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <input value={sessionForm.title} onChange={(e) => setSessionForm((p) => ({ ...p, title: e.target.value }))} placeholder="Session title" className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
+                                          <input type="datetime-local" value={sessionForm.scheduledAt} onChange={(e) => setSessionForm((p) => ({ ...p, scheduledAt: e.target.value }))} className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <input value={sessionForm.meetingLink} onChange={(e) => setSessionForm((p) => ({ ...p, meetingLink: e.target.value }))} placeholder="Meeting link" className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
+                                          <select value={sessionForm.status} onChange={(e) => setSessionForm((p) => ({ ...p, status: e.target.value }))} className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm">
+                                            <option value="scheduled">Scheduled</option>
+                                            <option value="completed">Completed</option>
+                                            <option value="cancelled">Cancelled</option>
+                                          </select>
+                                        </div>
+                                        <textarea rows={2} value={sessionForm.trainerNotes} onChange={(e) => setSessionForm((p) => ({ ...p, trainerNotes: e.target.value }))} placeholder="Trainer notes" className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
+                                        <div className="flex gap-2">
+                                          <button type="button" onClick={handleSaveSession} disabled={batchSaving} className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground disabled:opacity-60">{batchSaving ? 'Saving…' : 'Save session'}</button>
+                                          <button type="button" onClick={() => setSessionEditing(null)} className="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-foreground">Cancel</button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                          <p className="text-sm font-medium text-foreground">Session {session.sessionNumber}{session.title ? `: ${session.title}` : ''}</p>
+                                          <p className="text-xs text-muted-foreground">
+                                            {session.scheduledAt ? new Date(session.scheduledAt).toLocaleString() : 'Not scheduled'}
+                                            {' • '}{session.status}
+                                            {session.meetingLink ? <> • <a href={session.meetingLink} target="_blank" rel="noreferrer" className="text-primary underline">Join</a></> : null}
+                                          </p>
+                                          {session.trainerNotes ? <p className="mt-1 text-xs text-muted-foreground">{session.trainerNotes}</p> : null}
+                                        </div>
+                                        <button type="button" onClick={() => startSessionEdit(batch._id, session)} className="shrink-0 rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40">
+                                          <Edit3 className="h-3 w-3" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {(batch.candidates || []).length > 0 ? (
+                              <>
+                                <p className="mb-3 mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Candidates</p>
+                                <div className="space-y-2">
+                                  {batch.candidates.map((c) => (
+                                    <div key={String(c.candidateId)} className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2">
+                                      <div>
+                                        <p className="text-sm font-medium text-foreground">{c.displayName || c.email || String(c.candidateId)}</p>
+                                        <p className={`text-xs ${OUTCOME_COLORS[c.outcome] || 'text-muted-foreground'}`}>{c.outcome}</p>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        {c.outcome !== 'passed' ? (
+                                          <button type="button" onClick={() => handleCandidateOutcome(batch._id, c.candidateId, 'passed')} className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 hover:bg-green-200">
+                                            <CheckCircle2 className="h-3 w-3" /> Pass
+                                          </button>
+                                        ) : null}
+                                        {c.outcome !== 'failed' ? (
+                                          <button type="button" onClick={() => handleCandidateOutcome(batch._id, c.candidateId, 'failed')} className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-200">
+                                            <XCircle className="h-3 w-3" /> Fail
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            ) : (
+                              <p className="mt-4 text-xs text-muted-foreground">No candidates added to this batch yet. Add them from the Pipeline tab by moving them to training.</p>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {!batchLoading && !(batches || []).length ? <div className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground">No training batches yet.</div> : null}
+                </div>
+              </SectionCard>
+            </div>
           </div>
         ) : null}
 

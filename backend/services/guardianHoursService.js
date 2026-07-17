@@ -27,6 +27,10 @@ const resolveItemHours = (item) => {
 };
 
 const shouldCountClass = (cls) => {
+  // A class waived for the guardian is never charged and never consumes
+  // guardian prepaid hours (this is what "credits" the hour back when a class
+  // inside a paid invoice is waived — the paid invoice snapshot is untouched).
+  if (cls?.billingWaiver?.guardian?.waived === true) return false;
   const attendance = cls?.classReport?.attendance || null;
   if (attendance && COUNTABLE_ATTENDANCE.has(attendance)) return true;
   const status = cls?.status || null;
@@ -94,7 +98,7 @@ const computeConsumedHoursAllTime = async (guardianId) => {
       { 'classReport.attendance': { $in: Array.from(COUNTABLE_ATTENDANCE) } }
     ]
   })
-    .select('scheduledDate duration status classReport student.studentId student._id')
+    .select('scheduledDate duration status classReport student.studentId student._id billingWaiver.guardian.waived')
     .lean();
 
   for (const cls of classDocs || []) {

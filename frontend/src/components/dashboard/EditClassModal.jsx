@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { XCircle, Trash2, Plus, Clock, Copy, Check } from "lucide-react";
+import { XCircle, Trash2, Plus, Clock, Copy, Check, Ban, Eye, EyeOff, RotateCcw } from "lucide-react";
 import moment from "moment-timezone";
 import { formatTzToUtc } from "../../utils/time";
+import api from '../../api/axios';
 import { subjects as fallbackSubjects } from "../../constants/reportTopicsConfig";
 import { getSubjectsCatalogCached } from '../../services/subjectsCatalog';
 import TimezoneSelector from "../ui/TimezoneSelector";
@@ -90,6 +91,28 @@ export default function EditClassModal({
   const [dstWarning, setDstWarning] = useState(null);
   const [msgCopied, setMsgCopied] = useState(false);
   const [showSuggestedTimes, setShowSuggestedTimes] = useState(false);
+  const [waiverBusy, setWaiverBusy] = useState(null);
+  const [waiverError, setWaiverError] = useState(null);
+  const isAdmin = user?.role === 'admin';
+
+  // Admin: waive / recount / toggle-visibility for this single class. Guardian and
+  // teacher waivers are fully independent — changing one never affects the other.
+  const handleClassWaiver = useCallback(async (party, patch) => {
+    if (!isAdmin || !editClass?._id) return;
+    setWaiverBusy(party);
+    setWaiverError(null);
+    try {
+      const { data } = await api.patch(`/classes/${editClass._id}/billing-waiver`, { party, ...patch });
+      if (data?.billingWaiver) {
+        setEditClass((prev) => ({ ...prev, billingWaiver: data.billingWaiver }));
+      }
+    } catch (err) {
+      console.error('[billing-waiver] class modal toggle failed:', err);
+      setWaiverError(err?.response?.data?.message || 'Failed to update the class waiver.');
+    } finally {
+      setWaiverBusy(null);
+    }
+  }, [isAdmin, editClass?._id, setEditClass]);
   const modalScrollRef = useRef(null);
   const updateBannerRef = useRef(null);
 
@@ -492,6 +515,97 @@ export default function EditClassModal({
               </div>
               </div>
             )}
+
+            {/* Billing waiver (admin only, existing single class) */}
+            {isAdmin && editClass._id && !editClass.isRecurring && (() => {
+              const gw = editClass.billingWaiver?.guardian || {};
+              const tw = editClass.billingWaiver?.teacher || {};
+              const guardianWaived = gw.waived === true;
+              const teacherWaived = tw.waived === true;
+              const hidden = gw.hiddenFromGuardian === true;
+              return (
+                <div className={sectionCardClass}>
+                  <div className="mb-3">
+                    <h3 className={sectionTitleClass}>Billing waiver</h3>
+                    <p className={sectionDescriptionClass}>
+                      Waive this class independently for the guardian or the teacher. Waiving one side never affects the other, guardian hours stay correct, and paid invoices are preserved via adjustments.
+                    </p>
+                  </div>
+                  {waiverError && (
+                    <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{waiverError}</div>
+                  )}
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {/* Guardian */}
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">Guardian</p>
+                          <p className="text-[11px] text-slate-500">{guardianWaived ? (hidden ? 'Waived · hidden from guardian' : 'Waived · shown as "Waived"') : 'Charged normally'}</p>
+                        </div>
+                        {guardianWaived ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={waiverBusy === 'guardian'}
+                              onClick={() => handleClassWaiver('guardian', { hiddenFromGuardian: !hidden })}
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+                              title={hidden ? 'Show to guardian & public link' : 'Hide from guardian & public link'}
+                            >
+                              {hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={waiverBusy === 'guardian'}
+                              onClick={() => { if (window.confirm('Recount this class for the guardian? It will re-enter the billing chain and may shift later classes. Paid invoices stay intact via an adjustment.')) handleClassWaiver('guardian', { waived: false }); }}
+                              className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-40"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" /> Recount
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={waiverBusy === 'guardian'}
+                            onClick={() => handleClassWaiver('guardian', { waived: true })}
+                            className="inline-flex items-center gap-1 rounded-lg border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-40"
+                          >
+                            <Ban className="h-3.5 w-3.5" /> Waive
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {/* Teacher */}
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">Teacher</p>
+                          <p className="text-[11px] text-slate-500">{teacherWaived ? 'Waived · not paid to teacher' : 'Paid normally'}</p>
+                        </div>
+                        {teacherWaived ? (
+                          <button
+                            type="button"
+                            disabled={waiverBusy === 'teacher'}
+                            onClick={() => { if (window.confirm('Recount this class for the teacher? It will be paid again; paid invoices settle the change on the next draft.')) handleClassWaiver('teacher', { waived: false }); }}
+                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-40"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" /> Recount
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={waiverBusy === 'teacher'}
+                            onClick={() => handleClassWaiver('teacher', { waived: true })}
+                            className="inline-flex items-center gap-1 rounded-lg border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-40"
+                          >
+                            <Ban className="h-3.5 w-3.5" /> Waive
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Recurring Class Fields - group months, day, time, duration in one row group */}
             {editClass.isRecurring && (

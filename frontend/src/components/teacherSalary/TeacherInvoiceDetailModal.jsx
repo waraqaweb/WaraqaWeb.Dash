@@ -31,7 +31,9 @@ import {
   Edit3,
   Save,
   Trash2,
-  RefreshCw
+  RefreshCw,
+  Ban,
+  RotateCcw
 } from 'lucide-react';
 
 const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
@@ -48,6 +50,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
   const [copiedKey, setCopiedKey] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshSummary, setRefreshSummary] = useState(null);
+  const [waivingClassId, setWaivingClassId] = useState(null);
   const copyToClipboard = (text, key) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedKey(key);
@@ -274,6 +277,31 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
     }
   };
 
+  // Admin: waive / recount a single class for the teacher (never affects guardian billing).
+  const handleToggleTeacherWaiver = async (classId, nextWaived) => {
+    if (user?.role !== 'admin' || !classId) return;
+    if (nextWaived === false) {
+      const ok = window.confirm('Recount this class for the teacher? It will be paid again. Paid invoices stay intact — the adjustment settles on the next draft invoice.');
+      if (!ok) return;
+    }
+    try {
+      setWaivingClassId(classId);
+      setError(null);
+      const { data } = await api.patch(`/classes/${classId}/billing-waiver`, { party: 'teacher', waived: nextWaived });
+      if (Array.isArray(data?.notes) && data.notes.length) {
+        console.info('[billing-waiver]', data.notes.join(' '));
+      }
+      const response = await api.get(`/teacher-salary/admin/invoices/${invoiceId}`);
+      setInvoice(response.data.invoice);
+      if (onUpdate) onUpdate();
+    } catch (err) {
+      console.error('Error toggling teacher waiver:', err);
+      setError(err.response?.data?.message || err.response?.data?.error || 'Failed to update the class waiver');
+    } finally {
+      setWaivingClassId(null);
+    }
+  };
+
   const handleDeleteInvoice = async () => {
     if (user?.role !== 'admin') return;
     if (!invoiceId) return;
@@ -341,6 +369,7 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
       const durationMinutes = Number.isFinite(Number(cls?.duration)) ? Number(cls.duration) : null;
       const hours = Number.isFinite(Number(cls?.hours)) ? Number(cls.hours) : (durationMinutes !== null ? durationMinutes / 60 : 0);
       const safeHours = Number.isFinite(hours) ? hours : 0;
+      if (cls?.waivedForTeacher) return acc; // waived classes contribute nothing
       acc.hours += safeHours;
       acc.amount += safeHours * hourlyRate;
       return acc;
@@ -835,14 +864,16 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                       const durationMinutes = Number.isFinite(Number(cls?.duration)) ? Number(cls.duration) : null;
                       const hours = Number.isFinite(Number(cls?.hours)) ? Number(cls.hours) : (durationMinutes !== null ? durationMinutes / 60 : 0);
                       const safeHours = Number.isFinite(hours) ? hours : 0;
-                      const amount = safeHours * hourlyRate;
+                      const isWaived = Boolean(cls?.waivedForTeacher);
+                      const amount = isWaived ? 0 : safeHours * hourlyRate;
                       return (
-                        <tr key={cls._id || index} className="hover:bg-slate-50 transition-colors group relative">
+                        <tr key={cls._id || index} className={`hover:bg-slate-50 transition-colors group relative ${isWaived ? 'bg-slate-50/70' : ''}`}>
                           <td className="px-2 py-2 text-sm text-slate-700 whitespace-nowrap">
                             <div className="flex items-center gap-1">
                               {formatDateWithDay(cls.date)}
                               {user?.role === 'admin' && cls._id && (
                                 <button
+                                  type="button"
                                   onClick={() => copyToClipboard(String(cls._id), `cls-${cls._id}`)}
                                   className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center text-slate-400 hover:text-slate-600"
                                   title={`Copy Class ID: ${cls._id}`}
@@ -855,16 +886,49 @@ const TeacherInvoiceDetailModal = ({ invoiceId, onClose, onUpdate }) => {
                           <td className="px-2 py-2 text-sm font-medium text-slate-900">{formatStudentName(cls)}</td>
                           <td className="px-2 py-2 text-sm text-slate-700">{cls.subject || '-'}</td>
                           <td className="px-2 py-2 text-center">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                              cls.status === 'attended' ? 'bg-green-100 text-green-700' :
-                              cls.status === 'absent' ? 'bg-red-100 text-red-700' :
-                              'bg-blue-100 text-blue-700'
-                            }`}>
-                              {cls.status || 'scheduled'}
-                            </span>
+                            <div className="inline-flex items-center gap-1.5">
+                              <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                                cls.status === 'attended' ? 'bg-green-100 text-green-700' :
+                                cls.status === 'absent' ? 'bg-red-100 text-red-700' :
+                                'bg-blue-100 text-blue-700'
+                              }`}>
+                                {cls.status || 'scheduled'}
+                              </span>
+                              {isWaived && (
+                                <span
+                                  className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700"
+                                  title={cls.waiverReason ? `Waived for teacher — ${cls.waiverReason}` : 'Not paid to the teacher'}
+                                >
+                                  Waived
+                                </span>
+                              )}
+                              {user?.role === 'admin' && cls._id && (
+                                isWaived ? (
+                                  <button
+                                    type="button"
+                                    disabled={waivingClassId === cls._id}
+                                    onClick={() => handleToggleTeacherWaiver(cls._id, false)}
+                                    className="inline-flex items-center rounded p-0.5 text-slate-400 transition-colors hover:text-emerald-600 disabled:opacity-40"
+                                    title="Recount this class for the teacher"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={waivingClassId === cls._id}
+                                    onClick={() => handleToggleTeacherWaiver(cls._id, true)}
+                                    className="inline-flex items-center rounded p-0.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-indigo-600 disabled:opacity-40"
+                                    title="Waive this class for the teacher (not paid)"
+                                  >
+                                    <Ban className="w-3.5 h-3.5" />
+                                  </button>
+                                )
+                              )}
+                            </div>
                           </td>
-                          <td className="px-2 py-2 text-right text-sm text-slate-700 whitespace-nowrap">{safeHours.toFixed(2)} hrs</td>
-                          <td className="px-2 py-2 text-right text-sm font-semibold text-slate-900 whitespace-nowrap">${amount.toFixed(2)}</td>
+                          <td className="px-2 py-2 text-right text-sm text-slate-700 whitespace-nowrap">{isWaived ? <span className="text-slate-400">0.00 hrs</span> : `${safeHours.toFixed(2)} hrs`}</td>
+                          <td className="px-2 py-2 text-right text-sm font-semibold text-slate-900 whitespace-nowrap">{isWaived ? <span className="text-slate-400">$0.00</span> : `$${amount.toFixed(2)}`}</td>
                         </tr>
                       );
                     })}

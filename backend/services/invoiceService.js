@@ -350,6 +350,59 @@ const resolveStudentSnapshotFromClass = (cls) => {
   };
 };
 
+/**
+ * Build a zero-cost "Waived" marker line for a guardian-waived class so it can
+ * still be displayed inside the invoice chain without affecting any billing math.
+ */
+const buildWaivedMarkerItem = (entry, cls, teacherDoc, rate) => ({
+  dynamicSource: 'rebalanced',
+  lessonId: entry.classId,
+  class: {
+    _id: cls._id,
+    status: cls.status,
+    scheduledDate: cls.scheduledDate,
+    duration: cls.duration,
+    subject: cls.subject,
+    timezone: cls.timezone,
+    anchoredTimezone: cls.anchoredTimezone,
+    reportSubmission: cls.reportSubmission || {},
+    classReport: { submittedAt: cls.classReport?.submittedAt || null },
+    dateTime: cls.scheduledDate,
+    reportSubmissionAllowance: cls.reportSubmissionAllowance,
+    reportSubmissionExtendedUntil: cls.reportSubmissionExtendedUntil
+  },
+  student: cls.student?.studentId || null,
+  studentSnapshot: resolveStudentSnapshotFromClass(cls),
+  teacher: teacherDoc
+    ? { _id: teacherDoc._id, firstName: teacherDoc.firstName, lastName: teacherDoc.lastName }
+    : (cls.teacher || null),
+  teacherSnapshot: teacherDoc
+    ? { firstName: teacherDoc.firstName || '', lastName: teacherDoc.lastName || '' }
+    : null,
+  description: cls.subject || 'Class session',
+  date: cls.scheduledDate,
+  // Zero-cost: contributes nothing to invoice totals/hours.
+  duration: 0,
+  fullDuration: entry.duration,
+  rate,
+  amount: 0,
+  attended: false,
+  status: cls.status || 'scheduled',
+  category: entry.naturalCategory,
+  reportSubmission: cls.reportSubmission || {},
+  reportSubmissionAllowance: cls.reportSubmissionAllowance,
+  reportSubmissionExtendedUntil: cls.reportSubmissionExtendedUntil,
+  paidByGuardian: Boolean(cls.paidByGuardian),
+  isPinned: false,
+  isPartial: false,
+  partialMinutes: 0,
+  partialOfMinutes: null,
+  // Waiver flags consumed by the frontend / public route.
+  waivedForGuardian: true,
+  hiddenFromGuardian: Boolean(entry.hiddenFromGuardian),
+  waiverReason: cls.billingWaiver?.guardian?.reason || ''
+});
+
 const isAdminExtensionActive = (reportSubmission = {}, now = new Date()) => {
   const extension = reportSubmission?.adminExtension || {};
   if (!extension?.granted) return false;
@@ -405,8 +458,17 @@ const isSubmissionWindowActive = (cls, now) => {
  *   'eligible'      — expected to count (scheduled, report window active, future)
  *   'not_eligible'  — won't count (cancelled, no_show_both, expired window, etc.)
  */
-const classifyClassStatus = (cls, now = new Date()) => {
+const classifyClassStatus = (cls, now = new Date(), options = {}) => {
   const status = normalizeStatusValue(cls?.status);
+
+  // 0) Guardian waiver (admin-only): the class is not charged to the guardian and
+  //    does not consume prepaid hours nor invoice capacity. Treat as not-eligible
+  //    for all billing math so the chain re-shifts later classes into freed capacity.
+  //    `ignoreGuardianWaiver` lets callers compute the class's *natural* category
+  //    (used only to decide how to render the waived line — never for billing).
+  if (!options.ignoreGuardianWaiver && cls?.billingWaiver?.guardian?.waived === true) {
+    return 'not_eligible';
+  }
 
   // 1) Confirmed (final outcomes that always count)
   if (CONFIRMED_CLASS_STATUSES.has(status)) return 'confirmed';
@@ -2898,7 +2960,7 @@ class InvoiceService {
         status: { $ne: 'pattern' }
       })
         .sort({ scheduledDate: 1, createdAt: 1 })
-        .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId paidByGuardian guardianRate')
+        .select('scheduledDate duration subject status teacher student reportSubmission classReport timezone anchoredTimezone billedInInvoiceId paidByGuardian guardianRate billingWaiver')
         .lean();
 
       // 4. Classify each class and enrich with deadline info
@@ -2911,9 +2973,16 @@ class InvoiceService {
           reportSubmissionAllowance: allowance,
           reportSubmissionExtendedUntil: extendedUntil
         };
+        const isGuardianWaived = cls?.billingWaiver?.guardian?.waived === true;
         return {
           cls: enriched,
+          // Billing category respects the guardian waiver (waived => not_eligible).
           category: classifyClassStatus(enriched, now),
+          // Natural category ignores the waiver — used only to decide whether a
+          // waived class is worth showing as a "Waived" marker line.
+          naturalCategory: classifyClassStatus(enriched, now, { ignoreGuardianWaiver: true }),
+          isGuardianWaived,
+          hiddenFromGuardian: isGuardianWaived && cls?.billingWaiver?.guardian?.hiddenFromGuardian === true,
           classId: cls._id.toString(),
           date: ensureDate(cls.scheduledDate) || new Date(0),
           duration: Number(cls.duration || 0) || 0
@@ -2934,11 +3003,28 @@ class InvoiceService {
           return a.date - b.date;
         });
 
+      // 5b. Guardian-waived classes that would otherwise have counted. These are
+      //     rendered as zero-cost "Waived" marker lines (never consume capacity or
+      //     hours) so the admin/guardian can still see the class in the invoice.
+      const waivedDisplayClasses = classifiedClasses
+        .filter((c) => c.isGuardianWaived && c.naturalCategory !== 'not_eligible' && c.duration > 0)
+        .map((c) => ({ ...c, isWaivedDisplay: true }));
+
+      // 5c. Merge waived markers into the chronological walk so they land in the
+      //     invoice covering their date, without affecting capacity math.
+      const walkList = [...eligibleClasses, ...waivedDisplayClasses].sort((a, b) => {
+        if (a.date.getTime() === b.date.getTime()) {
+          const rank = (x) => (x.isWaivedDisplay ? 2 : (x.category === 'confirmed' ? 0 : 1));
+          return rank(a) - rank(b);
+        }
+        return a.date - b.date;
+      });
+
       result.totalClasses = eligibleClasses.length;
 
       // 6. Build teacher map for snapshots
       const teacherIdSet = new Set();
-      for (const item of eligibleClasses) {
+      for (const item of walkList) {
         const tid = toObjectId(item.cls.teacher);
         if (tid) teacherIdSet.add(tid.toString());
       }
@@ -2988,8 +3074,27 @@ class InvoiceService {
         const invoiceClasses = [];
         let usedMinutes = 0;
 
-        for (const entry of eligibleClasses) {
+        for (const entry of walkList) {
           if (assignedClassIds.has(entry.classId)) continue; // already assigned to earlier invoice
+
+          // Guardian-waived markers: zero-cost display lines. They never consume
+          // capacity or hours, but respect the capacity boundary so they land in
+          // the invoice that chronologically covers them (a full invoice defers
+          // the marker to the next invoice / the final sweep below).
+          if (entry.isWaivedDisplay) {
+            if (capacityMinutes !== null && usedMinutes >= capacityMinutes - 0.5) {
+              break;
+            }
+            const wcls = entry.cls;
+            const wTeacherDoc = teacherMap[wcls.teacher?.toString?.()] || null;
+            const wInvoiceRate = resolveInvoiceHourlyRate(invoice);
+            const wRate = (Number.isFinite(wcls.guardianRate) && wcls.guardianRate > 0) ? wcls.guardianRate : wInvoiceRate;
+            invoiceClasses.push(
+              buildWaivedMarkerItem(entry, wcls, wTeacherDoc, wRate)
+            );
+            assignedClassIds.add(entry.classId);
+            continue;
+          }
 
           // Check if this is a remainder from a previously split class
           const remainderKey = entry.classId;
@@ -3090,6 +3195,24 @@ class InvoiceService {
           totalHours: usedMinutes / 60,
           isPaid
         });
+      }
+
+      // 7b. Ensure every guardian-waived marker is shown somewhere: any waived
+      //     display class that never landed in an invoice (e.g. trailing markers
+      //     past a capped invoice's capacity) is appended to the last invoice so
+      //     the admin always sees it. Zero-cost, so no totals change.
+      if (result.invoices.length) {
+        const lastInvoiceEntry = result.invoices[result.invoices.length - 1];
+        for (const entry of waivedDisplayClasses) {
+          if (assignedClassIds.has(entry.classId)) continue;
+          const wcls = entry.cls;
+          const wTeacherDoc = teacherMap[wcls.teacher?.toString?.()] || null;
+          const wRate = (Number.isFinite(wcls.guardianRate) && wcls.guardianRate > 0)
+            ? wcls.guardianRate
+            : resolveInvoiceHourlyRate(allInvoices[allInvoices.length - 1]);
+          lastInvoiceEntry.items.push(buildWaivedMarkerItem(entry, wcls, wTeacherDoc, wRate));
+          assignedClassIds.add(entry.classId);
+        }
       }
 
       // 8. Collect unassigned eligible classes (overflow beyond all invoices)

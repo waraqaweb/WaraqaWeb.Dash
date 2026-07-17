@@ -591,11 +591,15 @@ router.get('/admin/invoices/:id', authenticateToken, requireAdmin, async (req, r
       duration: cls.duration || 0,
       hours: (cls.duration || 0) / 60,
       status: cls.status || 'scheduled',
-      rateUSD: invoice.rateSnapshot?.rate || 0
+      rateUSD: invoice.rateSnapshot?.rate || 0,
+      waivedForTeacher: Boolean(cls.billingWaiver?.teacher?.waived),
+      waiverReason: cls.billingWaiver?.teacher?.reason || ''
     }));
 
-    // Recompute totalHours from actual linked classes to catch any discrepancy
-    const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
+    // Recompute totalHours from actual linked classes to catch any discrepancy.
+    // Waived-for-teacher classes stay in the list (so admins can recount them)
+    // but contribute zero paid hours.
+    const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.waivedForTeacher ? 0 : (c.hours || 0)), 0) * 1000) / 1000;
 
     // Pull the latest exchange rate for unpaid invoices before recomputing.
     await refreshLiveExchangeRate(invoice);
@@ -1681,11 +1685,13 @@ router.get('/teacher/invoices/:id', authenticateToken, requireTeacher, async (re
       duration: cls.duration || 0,
       hours: (cls.duration || 0) / 60,
       status: cls.status || 'scheduled',
-      rateUSD: invoice.rateSnapshot?.rate || 0
+      rateUSD: invoice.rateSnapshot?.rate || 0,
+      waivedForTeacher: Boolean(cls.billingWaiver?.teacher?.waived),
+      waiverReason: cls.billingWaiver?.teacher?.reason || ''
     }));
 
-    // Recompute totalHours from actual linked classes
-    const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
+    // Recompute totalHours from actual linked classes (waived classes pay zero)
+    const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.waivedForTeacher ? 0 : (c.hours || 0)), 0) * 1000) / 1000;
 
     // Pull the latest exchange rate for unpaid invoices before recomputing.
     await refreshLiveExchangeRate(invoice);
@@ -1832,10 +1838,11 @@ router.get('/shared/:token', async (req, res) => {
       subject: cls.subject || '-',
       duration: cls.duration || 0,
       hours: (cls.duration || 0) / 60,
-      status: cls.status || 'scheduled'
+      status: cls.status || 'scheduled',
+      waivedForTeacher: Boolean(cls.billingWaiver?.teacher?.waived)
     }));
 
-    const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.hours || 0), 0) * 1000) / 1000;
+    const computedTotalHours = Math.round(classes.reduce((sum, c) => sum + (c.waivedForTeacher ? 0 : (c.hours || 0)), 0) * 1000) / 1000;
 
     // Pull the latest exchange rate for unpaid invoices before recomputing.
     await refreshLiveExchangeRate(inv);

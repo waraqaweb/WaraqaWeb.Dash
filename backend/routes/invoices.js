@@ -84,7 +84,10 @@ const CLASS_FIELDS_FOR_INVOICE = [
   'reportSubmission.markedUnreportedAt',
   'student.studentName',
   'student.studentId',
-  'student.guardianId'
+  'student.guardianId',
+  'billingWaiver.guardian.waived',
+  'billingWaiver.guardian.hiddenFromGuardian',
+  'billingWaiver.guardian.reason'
 ].join(' ');
 
 const INVOICE_LIST_FIELDS = [
@@ -554,6 +557,41 @@ router.get('/public/:slug', async (req, res) => {
     const snapshot = invoice.getExportSnapshot({ includeActivity: false });
     snapshot.invoiceName = invoice.invoiceName;
     snapshot.invoiceSlug = invoice.invoiceSlug;
+
+    // Apply per-class guardian billing waivers to the public view:
+    //  - Classes hidden from the guardian are removed entirely (privacy).
+    //  - Waived-but-visible classes are marked and shown at $0 (no charge).
+    // Displayed financial totals come straight from the stored snapshot /
+    // adjustment ledger, so mutating the row list here is purely cosmetic and
+    // never corrupts a paid invoice's amounts.
+    try {
+      const waiverByClassId = new Map();
+      (Array.isArray(invoice.items) ? invoice.items : []).forEach((entry) => {
+        const cls = entry && entry.class;
+        const classId = cls && cls._id ? String(cls._id) : null;
+        const gw = cls && cls.billingWaiver && cls.billingWaiver.guardian;
+        if (classId && gw && gw.waived === true) {
+          waiverByClassId.set(classId, {
+            hidden: gw.hiddenFromGuardian === true,
+            reason: typeof gw.reason === 'string' ? gw.reason : ''
+          });
+        }
+      });
+
+      if (waiverByClassId.size > 0 && Array.isArray(snapshot.items)) {
+        snapshot.items = snapshot.items
+          .map((item) => {
+            const classId = item && item.classId ? String(item.classId) : null;
+            const waiver = classId ? waiverByClassId.get(classId) : null;
+            if (!waiver) return item;
+            if (waiver.hidden) return null; // remove hidden rows
+            return { ...item, amount: 0, waivedForGuardian: true, waiverReason: waiver.reason };
+          })
+          .filter(Boolean);
+      }
+    } catch (waiverErr) {
+      console.warn('[public invoice] waiver post-processing failed:', waiverErr.message);
+    }
 
     res.json({ success: true, invoice: snapshot, readOnly: true });
   } catch (err) {

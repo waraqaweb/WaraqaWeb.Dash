@@ -375,9 +375,22 @@ const InvoicePublicPage = () => {
                       <td className="px-4 py-3 text-slate-700">{item.date?.iso ? formatClassDateTime(item.date.iso) : (item.date?.formatted || formatDate(item.date?.iso))}</td>
                       <td className="px-4 py-3 text-slate-900">{item.student?.name || '—'}</td>
                       <td className="px-4 py-3 text-slate-700">{item.teacher?.name || '—'}</td>
-                      <td className="px-4 py-3"><ClassStatusBadge status={item.classStatus || item.attendanceStatus} /></td>
+                      <td className="px-4 py-3">
+                        <ClassStatusBadge status={item.classStatus || item.attendanceStatus} />
+                        {item.waivedForGuardian && (
+                          <span className="ml-2 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700 ring-1 ring-indigo-200">
+                            Waived
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right text-slate-700">{Number(item.hours || 0).toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-slate-900">{formatCurrency(item.amount, currency)}</td>
+                      <td className="px-4 py-3 text-right text-slate-900">
+                        {item.waivedForGuardian ? (
+                          <span className="text-slate-400">{formatCurrency(0, currency)}</span>
+                        ) : (
+                          formatCurrency(item.amount, currency)
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

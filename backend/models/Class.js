@@ -715,7 +715,31 @@ const classSchema = new mongoose.Schema({
   // Mark when a class has been fully covered by a guardian payment
   paidByGuardian: { type: Boolean, default: false },
   paidByGuardianAt: { type: Date, default: null },
-  
+
+  // Admin-only per-party billing waiver.
+  // Waiving for one party does NOT affect the other:
+  //  - teacher.waived  => class is not counted in the teacher's salary invoice
+  //  - guardian.waived => class is not charged to the guardian and does not
+  //                       consume guardian prepaid hours
+  // hiddenFromGuardian only applies when guardian.waived is true: it controls
+  // whether the waived line is shown (marked "Waived") on the guardian's view /
+  // public invoice link, or hidden entirely. It never affects any calculation.
+  billingWaiver: {
+    teacher: {
+      waived: { type: Boolean, default: false },
+      at: { type: Date, default: null },
+      by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      reason: { type: String, trim: true, maxlength: 300, default: '' }
+    },
+    guardian: {
+      waived: { type: Boolean, default: false },
+      hiddenFromGuardian: { type: Boolean, default: false },
+      at: { type: Date, default: null },
+      by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      reason: { type: String, trim: true, maxlength: 300, default: '' }
+    }
+  },
+
   // Flag used by audits/UI to highlight lessons that should be invoiced
   flaggedUninvoiced: { type: Boolean, default: false },
 

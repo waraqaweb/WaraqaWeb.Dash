@@ -273,8 +273,15 @@ const TeacherInvoicePublicPage = () => {
                     <tr key={cls._id || idx} className="bg-white">
                       <td className="px-4 py-3 text-slate-700">{formatDateWithDay(cls.date)}</td>
                       <td className="px-4 py-3 text-slate-900">{cls.studentName || '—'}</td>
-                      <td className="px-4 py-3 text-slate-700">{cls.subject || '—'}</td>
-                      <td className="px-4 py-3 text-right text-slate-700">{(cls.hours || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {cls.subject || '—'}
+                        {cls.waivedForTeacher && (
+                          <span className="ml-2 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700 ring-1 ring-indigo-200">Waived</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700">
+                        {cls.waivedForTeacher ? <span className="text-slate-400">0.00</span> : (cls.hours || 0).toFixed(2)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

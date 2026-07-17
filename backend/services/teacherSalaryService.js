@@ -235,6 +235,7 @@ class TeacherSalaryService {
           $lt: endDate
         },
         status: { $in: ['attended', 'missed_by_student', 'completed', 'absent'] }, // Countable statuses
+        'billingWaiver.teacher.waived': { $ne: true }, // Admin-waived classes are never paid to the teacher
         deleted: { $ne: true }
       })
         .select('_id scheduledDate duration subject status student timezone billedInTeacherInvoiceId teacherPremium')

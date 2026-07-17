@@ -1336,13 +1336,14 @@ router.post('/admin/account-logs', [
           { 'classReport.attendance': { $in: ['attended', 'missed_by_student'] } }
         ]
       })
-        .select('scheduledDate duration status classReport student')
+        .select('scheduledDate duration status classReport student billingWaiver.guardian.waived')
         .sort({ scheduledDate: -1 })
         .limit(maxLimit)
         .lean();
 
       classLogs.forEach((cls) => {
         if (!shouldCountClass(cls)) return;
+        if (cls?.billingWaiver?.guardian?.waived === true) return; // waived: not consumed
         const durationMinutes = Number(cls?.duration || 0) || 0;
         const hours = Number.isFinite(durationMinutes) && durationMinutes > 0
           ? Math.round((durationMinutes / 60) * 1000) / 1000
@@ -1373,7 +1374,7 @@ router.post('/admin/account-logs', [
         deleted: { $ne: true },
         status: { $in: ['attended', 'missed_by_student', 'completed', 'absent'] }
       })
-        .select('scheduledDate duration status classReport student billedInTeacherInvoiceId')
+        .select('scheduledDate duration status classReport student billedInTeacherInvoiceId billingWaiver.teacher.waived')
         .populate('student', 'firstName lastName')
         .sort({ scheduledDate: -1 })
         .limit(maxLimit)
@@ -1396,6 +1397,7 @@ router.post('/admin/account-logs', [
       const classBalances = new Map();
       sortedTeacherClasses.forEach((cls) => {
         if (!shouldCountClass(cls)) return;
+        if (cls?.billingWaiver?.teacher?.waived === true) return; // waived: not earned
         const durationMinutes = Number(cls?.duration || 0) || 0;
         const hours = Number.isFinite(durationMinutes) && durationMinutes > 0
           ? Math.round((durationMinutes / 60) * 1000) / 1000
@@ -1409,6 +1411,7 @@ router.post('/admin/account-logs', [
 
       teacherClasses.forEach((cls) => {
         if (!shouldCountClass(cls)) return;
+        if (cls?.billingWaiver?.teacher?.waived === true) return; // waived: not earned
         const durationMinutes = Number(cls?.duration || 0) || 0;
         const hours = Number.isFinite(durationMinutes) && durationMinutes > 0
           ? Math.round((durationMinutes / 60) * 1000) / 1000

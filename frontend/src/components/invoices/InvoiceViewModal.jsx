@@ -23,7 +23,11 @@ import {
   Clock,
   ChevronLeft,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  Ban,
+  Eye,
+  EyeOff,
+  RotateCcw
 } from 'lucide-react';
 
 // Helper function to render text with **bold** markdown and bullet points
@@ -256,6 +260,7 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesStatus, setNotesStatus] = useState(null);
   const [waiveTransferFee, setWaiveTransferFee] = useState(false);
+  const [waivingClassId, setWaivingClassId] = useState(null);
   const [invoiceNameStatus, setInvoiceNameStatus] = useState(null);
   const [invoiceNameParts, setInvoiceNameParts] = useState({ prefix: 'Waraqa', month: 'Mar', year: '2026', seq: '' });
   const [seqEditing, setSeqEditing] = useState(false);
@@ -789,6 +794,9 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
           fullDuration: item.fullDuration || durationMinutes || 0,
           rate: Number.isFinite(Number(item.rate)) ? Number(item.rate) : null,
           amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : null,
+          waivedForGuardian: Boolean(item.waivedForGuardian || liveClass?.billingWaiver?.guardian?.waived),
+          hiddenFromGuardian: Boolean(item.hiddenFromGuardian || liveClass?.billingWaiver?.guardian?.hiddenFromGuardian),
+          waiverReason: item.waiverReason || liveClass?.billingWaiver?.guardian?.reason || '',
         };
       });
 
@@ -1899,7 +1907,30 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     }
   }, [invoice?._id]);
 
-  // Fetch unsettled adjustments from other paid invoices for this guardian (admin + unpaid invoice only)
+  // Admin: waive / recount / toggle-visibility of a single class for the guardian.
+  const handleToggleGuardianWaiver = useCallback(async (classId, patch) => {
+    if (!isAdmin || !classId) return;
+    setWaivingClassId(classId);
+    try {
+      const { data } = await api.patch(`/classes/${classId}/billing-waiver`, { party: 'guardian', ...patch });
+      if (Array.isArray(data?.notes) && data.notes.length) {
+        console.info('[billing-waiver]', data.notes.join(' '));
+      }
+      // Refetch with includeDynamic=1 so the rebalanced chain / waived markers refresh.
+      const targetInvoiceId = invoice?._id || resolvedInvoiceId;
+      if (targetInvoiceId) {
+        const { data: dynRes } = await api.get(`/invoices/${targetInvoiceId}`, { params: { includeDynamic: 1 } });
+        const dynInvoice = dynRes?.invoice || dynRes;
+        if (dynInvoice) syncInvoiceState(dynInvoice);
+      }
+    } catch (err) {
+      console.error('[billing-waiver] guardian toggle failed:', err);
+      window.alert(err?.response?.data?.message || 'Failed to update the class waiver.');
+    } finally {
+      setWaivingClassId(null);
+    }
+  }, [isAdmin, invoice?._id, resolvedInvoiceId, syncInvoiceState]);
+
   useEffect(() => {
     if (!isAdmin) return;
     const guardianId = invoice?.guardian?._id || invoice?.guardian;
@@ -3143,6 +3174,14 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                                   {hasCancelAdj && !hasDeleteAdj && (
                                     <span className="inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-semibold text-orange-600 cursor-default" title="This class was cancelled after invoicing — a credit adjustment was created">Cancelled</span>
                                   )}
+                                  {c.waivedForGuardian && (
+                                    <span
+                                      className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 cursor-default"
+                                      title={c.waiverReason ? `Waived for guardian — ${c.waiverReason}` : 'Not charged to the guardian'}
+                                    >
+                                      Waived{c.hiddenFromGuardian ? ' · hidden' : ''}
+                                    </span>
+                                  )}
                                   <button
                                     type="button"
                                     title="Copy class ID"
@@ -3151,6 +3190,44 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
                                   >
                                     <Copy className="h-3 w-3" />
                                   </button>
+                                  {isAdmin && !isGreyedOut && (
+                                    c.waivedForGuardian ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          disabled={waivingClassId === c._id}
+                                          title={c.hiddenFromGuardian ? 'Show this waived class to the guardian (marked "Waived")' : 'Hide this waived class from the guardian and public link'}
+                                          className="inline-flex items-center rounded p-0.5 text-slate-400 transition-colors hover:text-indigo-600 disabled:opacity-40"
+                                          onClick={() => handleToggleGuardianWaiver(c._id, { hiddenFromGuardian: !c.hiddenFromGuardian })}
+                                        >
+                                          {c.hiddenFromGuardian ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={waivingClassId === c._id}
+                                          title="Recount this class for the guardian"
+                                          className="inline-flex items-center rounded p-0.5 text-slate-400 transition-colors hover:text-emerald-600 disabled:opacity-40"
+                                          onClick={() => {
+                                            if (window.confirm('Recount this class for the guardian? This will re-add it to the billing chain and may shift later classes across invoices. Paid invoices stay intact via an offsetting adjustment.')) {
+                                              handleToggleGuardianWaiver(c._id, { waived: false });
+                                            }
+                                          }}
+                                        >
+                                          <RotateCcw className="h-3.5 w-3.5" />
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={waivingClassId === c._id}
+                                        title="Waive this class for the guardian (not charged, does not consume hours)"
+                                        className="inline-flex items-center rounded p-0.5 text-slate-400 opacity-0 transition-opacity group-hover/classrow:opacity-100 hover:text-indigo-600 disabled:opacity-40"
+                                        onClick={() => handleToggleGuardianWaiver(c._id, { waived: true })}
+                                      >
+                                        <Ban className="h-3.5 w-3.5" />
+                                      </button>
+                                    )
+                                  )}
                                 </span>
                               </td>
                             </tr>

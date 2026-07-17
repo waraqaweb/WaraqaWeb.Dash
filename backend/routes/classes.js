@@ -4092,6 +4092,290 @@ router.delete("/:id", authenticateToken, requireRole(["admin"]), async (req, res
 });
 
 /* -------------------------
+   PATCH /api/classes/:id/billing-waiver
+   Admin-only: waive (or recount) a single class independently for the guardian
+   and/or the teacher. Waiving one party NEVER affects the other party.
+
+   Body: { party: 'guardian'|'teacher', waived?: bool, hiddenFromGuardian?: bool, reason?: string }
+
+   Guardian waive: the class is not charged and does not consume prepaid hours.
+     - Guardian hours are recomputed (the waived class is excluded from "consumed"),
+       which credits the hour back automatically.
+     - If the class lives inside a PAID guardian invoice, a credit adjustment is
+       recorded (the paid invoice snapshot/items/paidAmount are never mutated) and
+       the dynamic chain re-shifts later classes into the freed capacity on next read.
+   Teacher waive: the class is not paid to the teacher.
+     - New aggregation automatically excludes it.
+     - If it lives in a DRAFT/published (unpaid) teacher invoice it is removed and the
+       invoice recalculated; if it lives in a PAID teacher invoice a pending cross-month
+       penalty is queued so it settles on the next draft invoice.
+   ------------------------- */
+router.patch("/:id/billing-waiver", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  try {
+    const { party } = req.body || {};
+    if (!['guardian', 'teacher'].includes(party)) {
+      return res.status(400).json({ message: "party must be 'guardian' or 'teacher'" });
+    }
+
+    const classDoc = await Class.findById(req.params.id);
+    if (!classDoc) return res.status(404).json({ message: "Class not found" });
+
+    const Invoice = require('../models/Invoice');
+    const TeacherInvoice = require('../models/TeacherInvoice');
+    const { computeGuardianHoursFromPaidInvoices, syncComputedHoursToStorage } = require('../services/guardianHoursService');
+
+    const trimmedReason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 300) : '';
+    const now = new Date();
+    const classDuration = Number(classDoc.duration || 60);
+    const classHours = classDuration / 60;
+    const dateStr = classDoc.scheduledDate
+      ? new Date(classDoc.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : 'unknown date';
+
+    if (!classDoc.billingWaiver) classDoc.billingWaiver = {};
+    if (!classDoc.billingWaiver.guardian) classDoc.billingWaiver.guardian = {};
+    if (!classDoc.billingWaiver.teacher) classDoc.billingWaiver.teacher = {};
+
+    const notes = [];
+
+    // ---------------- GUARDIAN ----------------
+    if (party === 'guardian') {
+      const currentlyWaived = classDoc.billingWaiver.guardian.waived === true;
+      const hasWaivedField = typeof req.body?.waived === 'boolean';
+      const nextWaived = hasWaivedField ? Boolean(req.body.waived) : currentlyWaived;
+
+      // Eye (visibility) toggle is only meaningful while the class is waived.
+      if (typeof req.body?.hiddenFromGuardian === 'boolean') {
+        if (!nextWaived) {
+          return res.status(400).json({ message: 'Visibility can only be changed while the class is waived for the guardian.' });
+        }
+        classDoc.billingWaiver.guardian.hiddenFromGuardian = req.body.hiddenFromGuardian;
+      }
+
+      const turningOn = hasWaivedField && nextWaived && !currentlyWaived;
+      const turningOff = hasWaivedField && !nextWaived && currentlyWaived;
+
+      if (hasWaivedField) {
+        classDoc.billingWaiver.guardian.waived = nextWaived;
+        if (nextWaived) {
+          classDoc.billingWaiver.guardian.at = now;
+          classDoc.billingWaiver.guardian.by = req.user._id;
+          classDoc.billingWaiver.guardian.reason = trimmedReason;
+        } else {
+          classDoc.billingWaiver.guardian.hiddenFromGuardian = false;
+          classDoc.billingWaiver.guardian.at = null;
+          classDoc.billingWaiver.guardian.by = null;
+          classDoc.billingWaiver.guardian.reason = '';
+        }
+      }
+      classDoc.markModified('billingWaiver');
+
+      // Reflect the change on a PAID guardian invoice via the adjustment ledger only —
+      // the paid invoice's items / paidAmount / paymentLogs are never mutated.
+      if ((turningOn || turningOff) && classDoc.billedInInvoiceId) {
+        try {
+          const billedInvoice = await Invoice.findById(classDoc.billedInInvoiceId);
+          const isPaid = billedInvoice && (String(billedInvoice.status).toLowerCase() === 'paid' || Number(billedInvoice.paidAmount || 0) > 0);
+          if (isPaid) {
+            const guardian = await User.findById(classDoc.student?.guardianId).select('guardianInfo.hourlyRate').lean();
+            const rate = (Number.isFinite(classDoc.guardianRate) && classDoc.guardianRate > 0)
+              ? classDoc.guardianRate
+              : (Number(guardian?.guardianInfo?.hourlyRate) || 10);
+            const amount = Math.round((classHours * rate) * 100) / 100;
+            const classIdStr = String(classDoc._id);
+
+            if (turningOn) {
+              await InvoiceService.createPaidInvoiceAdjustment({
+                invoiceId: classDoc.billedInInvoiceId,
+                type: 'credit',
+                reason: 'manual',
+                classDoc,
+                description: `Class on ${dateStr} (${classDoc.subject || 'Class'}) waived for guardian — ${classHours.toFixed(2)}h credit`,
+                hoursDelta: -classHours,
+                amountDelta: -amount,
+                previousDuration: classDuration,
+                actorId: req.user._id
+              });
+              notes.push('Credit adjustment recorded on the paid invoice (snapshot preserved).');
+            } else {
+              // Recount: prefer removing the still-unsettled waive credit; otherwise
+              // record an offsetting debit so the paid invoice ledger nets out.
+              const idx = (billedInvoice.adjustments || []).findIndex((a) =>
+                a && a.type === 'credit' && a.reason === 'manual' && !a.settled &&
+                String(a.classId || '') === classIdStr &&
+                typeof a.description === 'string' && a.description.includes('waived for guardian'));
+              if (idx !== -1) {
+                billedInvoice.adjustments.splice(idx, 1);
+                billedInvoice.markModified('adjustments');
+                billedInvoice._skipRecalculate = true;
+                await billedInvoice.save();
+                notes.push('Removed the earlier waive credit from the paid invoice.');
+              } else {
+                await InvoiceService.createPaidInvoiceAdjustment({
+                  invoiceId: classDoc.billedInInvoiceId,
+                  type: 'debit',
+                  reason: 'manual',
+                  classDoc,
+                  description: `Class on ${dateStr} (${classDoc.subject || 'Class'}) recounted for guardian — ${classHours.toFixed(2)}h`,
+                  hoursDelta: classHours,
+                  amountDelta: amount,
+                  previousDuration: classDuration,
+                  actorId: req.user._id
+                });
+                notes.push('Offsetting debit recorded on the paid invoice.');
+              }
+            }
+          }
+        } catch (adjErr) {
+          console.error('[billing-waiver] guardian paid-invoice adjustment failed:', adjErr.message);
+        }
+      }
+
+      classDoc.lastModifiedBy = req.user._id;
+      classDoc.lastModifiedAt = now;
+      await classDoc.save();
+
+      // Recompute guardian hours: a waived class is excluded from "consumed", so the
+      // hour is credited back automatically without touching the paid invoice.
+      const guardianId = classDoc.student?.guardianId;
+      if (guardianId) {
+        try {
+          const hoursMap = await computeGuardianHoursFromPaidInvoices([guardianId]);
+          await syncComputedHoursToStorage(hoursMap);
+        } catch (hErr) {
+          console.warn('[billing-waiver] guardian hours recompute failed:', hErr.message);
+        }
+      }
+    }
+
+    // ---------------- TEACHER ----------------
+    if (party === 'teacher') {
+      const currentlyWaived = classDoc.billingWaiver.teacher.waived === true;
+      const hasWaivedField = typeof req.body?.waived === 'boolean';
+      const nextWaived = hasWaivedField ? Boolean(req.body.waived) : currentlyWaived;
+      const turningOn = hasWaivedField && nextWaived && !currentlyWaived;
+      const turningOff = hasWaivedField && !nextWaived && currentlyWaived;
+
+      if (hasWaivedField) {
+        classDoc.billingWaiver.teacher.waived = nextWaived;
+        if (nextWaived) {
+          classDoc.billingWaiver.teacher.at = now;
+          classDoc.billingWaiver.teacher.by = req.user._id;
+          classDoc.billingWaiver.teacher.reason = trimmedReason;
+        } else {
+          classDoc.billingWaiver.teacher.at = null;
+          classDoc.billingWaiver.teacher.by = null;
+          classDoc.billingWaiver.teacher.reason = '';
+        }
+      }
+      classDoc.markModified('billingWaiver');
+
+      if ((turningOn || turningOff) && classDoc.billedInTeacherInvoiceId && classDoc.teacher) {
+        try {
+          const ti = await TeacherInvoice.findById(classDoc.billedInTeacherInvoiceId);
+          if (ti) {
+            const isPaidTI = String(ti.status).toLowerCase() === 'paid';
+            const classIdStr = String(classDoc._id);
+
+            if (isPaidTI) {
+              // Paid teacher invoice: never mutate it. Queue a pending cross-month
+              // adjustment that settles as an extra on the next draft invoice.
+              const teacher = await User.findById(classDoc.teacher).select('teacherInfo');
+              if (teacher) {
+                if (!teacher.teacherInfo) teacher.teacherInfo = {};
+                if (!Array.isArray(teacher.teacherInfo.pendingCrossMonthAdjustments)) {
+                  teacher.teacherInfo.pendingCrossMonthAdjustments = [];
+                }
+                const list = teacher.teacherInfo.pendingCrossMonthAdjustments;
+                if (turningOn) {
+                  list.push({
+                    classId: classDoc._id,
+                    classDate: classDoc.scheduledDate,
+                    classSubject: classDoc.subject || '',
+                    originalMonth: ti.month,
+                    originalYear: ti.year,
+                    hoursDelta: -classHours,
+                    reason: `Class on ${dateStr} waived for teacher (paid in ${ti.invoiceNumber || 'a paid invoice'})${trimmedReason ? ' — ' + trimmedReason : ''}`,
+                    createdAt: now
+                  });
+                  notes.push('Penalty queued for the next draft teacher invoice (paid invoice preserved).');
+                } else {
+                  const idx = list.findIndex((e) => e && !e.appliedAt && String(e.classId) === classIdStr && Number(e.hoursDelta) < 0);
+                  if (idx !== -1) {
+                    list.splice(idx, 1);
+                    notes.push('Removed the queued teacher penalty.');
+                  } else {
+                    list.push({
+                      classId: classDoc._id,
+                      classDate: classDoc.scheduledDate,
+                      classSubject: classDoc.subject || '',
+                      originalMonth: ti.month,
+                      originalYear: ti.year,
+                      hoursDelta: classHours,
+                      reason: `Class on ${dateStr} recounted for teacher${trimmedReason ? ' — ' + trimmedReason : ''}`,
+                      createdAt: now
+                    });
+                    notes.push('Credit queued for the next draft teacher invoice.');
+                  }
+                }
+                teacher.markModified('teacherInfo.pendingCrossMonthAdjustments');
+                await teacher.save();
+              }
+            } else {
+              // Draft/published (unpaid): keep the class linked so it stays
+              // visible in the invoice with a recount control, but adjust the
+              // aggregate hours. The fetch route also recomputes hours excluding
+              // waived classes, so the displayed total stays consistent.
+              if (turningOn) {
+                ti.totalHours = Math.max(0, Math.round(((ti.totalHours || 0) - classHours) * 1000) / 1000);
+              } else {
+                ti.totalHours = Math.round(((ti.totalHours || 0) + classHours) * 1000) / 1000;
+              }
+              if (!Array.isArray(ti.changeHistory)) ti.changeHistory = [];
+              ti.changeHistory.push({
+                changedAt: now,
+                changedBy: req.user._id,
+                action: turningOn ? 'waive_class' : 'recount_class',
+                field: 'totalHours',
+                note: `Class on ${dateStr} ${turningOn ? 'waived' : 'recounted'} for teacher${trimmedReason ? ' — ' + trimmedReason : ''}`
+              });
+              if (ti.status === 'draft' && typeof ti.calculateAmounts === 'function') {
+                ti.calculateAmounts();
+              }
+              ti.updatedBy = req.user._id;
+              await ti.save();
+              notes.push(turningOn ? 'Class marked waived on the draft teacher invoice.' : 'Class recounted on the draft teacher invoice.');
+            }
+          }
+        } catch (tiErr) {
+          console.error('[billing-waiver] teacher invoice adjustment failed:', tiErr.message);
+        }
+      }
+
+      classDoc.lastModifiedBy = req.user._id;
+      classDoc.lastModifiedAt = now;
+      await classDoc.save();
+    }
+
+    try {
+      const io = req.app.get("io");
+      if (io) io.emit("class:updated", { classId: classDoc._id });
+    } catch (e) { /* ignore */ }
+
+    const responseClass = sanitizeClassForRole(classDoc.toObject({ virtuals: true }), req.user?.role);
+    return res.json({
+      message: 'Billing waiver updated',
+      class: responseClass,
+      billingWaiver: classDoc.billingWaiver,
+      notes
+    });
+  } catch (err) {
+    console.error("[billing-waiver] Error:", err);
+    return res.status(500).json({ message: "Failed to update billing waiver", error: err.message });
+  }
+});
+
+/* -------------------------
    PUT /api/classes/:id/unsubmit-report
    Admin-only: reverts a submitted class report as if it was never submitted.
    - Restores guardian hours that were consumed

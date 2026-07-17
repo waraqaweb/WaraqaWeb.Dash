@@ -53,8 +53,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       { id: 'invoices', label: 'Invoices', icon: FileText, roles: ['admin', 'guardian'], link: '/dashboard/invoices' },
       { id: 'salaries', label: 'Salaries', icon: DollarSign, roles: ['admin', 'teacher'], link: salariesLink },
       { id: 'availability', label: isAdmin() ? 'Meetings' : 'My Availability', icon: Clock, roles: ['admin', 'teacher'], link: '/dashboard/availability' },
-      { id: 'teacher-operations', label: 'Teacher Operations', icon: BriefcaseBusiness, roles: ['admin'], link: '/dashboard/teacher-operations' },
-      { id: 'business-intelligence', label: 'Business Intelligence', icon: BarChart3, roles: ['admin'], link: '/dashboard/business-intelligence' },
+      { id: 'teacher-operations', label: 'Recruitment', icon: BriefcaseBusiness, roles: ['admin'], link: '/dashboard/teacher-operations' },
       { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
       { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
       { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },
@@ -259,7 +258,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
           </div>
 
           {/* User Info */}
-          <div className="px-4 py-3 bg-sidebar-accent border-b border-sidebar-border">
+          <div className="px-3 py-2 bg-sidebar-accent border-b border-sidebar-border">
             <div className="flex items-center space-x-3">
               <div className="h-10 w-10 rounded-full overflow-hidden bg-primary flex items-center justify-center">
                 {user?.profilePicture ? (
@@ -288,7 +287,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+          <nav className="flex-1 px-2.5 py-2 space-y-0.5 overflow-y-auto">
             {navigationItems.map((item) => {
               const Icon = item.icon;
               // Check if current path matches this item's link
@@ -317,7 +316,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
                     }
                   }}
                   className={`
-                    w-full flex min-h-[44px] items-center space-x-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors duration-200 cursor-pointer
+                    w-full flex min-h-[34px] items-center space-x-2 px-2 py-1 rounded-md text-[12px] font-medium transition-colors duration-200 cursor-pointer
                     ${isActive 
                       ? 'bg-sidebar-primary text-sidebar-primary-foreground' 
                       : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
@@ -361,10 +360,10 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
           </nav>
 
           {/* Bottom controls: Settings, View Profile, Sign Out */}
-          <div className="px-4 py-4 border-t border-sidebar-border space-y-2">
+          <div className="px-3 py-2 border-t border-sidebar-border space-y-1.5">
             <button
               onClick={() => { navigate('/dashboard/settings'); if (onClose) onClose(); }}
-              className="w-full text-left text-sm px-2 py-2 rounded hover:bg-sidebar-accent"
+              className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-sidebar-accent"
             >
               Settings
             </button>
@@ -374,14 +373,14 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
                 if (typeof onOpenProfileModal === 'function') onOpenProfileModal(); else navigate('/dashboard/profile');
                 if (onClose) onClose();
               }}
-              className="w-full text-left text-sm px-2 py-2 rounded hover:bg-sidebar-accent"
+              className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-sidebar-accent"
             >
               View Profile
             </button>
 
             <button
               onClick={handleLogout}
-              className="w-full flex items-center space-x-3 px-3 py-2 rounded-md text-sm font-medium text-sidebar-foreground hover:bg-destructive hover:text-destructive-foreground transition-colors duration-200"
+              className="w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-md text-xs font-medium text-sidebar-foreground hover:bg-destructive hover:text-destructive-foreground transition-colors duration-200"
             >
               <LogOut className={`h-4 w-4 text-black`} strokeWidth={1.25} style={{ filter: 'drop-shadow(0 0 10px rgba(245,158,11,0.95)) drop-shadow(0 0 4px rgba(245,158,11,0.6))' }} />
               <span>Sign Out</span>

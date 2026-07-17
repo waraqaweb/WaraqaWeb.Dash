@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   ResponsiveContainer, LineChart, BarChart, ComposedChart,
   Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
@@ -8,8 +7,7 @@ import { fetchBIHub } from '../../api/businessIntelligence';
 import {
   RefreshCcw, DollarSign, Users, TrendingUp, TrendingDown, Minus,
   Target, BarChart3, Award, Lightbulb, AlertTriangle,
-  Download, Edit3, Check, BookOpen, ShieldCheck, Activity,
-  GraduationCap, Layers, Globe,
+  Download, Edit3, Check, BookOpen, Layers,
 } from 'lucide-react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -275,22 +273,22 @@ function TabOverview({ computed, data, targets, setTargets, wi, setWI, wiMode, s
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       {/* ── Scoreboard ── */}
       {sb && (
         <section>
           <SH title="Business Health Scoreboard" sub="0–100 each — based on actual vs previous period" />
-          <div className="rounded-2xl border border-border bg-card p-6 mb-4 text-center">
+          <div className="rounded-xl border border-border bg-card p-3 mb-2 text-center">
             <div className={`text-6xl font-black ${sb.overall >= 75 ? 'text-emerald-600' : sb.overall >= 50 ? 'text-amber-500' : 'text-rose-500'}`}>{sb.overall}</div>
             <div className="text-2xl font-semibold text-muted-foreground mt-1">{sb.overall >= 80 ? 'Excellent' : sb.overall >= 65 ? 'Good' : sb.overall >= 50 ? 'Fair' : 'Needs work'}</div>
             <div className="text-sm text-muted-foreground">Overall business health score</div>
           </div>
-          <div className="grid grid-cols-5 gap-4 mb-4">
+          <div className="grid grid-cols-5 gap-2 mb-2">
             {[['Hours', sb.hours], ['Revenue', sb.revenue], ['Profit', sb.profit], ['Retention', sb.retention], ['Growth', sb.growth]].map(([l, s]) => (
               <ScoreGauge key={l} score={s} label={l} />
             ))}
           </div>
-          <div className="rounded-2xl border border-border bg-card p-4 space-y-2">
+          <div className="rounded-xl border border-border bg-card p-2.5 space-y-1.5">
             {[
               { label: 'Hours',     score: sb.hours,     desc: `${N(c.completedHours, 1)} hrs vs ${N(c.prev?.completedHours ?? 0, 1)} prev` },
               { label: 'Revenue',   score: sb.revenue,   desc: `${$$(c.revenue)} vs ${$$(c.prev?.revenue ?? 0)} prev` },
@@ -315,7 +313,7 @@ function TabOverview({ computed, data, targets, setTargets, wi, setWI, wiMode, s
       <section>
         <SH title="Critical Numbers" sub={`Completed teaching hours only — ${data.periodLabel}`} />
         {/* What-if calculator */}
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 mb-4">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 mb-2">
           <div className="flex items-center justify-between mb-3">
             <div>
               <div className="text-sm font-semibold text-amber-900">What-if calculator</div>
@@ -326,7 +324,7 @@ function TabOverview({ computed, data, targets, setTargets, wi, setWI, wiMode, s
               {wiMode ? 'Custom ON' : 'Enable what-if'}
             </button>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             {[
               { label: 'Hours',            key: 'hours',             act: actual.completedHours },
               { label: 'Revenue/hr',       key: 'revenuePerHour',    act: actual.revenuePerHour },
@@ -367,9 +365,9 @@ function TabOverview({ computed, data, targets, setTargets, wi, setWI, wiMode, s
           <KPICard label="Gross profit per hour" value={$$(c.profitPerHour)} highlight={c.profitPerHour > 0} warn={v => v < 0} sub="After teacher costs and PayPal" />
         </Grid>
         {hist.length > 1 && (
-          <div className="rounded-2xl border border-border bg-card p-4 mt-4">
+          <div className="rounded-xl border border-border bg-card p-2.5 mt-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">12-month trend</div>
-            <div className="h-52">
+            <div className="h-40">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={hist} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -391,11 +389,11 @@ function TabOverview({ computed, data, targets, setTargets, wi, setWI, wiMode, s
       <section>
         <SH title="Owner Insights" sub="Auto-generated signals. No fluff." />
         {!insights.length && <div className="text-muted-foreground text-sm">No insights available for this period.</div>}
-        <div className="space-y-3">
+        <div className="space-y-2">
           {insights.map((ins, i) => {
             const { Icon, bg, border, title, text } = insightStyles[ins.type] || insightStyles.explain;
             return (
-              <div key={i} className={`rounded-2xl border ${border} ${bg} p-4`}>
+              <div key={i} className={`rounded-xl border ${border} ${bg} p-2.5`}>
                 <div className={`flex items-center gap-2 font-semibold text-sm ${title} mb-1`}><Icon className="h-4 w-4" />{ins.label}</div>
                 {ins.text && <p className={`text-sm ${text}`}>{ins.text}</p>}
                 {ins.list && <ul className={`mt-1 space-y-1 text-sm ${text}`}>{ins.list.map((item, j) => (
@@ -423,7 +421,7 @@ function TabPeople({ data, targets, setTargets }) {
   const ut = (k, val) => { const t = { ...targets, [k]: val }; setTargets(t); saveTargets(t); };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       {/* ── Student Health ── */}
       <section>
         <SH title="Student Health" />
@@ -448,7 +446,7 @@ function TabPeople({ data, targets, setTargets }) {
           </Grid>
         </div>
         {hist.length > 1 && (
-          <div className="rounded-2xl border border-border bg-card p-4 mt-4">
+          <div className="rounded-xl border border-border bg-card p-2.5 mt-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Active students · 12 months</div>
             <HistoryBar data={hist} dataKey="activeStudents" color="#6366f1" height={100} />
           </div>
@@ -471,13 +469,13 @@ function TabPeople({ data, targets, setTargets }) {
           </Grid>
         </div>
         {gh.topByRevenue?.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
             {[['Top 10 by revenue', gh.topByRevenue, g => $$(g.revenue)], ['Top 10 by hours', gh.topByHours, g => `${N(g.hours, 1)} hrs`]].map(([title, list, fmt]) => (
-              <div key={title} className="rounded-2xl border border-border bg-card overflow-hidden">
-                <div className="px-4 py-2 bg-muted/30 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+              <div key={title} className="rounded-xl border border-border bg-card overflow-hidden">
+                <div className="px-3 py-1.5 bg-muted/30 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
                 <div className="divide-y divide-border">
                   {list.map((g, i) => (
-                    <div key={i} className="flex items-center justify-between px-4 py-2 text-sm hover:bg-muted/10">
+                    <div key={i} className="flex items-center justify-between px-3 py-1.5 text-xs hover:bg-muted/10">
                       <span className="font-medium">{i + 1}. {g.name}</span>
                       <span className="font-semibold text-emerald-600">{fmt(g)}</span>
                     </div>
@@ -488,7 +486,7 @@ function TabPeople({ data, targets, setTargets }) {
           </div>
         )}
         {hist.length > 1 && (
-          <div className="rounded-2xl border border-border bg-card p-4 mt-4">
+          <div className="rounded-xl border border-border bg-card p-2.5 mt-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Active guardians · 12 months</div>
             <HistoryBar data={hist} dataKey="activeGuardians" color="#22c55e" height={80} />
           </div>
@@ -517,8 +515,8 @@ function TabPeople({ data, targets, setTargets }) {
           </Grid>
         </div>
         {teachers.length > 0 && (
-          <div className="rounded-2xl border border-border bg-card overflow-hidden mt-4">
-            <div className="px-4 py-2 bg-muted/30 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Per-teacher</div>
+          <div className="rounded-xl border border-border bg-card overflow-hidden mt-2">
+            <div className="px-3 py-1.5 bg-muted/30 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Per-teacher</div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -555,7 +553,7 @@ function TabPeople({ data, targets, setTargets }) {
           </div>
         )}
         {hist.length > 1 && (
-          <div className="rounded-2xl border border-border bg-card p-4 mt-4">
+          <div className="rounded-xl border border-border bg-card p-2.5 mt-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Completed hours · 12 months</div>
             <HistoryBar data={hist} dataKey="completedHours" color="#8b5cf6" height={80} />
           </div>
@@ -598,12 +596,12 @@ function TabFinancial({ computed, data, targets, setTargets }) {
   ];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       {/* ── Income statement ── */}
       <section>
         <SH title="Financial Analytics" sub="Revenue = paid invoices only" />
-        <div className="rounded-2xl border border-border bg-card overflow-hidden mb-4">
-          <div className="px-4 py-2 bg-muted/30 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Income statement</div>
+        <div className="rounded-xl border border-border bg-card overflow-hidden mb-2">
+          <div className="px-3 py-1.5 bg-muted/30 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Income statement</div>
           <div className="divide-y divide-border text-sm">
             {[
               { l: 'Revenue',              v: c.revenue,          cls: 'text-foreground font-semibold' },
@@ -614,7 +612,7 @@ function TabFinancial({ computed, data, targets, setTargets }) {
               { l: '— Other expenses',     v: -oth,               cls: 'text-rose-500 pl-4' },
               { l: 'Net profit',           v: np,                 cls: np >= 0 ? 'text-emerald-700 font-bold' : 'text-rose-600 font-bold', border: true },
             ].map(({ l, v, cls, border }) => (
-              <div key={l} className={`flex items-center justify-between px-4 py-2.5 ${border ? 'border-t-2 border-border bg-muted/10' : ''}`}>
+              <div key={l} className={`flex items-center justify-between px-3 py-1.5 ${border ? 'border-t-2 border-border bg-muted/10' : ''}`}>
                 <span className="text-muted-foreground">{l}</span>
                 <span className={cls}>{$$(v)}</span>
               </div>
@@ -628,9 +626,9 @@ function TabFinancial({ computed, data, targets, setTargets }) {
           <KPICard label="Profit growth"  value={fin.profitGrowth != null ? `${fin.profitGrowth > 0 ? '+' : ''}${N(fin.profitGrowth, 1)}%` : '—'} highlight={(fin.profitGrowth ?? 0) > 0} />
         </Grid>
         {hist.length > 1 && (
-          <div className="rounded-2xl border border-border bg-card p-4 mt-4">
+          <div className="rounded-xl border border-border bg-card p-2.5 mt-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Revenue vs gross profit</div>
-            <div className="h-52">
+            <div className="h-40">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={hist} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -649,9 +647,9 @@ function TabFinancial({ computed, data, targets, setTargets }) {
       {/* ── Target Tracker ── */}
       <section>
         <SH title="Target Tracker" sub="Click any target to edit inline." />
-        <div className="space-y-4">
+        <div className="space-y-2.5">
           {targetRows.map(({ key, label, value, prefix, suffix }) => (
-            <div key={key} className="rounded-2xl border border-border bg-card p-4">
+            <div key={key} className="rounded-xl border border-border bg-card p-2.5">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium">{label}</span>
                 <span className="text-xs text-muted-foreground">
@@ -691,9 +689,9 @@ function TabFinancial({ computed, data, targets, setTargets }) {
           </Grid>
         </div>
         {hist.length > 1 && (
-          <div className="rounded-2xl border border-border bg-card p-4 mt-4">
+          <div className="rounded-xl border border-border bg-card p-2.5 mt-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Monthly revenue</div>
-            <div className="h-48">
+            <div className="h-36">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hist} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -729,21 +727,21 @@ function TabHistory({ data }) {
     a.click();
   };
   return (
-    <div className="space-y-4">
+    <div className="space-y-2.5">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold">Monthly History</h2>
           <p className="text-xs text-muted-foreground mt-0.5">Last 12+ months · completed hours only</p>
         </div>
         <button type="button" onClick={exportCSV}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted/50">
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs font-medium hover:bg-muted/50">
           <Download className="h-3.5 w-3.5" /> Export CSV
         </button>
       </div>
       {!hist.length ? (
         <div className="text-muted-foreground text-sm">No history data.</div>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-border">
+        <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full text-xs whitespace-nowrap">
             <thead>
               <tr className="border-b border-border bg-muted/30">
@@ -798,7 +796,7 @@ function PeriodPicker({ period, setPeriod, customRange, setCustomRange }) {
 }
 
 // ─── Main page component ──────────────────────────────────────────────────────
-export default function BusinessIntelligencePage({ isActive }) {
+export default function BusinessIntelligencePage({ isActive, embedded = false }) {
   const [period,      setPeriod]      = useState('thisMonth');
   const [customRange, setCustomRange] = useState({ start: '', end: '' });
   const [data,        setData]        = useState(null);
@@ -837,15 +835,19 @@ export default function BusinessIntelligencePage({ isActive }) {
   const sp = { computed, data, targets, setTargets, wi, setWI, wiMode, setWIMode };
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className={`flex flex-col h-full ${embedded ? 'bg-transparent' : 'bg-background'}`}>
       {/* ── Page header ── */}
-      <div className="px-4 sm:px-6 pt-5 pb-3 border-b border-border bg-background shrink-0">
+      <div className={`${embedded ? 'px-0 pt-0 pb-1.5' : 'px-3 sm:px-4 pt-3 pb-2 border-b border-border bg-background'} shrink-0`}>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
-            <h1 className="text-xl font-bold flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-primary" />
-              Business Intelligence
-            </h1>
+            {!embedded ? (
+              <h1 className="text-xl font-bold flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-primary" />
+                Business Intelligence
+              </h1>
+            ) : (
+              <h2 className="text-base font-semibold text-foreground">Business Intelligence</h2>
+            )}
             {data?.periodLabel && <p className="text-sm text-muted-foreground mt-0.5">{data.periodLabel}</p>}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -858,13 +860,13 @@ export default function BusinessIntelligencePage({ isActive }) {
           </div>
         </div>
         {/* ── Tabs ── */}
-        <div className="flex gap-1 -mb-px">
+        <div className="flex gap-1 -mb-px overflow-x-auto pb-1">
           {TABS.map(t => {
             const Icon = t.icon;
             const active = tab === t.id;
             return (
               <button key={t.id} type="button" onClick={() => setTab(t.id)}
-                className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'}`}>
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-t-lg border-b-2 transition-colors whitespace-nowrap ${active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'}`}>
                 <Icon className="h-4 w-4" />
                 <span className="hidden sm:inline">{t.label}</span>
               </button>
@@ -874,7 +876,7 @@ export default function BusinessIntelligencePage({ isActive }) {
       </div>
 
       {/* ── Tab content ── */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6">
+      <div className={`flex-1 overflow-y-auto ${embedded ? 'px-0 py-1.5' : 'px-3 sm:px-4 py-3'}`}>
         {error && (
           <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 mb-4">
             <AlertTriangle className="inline h-4 w-4 mr-1.5 mb-0.5" />{error}

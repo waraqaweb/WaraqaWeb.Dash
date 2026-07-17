@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import TeacherResponsesPanel from '../../components/features/meetings/TeacherResponsesPanel';
+import BusinessIntelligencePage from './BusinessIntelligencePage';
 import {
   createRecruitmentCampaign,
   getTeacherOperationsSummary,
@@ -35,6 +36,7 @@ const TABS = [
   { id: 'overview', label: 'Overview', icon: TrendingUp },
   { id: 'pipeline', label: 'Pipeline', icon: BriefcaseBusiness },
   { id: 'training', label: 'Training', icon: GraduationCap },
+  { id: 'business-intelligence', label: 'Business Intelligence', icon: BarChart3 },
   { id: 'interviews', label: 'Interviews', icon: CalendarClock },
   { id: 'stats', label: 'Stats', icon: BarChart3 },
 ];
@@ -74,6 +76,15 @@ const staticPolicyCards = [
   },
 ];
 
+const compactSignalCards = [
+  { key: 'pipeline', label: 'Pipeline', valuePath: ['pipeline', 'total'] },
+  { key: 'unreviewed', label: 'Unreviewed', valuePath: ['pipeline', 'unreviewed'] },
+  { key: 'activeTeachers', label: 'Active Teachers', valuePath: ['teachers', 'activeCount'] },
+  { key: 'hours14', label: '14d Hours', valuePath: ['teachers', 'totalUpcomingHours14Days'], suffix: 'h' },
+  { key: 'accepted', label: 'Accepted', valuePath: ['pipeline', 'byStatus', 'accepted'] },
+  { key: 'shortlisted', label: 'Shortlisted', valuePath: ['pipeline', 'byStatus', 'shortlisted'] },
+];
+
 const nextDeliverables = [
   'Capacity calculations by gender, subject, timezone window, and spare hours.',
   'Google Drive-backed public candidate application flow inside the dashboard.',
@@ -87,13 +98,13 @@ function TabButton({ active, icon: Icon, label, onClick }) {
       type="button"
       onClick={onClick}
       className={[
-        'inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition',
+        'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition',
         active
           ? 'border-primary bg-primary text-primary-foreground shadow-sm'
           : 'border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground',
       ].join(' ')}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className="h-3.5 w-3.5" />
       <span>{label}</span>
     </button>
   );
@@ -101,9 +112,9 @@ function TabButton({ active, icon: Icon, label, onClick }) {
 
 function SectionCard({ title, children, className = '' }) {
   return (
-    <section className={`rounded-3xl border border-border bg-card p-4 shadow-sm ${className}`.trim()}>
-      <div className="mb-3">
-        <h2 className="text-base font-semibold text-foreground">{title}</h2>
+    <section className={`rounded-2xl border border-border bg-card p-3 shadow-sm ${className}`.trim()}>
+      <div className="mb-2">
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
       </div>
       {children}
     </section>
@@ -138,9 +149,18 @@ export default function TeacherOperationsPage({ isActive }) {
   const [sessionForm, setSessionForm] = useState({ title: '', scheduledAt: '', durationMinutes: 60, meetingLink: '', status: 'scheduled', trainerNotes: '' });
 
   const headerCopy = useMemo(() => ({
-    title: 'Teacher Operations',
-    subtitle: 'A sidebar-native control room for staffing, recruitment, interviews, and teacher capacity.',
+    title: 'Recruitment',
+    subtitle: 'Compact hiring command center: pipeline, training, interviews, and BI in one page.',
   }), []);
+
+  const compactSignals = useMemo(() => {
+    const get = (obj, path) => path.reduce((acc, key) => (acc != null ? acc[key] : undefined), obj);
+    return compactSignalCards.map((item) => {
+      const raw = get(summary, item.valuePath);
+      const value = raw == null ? '—' : `${raw}${item.suffix || ''}`;
+      return { ...item, value };
+    });
+  }, [summary]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -378,26 +398,26 @@ export default function TeacherOperationsPage({ isActive }) {
   }, [summary]);
 
   return (
-    <div className="min-h-full bg-background p-4 sm:p-6">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
-        <section className="rounded-[28px] border border-border bg-card p-5 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="min-h-full bg-background p-2 sm:p-3">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-2.5">
+        <section className="rounded-[20px] border border-border bg-gradient-to-br from-card via-card to-primary/5 p-3 shadow-sm">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-3xl">
-              <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+              <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
                 <BriefcaseBusiness className="h-3.5 w-3.5" />
-                <span>New sidebar section</span>
+                <span>Single sidebar workspace</span>
               </div>
-              <h1 className="mt-3 text-2xl font-semibold text-foreground">{headerCopy.title}</h1>
-              <p className="mt-2 text-sm text-muted-foreground">{headerCopy.subtitle}</p>
+              <h1 className="mt-1.5 text-lg font-semibold text-foreground">{headerCopy.title}</h1>
+              <p className="mt-0.5 text-xs text-muted-foreground">{headerCopy.subtitle}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => navigate('/dashboard/business-intelligence')}
+                onClick={() => setActiveTab('business-intelligence')}
                 className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:border-primary/40"
               >
                 <BarChart3 className="h-4 w-4" />
-                <span>Business Intelligence</span>
+                <span>Open BI tab</span>
               </button>
               <button
                 type="button"
@@ -409,7 +429,15 @@ export default function TeacherOperationsPage({ isActive }) {
               </button>
             </div>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-2 grid gap-1.5 sm:grid-cols-3 lg:grid-cols-6">
+            {compactSignals.map((item) => (
+              <div key={item.key} className="rounded-lg border border-border/80 bg-background/80 px-2.5 py-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{item.label}</p>
+                <p className="mt-0.5 text-base font-semibold text-foreground leading-none">{item.value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1">
             {TABS.map((tab) => (
               <TabButton
                 key={tab.id}
@@ -422,53 +450,53 @@ export default function TeacherOperationsPage({ isActive }) {
           </div>
         </section>
 
-        {summaryError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{summaryError}</div> : null}
+        {summaryError ? <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{summaryError}</div> : null}
 
         {activeTab === 'overview' ? (
-          <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
+          <div className="grid gap-3 xl:grid-cols-[1.35fr_0.95fr]">
             <SectionCard title="Live operations snapshot">
               {loadingSummary ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading live summary…</div>
               ) : (
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-2 md:grid-cols-3">
                   {liveOverviewCards.map((card) => {
                     const Icon = card.icon;
                     return (
-                      <div key={card.title} className="rounded-2xl border border-border bg-background p-4">
+                      <div key={card.title} className="rounded-xl border border-border bg-background p-2.5">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{card.title}</p>
-                            <p className="mt-2 text-xl font-semibold text-foreground">{card.value}</p>
+                            <p className="mt-1 text-lg font-semibold text-foreground">{card.value}</p>
                           </div>
                           <div className="rounded-2xl bg-primary/10 p-2 text-primary">
                             <Icon className="h-4 w-4" />
                           </div>
                         </div>
-                        <p className="mt-3 text-sm leading-6 text-muted-foreground">{card.note}</p>
+                        <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{card.note}</p>
                       </div>
                     );
                   })}
                 </div>
               )}
-              {summary?.dataCompleteness?.note ? <p className="mt-4 text-xs leading-5 text-muted-foreground">{summary.dataCompleteness.note}</p> : null}
+              {summary?.dataCompleteness?.note ? <p className="mt-2 text-xs leading-5 text-muted-foreground">{summary.dataCompleteness.note}</p> : null}
             </SectionCard>
 
             <SectionCard title="Recruitment policy seed">
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-2 md:grid-cols-3">
                 {staticPolicyCards.map((card) => {
                   const Icon = card.icon;
                   return (
-                    <div key={card.title} className="rounded-2xl border border-border bg-background p-4">
+                    <div key={card.title} className="rounded-xl border border-border bg-background p-2.5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{card.title}</p>
-                          <p className="mt-2 text-xl font-semibold text-foreground">{card.value}</p>
+                          <p className="mt-1 text-lg font-semibold text-foreground">{card.value}</p>
                         </div>
                         <div className="rounded-2xl bg-primary/10 p-2 text-primary">
                           <Icon className="h-4 w-4" />
                         </div>
                       </div>
-                      <p className="mt-3 text-sm leading-6 text-muted-foreground">{card.note}</p>
+                      <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{card.note}</p>
                     </div>
                   );
                 })}
@@ -476,11 +504,11 @@ export default function TeacherOperationsPage({ isActive }) {
             </SectionCard>
 
             <SectionCard title="What this page will own">
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {nextDeliverables.map((item) => (
-                  <div key={item} className="flex items-start gap-3 rounded-2xl border border-border bg-background px-4 py-3">
+                  <div key={item} className="flex items-start gap-2 rounded-xl border border-border bg-background px-3 py-2">
                     <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                    <p className="text-sm leading-6 text-foreground">{item}</p>
+                    <p className="text-xs leading-5 text-foreground">{item}</p>
                   </div>
                 ))}
               </div>
@@ -489,10 +517,10 @@ export default function TeacherOperationsPage({ isActive }) {
         ) : null}
 
         {activeTab === 'pipeline' ? (
-          <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+          <div className="grid gap-3 xl:grid-cols-[1.05fr_0.95fr]">
             <SectionCard title="Recruitment campaigns">
-              {campaignError ? <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{campaignError}</div> : null}
-              <div className="grid gap-3 md:grid-cols-2">
+              {campaignError ? <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{campaignError}</div> : null}
+              <div className="grid gap-2 md:grid-cols-2">
                 <label className="text-sm text-foreground">
                   <span className="mb-1 block font-medium">Campaign title</span>
                   <input value={campaignForm.title} onChange={(event) => setCampaignForm((prev) => ({ ...prev, title: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
@@ -546,12 +574,12 @@ export default function TeacherOperationsPage({ isActive }) {
                   <span className="mb-1 block font-medium">Internal notes</span>
                   <textarea rows={4} value={campaignForm.internalNotes} onChange={(event) => setCampaignForm((prev) => ({ ...prev, internalNotes: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
                 </label>
-                <div className="md:col-span-2 flex flex-wrap items-center gap-4 text-sm text-foreground">
+                <div className="md:col-span-2 flex flex-wrap items-center gap-3 text-sm text-foreground">
                   <label className="inline-flex items-center gap-2"><input type="checkbox" checked={campaignForm.male} onChange={(event) => setCampaignForm((prev) => ({ ...prev, male: event.target.checked }))} /> Male teachers</label>
                   <label className="inline-flex items-center gap-2"><input type="checkbox" checked={campaignForm.female} onChange={(event) => setCampaignForm((prev) => ({ ...prev, female: event.target.checked }))} /> Female teachers</label>
                 </div>
               </div>
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-2 flex flex-wrap gap-1.5">
                 <button type="button" onClick={saveCampaign} disabled={campaignSaving} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60">
                   {editingCampaignId ? <Edit3 className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                   <span>{campaignSaving ? 'Saving…' : editingCampaignId ? 'Update campaign' : 'Create campaign'}</span>
@@ -562,21 +590,21 @@ export default function TeacherOperationsPage({ isActive }) {
 
             <SectionCard title="Campaign list">
               {campaignLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading campaigns…</div> : null}
-              <div className="mb-4 rounded-2xl border border-border bg-background p-4">
+              <div className="mb-2 rounded-xl border border-border bg-background p-2.5">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Generic application form link</p>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="mt-1.5 flex flex-col gap-1.5 sm:flex-row sm:items-center">
                   <input readOnly value={`${window.location.origin}/teacher-contract`} className="min-w-0 flex-1 rounded-xl border border-border bg-card px-3 py-2 text-sm text-foreground" />
                   <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Form link')} className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:border-primary/40">
                     <Copy className="h-4 w-4" />
                     <span>Copy</span>
                   </button>
                 </div>
-                <p className="mt-1.5 text-xs text-muted-foreground">Send this link to candidates. Use the per-campaign links below to pre-select a specific campaign.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Send this link to candidates. Use the per-campaign links below to pre-select a specific campaign.</p>
                 {copyNotice ? <p className="mt-1 text-xs text-muted-foreground">{copyNotice}</p> : null}
               </div>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {(campaigns || []).map((campaign) => (
-                  <div key={campaign.id} className="rounded-2xl border border-border bg-background p-4">
+                  <div key={campaign.id} className="rounded-xl border border-border bg-background p-2.5">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <p className="text-base font-semibold text-foreground">{campaign.title}</p>
@@ -593,15 +621,15 @@ export default function TeacherOperationsPage({ isActive }) {
                         </button>
                       </div>
                     </div>
-                    <div className="mt-3 grid gap-2 text-sm text-foreground sm:grid-cols-2">
-                      <div className="rounded-xl border border-border bg-card px-3 py-2">Subjects: {campaign.subjects?.join(', ') || 'General'}</div>
-                      <div className="rounded-xl border border-border bg-card px-3 py-2">Window: {campaign.preferredWindow || 'Flexible'}</div>
-                      <div className="rounded-xl border border-border bg-card px-3 py-2">Applicants target: {campaign.targetApplicants || 0}</div>
-                      <div className="rounded-xl border border-border bg-card px-3 py-2">Hires target: {campaign.targetHires || 0}</div>
+                    <div className="mt-2 grid gap-1.5 text-xs text-foreground sm:grid-cols-2">
+                      <div className="rounded-lg border border-border bg-card px-2.5 py-1.5">Subjects: {campaign.subjects?.join(', ') || 'General'}</div>
+                      <div className="rounded-lg border border-border bg-card px-2.5 py-1.5">Window: {campaign.preferredWindow || 'Flexible'}</div>
+                      <div className="rounded-lg border border-border bg-card px-2.5 py-1.5">Applicants target: {campaign.targetApplicants || 0}</div>
+                      <div className="rounded-lg border border-border bg-card px-2.5 py-1.5">Hires target: {campaign.targetHires || 0}</div>
                     </div>
                   </div>
                 ))}
-                {!campaignLoading && !(campaigns || []).length ? <div className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground">No recruitment campaigns yet.</div> : null}
+                {!campaignLoading && !(campaigns || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No recruitment campaigns yet.</div> : null}
               </div>
             </SectionCard>
 
@@ -615,24 +643,24 @@ export default function TeacherOperationsPage({ isActive }) {
         ) : null}
 
         {activeTab === 'interviews' ? (
-          <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <div className="grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
             <SectionCard title="Interview operations">
-              <div className="space-y-3 text-sm leading-6 text-muted-foreground">
+              <div className="space-y-2 text-xs leading-5 text-muted-foreground">
                 <p>New-teacher interviews now have a dedicated one-hour meeting type and can use the same booking infrastructure as other Waraqa meetings.</p>
                 <p>Use the meeting availability page to create admin slots, then share the interview link with candidates.</p>
               </div>
-              <div className="mt-4 rounded-2xl border border-border bg-background p-4">
+              <div className="mt-2 rounded-xl border border-border bg-background p-2.5">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">New teacher interview link</p>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="mt-1.5 flex flex-col gap-1.5 sm:flex-row sm:items-center">
                   <input readOnly value={newTeacherInterviewLink} className="min-w-0 flex-1 rounded-xl border border-border bg-card px-3 py-2 text-sm text-foreground" />
                   <button type="button" onClick={() => handleCopy(newTeacherInterviewLink, 'Interview link')} className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:border-primary/40">
                     <Copy className="h-4 w-4" />
                     <span>Copy link</span>
                   </button>
                 </div>
-                {copyNotice ? <p className="mt-2 text-xs text-muted-foreground">{copyNotice}</p> : null}
+                {copyNotice ? <p className="mt-1 text-xs text-muted-foreground">{copyNotice}</p> : null}
               </div>
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-2 flex flex-wrap gap-1.5">
                 <button
                   type="button"
                   onClick={() => navigate('/dashboard/availability')}
@@ -644,26 +672,26 @@ export default function TeacherOperationsPage({ isActive }) {
               </div>
             </SectionCard>
             <SectionCard title="Upcoming implementation">
-              <div className="space-y-3 text-sm leading-6 text-foreground">
-                <div className="rounded-2xl border border-border bg-background px-4 py-3">Candidate self-booking from admin-created slots.</div>
-                <div className="rounded-2xl border border-border bg-background px-4 py-3">Interview scorecards for punctuality, English, subject knowledge, and professionalism.</div>
-                <div className="rounded-2xl border border-border bg-background px-4 py-3">Stage-driven invite, reminder, and outcome emails using the existing mail queue.</div>
+              <div className="space-y-2 text-xs leading-5 text-foreground">
+                <div className="rounded-xl border border-border bg-background px-3 py-2">Candidate self-booking from admin-created slots.</div>
+                <div className="rounded-xl border border-border bg-background px-3 py-2">Interview scorecards for punctuality, English, subject knowledge, and professionalism.</div>
+                <div className="rounded-xl border border-border bg-background px-3 py-2">Stage-driven invite, reminder, and outcome emails using the existing mail queue.</div>
               </div>
             </SectionCard>
           </div>
         ) : null}
 
         {activeTab === 'training' ? (
-          <div className="grid gap-4">
-            {batchError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{batchError}</div> : null}
-            <div className="grid gap-4 xl:grid-cols-[1fr_1.5fr]">
+          <div className="grid gap-3">
+            {batchError ? <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{batchError}</div> : null}
+            <div className="grid gap-3 xl:grid-cols-[1fr_1.5fr]">
               <SectionCard title="Create training batch">
-                <div className="grid gap-3">
+                <div className="grid gap-2">
                   <label className="text-sm text-foreground">
                     <span className="mb-1 block font-medium">Batch title *</span>
                     <input value={batchForm.title} onChange={(e) => setBatchForm((p) => ({ ...p, title: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" placeholder="e.g. Training Batch — July 2026" />
                   </label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2">
                     <label className="text-sm text-foreground">
                       <span className="mb-1 block font-medium">Sessions</span>
                       <input type="number" min="1" max="30" value={batchForm.totalSessions} onChange={(e) => setBatchForm((p) => ({ ...p, totalSessions: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
@@ -676,7 +704,7 @@ export default function TeacherOperationsPage({ isActive }) {
                       </select>
                     </label>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2">
                     <label className="text-sm text-foreground">
                       <span className="mb-1 block font-medium">Start date</span>
                       <input type="date" value={batchForm.startDate} onChange={(e) => setBatchForm((p) => ({ ...p, startDate: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
@@ -699,7 +727,7 @@ export default function TeacherOperationsPage({ isActive }) {
 
               <SectionCard title="Training batches">
                 {batchLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading batches…</div> : null}
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {(batches || []).map((batch) => {
                     const isExpanded = expandedBatchId === batch._id;
                     const completedSessions = (batch.sessions || []).filter((s) => s.status === 'completed').length;
@@ -708,7 +736,7 @@ export default function TeacherOperationsPage({ isActive }) {
                     return (
                       <div key={batch._id} className="rounded-2xl border border-border bg-background">
                         <div
-                          className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3"
+                          className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2"
                           onClick={() => setExpandedBatchId(isExpanded ? null : batch._id)}
                         >
                           <div className="min-w-0">
@@ -738,13 +766,13 @@ export default function TeacherOperationsPage({ isActive }) {
                         </div>
 
                         {isExpanded ? (
-                          <div className="border-t border-border px-4 pb-4 pt-3">
-                            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Sessions</p>
+                          <div className="border-t border-border px-3 pb-3 pt-2">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Sessions</p>
                             <div className="space-y-2">
                               {(batch.sessions || []).map((session) => {
                                 const isEditingThis = sessionEditing?.batchId === batch._id && sessionEditing?.sessionNumber === session.sessionNumber;
                                 return (
-                                  <div key={session.sessionNumber} className="rounded-xl border border-border bg-card p-3">
+                                  <div key={session.sessionNumber} className="rounded-lg border border-border bg-card p-2">
                                     {isEditingThis ? (
                                       <div className="grid gap-2">
                                         <div className="grid grid-cols-2 gap-2">
@@ -788,7 +816,7 @@ export default function TeacherOperationsPage({ isActive }) {
 
                             {(batch.candidates || []).length > 0 ? (
                               <>
-                                <p className="mb-3 mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Candidates</p>
+                                <p className="mb-2 mt-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Candidates</p>
                                 <div className="space-y-2">
                                   {batch.candidates.map((c) => (
                                     <div key={String(c.candidateId)} className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2">
@@ -813,14 +841,14 @@ export default function TeacherOperationsPage({ isActive }) {
                                 </div>
                               </>
                             ) : (
-                              <p className="mt-4 text-xs text-muted-foreground">No candidates added to this batch yet. Add them from the Pipeline tab by moving them to training.</p>
+                              <p className="mt-2 text-xs text-muted-foreground">No candidates added to this batch yet. Add them from the Pipeline tab by moving them to training.</p>
                             )}
                           </div>
                         ) : null}
                       </div>
                     );
                   })}
-                  {!batchLoading && !(batches || []).length ? <div className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground">No training batches yet.</div> : null}
+                  {!batchLoading && !(batches || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No training batches yet.</div> : null}
                 </div>
               </SectionCard>
             </div>
@@ -828,13 +856,13 @@ export default function TeacherOperationsPage({ isActive }) {
         ) : null}
 
         {activeTab === 'stats' ? (
-          <div className="grid gap-4">
-            <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-3">
+            <div className="grid gap-3 xl:grid-cols-2">
               <SectionCard title="Recruitment pipeline stages">
                 {loadingSummary ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading pipeline data…</div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {[
                       ['New', summary?.pipeline?.byStatus?.new ?? 0, 'text-foreground'],
                       ['Under review', summary?.pipeline?.byStatus?.under_review ?? 0, 'text-foreground'],
@@ -845,14 +873,14 @@ export default function TeacherOperationsPage({ isActive }) {
                       ['Rejected', summary?.pipeline?.byStatus?.rejected ?? 0, 'text-red-600 dark:text-red-400'],
                       ['Archived', summary?.pipeline?.byStatus?.archived ?? 0, 'text-muted-foreground'],
                     ].map(([label, value, colorClass]) => (
-                      <div key={label} className="rounded-2xl border border-border bg-background px-3 py-3">
+                      <div key={label} className="rounded-xl border border-border bg-background px-2.5 py-2">
                         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
-                        <p className={`mt-1.5 text-2xl font-semibold ${colorClass}`}>{value}</p>
+                        <p className={`mt-1 text-xl font-semibold ${colorClass}`}>{value}</p>
                       </div>
                     ))}
                   </div>
                 )}
-                <p className="mt-3 text-xs text-muted-foreground">
+                <p className="mt-2 text-xs text-muted-foreground">
                   Total candidates in pipeline: <span className="font-semibold text-foreground">{summary?.pipeline?.total ?? 0}</span>
                   {' • '}
                   Unreviewed: <span className="font-semibold text-foreground">{summary?.pipeline?.unreviewed ?? 0}</span>
@@ -863,7 +891,7 @@ export default function TeacherOperationsPage({ isActive }) {
                 {loadingSummary ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading teacher stats…</div>
                 ) : (
-                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     {[
                       ['Quran teachers', summary?.teachers?.quranCount ?? 0],
                       ['Arabic teachers', summary?.teachers?.arabicCount ?? 0],
@@ -874,9 +902,9 @@ export default function TeacherOperationsPage({ isActive }) {
                       ['Single-subject', summary?.teachers?.singleSubjectCount ?? 0],
                       ['Multi-subject', summary?.teachers?.multiSubjectCount ?? 0],
                     ].map(([label, value]) => (
-                      <div key={label} className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-foreground">
+                      <div key={label} className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground">
                         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-                        <p className="mt-2 text-2xl font-semibold text-foreground">{value}</p>
+                        <p className="mt-1 text-xl font-semibold text-foreground">{value}</p>
                       </div>
                     ))}
                   </div>
@@ -888,22 +916,22 @@ export default function TeacherOperationsPage({ isActive }) {
               {loadingSummary ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading load data…</div>
               ) : (
-                <div className="space-y-3">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-foreground">
+                <div className="space-y-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Monthly hours</p>
-                      <p className="mt-2 text-2xl font-semibold text-foreground">{summary?.teachers?.totalMonthlyHours ?? 0}h</p>
-                      <p className="mt-1 text-xs text-muted-foreground">Average {summary?.teachers?.averageMonthlyHours ?? 0}h per active teacher this month.</p>
+                      <p className="mt-1 text-xl font-semibold text-foreground">{summary?.teachers?.totalMonthlyHours ?? 0}h</p>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">Average {summary?.teachers?.averageMonthlyHours ?? 0}h per active teacher this month.</p>
                     </div>
-                    <div className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-foreground">
+                    <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Next 14 days</p>
-                      <p className="mt-2 text-2xl font-semibold text-foreground">{summary?.teachers?.withUpcomingClasses ?? 0}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">Teachers with scheduled load; {summary?.teachers?.withoutUpcomingClasses ?? 0} currently have none.</p>
+                      <p className="mt-1 text-xl font-semibold text-foreground">{summary?.teachers?.withUpcomingClasses ?? 0}</p>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">Teachers with scheduled load; {summary?.teachers?.withoutUpcomingClasses ?? 0} currently have none.</p>
                     </div>
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {(summary?.teacherRows || []).map((teacher) => (
-                      <div key={teacher.id} className="rounded-2xl border border-border bg-background px-4 py-3 text-sm text-foreground">
+                      <div key={teacher.id} className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div>
                             <p className="font-semibold text-foreground">{teacher.name}</p>
@@ -921,6 +949,12 @@ export default function TeacherOperationsPage({ isActive }) {
               )}
             </SectionCard>
           </div>
+        ) : null}
+
+        {activeTab === 'business-intelligence' ? (
+          <SectionCard title="Business Intelligence">
+            <BusinessIntelligencePage isActive={isActive && activeTab === 'business-intelligence'} embedded />
+          </SectionCard>
         ) : null}
       </div>
     </div>

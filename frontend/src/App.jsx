@@ -425,6 +425,14 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/dashboard/business-intelligence"
+        element={
+          <ProtectedRoute requiredRole="admin">
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      />
       <Route 
         path="/dashboard/vacation-management" 
         element={

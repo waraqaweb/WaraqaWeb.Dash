@@ -720,7 +720,7 @@ try {
 	# (run before staging/committing). After committing we only need to push.
 	Push-WithRetry -BranchName $Branch
 
-	$sshArguments = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20')
+	$sshArguments = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=6')
 	if ($SshKeyPath) {
 		$sshArguments += @('-i', $SshKeyPath)
 	}
@@ -745,6 +745,8 @@ try {
 		('DEPLOY_BRANCH={0}' -f (ConvertTo-BashLiteral $Branch)),
 		('DEPLOY_MODE={0}' -f (ConvertTo-BashLiteral $DeployMode)),
 		'FRONTEND_IMAGE_REPO=ghcr.io/waraqaweb/waraqa-frontend',
+		'NGINX_IMAGE_REPO=ghcr.io/waraqaweb/waraqa-nginx',
+		'BACKEND_IMAGE_REPO=ghcr.io/waraqaweb/waraqa-backend',
 		'git fetch origin "$DEPLOY_BRANCH" >/dev/null 2>&1 || true',
 		'TARGET_SHA="$(git rev-parse "origin/$DEPLOY_BRANCH")"',
 		'TARGET_IMAGE="$FRONTEND_IMAGE_REPO:$TARGET_SHA"',
@@ -753,13 +755,16 @@ try {
 		# image for this exact commit. Checking git HEAD alone is NOT enough: a local
 		# build can leave HEAD correct while the container still serves a stale image.
 		'running_is_target() { local fid img; fid="$(docker ps --filter name=frontend --format "{{.ID}}" | head -n1)"; img="$(docker inspect --format "{{.Config.Image}}" "$fid" 2>/dev/null || true)"; [ "$img" = "$TARGET_IMAGE" ]; }',
+		# all_images_published: returns true only when ALL 3 app images are in GHCR.
+		# Nginx is built last in CI; checking only frontend caused premature deploy starts.
+		'all_images_published() { docker manifest inspect "$FRONTEND_IMAGE_REPO:$TARGET_SHA" >/dev/null 2>&1 && docker manifest inspect "$NGINX_IMAGE_REPO:$TARGET_SHA" >/dev/null 2>&1 && docker manifest inspect "$BACKEND_IMAGE_REPO:$TARGET_SHA" >/dev/null 2>&1; }',
 		'deploy_ok=0',
 		'if [ "$DEPLOY_MODE" = "pull" ]; then',
-		# Phase 1: wait (up to ~15m) for the CI build to publish this commit''s image,
+		# Phase 1: wait (up to ~15m) for the CI build to publish ALL 3 images,
 		# or for the CI auto-deploy (triggered by this same push) to finish on its own.
 		'  for w in $(seq 1 90); do',
 		'    if running_is_target; then echo "[deploy] server already running image $TARGET_SHA; deploy satisfied by the concurrent CI run."; deploy_ok=1; break; fi',
-		'    if docker manifest inspect "$TARGET_IMAGE" >/dev/null 2>&1; then echo "[deploy] GHCR image $TARGET_SHA is published; proceeding to pull."; break; fi',
+		'    if all_images_published; then echo "[deploy] GHCR image $TARGET_SHA is published; proceeding to pull."; break; fi',
 		'    if [ "$w" = "1" ]; then echo "[deploy] waiting for the CI image build to publish $TARGET_SHA (up to ~15m)..."; fi',
 		'    sleep 10',
 		'  done',
@@ -770,7 +775,7 @@ try {
 		'    for attempt in 1 2 3 4 5 6; do',
 		'      for i in $(seq 1 180); do [ -d /tmp/waraqa-deploy.lock ] || break; if [ "$i" = "1" ]; then echo "[deploy] another deploy is in progress (likely the CI auto-deploy from this push); waiting..."; fi; sleep 5; done',
 		'      if running_is_target; then echo "[deploy] server already running image $TARGET_SHA; deploy satisfied by the concurrent CI run."; deploy_ok=1; break; fi',
-		'      if ! docker manifest inspect "$TARGET_IMAGE" >/dev/null 2>&1; then echo "[deploy] image $TARGET_SHA still not published; waiting..."; sleep 15; continue; fi',
+		'      if ! all_images_published; then echo "[deploy] image $TARGET_SHA still not fully published; waiting..."; sleep 15; continue; fi',
 		'      if DEPLOY_IMAGE_TAG="$TARGET_SHA" TARGET_REF="$TARGET_SHA" ./deploy/scripts/deploy.sh pull; then deploy_ok=1; break; fi',
 		'      echo "[deploy] pull attempt $attempt did not complete (lock race with CI); retrying..."; sleep 5',
 		'    done',

@@ -34,7 +34,6 @@ import DashboardDecoration from '../../components/dashboard/widgets/DashboardDec
 import useDomainRefresh from '../../hooks/useDomainRefresh';
 import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
 import { getHomepageAnnouncementContainerClass, getHomepageAnnouncementTextClass } from '../../utils/homepageAnnouncement';
-const BusinessIntelligenceModal = React.lazy(() => import('../../components/admin/BusinessIntelligenceModal'));
 const AdminDashboardCharts = React.lazy(() => import('../../components/dashboard/widgets/AdminDashboardCharts'));
 const OnboardingTodoPanel = React.lazy(() => import('../../components/dashboard/widgets/OnboardingTodoPanel'));
 
@@ -432,7 +431,6 @@ const HijriDateCard = ({ variant = 'card', timeZone, locale, hijriOffset, userId
 const DashboardHome = ({ isActive = true }) => {
   const { user, isAdmin, isTeacher, isGuardian, isStudent } = useAuth();
   const [compactAdmin, setCompactAdmin] = React.useState(false);
-  const [biModalOpen, setBiModalOpen] = React.useState(false);
   const [pasteMeetingOpen, setPasteMeetingOpen] = React.useState(false);
   const [requestsTab, setRequestsTab] = React.useState('teachers');
   const [hijriOffset, setHijriOffset] = React.useState({ default: 0, byRegion: {} });
@@ -2234,11 +2232,6 @@ const DashboardHome = ({ isActive = true }) => {
       )}
 
       {isAdmin() && renderAdminDashboard()}
-      {isAdmin() && (
-        <React.Suspense fallback={null}>
-          <BusinessIntelligenceModal open={biModalOpen} onClose={() => setBiModalOpen(false)} />
-        </React.Suspense>
-      )}
       {isAdmin() && pasteMeetingOpen && (
         <React.Suspense fallback={null}>
           <PasteMeetingModal

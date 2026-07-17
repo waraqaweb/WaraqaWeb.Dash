@@ -54,6 +54,7 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       { id: 'salaries', label: 'Salaries', icon: DollarSign, roles: ['admin', 'teacher'], link: salariesLink },
       { id: 'availability', label: isAdmin() ? 'Meetings' : 'My Availability', icon: Clock, roles: ['admin', 'teacher'], link: '/dashboard/availability' },
       { id: 'teacher-operations', label: 'Teacher Operations', icon: BriefcaseBusiness, roles: ['admin'], link: '/dashboard/teacher-operations' },
+      { id: 'business-intelligence', label: 'Business Intelligence', icon: BarChart3, roles: ['admin'], link: '/dashboard/business-intelligence' },
       { id: 'vacation-management', label: 'Vacations', icon: Clock, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/vacation-management' },
       { id: 'feedbacks', label: 'Feedbacks', icon: BarChart3, roles: ['admin'], link: '/dashboard/feedbacks' },
       { id: 'library', label: 'Library', icon: BookOpen, roles: ['admin', 'teacher', 'guardian', 'student'], link: '/dashboard/library' },

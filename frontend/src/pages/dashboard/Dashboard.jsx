@@ -44,6 +44,7 @@ const VacationManagementPage = React.lazy(() => import('./VacationManagementPage
 const EvaluationPage = React.lazy(() => import('./EvaluationPage'));
 const ClassChangeRequestsPage = React.lazy(() => import('./ClassChangeRequestsPage'));
 const TeacherOperationsPage = React.lazy(() => import('./TeacherOperationsPage'));
+const BusinessIntelligencePage = React.lazy(() => import('./BusinessIntelligencePage'));
 
 const DeleteCountdownHost = () => {
   const { isActive, secondsLeft, message, error, undo, preDelaySeconds, undoSeconds, phase } = useDeleteClassCountdown();
@@ -325,6 +326,8 @@ const Dashboard = () => {
         return <ClassChangeRequestsPage isActive={isActive} />;
       case 'teacher-operations':
         return user?.role === 'admin' ? <TeacherOperationsPage isActive={isActive} /> : <DashboardHome isActive={isActive} />;
+      case 'business-intelligence':
+        return user?.role === 'admin' ? <BusinessIntelligencePage isActive={isActive} /> : <DashboardHome isActive={isActive} />;
       case 'evaluation':
         return user?.role === 'admin' ? <EvaluationPage isActive={isActive} /> : <DashboardHome isActive={isActive} />;
       /* Removed 'reports' and 'users' pages from the dashboard: these pages are intentionally

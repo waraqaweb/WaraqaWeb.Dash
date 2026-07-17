@@ -19,7 +19,6 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import TeacherResponsesPanel from '../../components/features/meetings/TeacherResponsesPanel';
-import BusinessIntelligenceModal from '../../components/admin/BusinessIntelligenceModal';
 import {
   createRecruitmentCampaign,
   getTeacherOperationsSummary,
@@ -114,7 +113,6 @@ function SectionCard({ title, children, className = '' }) {
 export default function TeacherOperationsPage({ isActive }) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
-  const [legacyBiOpen, setLegacyBiOpen] = useState(false);
   const [summary, setSummary] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState('');
@@ -395,11 +393,11 @@ export default function TeacherOperationsPage({ isActive }) {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setLegacyBiOpen(true)}
+                onClick={() => navigate('/dashboard/business-intelligence')}
                 className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:border-primary/40"
               >
                 <BarChart3 className="h-4 w-4" />
-                <span>Open legacy BI</span>
+                <span>Business Intelligence</span>
               </button>
               <button
                 type="button"
@@ -925,8 +923,6 @@ export default function TeacherOperationsPage({ isActive }) {
           </div>
         ) : null}
       </div>
-
-      <BusinessIntelligenceModal open={legacyBiOpen} onClose={() => setLegacyBiOpen(false)} />
     </div>
   );
 }

@@ -1203,7 +1203,9 @@ export default function TeacherOperationsPage({ isActive }) {
               ) : (() => {
                 const current = interviewResponses.find((r) => r.id === selectedInterviewId);
                 const phone = String(current?.personalInfo?.whatsappNumber || current?.personalInfo?.mobileNumber || current?.user?.phone || '').replace(/[^\d]/g, '');
+                const email = current?.personalInfo?.email || current?.user?.email || '';
                 const waText = encodeURIComponent(`Assalamu alaikum, this is Waraqa. Please book your teacher interview here: ${newTeacherInterviewLink}`);
+                const mailtoHref = email ? `mailto:${email}?subject=${encodeURIComponent('Waraqa Institute — teacher interview')}&body=${encodeURIComponent(`Assalamu alaikum,\n\nThank you for applying to Waraqa. Please book your teacher interview here:\n${newTeacherInterviewLink}\n\nWaraqa Institute`)}` : '';
                 return (
                   <div className="grid gap-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1211,11 +1213,18 @@ export default function TeacherOperationsPage({ isActive }) {
                         <p className="text-sm font-semibold text-foreground">{current?.personalInfo?.fullName || current?.contract?.fullName || 'Candidate'}</p>
                         <p className="text-[11px] text-muted-foreground">{current?.personalInfo?.email || current?.user?.email || '—'}</p>
                       </div>
-                      {phone ? (
-                        <a href={`https://wa.me/${phone}?text=${waText}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700">
-                          <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
-                        </a>
-                      ) : null}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {phone ? (
+                          <a href={`https://wa.me/${phone}?text=${waText}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700">
+                            <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
+                          </a>
+                        ) : null}
+                        {mailtoHref ? (
+                          <a href={mailtoHref} className="inline-flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700">
+                            <Mail className="h-3.5 w-3.5" /> Email
+                          </a>
+                        ) : null}
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2">

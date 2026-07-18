@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Play, RefreshCw, Save, Search, Table2, UserPlus, UserRound, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, MessageCircle, Phone, Play, RefreshCw, Save, Search, Table2, UserPlus, UserRound, X } from 'lucide-react';
 import { convertCandidateToTeacher, listRecruitmentCampaigns, listTeacherContractResponses, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
@@ -178,6 +178,41 @@ const resolveMedia = (url, mimeType = '') => {
   return { kind: 'iframe', src: raw, download: raw };
 };
 
+// Build a WhatsApp deep link from any phone format (Egyptian local numbers default to +20).
+const waLink = (phone) => {
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  else if (digits.startsWith('0')) digits = `20${digits.slice(1)}`;
+  return `https://wa.me/${digits}`;
+};
+
+const mailtoLink = (email) => {
+  if (!email) return '';
+  return `mailto:${email}?subject=${encodeURIComponent('Waraqa Institute — your teaching application')}`;
+};
+
+// Contact action buttons (WhatsApp / Email / Call) reused in cards and the table.
+function ContactActions({ item, compact = false }) {
+  const p = item.personalInfo || {};
+  const wa = waLink(p.whatsappNumber || p.mobileNumber);
+  const email = p.email || item.user?.email || '';
+  const mailto = mailtoLink(email);
+  const phone = p.mobileNumber || p.whatsappNumber || '';
+  if (!wa && !mailto && !phone) return <span className="text-slate-400">—</span>;
+  const base = compact
+    ? 'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium'
+    : 'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold';
+  const icon = compact ? 'h-3 w-3' : 'h-3.5 w-3.5';
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {wa ? <a href={wa} target="_blank" rel="noreferrer" className={`${base} bg-green-600 text-white hover:bg-green-700`}><MessageCircle className={icon} /> WhatsApp</a> : null}
+      {mailto ? <a href={mailto} className={`${base} bg-sky-600 text-white hover:bg-sky-700`}><Mail className={icon} /> Email</a> : null}
+      {phone && !compact ? <a href={`tel:${phone}`} className={`${base} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50`}><Phone className={icon} /> Call</a> : null}
+    </div>
+  );
+}
+
 // Spreadsheet-style overview of every applicant using only the fields the form collects.
 function ApplicantTable({ rows, openViewer }) {
   const cell = (value) => (value == null || value === '' ? '—' : value);
@@ -199,7 +234,7 @@ function ApplicantTable({ rows, openViewer }) {
       </div>
     );
   };
-  const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'Class tools', 'Meeting apps', 'Office tools', 'Summary', 'Stage', 'Files'];
+  const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'Class tools', 'Meeting apps', 'Office tools', 'Summary', 'Stage', 'Contact', 'Files'];
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
       <table className="w-full min-w-[1600px] border-collapse text-left text-xs text-slate-700">
@@ -235,6 +270,7 @@ function ApplicantTable({ rows, openViewer }) {
                 <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell((a.technicalSkills?.officeProducts || []).join(', '))}</td>
                 <td className="min-w-[220px] whitespace-pre-wrap border-b border-slate-100 px-3 py-2">{cell(a.experience?.profileSummary)}</td>
                 <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{getStatusLabel(item?.recruitment?.status || item.status)}</td>
+                <td className="min-w-[150px] border-b border-slate-100 px-3 py-2"><ContactActions item={item} compact /></td>
                 <td className="min-w-[180px] border-b border-slate-100 px-3 py-2">{fileButtons(item)}</td>
               </tr>
             );
@@ -574,6 +610,7 @@ export default function TeacherResponsesPanel() {
                 </button>
                 {isOpen ? (
                   <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
+                    <ContactActions item={item} />
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                       <div className="flex items-center gap-2 font-semibold text-slate-900"><UserRound className="h-4 w-4 text-primary" />Personal details</div>
                       <div className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2">

@@ -12,12 +12,16 @@ import {
   Edit3,
   GraduationCap,
   Loader2,
+  Mail,
   MessageCircle,
   Plus,
   Save,
+  Send,
+  Sliders,
   Star,
   Trash2,
   TrendingUp,
+  Upload,
   Users,
   X,
   XCircle,
@@ -41,6 +45,12 @@ import {
   saveLectureTemplate,
   listTeacherContractResponses,
   saveInterviewScorecard,
+  getRecruitmentEmailTemplates,
+  saveRecruitmentEmailTemplates,
+  sendCandidateEmail,
+  getCapacityConfig,
+  saveCapacityConfig,
+  importApplicantsFromSheet,
 } from '../../api/teacherContract';
 
 const TABS = [
@@ -88,6 +98,30 @@ const INTERVIEW_OUTCOME_COLORS = {
   passed_not_selected: 'text-amber-600 dark:text-amber-400',
   completed_unsuitable: 'text-amber-600 dark:text-amber-400',
   failed: 'text-red-600 dark:text-red-400',
+};
+
+// Maps an interview outcome to the recruitment email template event sent to the candidate.
+const OUTCOME_TO_EMAIL_EVENT = {
+  pending: 'interview_invite',
+  passed: 'passed',
+  passed_not_selected: 'passed_not_selected',
+  completed_unsuitable: 'completed_unsuitable',
+  failed: 'failed',
+};
+
+const EMAIL_EVENT_LABELS = {
+  interview_invite: 'Interview invite',
+  missing_info: 'Request missing info',
+  passed: 'Passed — welcome',
+  passed_not_selected: 'Passed — not selected',
+  completed_unsuitable: 'Completed — unsuitable',
+  failed: 'Not moving forward',
+};
+
+const CAPACITY_DECISION_STYLES = {
+  ok: { label: 'Healthy', badge: 'bg-green-100 text-green-700', bar: 'bg-green-500' },
+  hire: { label: 'Start hiring', badge: 'bg-amber-100 text-amber-700', bar: 'bg-amber-500' },
+  urgent: { label: 'Urgent hiring', badge: 'bg-red-100 text-red-700', bar: 'bg-red-500' },
 };
 
 const staticPolicyCards = [
@@ -177,6 +211,26 @@ export default function TeacherOperationsPage({ isActive }) {
   const [selectedInterviewId, setSelectedInterviewId] = useState('');
   const [interviewForm, setInterviewForm] = useState(null);
   const [interviewSaving, setInterviewSaving] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailNotice, setEmailNotice] = useState('');
+
+  // Sheet import
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [importError, setImportError] = useState('');
+
+  // Recruitment email templates editor
+  const [showEmailTemplates, setShowEmailTemplates] = useState(false);
+  const [emailTemplates, setEmailTemplates] = useState(null);
+  const [emailTemplateEvents, setEmailTemplateEvents] = useState([]);
+  const [emailTemplatesSaving, setEmailTemplatesSaving] = useState(false);
+
+  // Capacity settings editor
+  const [showCapacityModal, setShowCapacityModal] = useState(false);
+  const [capacityForm, setCapacityForm] = useState(null);
+  const [capacitySaving, setCapacitySaving] = useState(false);
 
   const headerCopy = useMemo(() => ({
     title: 'Recruitment',
@@ -374,6 +428,104 @@ export default function TeacherOperationsPage({ isActive }) {
       setInterviewError(error?.response?.data?.message || 'Failed to save interview scorecard.');
     } finally {
       setInterviewSaving(false);
+    }
+  };
+
+  const handleSendCandidateEmail = async (event) => {
+    if (!interviewForm) return;
+    try {
+      setEmailSending(true);
+      setEmailNotice('');
+      setInterviewError('');
+      const res = await sendCandidateEmail(interviewForm.source, interviewForm.id, {
+        template: event,
+        notes: interviewForm.notes || '',
+      });
+      setEmailNotice(res?.message || 'Email queued.');
+      window.setTimeout(() => setEmailNotice(''), 4000);
+    } catch (error) {
+      setInterviewError(error?.response?.data?.message || 'Failed to send email.');
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
+  const handleImportSheet = async () => {
+    const url = importUrl.trim();
+    if (!url) return;
+    try {
+      setImporting(true);
+      setImportError('');
+      setImportResult(null);
+      const res = await importApplicantsFromSheet(url);
+      setImportResult(res);
+      // Refresh interview list if we imported and are on that tab
+      if (res?.imported > 0 && activeTab === 'interviews') {
+        try {
+          const data = await listTeacherContractResponses();
+          setInterviewResponses(data || []);
+        } catch { /* non-fatal */ }
+      }
+    } catch (error) {
+      setImportError(error?.response?.data?.message || 'Failed to import from the sheet.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const openEmailTemplates = async () => {
+    setShowEmailTemplates(true);
+    if (emailTemplates) return;
+    try {
+      const data = await getRecruitmentEmailTemplates();
+      setEmailTemplates(data?.templates || {});
+      setEmailTemplateEvents(data?.events || Object.keys(data?.templates || {}));
+    } catch (error) {
+      setEmailTemplateEvents([]);
+    }
+  };
+
+  const handleSaveEmailTemplates = async () => {
+    if (!emailTemplates) return;
+    try {
+      setEmailTemplatesSaving(true);
+      const data = await saveRecruitmentEmailTemplates(emailTemplates);
+      setEmailTemplates(data?.templates || emailTemplates);
+      setShowEmailTemplates(false);
+    } catch (error) {
+      // Keep modal open on error
+    } finally {
+      setEmailTemplatesSaving(false);
+    }
+  };
+
+  const openCapacitySettings = async () => {
+    setShowCapacityModal(true);
+    if (capacityForm) return;
+    try {
+      const data = await getCapacityConfig();
+      setCapacityForm(data?.config || null);
+    } catch (error) {
+      setCapacityForm(summary?.capacity?.config || null);
+    }
+  };
+
+  const handleSaveCapacity = async () => {
+    if (!capacityForm) return;
+    try {
+      setCapacitySaving(true);
+      const data = await saveCapacityConfig(capacityForm);
+      setCapacityForm(data?.config || capacityForm);
+      setShowCapacityModal(false);
+      // Reload summary so the capacity card reflects new thresholds
+      try {
+        const fresh = await getTeacherOperationsSummary();
+        setSummary(fresh);
+      } catch { /* non-fatal */ }
+    } catch (error) {
+      // Keep modal open on error
+    } finally {
+      setCapacitySaving(false);
     }
   };
 
@@ -686,9 +838,60 @@ export default function TeacherOperationsPage({ isActive }) {
                   <button type="button" onClick={() => setActiveTab('pipeline')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><BriefcaseBusiness className="h-3.5 w-3.5" /> Pipeline</button>
                   <button type="button" onClick={() => setActiveTab('training')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><GraduationCap className="h-3.5 w-3.5" /> Training</button>
                   <button type="button" onClick={() => setActiveTab('interviews')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><CalendarClock className="h-3.5 w-3.5" /> Interviews</button>
+                  <button type="button" onClick={openEmailTemplates} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><Mail className="h-3.5 w-3.5" /> Email templates</button>
+                  <button type="button" onClick={openCapacitySettings} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><Sliders className="h-3.5 w-3.5" /> Capacity rules</button>
                 </div>
                 {copyNotice ? <p className="text-[11px] text-muted-foreground">{copyNotice}</p> : null}
               </div>
+            </SectionCard>
+
+            <SectionCard title="Capacity decision" className="xl:col-span-2">
+              {loadingSummary ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Computing capacity…</div>
+              ) : (() => {
+                const cap = summary?.capacity;
+                if (!cap) return <p className="text-xs text-muted-foreground">Capacity data unavailable.</p>;
+                const style = CAPACITY_DECISION_STYLES[cap.decision] || CAPACITY_DECISION_STYLES.ok;
+                const pct = Math.min(100, Math.max(0, cap.occupancyPct || 0));
+                return (
+                  <div className="grid gap-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${style.badge}`}>{style.label}</span>
+                        <span className="text-sm text-muted-foreground">{cap.recommendedAction}</span>
+                      </div>
+                      <button type="button" onClick={openCapacitySettings} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-primary/40"><Sliders className="h-3 w-3" /> Adjust</button>
+                    </div>
+                    <div>
+                      <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>Occupancy (next {cap.config?.horizonDays ?? 14} days)</span>
+                        <span className="font-semibold text-foreground">{cap.occupancyPct}% • {cap.bookedHours}h / {cap.capacityHours}h</span>
+                      </div>
+                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div className={`h-full rounded-full ${style.bar}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+                        <span>Hire at {cap.config?.hireThresholdPct ?? 75}%</span>
+                        <span>Urgent at {cap.config?.urgentThresholdPct ?? 85}%</span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <div className="rounded-lg border border-border bg-background px-2.5 py-1.5"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Female</p><p className="text-base font-semibold text-foreground">{cap.femaleCount}</p></div>
+                      <div className="rounded-lg border border-border bg-background px-2.5 py-1.5"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Male</p><p className="text-base font-semibold text-foreground">{cap.maleCount}</p></div>
+                      <div className="rounded-lg border border-border bg-background px-2.5 py-1.5"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Booked 14d</p><p className="text-base font-semibold text-foreground">{cap.bookedHours}h</p></div>
+                      <div className="rounded-lg border border-border bg-background px-2.5 py-1.5"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Capacity</p><p className="text-base font-semibold text-foreground">{cap.capacityHours}h</p></div>
+                    </div>
+                    {(cap.shortages || []).length ? (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">Coverage gaps</p>
+                        <ul className="space-y-0.5 text-xs text-amber-800">
+                          {cap.shortages.map((s, i) => <li key={i}>• {s.label}</li>)}
+                        </ul>
+                      </div>
+                    ) : <p className="text-xs text-muted-foreground">No gender or subject coverage gaps detected.</p>}
+                  </div>
+                );
+              })()}
             </SectionCard>
           </div>
         ) : null}
@@ -705,6 +908,9 @@ export default function TeacherOperationsPage({ isActive }) {
               <div className="flex flex-wrap gap-1.5">
                 <button type="button" onClick={() => { resetCampaignForm(); setShowCampaignModal(true); }} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm">
                   <Plus className="h-3.5 w-3.5" /> New campaign
+                </button>
+                <button type="button" onClick={() => { setImportResult(null); setImportError(''); setShowImportModal(true); }} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3.5 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40">
+                  <Upload className="h-3.5 w-3.5" /> Import applicants
                 </button>
                 <button type="button" onClick={() => setShowCampaignDrawer(true)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3.5 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40">
                   <BriefcaseBusiness className="h-3.5 w-3.5" /> Campaigns
@@ -837,6 +1043,26 @@ export default function TeacherOperationsPage({ isActive }) {
                         <Save className="h-4 w-4" /> {interviewSaving ? 'Saving…' : 'Save scorecard'}
                       </button>
                       <button type="button" onClick={() => { setSelectedInterviewId(''); setInterviewForm(null); }} className="rounded-full border border-border bg-background px-4 py-1.5 text-sm font-medium text-foreground">Close</button>
+                    </div>
+
+                    <div className="rounded-xl border border-border bg-background p-2.5">
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Send email to candidate</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button type="button" onClick={() => handleSendCandidateEmail(OUTCOME_TO_EMAIL_EVENT[interviewForm.outcome] || 'interview_invite')} disabled={emailSending} className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background shadow-sm disabled:opacity-60">
+                          <Send className="h-3.5 w-3.5" /> {emailSending ? 'Sending…' : `Send: ${EMAIL_EVENT_LABELS[OUTCOME_TO_EMAIL_EVENT[interviewForm.outcome] || 'interview_invite']}`}
+                        </button>
+                        <button type="button" onClick={() => handleSendCandidateEmail('interview_invite')} disabled={emailSending} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
+                          <Mail className="h-3.5 w-3.5" /> Interview invite
+                        </button>
+                        <button type="button" onClick={() => handleSendCandidateEmail('missing_info')} disabled={emailSending} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
+                          <Mail className="h-3.5 w-3.5" /> Request missing info
+                        </button>
+                        <button type="button" onClick={openEmailTemplates} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40">
+                          <Edit3 className="h-3.5 w-3.5" /> Edit templates
+                        </button>
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">The "missing info" email includes the notes above. Save the scorecard first so the outcome-matched email is correct.</p>
+                      {emailNotice ? <p className="mt-1 text-[11px] font-medium text-green-600 dark:text-green-400">{emailNotice}</p> : null}
                     </div>
                   </div>
                 );
@@ -1081,6 +1307,7 @@ export default function TeacherOperationsPage({ isActive }) {
                             <p className="text-xs text-muted-foreground">{teacher.subjects.join(', ') || 'No subjects yet'} • {teacher.timezone}</p>
                           </div>
                           <div className="text-xs text-muted-foreground">
+                            {teacher.tenureLabel ? <span className="mr-1 rounded-full bg-muted px-1.5 py-0.5 font-medium text-foreground">{teacher.tenureLabel} tenure</span> : null}
                             {teacher.upcomingHours14Days}h next 14d • {teacher.studentCount14Days} students • {teacher.monthlyHours}h this month
                           </div>
                         </div>
@@ -1235,6 +1462,102 @@ export default function TeacherOperationsPage({ isActive }) {
             <div className="mt-3 flex flex-wrap justify-end gap-1.5">
               <button type="button" onClick={() => setShowTemplateEditor(false)} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Cancel</button>
               <button type="button" onClick={handleSaveTemplate} disabled={lectureSaving} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60"><Save className="h-4 w-4" /> {lectureSaving ? 'Saving…' : 'Save topics'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Import applicants from Google Sheet */}
+      {showImportModal ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 sm:p-6" onClick={() => setShowImportModal(false)}>
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">Import applicants from Google Sheet</h3>
+              <button type="button" onClick={() => setShowImportModal(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            <p className="mb-2 text-[11px] leading-5 text-muted-foreground">Paste a Google Sheet link shared as <span className="font-medium text-foreground">"Anyone with the link (Viewer)"</span> or published to the web. The first row must contain headers (email, name, phone, gender, subjects…). Applicants are de-duplicated by email against existing leads, submissions, and users.</p>
+            <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Sheet URL</span>
+              <input value={importUrl} onChange={(e) => setImportUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm" />
+            </label>
+            {importError ? <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{importError}</div> : null}
+            {importResult ? (
+              <div className="mt-2 rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
+                <p className="font-semibold">{importResult.message}</p>
+                <p className="mt-0.5 text-green-700">Imported {importResult.imported} • Duplicates skipped {importResult.duplicates} • Invalid {importResult.invalid} • Rows read {importResult.totalRows}</p>
+              </div>
+            ) : null}
+            <div className="mt-3 flex flex-wrap justify-end gap-1.5">
+              <button type="button" onClick={() => setShowImportModal(false)} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Close</button>
+              <button type="button" onClick={handleImportSheet} disabled={importing || !importUrl.trim()} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60"><Upload className="h-4 w-4" /> {importing ? 'Importing…' : 'Import'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Recruitment email templates editor */}
+      {showEmailTemplates ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 sm:p-6" onClick={() => setShowEmailTemplates(false)}>
+          <div className="w-full max-w-2xl rounded-2xl border border-border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">Recruitment email templates</h3>
+              <button type="button" onClick={() => setShowEmailTemplates(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            <p className="mb-2 text-[11px] text-muted-foreground">Use placeholders <code className="rounded bg-muted px-1">{'{{name}}'}</code>, <code className="rounded bg-muted px-1">{'{{link}}'}</code>, and <code className="rounded bg-muted px-1">{'{{notes}}'}</code> (missing-info only).</p>
+            {!emailTemplates ? (
+              <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading templates…</div>
+            ) : (
+              <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+                {(emailTemplateEvents.length ? emailTemplateEvents : Object.keys(emailTemplates)).map((event) => (
+                  <div key={event} className="rounded-xl border border-border bg-background p-2.5">
+                    <p className="mb-1.5 text-xs font-semibold text-foreground">{EMAIL_EVENT_LABELS[event] || event}</p>
+                    <input
+                      value={emailTemplates[event]?.subject || ''}
+                      onChange={(e) => setEmailTemplates((p) => ({ ...p, [event]: { ...p[event], subject: e.target.value } }))}
+                      placeholder="Subject"
+                      className="mb-1.5 w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm"
+                    />
+                    <textarea
+                      rows={4}
+                      value={emailTemplates[event]?.body || ''}
+                      onChange={(e) => setEmailTemplates((p) => ({ ...p, [event]: { ...p[event], body: e.target.value } }))}
+                      placeholder="Body"
+                      className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-3 flex flex-wrap justify-end gap-1.5">
+              <button type="button" onClick={() => setShowEmailTemplates(false)} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Cancel</button>
+              <button type="button" onClick={handleSaveEmailTemplates} disabled={emailTemplatesSaving || !emailTemplates} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60"><Save className="h-4 w-4" /> {emailTemplatesSaving ? 'Saving…' : 'Save templates'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Capacity rules editor */}
+      {showCapacityModal ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 sm:p-6" onClick={() => setShowCapacityModal(false)}>
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">Capacity decision rules</h3>
+              <button type="button" onClick={() => setShowCapacityModal(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            {!capacityForm ? (
+              <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading settings…</div>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Target hours / teacher / day</span><input type="number" min="0.5" step="0.5" value={capacityForm.targetHoursPerTeacherPerDay} onChange={(e) => setCapacityForm((p) => ({ ...p, targetHoursPerTeacherPerDay: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+                <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Horizon (days)</span><input type="number" min="1" value={capacityForm.horizonDays} onChange={(e) => setCapacityForm((p) => ({ ...p, horizonDays: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+                <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Hire threshold (%)</span><input type="number" min="10" max="100" value={capacityForm.hireThresholdPct} onChange={(e) => setCapacityForm((p) => ({ ...p, hireThresholdPct: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+                <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Urgent threshold (%)</span><input type="number" min="10" max="100" value={capacityForm.urgentThresholdPct} onChange={(e) => setCapacityForm((p) => ({ ...p, urgentThresholdPct: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+                <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Min female teachers</span><input type="number" min="0" value={capacityForm.minFemaleTeachers} onChange={(e) => setCapacityForm((p) => ({ ...p, minFemaleTeachers: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+                <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Min male teachers</span><input type="number" min="0" value={capacityForm.minMaleTeachers} onChange={(e) => setCapacityForm((p) => ({ ...p, minMaleTeachers: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              </div>
+            )}
+            <div className="mt-3 flex flex-wrap justify-end gap-1.5">
+              <button type="button" onClick={() => setShowCapacityModal(false)} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Cancel</button>
+              <button type="button" onClick={handleSaveCapacity} disabled={capacitySaving || !capacityForm} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60"><Save className="h-4 w-4" /> {capacitySaving ? 'Saving…' : 'Save rules'}</button>
             </div>
           </div>
         </div>

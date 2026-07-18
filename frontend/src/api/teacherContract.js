@@ -146,3 +146,35 @@ export async function updateCandidateOutcome(batchId, candidateId, payload) {
   const { data } = await api.patch(`${BASE}/training-batches/${batchId}/candidates/${candidateId}/outcome`, payload);
   return data.batch || null;
 }
+
+// ─── Recruitment automation (emails, capacity, sheet import) ──────────────────
+
+export async function getRecruitmentEmailTemplates() {
+  const { data } = await api.get(`${BASE}/email-templates`);
+  return data;
+}
+
+export async function saveRecruitmentEmailTemplates(templates) {
+  const { data } = await api.put(`${BASE}/email-templates`, { templates });
+  return data;
+}
+
+export async function sendCandidateEmail(source, id, payload) {
+  const { data } = await api.post(`${BASE}/responses/${source}/${id}/send-email`, payload);
+  return data;
+}
+
+export async function getCapacityConfig() {
+  const { data } = await api.get(`${BASE}/capacity-config`);
+  return data;
+}
+
+export async function saveCapacityConfig(config) {
+  const { data } = await api.put(`${BASE}/capacity-config`, { config });
+  return data;
+}
+
+export async function importApplicantsFromSheet(sheetUrl) {
+  const { data } = await api.post(`${BASE}/import-sheet`, { sheetUrl });
+  return data;
+}

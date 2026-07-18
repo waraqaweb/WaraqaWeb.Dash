@@ -3,6 +3,9 @@ const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const axios = require('axios');
+const { parse: parseCsv } = require('csv-parse/sync');
+const emailService = require('../services/emailService');
 const Setting = require('../models/Setting');
 const TeacherContractSubmission = require('../models/TeacherContractSubmission');
 const TeacherContractLead = require('../models/TeacherContractLead');
@@ -57,6 +60,55 @@ const DEFAULT_LECTURE_TOPICS = [
 ];
 const RECRUITMENT_RATINGS = ['not_available', 'weak', 'good', 'very_good', 'excellent'];
 const RECRUITMENT_STATUSES = ['new', 'under_review', 'shortlisted', 'interview_pending', 'interviewed', 'accepted', 'rejected', 'archived'];
+
+// ─── Recruitment automation config keys + defaults ───────────────────────────
+const RECRUITMENT_EMAIL_TEMPLATE_KEY = 'recruitment_email_templates_v1';
+const CAPACITY_CONFIG_KEY = 'recruitment_capacity_config_v1';
+
+const DEFAULT_CAPACITY_CONFIG = {
+  targetHoursPerTeacherPerDay: 4,
+  horizonDays: 14,
+  hireThresholdPct: 75,
+  urgentThresholdPct: 85,
+  minFemaleTeachers: 3,
+  minMaleTeachers: 3,
+};
+
+const RECRUITMENT_EMAIL_EVENTS = [
+  'interview_invite',
+  'missing_info',
+  'passed',
+  'passed_not_selected',
+  'completed_unsuitable',
+  'failed',
+];
+
+const DEFAULT_RECRUITMENT_EMAIL_TEMPLATES = {
+  interview_invite: {
+    subject: 'Your Waraqa teacher interview',
+    body: 'Dear {{name}},\n\nThank you for applying to teach with Waraqa. We would like to invite you to a short online interview.\n\nPlease book a convenient slot here:\n{{link}}\n\nWe look forward to speaking with you.\n\nWaraqa Recruitment Team',
+  },
+  missing_info: {
+    subject: 'A little more information is needed for your Waraqa application',
+    body: 'Dear {{name}},\n\nThank you for your application. Before we can proceed, we need the following details:\n\n{{notes}}\n\nPlease reply to this email or update your application here:\n{{link}}\n\nWaraqa Recruitment Team',
+  },
+  passed: {
+    subject: 'Congratulations — welcome to Waraqa',
+    body: 'Dear {{name}},\n\nCongratulations! You have successfully passed your interview and we are delighted to welcome you to the Waraqa teaching team.\n\nOur team will contact you shortly with the next onboarding steps.\n\nWaraqa Recruitment Team',
+  },
+  passed_not_selected: {
+    subject: 'Update on your Waraqa application',
+    body: 'Dear {{name}},\n\nThank you for taking the time to interview with us. You performed well, and while we are not able to offer a position at this moment, we would like to keep your profile on file and reach out as soon as a suitable opening becomes available.\n\nWith appreciation,\nWaraqa Recruitment Team',
+  },
+  completed_unsuitable: {
+    subject: 'Update on your Waraqa application',
+    body: 'Dear {{name}},\n\nThank you for completing the interview process with us. After careful consideration, we have concluded that this is not the right match at this time.\n\nWe wish you every success in your teaching career.\n\nWaraqa Recruitment Team',
+  },
+  failed: {
+    subject: 'Update on your Waraqa application',
+    body: 'Dear {{name}},\n\nThank you for your interest in teaching with Waraqa and for the time you invested in your application. On this occasion we will not be moving forward.\n\nWe wish you all the best.\n\nWaraqa Recruitment Team',
+  },
+};
 const RATING_SCORE = {
   not_available: 0,
   weak: 1,
@@ -157,6 +209,71 @@ async function getLectureTopics() {
     if (cleaned.length) return cleaned;
   }
   return [...DEFAULT_LECTURE_TOPICS];
+}
+
+async function getRecruitmentEmailTemplates() {
+  const setting = await Setting.findOne({ key: RECRUITMENT_EMAIL_TEMPLATE_KEY }).lean();
+  const stored = (setting && typeof setting.value === 'object' && setting.value) ? setting.value : {};
+  const merged = {};
+  RECRUITMENT_EMAIL_EVENTS.forEach((event) => {
+    const fallback = DEFAULT_RECRUITMENT_EMAIL_TEMPLATES[event] || { subject: '', body: '' };
+    const custom = stored[event] || {};
+    merged[event] = {
+      subject: String(custom.subject || fallback.subject || '').trim(),
+      body: String(custom.body || fallback.body || ''),
+    };
+  });
+  return merged;
+}
+
+async function getCapacityConfig() {
+  const setting = await Setting.findOne({ key: CAPACITY_CONFIG_KEY }).lean();
+  const stored = (setting && typeof setting.value === 'object' && setting.value) ? setting.value : {};
+  const clampNum = (val, def, min, max) => {
+    const n = Number(val);
+    if (Number.isNaN(n)) return def;
+    return Math.max(min, Math.min(max, n));
+  };
+  return {
+    targetHoursPerTeacherPerDay: clampNum(stored.targetHoursPerTeacherPerDay, DEFAULT_CAPACITY_CONFIG.targetHoursPerTeacherPerDay, 0.5, 16),
+    horizonDays: Math.round(clampNum(stored.horizonDays, DEFAULT_CAPACITY_CONFIG.horizonDays, 1, 60)),
+    hireThresholdPct: Math.round(clampNum(stored.hireThresholdPct, DEFAULT_CAPACITY_CONFIG.hireThresholdPct, 10, 100)),
+    urgentThresholdPct: Math.round(clampNum(stored.urgentThresholdPct, DEFAULT_CAPACITY_CONFIG.urgentThresholdPct, 10, 100)),
+    minFemaleTeachers: Math.round(clampNum(stored.minFemaleTeachers, DEFAULT_CAPACITY_CONFIG.minFemaleTeachers, 0, 100)),
+    minMaleTeachers: Math.round(clampNum(stored.minMaleTeachers, DEFAULT_CAPACITY_CONFIG.minMaleTeachers, 0, 100)),
+  };
+}
+
+// Normalize any Google Sheets share/edit URL into a CSV export URL.
+function toGoogleSheetCsvUrl(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  if (!url) return '';
+  // Already a CSV export link
+  if (/[?&]format=csv/i.test(url) || /\/export\?/i.test(url)) return url;
+  const idMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  const id = idMatch ? idMatch[1] : (/^[a-zA-Z0-9-_]{20,}$/.test(url) ? url : '');
+  if (!id) return url; // Let the caller attempt the URL as-is (e.g. published CSV)
+  const gidMatch = url.match(/[?#&]gid=([0-9]+)/);
+  const gid = gidMatch ? gidMatch[1] : '0';
+  return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`;
+}
+
+// Pick the first matching column value from a parsed CSV row (case/space-insensitive header match).
+function pickColumn(row, candidates) {
+  const keys = Object.keys(row || {});
+  for (const cand of candidates) {
+    const target = cand.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const foundKey = keys.find((k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '').includes(target));
+    if (foundKey && String(row[foundKey] || '').trim()) return String(row[foundKey]).trim();
+  }
+  return '';
+}
+
+function renderEmailTemplate(text, vars = {}) {
+  return String(text || '').replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => {
+    const value = vars[key];
+    return value == null ? '' : String(value);
+  });
 }
 
 function normalizeTeacherResponse(source, doc) {
@@ -559,17 +676,29 @@ router.get('/responses', authenticateToken, requireAdmin, async (req, res) => {
 
 router.get('/responses-summary', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const [publicTotal, dashboardTotal, publicUnread, dashboardUnread] = await Promise.all([
+    const awaitingInterviewFilter = {
+      'recruitment.interview.scheduledAt': { $ne: null },
+      'recruitment.interview.outcome': 'pending',
+    };
+    const [publicTotal, dashboardTotal, publicUnread, dashboardUnread, publicAwaiting, dashboardAwaiting] = await Promise.all([
       TeacherContractLead.countDocuments({}),
       TeacherContractSubmission.countDocuments({ status: 'submitted' }),
       TeacherContractLead.countDocuments({ 'recruitment.reviewed': { $ne: true } }),
       TeacherContractSubmission.countDocuments({ status: 'submitted', 'recruitment.reviewed': { $ne: true } }),
+      TeacherContractLead.countDocuments(awaitingInterviewFilter),
+      TeacherContractSubmission.countDocuments({ status: 'submitted', ...awaitingInterviewFilter }),
     ]);
+
+    const unreviewed = publicUnread + dashboardUnread;
+    const interviewsAwaitingOutcome = publicAwaiting + dashboardAwaiting;
 
     return res.json({
       success: true,
       total: publicTotal + dashboardTotal,
-      unreviewed: publicUnread + dashboardUnread,
+      unreviewed,
+      interviewsAwaitingOutcome,
+      // Single consolidated recruitment counter for the sidebar badge.
+      badge: unreviewed + interviewsAwaitingOutcome,
       publicTotal,
       dashboardTotal,
     });
@@ -584,7 +713,7 @@ router.get('/operations-summary', authenticateToken, requireAdmin, async (req, r
     const now = new Date();
     const next14Days = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
     const teacherDocs = await User.find({ role: 'teacher', isActive: true })
-      .select('firstName lastName gender timezone teacherInfo')
+      .select('firstName lastName gender timezone teacherInfo createdAt')
       .lean();
 
     const teacherIds = teacherDocs.map((teacher) => teacher._id).filter(Boolean);
@@ -640,6 +769,16 @@ router.get('/operations-summary', authenticateToken, requireAdmin, async (req, r
       const qualifications = Array.isArray(teacherInfo.qualifications) ? teacherInfo.qualifications : [];
       const subjects = Array.isArray(teacherInfo.subjects) ? teacherInfo.subjects.filter(Boolean) : [];
       const upcoming = upcomingByTeacher.get(String(teacher._id)) || { upcomingHours: 0, upcomingClasses: 0, studentCount: 0 };
+      const tenureStart = teacher.createdAt ? new Date(teacher.createdAt) : null;
+      const tenureMonths = tenureStart ? Math.max(0, Math.round((now.getTime() - tenureStart.getTime()) / (30.44 * 24 * 60 * 60 * 1000))) : null;
+      let tenureLabel = 'Unknown';
+      if (tenureMonths != null) {
+        const years = Math.floor(tenureMonths / 12);
+        const months = tenureMonths % 12;
+        if (years > 0) tenureLabel = months > 0 ? `${years}y ${months}m` : `${years}y`;
+        else if (months > 0) tenureLabel = `${months}m`;
+        else tenureLabel = 'New';
+      }
       return {
         id: String(teacher._id),
         name: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || 'Teacher',
@@ -655,6 +794,9 @@ router.get('/operations-summary', authenticateToken, requireAdmin, async (req, r
         upcomingHours14Days: Number(upcoming.upcomingHours || 0),
         upcomingClasses14Days: Number(upcoming.upcomingClasses || 0),
         studentCount14Days: Number(upcoming.studentCount || 0),
+        tenureStart: tenureStart ? tenureStart.toISOString() : null,
+        tenureMonths,
+        tenureLabel,
       };
     });
 
@@ -669,13 +811,51 @@ router.get('/operations-summary', authenticateToken, requireAdmin, async (req, r
     const englishSpeakingCount = teacherRows.filter((teacher) => includesAny(teacher.spokenLanguages, [/english/i])).length;
     const azharCount = teacherRows.filter((teacher) => includesAny(teacher.qualificationText, [/azhar/i])).length;
     const ijazahCount = teacherRows.filter((teacher) => includesAny(teacher.qualificationText, [/ijaz/i])).length;
+    const femaleCount = teacherRows.filter((teacher) => String(teacher.gender).toLowerCase() === 'female').length;
+    const maleCount = teacherRows.filter((teacher) => String(teacher.gender).toLowerCase() === 'male').length;
+
+    // ─── Capacity decision engine ─────────────────────────────────────────────
+    const capacityConfig = await getCapacityConfig();
+    const capacityHours = teacherRows.length * capacityConfig.targetHoursPerTeacherPerDay * capacityConfig.horizonDays;
+    const bookedHours = totalUpcomingHours14Days;
+    const occupancyPct = capacityHours > 0 ? Math.round((bookedHours / capacityHours) * 100) : 0;
+
+    let decision = 'ok';
+    if (occupancyPct >= capacityConfig.urgentThresholdPct) decision = 'urgent';
+    else if (occupancyPct >= capacityConfig.hireThresholdPct) decision = 'hire';
+
+    const shortages = [];
+    if (femaleCount < capacityConfig.minFemaleTeachers) shortages.push({ type: 'gender', label: `Female teachers below target (${femaleCount}/${capacityConfig.minFemaleTeachers})` });
+    if (maleCount < capacityConfig.minMaleTeachers) shortages.push({ type: 'gender', label: `Male teachers below target (${maleCount}/${capacityConfig.minMaleTeachers})` });
+    if (quranCount === 0) shortages.push({ type: 'subject', label: 'No Quran/Tajweed teachers configured' });
+    if (arabicCount === 0) shortages.push({ type: 'subject', label: 'No Arabic teachers configured' });
+    if (islamicStudiesCount === 0) shortages.push({ type: 'subject', label: 'No Islamic Studies teachers configured' });
+
+    const capacity = {
+      config: capacityConfig,
+      capacityHours: +capacityHours.toFixed(1),
+      bookedHours: +bookedHours.toFixed(1),
+      occupancyPct,
+      decision, // ok | hire | urgent
+      recommendedAction: decision === 'urgent'
+        ? 'Open urgent hiring — capacity is nearly full.'
+        : decision === 'hire'
+          ? 'Start hiring — capacity is filling up.'
+          : 'Capacity is healthy. Keep the pipeline warm.',
+      shortages,
+      femaleCount,
+      maleCount,
+    };
 
     return res.json({
       success: true,
       generatedAt: new Date().toISOString(),
       pipeline,
+      capacity,
       teachers: {
         activeCount: teacherRows.length,
+        femaleCount,
+        maleCount,
         totalMonthlyHours: +totalMonthlyHours.toFixed(2),
         averageMonthlyHours: teacherRows.length ? +(totalMonthlyHours / teacherRows.length).toFixed(2) : 0,
         totalUpcomingHours14Days: +totalUpcomingHours14Days.toFixed(2),
@@ -1425,6 +1605,250 @@ router.delete('/training-batches/:id/sessions/:sessionNumber', authenticateToken
   } catch (error) {
     console.error('Remove training session error:', error);
     return res.status(500).json({ message: 'Failed to remove lecture.' });
+  }
+});
+
+// ─── Recruitment email templates (per-outcome) ───────────────────────────────
+
+router.get('/email-templates', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const templates = await getRecruitmentEmailTemplates();
+    return res.json({ templates, events: RECRUITMENT_EMAIL_EVENTS, defaults: DEFAULT_RECRUITMENT_EMAIL_TEMPLATES });
+  } catch (error) {
+    console.error('Get recruitment email templates error:', error);
+    return res.status(500).json({ message: 'Failed to load email templates.' });
+  }
+});
+
+router.put('/email-templates', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const incoming = (req.body && typeof req.body.templates === 'object') ? req.body.templates : {};
+    const cleaned = {};
+    RECRUITMENT_EMAIL_EVENTS.forEach((event) => {
+      const entry = incoming[event] || {};
+      cleaned[event] = {
+        subject: String(entry.subject || '').trim().slice(0, 200),
+        body: String(entry.body || '').slice(0, 8000),
+      };
+    });
+    await Setting.findOneAndUpdate(
+      { key: RECRUITMENT_EMAIL_TEMPLATE_KEY },
+      { $set: { key: RECRUITMENT_EMAIL_TEMPLATE_KEY, value: cleaned, updatedBy: req.user._id, description: 'Per-outcome recruitment email templates' } },
+      { upsert: true, new: true }
+    );
+    const templates = await getRecruitmentEmailTemplates();
+    return res.json({ message: 'Email templates saved.', templates });
+  } catch (error) {
+    console.error('Save recruitment email templates error:', error);
+    return res.status(500).json({ message: 'Failed to save email templates.' });
+  }
+});
+
+// Send a per-outcome email to a candidate
+router.post('/responses/:source/:id/send-email', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const source = String(req.params.source || '').trim().toLowerCase();
+    const Model = resolveResponseModel(source);
+    if (!Model) return res.status(400).json({ message: 'Unsupported response source.' });
+
+    const event = String(req.body?.template || req.body?.event || '').trim();
+    if (!RECRUITMENT_EMAIL_EVENTS.includes(event)) {
+      return res.status(400).json({ message: 'Unsupported email template.' });
+    }
+
+    const doc = await Model.findById(req.params.id).populate('user', 'firstName lastName email');
+    if (!doc) return res.status(404).json({ message: 'Teacher response not found.' });
+
+    const personalInfo = doc.personalInfo || {};
+    const to = String(personalInfo.email || doc.user?.email || '').trim().toLowerCase();
+    if (!to) return res.status(400).json({ message: 'This candidate has no email address on file.' });
+
+    const templates = await getRecruitmentEmailTemplates();
+    const template = templates[event];
+    const name = String(personalInfo.fullName || `${doc.user?.firstName || ''} ${doc.user?.lastName || ''}`.trim() || 'there');
+    const interviewLink = `${(process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '').split(',')[0].replace(/\/$/, '')}/public/meetings/evaluation?type=new_teacher_interview`;
+
+    const vars = {
+      name,
+      link: event === 'missing_info'
+        ? `${(process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '').split(',')[0].replace(/\/$/, '')}/teacher-contract`
+        : interviewLink,
+      notes: String(req.body?.notes || '').trim(),
+    };
+
+    const subject = renderEmailTemplate(template.subject, vars) || 'Waraqa Recruitment';
+    const bodyText = renderEmailTemplate(template.body, vars);
+
+    let branding = {};
+    try { branding = await emailService.loadBrandingAndLogo(); } catch { branding = {}; }
+    const htmlBody = `<div style="font-size:15px;line-height:1.6;color:#111827;">${bodyText.split('\n').map((line) => line.trim() ? `<p style="margin:0 0 12px;">${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>` : '<br/>').join('')}</div>`;
+    const html = emailService.baseEmailTemplate({ preheader: subject, body: htmlBody, branding });
+
+    await emailService.enqueueEmail({
+      to,
+      subject,
+      html,
+      text: bodyText,
+      type: 'recruitment',
+      relatedId: String(doc._id),
+      priority: 2,
+    });
+
+    // Record in candidate history
+    doc.recruitment = doc.recruitment || {};
+    if (!Array.isArray(doc.recruitment.history)) doc.recruitment.history = [];
+    doc.recruitment.history.push({
+      at: new Date(),
+      actor: req.user._id,
+      action: 'email_sent',
+      note: `Sent "${event}" email to ${to}`,
+    });
+    doc.markModified('recruitment');
+    await doc.save();
+
+    return res.json({ message: `Email queued to ${to}.`, sentTo: to, event });
+  } catch (error) {
+    console.error('Send candidate email error:', error);
+    return res.status(500).json({ message: 'Failed to send email.' });
+  }
+});
+
+// ─── Capacity decision config ─────────────────────────────────────────────────
+
+router.get('/capacity-config', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const config = await getCapacityConfig();
+    return res.json({ config, defaults: DEFAULT_CAPACITY_CONFIG });
+  } catch (error) {
+    console.error('Get capacity config error:', error);
+    return res.status(500).json({ message: 'Failed to load capacity config.' });
+  }
+});
+
+router.put('/capacity-config', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const incoming = req.body?.config || req.body || {};
+    await Setting.findOneAndUpdate(
+      { key: CAPACITY_CONFIG_KEY },
+      { $set: { key: CAPACITY_CONFIG_KEY, value: incoming, updatedBy: req.user._id, description: 'Recruitment capacity decision thresholds' } },
+      { upsert: true, new: true }
+    );
+    const config = await getCapacityConfig();
+    return res.json({ message: 'Capacity settings saved.', config });
+  } catch (error) {
+    console.error('Save capacity config error:', error);
+    return res.status(500).json({ message: 'Failed to save capacity config.' });
+  }
+});
+
+// ─── Import applicants from a Google Sheet (CSV) with dedup ────────────────────
+
+router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const rawUrl = String(req.body?.sheetUrl || req.body?.url || '').trim();
+    if (!rawUrl) return res.status(400).json({ message: 'A Google Sheet URL is required.' });
+
+    const csvUrl = toGoogleSheetCsvUrl(rawUrl);
+    let csvText = '';
+    try {
+      const response = await axios.get(csvUrl, {
+        responseType: 'text',
+        timeout: 20000,
+        maxRedirects: 5,
+        headers: { 'User-Agent': 'Waraqa-Recruitment-Import/1.0' },
+      });
+      csvText = String(response.data || '');
+    } catch (fetchErr) {
+      return res.status(422).json({ message: 'Could not read the sheet. Make sure it is shared as "Anyone with the link (Viewer)" or published to the web.' });
+    }
+
+    if (/<html/i.test(csvText.slice(0, 500))) {
+      return res.status(422).json({ message: 'The sheet is not publicly readable. Share it as "Anyone with the link" or publish it as CSV.' });
+    }
+
+    let rows = [];
+    try {
+      rows = parseCsv(csvText, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+    } catch (parseErr) {
+      return res.status(422).json({ message: 'The sheet could not be parsed as a table. Ensure the first row contains column headers.' });
+    }
+
+    if (!rows.length) return res.json({ message: 'No rows found in the sheet.', imported: 0, skipped: 0, duplicates: 0, invalid: 0 });
+
+    // Preload existing emails for dedup (leads + submissions + users).
+    const [existingLeads, existingSubs, existingUsers] = await Promise.all([
+      TeacherContractLead.find({}).select('personalInfo.email').lean(),
+      TeacherContractSubmission.find({}).select('personalInfo.email user').populate('user', 'email').lean(),
+      User.find({ role: { $in: ['teacher', 'admin', 'guardian', 'student'] } }).select('email').lean(),
+    ]);
+    const existingEmails = new Set();
+    existingLeads.forEach((l) => { if (l?.personalInfo?.email) existingEmails.add(String(l.personalInfo.email).toLowerCase()); });
+    existingSubs.forEach((s) => {
+      if (s?.personalInfo?.email) existingEmails.add(String(s.personalInfo.email).toLowerCase());
+      if (s?.user?.email) existingEmails.add(String(s.user.email).toLowerCase());
+    });
+    existingUsers.forEach((u) => { if (u?.email) existingEmails.add(String(u.email).toLowerCase()); });
+
+    let imported = 0;
+    let duplicates = 0;
+    let invalid = 0;
+    const seenInBatch = new Set();
+    const toInsert = [];
+
+    for (const row of rows) {
+      const email = pickColumn(row, ['email', 'e-mail', 'emailaddress']).toLowerCase();
+      const fullName = pickColumn(row, ['fullname', 'name', 'applicantname']);
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { invalid += 1; continue; }
+      if (existingEmails.has(email) || seenInBatch.has(email)) { duplicates += 1; continue; }
+      seenInBatch.add(email);
+
+      const phone = pickColumn(row, ['phone', 'whatsapp', 'mobile', 'phonenumber']);
+      const gender = pickColumn(row, ['gender', 'sex']).toLowerCase();
+      const country = pickColumn(row, ['country', 'nationality']);
+      const subjects = pickColumn(row, ['subjects', 'subject', 'positions', 'positionsinterested']);
+      const summary = pickColumn(row, ['summary', 'about', 'experience', 'profile', 'notes', 'message']);
+
+      toInsert.push({
+        source: 'public',
+        status: 'submitted',
+        submittedAt: new Date(),
+        personalInfo: {
+          fullName: fullName || email,
+          email,
+          mobileNumber: phone,
+          whatsappNumber: phone,
+          gender: gender === 'female' ? 'female' : (gender === 'male' ? 'male' : ''),
+          nationality: country,
+          address: { country: country || 'Egypt' },
+        },
+        application: {
+          positionsInterested: subjects ? subjects.split(/[,;/]/).map((s) => s.trim()).filter(Boolean) : [],
+          experience: { profileSummary: summary },
+        },
+        recruitment: {
+          status: 'new',
+          reviewed: false,
+          tags: ['imported'],
+          history: [{ at: new Date(), actor: req.user._id, action: 'imported', note: 'Imported from Google Sheet' }],
+        },
+      });
+    }
+
+    if (toInsert.length) {
+      const inserted = await TeacherContractLead.insertMany(toInsert, { ordered: false });
+      imported = inserted.length;
+    }
+
+    return res.json({
+      message: `Imported ${imported} applicant${imported === 1 ? '' : 's'}.`,
+      imported,
+      duplicates,
+      invalid,
+      totalRows: rows.length,
+    });
+  } catch (error) {
+    console.error('Import sheet error:', error);
+    return res.status(500).json({ message: 'Failed to import applicants from the sheet.' });
   }
 });
 

@@ -99,15 +99,17 @@ const Sidebar = ({ isOpen, onClose, activeView, onOpenProfileModal }) => {
       try {
         const cacheKey = makeCacheKey('teacher-contract:summary', user?._id || 'admin');
         const cached = readCache(cacheKey, { deps: ['teacher-contract'] });
-        if (cached.hit && typeof cached.value?.unreviewed === 'number') {
-          if (mounted) setTeacherOperationsCount(cached.value.unreviewed || 0);
+        if (cached.hit && typeof cached.value?.badge === 'number') {
+          if (mounted) setTeacherOperationsCount(cached.value.badge || 0);
           if (cached.ageMs < 30_000) return;
         }
 
         const data = await getTeacherContractResponseSummary();
         if (mounted && data?.success) {
-          setTeacherOperationsCount(data.unreviewed || 0);
-          writeCache(cacheKey, { unreviewed: data.unreviewed || 0 }, { ttlMs: 30_000, deps: ['teacher-contract'] });
+          // Single consolidated recruitment counter (unreviewed applications + interviews awaiting outcome).
+          const badge = typeof data.badge === 'number' ? data.badge : (data.unreviewed || 0);
+          setTeacherOperationsCount(badge);
+          writeCache(cacheKey, { badge }, { ttlMs: 30_000, deps: ['teacher-contract'] });
         }
       } catch (err) {
         console.error('Failed to fetch teacher operations count', err);

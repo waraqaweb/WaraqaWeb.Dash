@@ -231,20 +231,25 @@ function ExcelCell({ label, value, span = 1, clamp = true }) {
 
 function FileActionGrid({ item, openViewer }) {
   const files = [
-    ['Resume', item.application?.files?.resume],
+    ['Resume', item.application?.files?.resume, FileBadge2],
+    ['Intro audio', item.application?.files?.englishIntroduction, Play],
+    ['Quran recitation', item.application?.files?.quranRecitation, Play],
+    ['Topic explanation', item.application?.files?.teachingTopicExplanation, Play],
   ];
+  const available = files.filter(([, file]) => file?.url);
+  if (!available.length) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-400">
+        <FileBadge2 className="h-3.5 w-3.5" /> No files
+      </span>
+    );
+  }
   return (
     <div className="flex flex-wrap gap-2">
-      {files.map(([label, file]) => (
-        file?.url ? (
-          <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType)} className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10">
-            <FileBadge2 className="h-3.5 w-3.5" /> {label}
-          </button>
-        ) : (
-          <span key={label} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-400">
-            <FileBadge2 className="h-3.5 w-3.5" /> {label}: —
-          </span>
-        )
+      {available.map(([label, file, Icon]) => (
+        <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType)} className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10">
+          <Icon className="h-3.5 w-3.5" /> {label}
+        </button>
       ))}
     </div>
   );
@@ -300,6 +305,9 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
   const fileButtons = (item) => {
     const files = [
       ['Resume', item.application?.files?.resume],
+      ['Intro', item.application?.files?.englishIntroduction],
+      ['Recitation', item.application?.files?.quranRecitation],
+      ['Explanation', item.application?.files?.teachingTopicExplanation],
     ].filter(([, file]) => file?.url);
     if (!files.length) return <span className="text-slate-400">—</span>;
     return (
@@ -312,7 +320,7 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
       </div>
     );
   };
-  const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'What we should know', 'Stage', 'Contact', 'Resume'];
+  const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'What we should know', 'Stage', 'Contact', 'Files'];
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(row.id));
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">

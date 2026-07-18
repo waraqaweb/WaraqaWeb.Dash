@@ -2091,7 +2091,7 @@ router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) =
           gender: gender.includes('female') ? 'female' : (gender.includes('male') ? 'male' : ''),
           nationality: nationality || country,
           occupation,
-          address: { street, city, country: country || 'Egypt' },
+          address: { street, city, country },
         },
         application: {
           positionsInterested: splitList(positions),

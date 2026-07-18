@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, Play, RefreshCw, Save, Search, UserPlus, UserRound, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Play, RefreshCw, Save, Search, Table2, UserPlus, UserRound, X } from 'lucide-react';
 import { convertCandidateToTeacher, listRecruitmentCampaigns, listTeacherContractResponses, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
@@ -178,6 +178,76 @@ const resolveMedia = (url, mimeType = '') => {
   return { kind: 'iframe', src: raw, download: raw };
 };
 
+// Spreadsheet-style overview of every applicant using only the fields the form collects.
+function ApplicantTable({ rows, openViewer }) {
+  const cell = (value) => (value == null || value === '' ? '—' : value);
+  const fileButtons = (item) => {
+    const files = [
+      ['Resume', item.application?.files?.resume],
+      ['English intro', item.application?.files?.englishIntroduction],
+      ['Quran recitation', item.application?.files?.quranRecitation],
+      ['Teaching explanation', item.application?.files?.teachingTopicExplanation],
+    ].filter(([, file]) => file?.url);
+    if (!files.length) return <span className="text-slate-400">—</span>;
+    return (
+      <div className="flex flex-wrap gap-1">
+        {files.map(([label, file]) => (
+          <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType)} className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10">
+            <Play className="h-3 w-3" />{label}
+          </button>
+        ))}
+      </div>
+    );
+  };
+  const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'Class tools', 'Meeting apps', 'Office tools', 'Summary', 'Stage', 'Files'];
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <table className="w-full min-w-[1600px] border-collapse text-left text-xs text-slate-700">
+        <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          <tr>
+            {columns.map((header) => (
+              <th key={header} className="whitespace-nowrap border-b border-slate-200 px-3 py-2">{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((item) => {
+            const p = item.personalInfo || {};
+            const a = item.application || {};
+            const address = [p.address?.street, p.address?.city, p.address?.country].filter(Boolean).join(', ');
+            return (
+              <tr key={item.id} className="align-top odd:bg-white even:bg-slate-50/50">
+                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2 font-semibold text-slate-900">{cell(p.fullName || item.contract?.fullName)}</td>
+                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{cell(p.email)}</td>
+                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{cell(p.mobileNumber)}</td>
+                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2 capitalize">{cell(p.gender)}</td>
+                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{p.birthDate ? formatDate(p.birthDate) : '—'}</td>
+                <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell(address)}</td>
+                <td className="min-w-[180px] border-b border-slate-100 px-3 py-2">{cell((a.positionsInterested || []).join(', '))}</td>
+                <td className="min-w-[120px] border-b border-slate-100 px-3 py-2">{cell(a.education?.graduationStatus)}</td>
+                <td className="min-w-[160px] border-b border-slate-100 px-3 py-2">{cell(a.education?.facultyUniversity)}</td>
+                <td className="border-b border-slate-100 px-3 py-2">{cell(a.education?.degree)}</td>
+                <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell(a.education?.additionalCertificates)}</td>
+                <td className="min-w-[160px] border-b border-slate-100 px-3 py-2">{cell(a.experience?.teachingExperienceLevel)}</td>
+                <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell(a.experience?.currentJob)}</td>
+                <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell(a.technicalSkills?.classTools)}</td>
+                <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell((a.technicalSkills?.meetingApps || []).join(', '))}</td>
+                <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell((a.technicalSkills?.officeProducts || []).join(', '))}</td>
+                <td className="min-w-[220px] whitespace-pre-wrap border-b border-slate-100 px-3 py-2">{cell(a.experience?.profileSummary)}</td>
+                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{getStatusLabel(item?.recruitment?.status || item.status)}</td>
+                <td className="min-w-[180px] border-b border-slate-100 px-3 py-2">{fileButtons(item)}</td>
+              </tr>
+            );
+          })}
+          {!rows.length ? (
+            <tr><td colSpan={columns.length} className="px-3 py-6 text-center text-slate-500">No teacher responses found for the current filters.</td></tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function TeacherResponsesPanel() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -193,6 +263,7 @@ export default function TeacherResponsesPanel() {
   const [convertingId, setConvertingId] = useState('');
   const [convertForm, setConvertForm] = useState({});
   const [viewer, setViewer] = useState(null);
+  const [viewMode, setViewMode] = useState('cards');
 
   const openViewer = (label, url, mimeType) => {
     if (!url) return;
@@ -350,11 +421,11 @@ export default function TeacherResponsesPanel() {
     const rows = filteredItems;
     if (!rows.length) return;
     const headers = [
-      'Name', 'Email', 'Phone', 'WhatsApp', 'Gender', 'Nationality', 'Occupation', 'Birth date', 'Country', 'City', 'Street',
-      'Positions', 'Subjects can teach', 'Eligibility', 'Graduation', 'Faculty/University', 'Degree', 'Certificates',
-      'Teaching experience', 'Current job', 'Class tools', 'Meeting apps', 'Office tools', 'Preferred availability', 'Alternative availability',
-      'Profile summary', 'Special requests', 'Stage', 'Reviewed', 'Tags', 'Overall', 'Submitted at',
-      'Resume', 'Identity', 'Education docs', 'Photo', 'English intro', 'Quran recitation', 'Teaching explanation',
+      'Name', 'Email', 'Phone', 'WhatsApp', 'Gender', 'Birth date', 'Address',
+      'Positions', 'Graduation', 'Faculty/University', 'Degree', 'Certificates',
+      'Teaching experience', 'Current job', 'Class tools', 'Meeting apps', 'Office tools',
+      'Profile summary', 'Stage', 'Reviewed', 'Tags', 'Overall', 'Submitted at',
+      'Resume', 'English intro', 'Quran recitation', 'Teaching explanation',
     ];
     const esc = (value) => {
       const s = value == null ? '' : String(value);
@@ -364,19 +435,18 @@ export default function TeacherResponsesPanel() {
       const p = item.personalInfo || {};
       const a = item.application || {};
       const r = item.recruitment || {};
-      const v = item.verification || {};
+      const address = [p.address?.street, p.address?.city, p.address?.country].filter(Boolean).join(', ');
       return [
-        p.fullName || item.contract?.fullName, p.email, p.mobileNumber, p.whatsappNumber, p.gender, p.nationality, p.occupation,
-        p.birthDate ? new Date(p.birthDate).toISOString().slice(0, 10) : '', p.address?.country, p.address?.city, p.address?.street,
-        (a.positionsInterested || []).join('; '), (a.teachingProfile?.subjectsCanTeach || []).join('; '),
-        a.education?.eligibilityPath, a.education?.graduationStatus, a.education?.facultyUniversity, a.education?.degree, a.education?.additionalCertificates,
+        p.fullName || item.contract?.fullName, p.email, p.mobileNumber, p.whatsappNumber, p.gender,
+        p.birthDate ? new Date(p.birthDate).toISOString().slice(0, 10) : '', address,
+        (a.positionsInterested || []).join('; '),
+        a.education?.graduationStatus, a.education?.facultyUniversity, a.education?.degree, a.education?.additionalCertificates,
         a.experience?.teachingExperienceLevel, a.experience?.currentJob, a.technicalSkills?.classTools,
         (a.technicalSkills?.meetingApps || []).join('; '), (a.technicalSkills?.officeProducts || []).join('; '),
-        a.teachingProfile?.preferredAvailability, a.teachingProfile?.alternativeAvailability, a.experience?.profileSummary, a.experience?.specialRequests,
+        a.experience?.profileSummary,
         getStatusLabel(r.status || item.status), r.reviewed ? 'Yes' : 'No', (r.tags || []).join('; '), r.overall?.label,
         item.submittedAt ? new Date(item.submittedAt).toISOString() : '',
-        a.files?.resume?.url, v.identityDocument?.url, v.educationDocuments?.url, v.profilePhoto?.url,
-        a.files?.englishIntroduction?.url, a.files?.quranRecitation?.url, a.files?.teachingTopicExplanation?.url,
+        a.files?.resume?.url, a.files?.englishIntroduction?.url, a.files?.quranRecitation?.url, a.files?.teachingTopicExplanation?.url,
       ].map(esc).join(',');
     };
     const csv = `\uFEFF${[headers.join(','), ...rows.map(line)].join('\r\n')}`;
@@ -450,6 +520,9 @@ export default function TeacherResponsesPanel() {
                 <RefreshCw className="h-4 w-4" />
                 <span>Refresh</span>
               </button>
+              <button type="button" onClick={() => setViewMode((mode) => (mode === 'table' ? 'cards' : 'table'))} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                {viewMode === 'table' ? <><LayoutGrid className="h-4 w-4" /><span>Card view</span></> : <><Table2 className="h-4 w-4" /><span>Table view</span></>}
+              </button>
               <button type="button" onClick={exportToExcel} disabled={!filteredItems.length} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
                 <FileSpreadsheet className="h-4 w-4" />
                 <span>Export Excel</span>
@@ -457,6 +530,9 @@ export default function TeacherResponsesPanel() {
             </div>
           </div>
 
+          {viewMode === 'table' ? (
+            <ApplicantTable rows={filteredItems} openViewer={openViewer} />
+          ) : (
           <div className="space-y-3">
           {filteredItems.length ? filteredItems.map((item) => {
             const isOpen = expandedId === item.id;
@@ -490,57 +566,33 @@ export default function TeacherResponsesPanel() {
                       <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Email</p><p className="break-words">{item.personalInfo?.email || '—'}</p></div>
                       <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Phone</p><p>{item.personalInfo?.mobileNumber || '—'}</p></div>
                       <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">WhatsApp</p><p>{item.personalInfo?.whatsappNumber || '—'}</p></div>
-                      <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Nationality</p><p>{item.personalInfo?.nationality || '—'}</p></div>
-                      <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Occupation</p><p>{item.personalInfo?.occupation || '—'}</p></div>
+                      <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Birth date</p><p>{item.personalInfo?.birthDate ? formatDate(item.personalInfo.birthDate) : '—'}</p></div>
+                      <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Address</p><p className="break-words">{[item.personalInfo?.address?.street, item.personalInfo?.address?.city, item.personalInfo?.address?.country].filter(Boolean).join(', ') || '—'}</p></div>
                     </div>
                   </div>
                   {isOpen ? <ChevronUp className="mt-1 h-4 w-4 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 text-slate-400" />}
                 </button>
                 {isOpen ? (
                   <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
-                    <div className="grid gap-3 lg:grid-cols-2">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                        <div className="flex items-center gap-2 font-semibold text-slate-900"><UserRound className="h-4 w-4 text-primary" />Personal details</div>
-                        <p className="mt-2"><span className="font-medium text-slate-800">Birth date:</span> {item.personalInfo?.birthDate ? formatDate(item.personalInfo.birthDate) : '—'}</p>
-                        <p><span className="font-medium text-slate-800">Gender:</span> {item.personalInfo?.gender || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Meeting link:</span> {item.personalInfo?.meetingLink || item.personalInfo?.skypeId || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Address:</span> {[item.personalInfo?.address?.street, item.personalInfo?.address?.city, item.personalInfo?.address?.country].filter(Boolean).join(', ') || '—'}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                        <div className="flex items-center gap-2 font-semibold text-slate-900"><FileBadge2 className="h-4 w-4 text-primary" />Documents</div>
-                        <div className="mt-2 space-y-2">
-                          {[
-                            ['Identity', item.verification?.identityDocument?.url, item.verification?.identityDocument?.mimeType],
-                            ['Education', item.verification?.educationDocuments?.url, item.verification?.educationDocuments?.mimeType],
-                            ['Photo', item.verification?.profilePhoto?.url, item.verification?.profilePhoto?.mimeType],
-                          ].map(([label, url, mimeType]) => (
-                            <div key={label} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                              <span>{label}</span>
-                              {url ? <button type="button" onClick={() => openViewer(label, url, mimeType)} className="inline-flex items-center gap-1 text-primary hover:underline"><Play className="h-3.5 w-3.5" /> View</button> : <span className="text-slate-400">—</span>}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                      <p className="font-semibold text-slate-900">Introduction</p>
-                      <p className="mt-2 whitespace-pre-wrap">{item.verification?.introEssay || '—'}</p>
+                      <div className="flex items-center gap-2 font-semibold text-slate-900"><UserRound className="h-4 w-4 text-primary" />Personal details</div>
+                      <div className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                        <p><span className="font-medium text-slate-800">Birth date:</span> {item.personalInfo?.birthDate ? formatDate(item.personalInfo.birthDate) : '—'}</p>
+                        <p><span className="font-medium text-slate-800">Gender:</span> {item.personalInfo?.gender || '—'}</p>
+                        <p className="sm:col-span-2"><span className="font-medium text-slate-800">Address:</span> {[item.personalInfo?.address?.street, item.personalInfo?.address?.city, item.personalInfo?.address?.country].filter(Boolean).join(', ') || '—'}</p>
+                      </div>
                     </div>
 
                     <div className="grid gap-3 lg:grid-cols-2">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                         <div className="font-semibold text-slate-900">Application profile</div>
                         <p className="mt-2"><span className="font-medium text-slate-800">Positions:</span> {item.application?.positionsInterested?.join(', ') || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Can teach:</span> {item.application?.teachingProfile?.subjectsCanTeach?.join(', ') || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Preferred availability:</span> {item.application?.teachingProfile?.preferredAvailability || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Alternative availability:</span> {item.application?.teachingProfile?.alternativeAvailability || '—'}</p>
                         <p><span className="font-medium text-slate-800">Current job:</span> {item.application?.experience?.currentJob || '—'}</p>
                         <p><span className="font-medium text-slate-800">Teaching experience:</span> {item.application?.experience?.teachingExperienceLevel || '—'}</p>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                         <div className="font-semibold text-slate-900">Education and tools</div>
-                        <p className="mt-2"><span className="font-medium text-slate-800">Eligibility path:</span> {item.application?.education?.eligibilityPath || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Graduation:</span> {item.application?.education?.graduationStatus || '—'}</p>
+                        <p className="mt-2"><span className="font-medium text-slate-800">Graduation:</span> {item.application?.education?.graduationStatus || '—'}</p>
                         <p><span className="font-medium text-slate-800">Faculty / university:</span> {item.application?.education?.facultyUniversity || '—'}</p>
                         <p><span className="font-medium text-slate-800">Degree:</span> {item.application?.education?.degree || '—'}</p>
                         <p><span className="font-medium text-slate-800">Meeting apps:</span> {item.application?.technicalSkills?.meetingApps?.join(', ') || '—'}</p>
@@ -681,6 +733,7 @@ export default function TeacherResponsesPanel() {
             );
           }) : <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">No teacher responses found for the current filters.</div>}
           </div>
+          )}
         </>
       ) : null}
 

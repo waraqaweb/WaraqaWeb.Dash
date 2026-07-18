@@ -45,6 +45,7 @@ import {
   saveLectureTemplate,
   listTeacherContractResponses,
   saveInterviewScorecard,
+  generateContractLink,
   getRecruitmentEmailTemplates,
   saveRecruitmentEmailTemplates,
   sendCandidateEmail,
@@ -145,6 +146,27 @@ const TENURE_FILTER_OPTIONS = [
   { value: 'senior', label: '2+ years' },
 ];
 
+// Left-nav sections for the unified Stats & Business Intelligence view.
+const STATS_NAV_GROUPS = [
+  {
+    label: 'Recruitment & workforce',
+    items: [
+      { id: 'pipeline', label: 'Pipeline stages' },
+      { id: 'workforce', label: 'Workforce breakdown' },
+      { id: 'load', label: 'Teacher load' },
+    ],
+  },
+  {
+    label: 'Business intelligence',
+    items: [
+      { id: 'bi-overview', label: 'Overview' },
+      { id: 'bi-people', label: 'People' },
+      { id: 'bi-financial', label: 'Financial' },
+      { id: 'bi-history', label: 'History' },
+    ],
+  },
+];
+
 const staticPolicyCards = [
   { title: 'Working hours', value: '4h / day', note: '≥3h in Cairo prime windows.', icon: Clock3 },
   { title: 'Hiring trigger', value: '75% full', note: 'Urgent alert at 85%.', icon: TrendingUp },
@@ -234,6 +256,7 @@ export default function TeacherOperationsPage({ isActive }) {
   const [interviewSaving, setInterviewSaving] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
   const [emailNotice, setEmailNotice] = useState('');
+  const [contractLinkState, setContractLinkState] = useState({ id: '', url: '', loading: false, notice: '' });
 
   // Sheet import
   const [showImportModal, setShowImportModal] = useState(false);
@@ -261,6 +284,7 @@ export default function TeacherOperationsPage({ isActive }) {
 
   // Teacher statistics filters + per-teacher controls
   const [statsFilters, setStatsFilters] = useState({ subject: 'all', gender: 'all', accepting: 'all', tenure: 'all', availability: 'all' });
+  const [statsSection, setStatsSection] = useState('pipeline');
   const [togglingTeacherId, setTogglingTeacherId] = useState('');
   const [expandedTeacherId, setExpandedTeacherId] = useState('');
 
@@ -567,6 +591,28 @@ export default function TeacherOperationsPage({ isActive }) {
     }
   };
 
+  const handleGenerateContractLink = async () => {
+    if (!interviewForm) return;
+    try {
+      setContractLinkState((p) => ({ ...p, loading: true, notice: '' }));
+      const res = await generateContractLink(interviewForm.source, interviewForm.id);
+      const url = `${window.location.origin}/teacher-agreement?token=${res.token}`;
+      let notice = 'Contract link ready.';
+      try {
+        await navigator.clipboard.writeText(url);
+        notice = 'Contract link copied to clipboard.';
+      } catch (err) {
+        notice = 'Contract link ready (copy it below).';
+      }
+      setContractLinkState({ id: interviewForm.id, url, loading: false, notice });
+      setInterviewResponses((prev) => prev.map((r) => (r.id === interviewForm.id
+        ? { ...r, recruitment: { ...(r.recruitment || {}), contract: { ...((r.recruitment || {}).contract || {}), token: res.token, sentAt: res.sentAt } } }
+        : r)));
+    } catch (error) {
+      setContractLinkState((p) => ({ ...p, loading: false, notice: error?.response?.data?.message || 'Failed to generate contract link.' }));
+    }
+  };
+
   const handleImportSheet = async () => {
     const url = importUrl.trim();
     if (!url) return;
@@ -734,6 +780,25 @@ export default function TeacherOperationsPage({ isActive }) {
     } catch (error) {
       setCopyNotice(`Could not copy ${label.toLowerCase()}.`);
     }
+  };
+
+  // Build a ready-to-share recruitment message from a campaign's own fields.
+  const buildCampaignMessage = (campaign) => {
+    const subjects = campaign.subjects?.length ? campaign.subjects.join(', ') : 'Quran, Arabic & Islamic Studies';
+    const preferredWindow = campaign.preferredWindow || 'Flexible hours';
+    const hires = campaign.targetHires || 0;
+    const genders = [campaign.female ? 'female' : null, campaign.male ? 'male' : null].filter(Boolean);
+    const gendersLine = genders.length && genders.length < 2 ? ` (${genders[0]} teachers)` : '';
+    const link = `${window.location.origin}/teacher-contract?campaign=${campaign.slug}`;
+    return [
+      `🌟 We're hiring online ${subjects} teachers at Waraqa!${gendersLine}`,
+      '',
+      `📚 Subjects: ${subjects}`,
+      `🕒 Preferred window: ${preferredWindow}`,
+      hires ? `👥 Openings: ${hires}` : null,
+      '',
+      `Apply here: ${link}`,
+    ].filter((line) => line !== null).join('\n');
   };
 
   const resetCampaignForm = () => {
@@ -941,7 +1006,7 @@ export default function TeacherOperationsPage({ isActive }) {
                   <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Application form</p>
                   <div className="mt-1 flex items-center gap-1.5">
                     <input readOnly value={`${window.location.origin}/teacher-contract`} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
-                    <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Form link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
+                    <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Application link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
                   </div>
                 </div>
                 <div className="rounded-xl border border-border bg-background p-2.5">
@@ -1228,6 +1293,30 @@ export default function TeacherOperationsPage({ isActive }) {
                       <p className="mt-1.5 text-[11px] text-muted-foreground">The "missing info" email includes the notes above. Save the scorecard first so the outcome-matched email is correct.</p>
                       {emailNotice ? <p className="mt-1 text-[11px] font-medium text-green-600 dark:text-green-400">{emailNotice}</p> : null}
                     </div>
+
+                    <div className="rounded-xl border border-border bg-background p-2.5">
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Contract (after passing the interview)</p>
+                      {current?.recruitment?.contract?.acceptedAt ? (
+                        <p className="text-[11px] font-medium text-green-600 dark:text-green-400">
+                          Accepted by {current.recruitment.contract.acceptedName || 'candidate'} on {new Date(current.recruitment.contract.acceptedAt).toLocaleString()}.
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground">
+                          Generate a private link for the candidate to review and accept the contract.
+                          {current?.recruitment?.contract?.sentAt ? ` Link last generated ${new Date(current.recruitment.contract.sentAt).toLocaleString()}.` : ''}
+                        </p>
+                      )}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <button type="button" onClick={handleGenerateContractLink} disabled={contractLinkState.loading} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
+                          {contractLinkState.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
+                          {current?.recruitment?.contract?.token ? 'Regenerate & copy contract link' : 'Generate & copy contract link'}
+                        </button>
+                      </div>
+                      {contractLinkState.id === selectedInterviewId && contractLinkState.url ? (
+                        <input readOnly value={contractLinkState.url} onFocus={(e) => e.target.select()} className="mt-1.5 w-full rounded-lg border border-border bg-card px-2 py-1.5 text-[11px] text-foreground" />
+                      ) : null}
+                      {contractLinkState.id === selectedInterviewId && contractLinkState.notice ? <p className="mt-1 text-[11px] text-muted-foreground">{contractLinkState.notice}</p> : null}
+                    </div>
                   </div>
                 );
               })()}
@@ -1389,8 +1478,34 @@ export default function TeacherOperationsPage({ isActive }) {
         ) : null}
 
         {activeTab === 'stats' ? (
-          <div className="grid gap-3">
-            <div className="grid gap-3 xl:grid-cols-2">
+          <div className="flex flex-col gap-3 lg:flex-row">
+            {/* Left section nav */}
+            <nav className="shrink-0 lg:w-52">
+              <div className="rounded-2xl border border-border bg-card p-2 lg:sticky lg:top-2">
+                {STATS_NAV_GROUPS.map((group) => (
+                  <div key={group.label} className="mb-1 last:mb-0">
+                    <p className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{group.label}</p>
+                    {group.items.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setStatsSection(item.id)}
+                        className={[
+                          'block w-full rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition',
+                          statsSection === item.id ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted',
+                        ].join(' ')}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </nav>
+
+            {/* Right content pane */}
+            <div className="min-w-0 flex-1 space-y-3">
+              {statsSection === 'pipeline' ? (
               <SectionCard title="Recruitment pipeline stages">
                 {loadingSummary ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading pipeline data…</div>
@@ -1419,7 +1534,9 @@ export default function TeacherOperationsPage({ isActive }) {
                   Unreviewed: <span className="font-semibold text-foreground">{summary?.pipeline?.unreviewed ?? 0}</span>
                 </p>
               </SectionCard>
+              ) : null}
 
+              {statsSection === 'workforce' ? (
               <SectionCard title="Teacher workforce breakdown">
                 {loadingSummary ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading teacher stats…</div>
@@ -1443,8 +1560,9 @@ export default function TeacherOperationsPage({ isActive }) {
                   </div>
                 )}
               </SectionCard>
-            </div>
+              ) : null}
 
+              {statsSection === 'load' ? (
             <SectionCard title="Current teacher load">
               {loadingSummary ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading load data…</div>
@@ -1549,10 +1667,12 @@ export default function TeacherOperationsPage({ isActive }) {
                 </div>
               )}
             </SectionCard>
+              ) : null}
 
-            <SectionCard title="Business intelligence">
-              <BusinessIntelligencePage isActive={isActive && activeTab === 'stats'} embedded />
-            </SectionCard>
+              <div className={statsSection.startsWith('bi-') ? '' : 'hidden'}>
+                <BusinessIntelligencePage isActive={isActive && activeTab === 'stats'} embedded controlledTab={statsSection.startsWith('bi-') ? statsSection.slice(3) : 'overview'} />
+              </div>
+            </div>
           </div>
         ) : null}
       </div>
@@ -1608,10 +1728,10 @@ export default function TeacherOperationsPage({ isActive }) {
               <button type="button" onClick={() => setShowCampaignDrawer(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
             </div>
             <div className="mb-2 rounded-xl border border-border bg-background p-2.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Generic form link</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Generic application link</p>
               <div className="mt-1 flex items-center gap-1.5">
                 <input readOnly value={`${window.location.origin}/teacher-contract`} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
-                <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Form link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
+                <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Application link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
               </div>
               {copyNotice ? <p className="mt-1 text-[11px] text-muted-foreground">{copyNotice}</p> : null}
             </div>
@@ -1624,8 +1744,9 @@ export default function TeacherOperationsPage({ isActive }) {
                       <p className="text-[11px] text-muted-foreground">/{campaign.slug} • {campaign.status} • {campaign.applicationCount} apps</p>
                     </div>
                     <div className="flex shrink-0 gap-1">
-                      <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract?campaign=${campaign.slug}`, 'Campaign link')} className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /></button>
-                      <button type="button" onClick={() => startEditCampaign(campaign)} className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Edit3 className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract?campaign=${campaign.slug}`, 'Campaign link')} title="Copy application link" className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => handleCopy(buildCampaignMessage(campaign), 'Outreach message')} title="Copy outreach message" className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><MessageCircle className="h-3.5 w-3.5" /> Message</button>
+                      <button type="button" onClick={() => startEditCampaign(campaign)} title="Edit campaign" className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Edit3 className="h-3.5 w-3.5" /></button>
                     </div>
                   </div>
                   <div className="mt-1.5 grid gap-1 text-[11px] text-foreground">

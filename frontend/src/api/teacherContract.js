@@ -80,6 +80,24 @@ export async function saveInterviewScorecard(source, id, payload) {
   return data.response || null;
 }
 
+// Generate/refresh the post-interview contract-acceptance link for a candidate.
+export async function generateContractLink(source, id) {
+  const { data } = await api.post(`${BASE}/responses/${source}/${id}/contract-link`);
+  return data;
+}
+
+// Public: fetch the contract text + acceptance status for a token.
+export async function getPublicTeacherAgreement(token) {
+  const { data } = await api.get(`${BASE}/agreement/${token}`);
+  return data;
+}
+
+// Public: record the candidate's acceptance of the contract.
+export async function acceptPublicTeacherAgreement(token, fullName) {
+  const { data } = await api.post(`${BASE}/agreement/${token}/accept`, { fullName });
+  return data;
+}
+
 export async function convertCandidateToTeacher(source, id, payload) {
   const { data } = await api.post(`${BASE}/responses/${source}/${id}/convert-to-teacher`, payload);
   return data;

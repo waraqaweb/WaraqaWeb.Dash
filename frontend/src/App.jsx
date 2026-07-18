@@ -32,6 +32,7 @@ const TeacherInvoicePublicPage = React.lazy(() => import('./components/teacherSa
 const PublicEvaluationBookingPage = React.lazy(() => import('./components/meetings/PublicEvaluationBookingPage'));
 const PublicStudentRegistrationPage = React.lazy(() => import('./components/registration/PublicStudentRegistrationPage'));
 const PublicTeacherContractPage = React.lazy(() => import('./components/registration/PublicTeacherContractPage'));
+const PublicTeacherAgreementPage = React.lazy(() => import('./components/registration/PublicTeacherAgreementPage'));
 const PublicEvaluationFeedbackPage = React.lazy(() => import('./components/evaluation/PublicEvaluationFeedbackPage'));
 const SalariesPage = React.lazy(() => import('./pages/dashboard/salaries/SalariesPage'));
 const FeedbacksAdmin = React.lazy(() => import('./pages/dashboard/FeedbacksAdmin'));
@@ -264,6 +265,12 @@ const AppRoutes = () => {
         path="/teacher-contract"
         element={<PublicTeacherContractPage />}
       />
+
+      <Route
+        path="/teacher-agreement"
+        element={<PublicTeacherAgreementPage />}
+      />
+
 
       <Route
         path="/dashboard/register-teacher"

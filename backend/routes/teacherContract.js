@@ -321,6 +321,7 @@ function normalizeTeacherResponse(source, doc) {
       evaluation: recruitment.evaluation || {},
       overall: recruitment.overall || {},
       interview: recruitment.interview || {},
+      contract: recruitment.contract || {},
       history: Array.isArray(recruitment.history) ? recruitment.history : [],
     },
     user: plain.user ? {
@@ -1009,6 +1010,110 @@ router.patch('/responses/:source/:id/interview', authenticateToken, requireAdmin
   } catch (error) {
     console.error('Update interview scorecard error:', error);
     return res.status(500).json({ message: 'Failed to save interview scorecard.' });
+  }
+});
+
+// Generate (or refresh) the public contract-acceptance link for a candidate.
+// Sent to candidates after they pass the interview so they can review + accept
+// the contract terms without needing a dashboard account.
+router.post('/responses/:source/:id/contract-link', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const source = String(req.params.source || '').trim().toLowerCase();
+    const Model = resolveResponseModel(source);
+    if (!Model) return res.status(400).json({ message: 'Unsupported response source.' });
+
+    const doc = await Model.findById(req.params.id);
+    if (!doc) return res.status(404).json({ message: 'Teacher response not found.' });
+
+    const recruitment = doc.recruitment || {};
+    const contract = recruitment.contract || {};
+    if (!contract.token) contract.token = crypto.randomBytes(24).toString('hex');
+    contract.sentAt = new Date();
+    recruitment.contract = contract;
+    doc.recruitment = recruitment;
+    doc.markModified('recruitment');
+    await doc.save();
+
+    return res.json({
+      message: 'Contract link ready.',
+      token: contract.token,
+      sentAt: contract.sentAt,
+      acceptedAt: contract.acceptedAt || null,
+      acceptedName: contract.acceptedName || '',
+    });
+  } catch (error) {
+    console.error('Generate contract link error:', error);
+    return res.status(500).json({ message: 'Failed to generate contract link.' });
+  }
+});
+
+const findByContractToken = async (token) => {
+  const clean = String(token || '').trim();
+  if (!clean) return null;
+  for (const [source, Model] of [['public', TeacherContractLead], ['dashboard', TeacherContractSubmission]]) {
+    // eslint-disable-next-line no-await-in-loop
+    const doc = await Model.findOne({ 'recruitment.contract.token': clean }).populate('user', 'firstName lastName email');
+    if (doc) return { source, Model, doc };
+  }
+  return null;
+};
+
+// Public: fetch the contract text + acceptance status for a token.
+router.get('/agreement/:token', async (req, res) => {
+  try {
+    const found = await findByContractToken(req.params.token);
+    if (!found) return res.status(404).json({ message: 'This contract link is invalid or has expired.' });
+    const { doc } = found;
+    const personalInfo = doc.personalInfo || {};
+    const name = String(personalInfo.fullName || `${doc.user?.firstName || ''} ${doc.user?.lastName || ''}`.trim() || '');
+    const template = await getContractTemplateValue();
+    const contract = doc.recruitment?.contract || {};
+    return res.json({
+      name,
+      contractText: template,
+      acceptedAt: contract.acceptedAt || null,
+      acceptedName: contract.acceptedName || '',
+    });
+  } catch (error) {
+    console.error('Get public teacher agreement error:', error);
+    return res.status(500).json({ message: 'Failed to load the contract.' });
+  }
+});
+
+// Public: record the candidate's acceptance of the contract.
+router.post('/agreement/:token/accept', async (req, res) => {
+  try {
+    const found = await findByContractToken(req.params.token);
+    if (!found) return res.status(404).json({ message: 'This contract link is invalid or has expired.' });
+    const { doc } = found;
+    const recruitment = doc.recruitment || {};
+    const contract = recruitment.contract || {};
+    if (contract.acceptedAt) {
+      return res.json({
+        message: 'This contract was already accepted.',
+        acceptedAt: contract.acceptedAt,
+        acceptedName: contract.acceptedName || '',
+      });
+    }
+    const fullName = String(req.body?.fullName || '').trim().slice(0, 200);
+    if (!fullName) return res.status(400).json({ message: 'Please write your full legal name to accept.' });
+
+    contract.acceptedAt = new Date();
+    contract.acceptedName = fullName;
+    contract.acceptedIp = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 60);
+    recruitment.contract = contract;
+    doc.recruitment = recruitment;
+    doc.markModified('recruitment');
+    await doc.save();
+
+    return res.json({
+      message: 'Thank you. Your acceptance has been recorded.',
+      acceptedAt: contract.acceptedAt,
+      acceptedName: contract.acceptedName,
+    });
+  } catch (error) {
+    console.error('Accept public teacher agreement error:', error);
+    return res.status(500).json({ message: 'Failed to record your acceptance.' });
   }
 });
 

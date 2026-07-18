@@ -70,6 +70,15 @@ const recruitmentSchema = new mongoose.Schema({
     emailSentForOutcome: { type: String, trim: true, default: '', maxlength: 40 },
     outcomeEmailSentAt: { type: Date, default: null },
   },
+  // Post-interview contract acceptance. The token backs a public accept link the
+  // admin sends to a candidate after they pass the interview.
+  contract: {
+    token: { type: String, trim: true, default: '', index: true },
+    sentAt: { type: Date, default: null },
+    acceptedAt: { type: Date, default: null },
+    acceptedName: { type: String, trim: true, default: '', maxlength: 200 },
+    acceptedIp: { type: String, trim: true, default: '', maxlength: 60 },
+  },
   history: [{
     at: { type: Date, default: Date.now },
     actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

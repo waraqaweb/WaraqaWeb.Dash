@@ -796,13 +796,14 @@ function PeriodPicker({ period, setPeriod, customRange, setCustomRange }) {
 }
 
 // ─── Main page component ──────────────────────────────────────────────────────
-export default function BusinessIntelligencePage({ isActive, embedded = false }) {
+export default function BusinessIntelligencePage({ isActive, embedded = false, controlledTab = null }) {
   const [period,      setPeriod]      = useState('thisMonth');
   const [customRange, setCustomRange] = useState({ start: '', end: '' });
   const [data,        setData]        = useState(null);
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState(null);
-  const [tab,         setTab]         = useState('overview');
+  const [tabState,    setTab]         = useState('overview');
+  const tab = controlledTab || tabState;
   const [targets,     setTargets]     = useState(() => loadTargets());
   const [wi,          setWI]          = useState({ ownerSalary: 0, otherExpenses: 0, paypalRate: 3.5 });
   const [wiMode,      setWIMode]      = useState(false);
@@ -845,9 +846,9 @@ export default function BusinessIntelligencePage({ isActive, embedded = false })
                 <BarChart3 className="h-5 w-5 text-primary" />
                 Business Intelligence
               </h1>
-            ) : (
+            ) : (controlledTab ? null : (
               <h2 className="text-base font-semibold text-foreground">Business Intelligence</h2>
-            )}
+            ))}
             {data?.periodLabel && <p className="text-sm text-muted-foreground mt-0.5">{data.periodLabel}</p>}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -860,19 +861,21 @@ export default function BusinessIntelligencePage({ isActive, embedded = false })
           </div>
         </div>
         {/* ── Tabs ── */}
-        <div className="flex gap-1 -mb-px overflow-x-auto pb-1">
-          {TABS.map(t => {
-            const Icon = t.icon;
-            const active = tab === t.id;
-            return (
-              <button key={t.id} type="button" onClick={() => setTab(t.id)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-t-lg border-b-2 transition-colors whitespace-nowrap ${active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'}`}>
-                <Icon className="h-4 w-4" />
-                <span className="hidden sm:inline">{t.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        {!controlledTab && (
+          <div className="flex gap-1 -mb-px overflow-x-auto pb-1">
+            {TABS.map(t => {
+              const Icon = t.icon;
+              const active = tab === t.id;
+              return (
+                <button key={t.id} type="button" onClick={() => setTab(t.id)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-t-lg border-b-2 transition-colors whitespace-nowrap ${active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'}`}>
+                  <Icon className="h-4 w-4" />
+                  <span className="hidden sm:inline">{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* ── Tab content ── */}

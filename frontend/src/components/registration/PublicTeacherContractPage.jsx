@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { CheckCircle2, ChevronRight, FileBadge2, FileText, Loader2, Mic, ShieldCheck, Upload, UserRound, Wrench } from 'lucide-react';
-import { getTeacherContractTemplate, listPublicRecruitmentCampaigns, submitPublicTeacherContract } from '../../api/teacherContract';
+import { listPublicRecruitmentCampaigns, submitPublicTeacherContract } from '../../api/teacherContract';
 import api from '../../api/axios';
 
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10';
 const checkboxCardClass = 'flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700';
-const containsArabic = (value = '') => /[\u0600-\u06FF]/.test(String(value));
 const getFileLabel = (file, fallback = '') => file?.name || fallback || 'No file chosen';
 
 const POSITION_OPTIONS = ['Quran Teacher', 'Arabic Teacher', 'Islamic Studies Teacher', 'Noor Al-Bayan Teacher'];
@@ -16,7 +15,6 @@ const SUBJECT_OPTIONS = ['Quran', 'Tajweed', 'Arabic', 'Islamic Studies', 'Noor 
 export default function PublicTeacherContractPage() {
   const search = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const campaignSlugFromUrl = search.get('campaign') || '';
-  const [contractTemplate, setContractTemplate] = useState('');
   const [branding, setBranding] = useState({ title: 'Waraqa', slogan: 'Welcome', logoUrl: null });
   const [campaigns, setCampaigns] = useState([]);
   const [activeCampaign, setActiveCampaign] = useState(null);
@@ -68,16 +66,6 @@ export default function PublicTeacherContractPage() {
 
   React.useEffect(() => {
     let mounted = true;
-    getTeacherContractTemplate().then((template) => {
-      if (mounted) setContractTemplate(template || '');
-    }).catch(() => {
-      if (mounted) setContractTemplate('');
-    });
-    return () => { mounted = false; };
-  }, []);
-
-  React.useEffect(() => {
-    let mounted = true;
     listPublicRecruitmentCampaigns().then((items) => {
       if (!mounted) return;
       setCampaigns(items || []);
@@ -120,7 +108,7 @@ export default function PublicTeacherContractPage() {
 
   const validateStep = (targetStep = step) => {
     if (targetStep === 1 && (!form.contractFullName.trim() || !form.contractAccepted)) {
-      setError('Please confirm the contract and write your full legal name.');
+      setError('Please write your full legal name and confirm the consent to continue.');
       return false;
     }
     if (targetStep === 2 && (!form.fullName.trim() || !form.email.trim() || !form.birthDate || !form.mobileNumber.trim() || !form.gender || !form.positionsInterested.length || !files.resume)) {
@@ -229,18 +217,15 @@ export default function PublicTeacherContractPage() {
         <div className="mt-6 space-y-8">
           {step === 1 ? (
             <section className="space-y-5">
-              <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><FileText className="h-5 w-5 text-primary" />Agreement and process</div>
+              <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><FileText className="h-5 w-5 text-primary" />Application &amp; process</div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-7 text-slate-700">
-                <p>Upload your resume, answer the questions, and submit the required audio or video samples. Applications that pass the first review stage will move to a 60-minute interview with English, Tajweed, Arabic, and Islamic Studies checks depending on the role.</p>
-              </div>
-              <div className={`rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-7 text-slate-700 ${containsArabic(contractTemplate) ? 'text-right' : 'text-left'}`} dir={containsArabic(contractTemplate) ? 'rtl' : 'ltr'}>
-                <div className="whitespace-pre-wrap leading-7 text-slate-700">{contractTemplate}</div>
+                <p>Upload your resume, answer the questions, and submit the required audio or video samples. Applications that pass the first review stage will move to a 60-minute interview with English, Tajweed, Arabic, and Islamic Studies checks depending on the role. If your interview is successful, we will send you the teaching contract to review and accept as a later step.</p>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <input className={inputClass} placeholder="Full legal name *" value={form.contractFullName} onChange={(e) => updateField('contractFullName', e.target.value)} />
                 <label className={checkboxCardClass}>
                   <input type="checkbox" checked={form.contractAccepted} onChange={(e) => updateField('contractAccepted', e.target.checked)} />
-                  <span>I confirm that I have read the contract and agree to its terms.</span>
+                  <span>I confirm the information I provide is accurate and consent to Waraqa reviewing my application.</span>
                 </label>
               </div>
             </section>

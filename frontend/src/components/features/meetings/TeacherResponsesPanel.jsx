@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, MessageCircle, Phone, Play, RefreshCw, Save, Search, Table2, UserPlus, X } from 'lucide-react';
-import { convertCandidateToTeacher, listRecruitmentCampaigns, listTeacherContractResponses, updateTeacherContractResponse } from '../../../api/teacherContract';
-import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
+import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, MessageCircle, Phone, Play, RefreshCw, Save, Search, Settings2, Table2, UserPlus, X } from 'lucide-react';
+import { convertCandidateToTeacher, getSheetSyncConfig, listRecruitmentCampaigns, listTeacherContractResponses, runSheetSyncNow, saveSheetSyncConfig, updateTeacherContractResponse } from '../../../api/teacherContract';
+import { bumpDomainVersion, makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
 const formatDate = (value) => {
   try {
@@ -218,12 +218,14 @@ const displayValue = (value) => {
   return value == null || value === '' ? '—' : value;
 };
 
-function FieldRow({ label, value, wide = false }) {
+// One spreadsheet-style cell: tiny header label + value inside a bordered cell.
+function ExcelCell({ label, value, span = 1, clamp = true }) {
+  const text = displayValue(value);
   return (
-    <div className={wide ? 'sm:col-span-2 xl:col-span-3' : ''}>
-      <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</dt>
-      <dd className="mt-0.5 whitespace-pre-wrap break-words text-sm text-slate-800">{displayValue(value)}</dd>
-    </div>
+    <td colSpan={span} className="border border-slate-200 bg-white px-2 py-1.5 align-top" title={typeof text === 'string' ? text : undefined}>
+      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`mt-0.5 break-words text-xs leading-snug text-slate-800 ${clamp ? 'line-clamp-3' : 'whitespace-pre-wrap'}`}>{text}</p>
+    </td>
   );
 }
 
@@ -248,35 +250,52 @@ function FileActionGrid({ item, openViewer }) {
   );
 }
 
+// All applicant data compressed into a 3-row spreadsheet-style grid.
 function CandidateFacts({ item, openViewer }) {
   const p = item.personalInfo || {};
   const a = item.application || {};
   const address = [p.address?.street, p.address?.city, p.address?.country].filter(Boolean).join(', ');
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <ContactActions item={item} />
         <FileActionGrid item={item} openViewer={openViewer} />
       </div>
-      <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
-        <FieldRow label="Birth date" value={p.birthDate ? formatDate(p.birthDate) : ''} />
-        <FieldRow label="Gender" value={p.gender} />
-        <FieldRow label="Address" value={address} wide />
-        <FieldRow label="Positions" value={a.positionsInterested} wide />
-        <FieldRow label="Graduation" value={a.education?.graduationStatus} />
-        <FieldRow label="Faculty / university" value={a.education?.facultyUniversity} />
-        <FieldRow label="Degree" value={a.education?.degree} />
-        <FieldRow label="Certificates" value={a.education?.additionalCertificates} wide />
-        <FieldRow label="Teaching experience" value={a.experience?.teachingExperienceLevel} />
-        <FieldRow label="Current job" value={a.experience?.currentJob} wide />
-        <FieldRow label="What she wants us to know" value={a.experience?.profileSummary} wide />
-      </dl>
+      <div className="overflow-x-auto rounded-lg border border-slate-300">
+        <table className="w-full min-w-[980px] table-fixed border-collapse">
+          <tbody>
+            <tr>
+              <ExcelCell label="Name" value={p.fullName || item.contract?.fullName} />
+              <ExcelCell label="Email" value={p.email} />
+              <ExcelCell label="Phone" value={p.mobileNumber} />
+              <ExcelCell label="WhatsApp" value={p.whatsappNumber} />
+              <ExcelCell label="Birth date" value={p.birthDate ? formatDate(p.birthDate) : ''} />
+              <ExcelCell label="Gender" value={p.gender} />
+              <ExcelCell label="Address" value={address} />
+            </tr>
+            <tr>
+              <ExcelCell label="Positions" value={a.positionsInterested} span={2} />
+              <ExcelCell label="Graduation" value={a.education?.graduationStatus} />
+              <ExcelCell label="Faculty / University" value={a.education?.facultyUniversity} />
+              <ExcelCell label="Degree" value={a.education?.degree} />
+              <ExcelCell label="Certificates" value={a.education?.additionalCertificates} />
+              <ExcelCell label="Experience" value={a.experience?.teachingExperienceLevel} />
+            </tr>
+            <tr>
+              <ExcelCell label="Current job" value={a.experience?.currentJob} span={2} />
+              <ExcelCell label="What we should know" value={a.experience?.profileSummary} span={3} clamp={false} />
+              <ExcelCell label="Submitted" value={item.submittedAt ? formatDateTime(item.submittedAt) : ''} />
+              <ExcelCell label="Stage" value={getStatusLabel(item?.recruitment?.status || item.status)} />
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
 // Spreadsheet-style overview of every applicant using only the fields the form collects.
-function ApplicantTable({ rows, openViewer }) {
+function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selectedIds, onToggleSelect, onToggleSelectAll }) {
   const cell = (value) => (value == null || value === '' ? '—' : value);
   const fileButtons = (item) => {
     const files = [
@@ -294,11 +313,15 @@ function ApplicantTable({ rows, openViewer }) {
     );
   };
   const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'What we should know', 'Stage', 'Contact', 'Resume'];
+  const allSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(row.id));
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
       <table className="w-full min-w-[1600px] border-collapse text-left text-xs text-slate-700">
         <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
           <tr>
+            <th className="w-9 border-b border-slate-200 px-3 py-2">
+              <input type="checkbox" checked={allSelected} onChange={() => onToggleSelectAll(rows)} className="h-3.5 w-3.5 rounded border-slate-300" aria-label="Select all" />
+            </th>
             {columns.map((header) => (
               <th key={header} className="whitespace-nowrap border-b border-slate-200 px-3 py-2">{header}</th>
             ))}
@@ -311,6 +334,9 @@ function ApplicantTable({ rows, openViewer }) {
             const address = [p.address?.street, p.address?.city, p.address?.country].filter(Boolean).join(', ');
             return (
               <tr key={item.id} className="align-top odd:bg-white even:bg-slate-50/50">
+                <td className="border-b border-slate-100 px-3 py-2">
+                  <input type="checkbox" checked={selectedIds.includes(item.id)} onChange={() => onToggleSelect(item.id)} className="h-3.5 w-3.5 rounded border-slate-300" aria-label={`Select ${p.fullName || p.email || 'candidate'}`} />
+                </td>
                 <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2 font-semibold text-slate-900">{cell(p.fullName || item.contract?.fullName)}</td>
                 <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{cell(p.email)}</td>
                 <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{cell(p.mobileNumber)}</td>
@@ -325,14 +351,23 @@ function ApplicantTable({ rows, openViewer }) {
                 <td className="min-w-[160px] border-b border-slate-100 px-3 py-2">{cell(a.experience?.teachingExperienceLevel)}</td>
                 <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell(a.experience?.currentJob)}</td>
                 <td className="min-w-[220px] whitespace-pre-wrap border-b border-slate-100 px-3 py-2">{cell(a.experience?.profileSummary)}</td>
-                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{getStatusLabel(item?.recruitment?.status || item.status)}</td>
+                <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">
+                  <select
+                    value={item?.recruitment?.status || item.status || 'new'}
+                    disabled={quickStageId === item.id}
+                    onChange={(event) => onQuickStage(item, event.target.value)}
+                    className="rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] outline-none focus:border-primary disabled:opacity-50"
+                  >
+                    {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </td>
                 <td className="min-w-[150px] border-b border-slate-100 px-3 py-2"><ContactActions item={item} compact /></td>
                 <td className="min-w-[180px] border-b border-slate-100 px-3 py-2">{fileButtons(item)}</td>
               </tr>
             );
           })}
           {!rows.length ? (
-            <tr><td colSpan={columns.length} className="px-3 py-6 text-center text-slate-500">No teacher responses found for the current filters.</td></tr>
+            <tr><td colSpan={columns.length + 1} className="px-3 py-6 text-center text-slate-500">No teacher responses found for the current filters.</td></tr>
           ) : null}
         </tbody>
       </table>
@@ -356,6 +391,15 @@ export default function TeacherResponsesPanel() {
   const [convertForm, setConvertForm] = useState({});
   const [viewer, setViewer] = useState(null);
   const [viewMode, setViewMode] = useState('cards');
+  const [syncConfig, setSyncConfig] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [showSyncSettings, setShowSyncSettings] = useState(false);
+  const [syncDraft, setSyncDraft] = useState({ sheetUrl: '', formUrl: '', autoSync: true, intervalMinutes: 10 });
+  const [savingSync, setSavingSync] = useState(false);
+  const [quickStageId, setQuickStageId] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkStage, setBulkStage] = useState('');
+  const [bulkMoving, setBulkMoving] = useState(false);
 
   const openViewer = (label, url, mimeType) => {
     if (!url) return;
@@ -390,6 +434,119 @@ export default function TeacherResponsesPanel() {
   };
 
   useEffect(() => { load(); }, []);
+
+  // Load the Google Sheet sync configuration (source of truth for applicants).
+  const loadSyncConfig = async () => {
+    try {
+      const config = await getSheetSyncConfig();
+      if (config) {
+        setSyncConfig(config);
+        setSyncDraft({
+          sheetUrl: config.sheetUrl || '',
+          formUrl: config.formUrl || '',
+          autoSync: config.autoSync !== false,
+          intervalMinutes: config.intervalMinutes || 10,
+        });
+      }
+    } catch { /* non-fatal */ }
+  };
+
+  useEffect(() => { loadSyncConfig(); }, []);
+
+  const handleSyncNow = async () => {
+    try {
+      setSyncing(true);
+      setError('');
+      setNotice('');
+      const result = await runSheetSyncNow();
+      if (result?.config) setSyncConfig(result.config);
+      setNotice(result?.message || 'Sync complete.');
+      bumpDomainVersion('teacher-contract');
+      const data = await listTeacherContractResponses();
+      const nextItems = data || [];
+      setItems(nextItems);
+      writeCache(makeCacheKey('meetings:teacherResponses', 'admin'), { items: nextItems }, { ttlMs: 5 * 60_000, deps: ['teacher-contract'] });
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to sync from the Google Sheet.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleSaveSyncConfig = async () => {
+    try {
+      setSavingSync(true);
+      setError('');
+      const config = await saveSheetSyncConfig({
+        sheetUrl: syncDraft.sheetUrl,
+        formUrl: syncDraft.formUrl,
+        autoSync: Boolean(syncDraft.autoSync),
+        intervalMinutes: Number(syncDraft.intervalMinutes) || 10,
+      });
+      if (config) setSyncConfig(config);
+      setNotice('Sync source saved. New submissions will be pulled from this sheet automatically.');
+      setShowSyncSettings(false);
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to save sync settings.');
+    } finally {
+      setSavingSync(false);
+    }
+  };
+
+  // Move one candidate to a new funnel stage instantly (no full review needed).
+  const handleQuickStage = async (item, status) => {
+    try {
+      setQuickStageId(item.id);
+      setError('');
+      const updated = await updateTeacherContractResponse(item.source, item.id, { pipelineStatus: status });
+      if (updated) {
+        setItems((prev) => prev.map((entry) => (entry.id === item.id ? updated : entry)));
+        setDrafts((prev) => (prev[item.id] ? { ...prev, [item.id]: createDraftFromItem(updated) } : prev));
+        bumpDomainVersion('teacher-contract');
+      }
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to move candidate.');
+    } finally {
+      setQuickStageId('');
+    }
+  };
+
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const toggleSelectAll = (rows) => {
+    const ids = rows.map((row) => row.id);
+    setSelectedIds((prev) => (ids.every((id) => prev.includes(id)) ? prev.filter((id) => !ids.includes(id)) : Array.from(new Set([...prev, ...ids]))));
+  };
+
+  const applyBulkStage = async () => {
+    if (!bulkStage || !selectedIds.length) return;
+    try {
+      setBulkMoving(true);
+      setError('');
+      let moved = 0;
+      for (const id of selectedIds) {
+        const item = items.find((entry) => entry.id === id);
+        if (!item) continue;
+        // Sequential to keep server load light and preserve history entries.
+        // eslint-disable-next-line no-await-in-loop
+        const updated = await updateTeacherContractResponse(item.source, item.id, { pipelineStatus: bulkStage });
+        if (updated) {
+          moved += 1;
+          setItems((prev) => prev.map((entry) => (entry.id === item.id ? updated : entry)));
+        }
+      }
+      bumpDomainVersion('teacher-contract');
+      setNotice(`Moved ${moved} candidate${moved === 1 ? '' : 's'} to ${getStatusLabel(bulkStage)}.`);
+      setSelectedIds([]);
+      setBulkStage('');
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Bulk move failed part-way. Refresh to see the current state.');
+    } finally {
+      setBulkMoving(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -487,6 +644,18 @@ export default function TeacherResponsesPanel() {
     interviewPending: items.filter((item) => item?.recruitment?.status === 'interview_pending').length,
   }), [items]);
 
+  // Live funnel counts per pipeline stage.
+  const funnelCounts = useMemo(() => {
+    const counts = {};
+    STATUS_OPTIONS.forEach((option) => { counts[option.value] = 0; });
+    items.forEach((item) => {
+      const status = item?.recruitment?.status || item.status || 'new';
+      if (counts[status] != null) counts[status] += 1;
+      else counts.new += 1;
+    });
+    return counts;
+  }, [items]);
+
   const filteredItems = useMemo(() => {
     const normalizedQuery = String(query || '').trim().toLowerCase();
     return items.filter((item) => {
@@ -560,19 +729,97 @@ export default function TeacherResponsesPanel() {
 
       {!loading ? (
         <>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            {[
-              ['Total', summary.total],
-              ['Unreviewed', summary.unreviewed],
-              ['Shortlisted', summary.shortlisted],
-              ['Interview pending', summary.interviewPending],
-              ['Public forms', summary.publicCount],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">{label}</p>
-                <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
+          {/* Google Form sync source — full dashboard control over the sheet/account */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${syncConfig?.lastError ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900">Google Form applications — auto-sync</p>
+                  <p className="truncate text-xs text-slate-500">
+                    {syncConfig?.lastSyncAt ? `Last synced ${formatDateTime(syncConfig.lastSyncAt)}` : 'Not synced yet'}
+                    {syncConfig?.autoSync !== false ? ` • refreshes automatically every ${syncConfig?.intervalMinutes || 10} min` : ' • auto-sync is OFF'}
+                    {syncConfig?.lastResult ? ` • ${syncConfig.lastResult.totalRows ?? 0} rows in sheet` : ''}
+                  </p>
+                  {syncConfig?.lastError ? <p className="text-xs font-medium text-rose-600">Last sync error: {syncConfig.lastError}</p> : null}
+                </div>
               </div>
-            ))}
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={handleSyncNow} disabled={syncing} className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50">
+                  <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} /> {syncing ? 'Syncing…' : 'Sync now'}
+                </button>
+                {syncConfig?.sheetUrl ? (
+                  <a href={syncConfig.sheetUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
+                    <FileSpreadsheet className="h-3.5 w-3.5" /> Open sheet
+                  </a>
+                ) : null}
+                {syncConfig?.formUrl ? (
+                  <a href={syncConfig.formUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                    <ExternalLink className="h-3.5 w-3.5" /> Open form
+                  </a>
+                ) : null}
+                <button type="button" onClick={() => setShowSyncSettings((open) => !open)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                  <Settings2 className="h-3.5 w-3.5" /> Source settings
+                </button>
+              </div>
+            </div>
+            {showSyncSettings ? (
+              <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 md:grid-cols-2">
+                <label className="text-xs text-slate-700 md:col-span-2">
+                  <span className="mb-1 block font-semibold">Google Sheet URL (responses source — change this to switch account/sheet)</span>
+                  <input value={syncDraft.sheetUrl} onChange={(event) => setSyncDraft((prev) => ({ ...prev, sheetUrl: event.target.value }))} placeholder="https://docs.google.com/spreadsheets/d/..." className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
+                </label>
+                <label className="text-xs text-slate-700 md:col-span-2">
+                  <span className="mb-1 block font-semibold">Google Form URL (what applicants open)</span>
+                  <input value={syncDraft.formUrl} onChange={(event) => setSyncDraft((prev) => ({ ...prev, formUrl: event.target.value }))} placeholder="https://docs.google.com/forms/d/e/.../viewform" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
+                </label>
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <input type="checkbox" checked={syncDraft.autoSync} onChange={(event) => setSyncDraft((prev) => ({ ...prev, autoSync: event.target.checked }))} className="h-4 w-4 rounded border-slate-300" />
+                  Auto-sync when the dashboard opens
+                </label>
+                <label className="text-xs text-slate-700">
+                  <span className="mb-1 block font-semibold">Auto-sync interval (minutes)</span>
+                  <input type="number" min="2" max="1440" value={syncDraft.intervalMinutes} onChange={(event) => setSyncDraft((prev) => ({ ...prev, intervalMinutes: event.target.value }))} className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
+                </label>
+                <div className="md:col-span-2">
+                  <button type="button" onClick={handleSaveSyncConfig} disabled={savingSync} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50">
+                    <Save className="h-3.5 w-3.5" /> {savingSync ? 'Saving…' : 'Save source'}
+                  </button>
+                  <p className="mt-2 text-[11px] text-slate-500">The sheet must be shared as “Anyone with the link (Viewer)”. New form submissions land in the sheet and appear here automatically.</p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Recruitment funnel — click a stage to filter */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900">Recruitment funnel</p>
+              <p className="text-xs text-slate-500">{summary.unreviewed} awaiting first review • {summary.total} total applicants</p>
+            </div>
+            <div className="mt-3 flex flex-wrap items-stretch gap-1.5">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`flex min-w-[86px] flex-col items-center rounded-xl border px-3 py-2 text-center transition ${statusFilter === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
+              >
+                <span className="text-lg font-bold leading-tight">{summary.total}</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide opacity-80">All</span>
+              </button>
+              {STATUS_OPTIONS.map((option, index) => (
+                <React.Fragment key={option.value}>
+                  {index > 0 && index < STATUS_OPTIONS.length - 2 ? <span className="self-center text-slate-300">›</span> : null}
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter((current) => (current === option.value ? 'all' : option.value))}
+                    className={`flex min-w-[86px] flex-col items-center rounded-xl border px-3 py-2 text-center transition ${statusFilter === option.value ? 'ring-2 ring-primary ring-offset-1' : 'hover:opacity-80'} ${STATUS_TONES[option.value] || 'bg-slate-50 text-slate-700 border-slate-200'}`}
+                  >
+                    <span className="text-lg font-bold leading-tight">{funnelCounts[option.value] || 0}</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide opacity-80">{option.label}</span>
+                  </button>
+                </React.Fragment>
+              ))}
+            </div>
           </div>
 
           <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
@@ -622,7 +869,30 @@ export default function TeacherResponsesPanel() {
           </div>
 
           {viewMode === 'table' ? (
-            <ApplicantTable rows={filteredItems} openViewer={openViewer} />
+            <>
+              {selectedIds.length ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-primary/20 bg-primary/5 p-3 text-sm">
+                  <span className="font-semibold text-slate-800">{selectedIds.length} selected</span>
+                  <select value={bulkStage} onChange={(event) => setBulkStage(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-primary">
+                    <option value="">Move to stage…</option>
+                    {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                  <button type="button" onClick={applyBulkStage} disabled={!bulkStage || bulkMoving} className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50">
+                    {bulkMoving ? 'Moving…' : 'Apply'}
+                  </button>
+                  <button type="button" onClick={() => setSelectedIds([])} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Clear</button>
+                </div>
+              ) : null}
+              <ApplicantTable
+                rows={filteredItems}
+                openViewer={openViewer}
+                onQuickStage={handleQuickStage}
+                quickStageId={quickStageId}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelect}
+                onToggleSelectAll={toggleSelectAll}
+              />
+            </>
           ) : (
           <div className="space-y-3">
           {filteredItems.length ? filteredItems.map((item) => {

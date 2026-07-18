@@ -664,6 +664,10 @@ router.put('/template', authenticateToken, requireAdmin, async (req, res) => {
 
 router.get('/responses', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    // Keep the funnel fresh automatically: pull new Google Form submissions
+    // from the linked sheet when the data is stale (no manual import needed).
+    await maybeAutoSyncSheet();
+
     const [publicLeads, dashboardSubmissions] = await Promise.all([
       TeacherContractLead.find({})
         .populate('recruitment.reviewedBy', 'firstName lastName email')
@@ -1981,41 +1985,81 @@ router.put('/capacity-config', authenticateToken, requireAdmin, async (req, res)
 
 // ─── Import applicants from a Google Sheet (CSV) with dedup ────────────────────
 
-router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) => {
+// ---------------------------------------------------------------------------
+// Google Sheet recruitment sync engine
+// The linked Google Form sheet is the single source of truth for applicants.
+// Config (sheet URL, auto-sync) lives in Settings so admins can change the
+// source account/sheet later from the dashboard without a deploy.
+// ---------------------------------------------------------------------------
+const SHEET_SYNC_SETTING_KEY = 'recruitmentSheetSync';
+const DEFAULT_RECRUITMENT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1MNoWHzKYmkyKGQXGtzlDVnKX1C4ZGSdQ_bGK7FbbHwE/edit?gid=282705337';
+const DEFAULT_RECRUITMENT_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfLK5DuXIGA5UNVgNHHhJXpiy9NJRhobB0BOwRFJE38z3rdgA/viewform';
+
+async function getSheetSyncConfig() {
+  const doc = await Setting.findOne({ key: SHEET_SYNC_SETTING_KEY }).lean();
+  const value = doc?.value || {};
+  return {
+    sheetUrl: typeof value.sheetUrl === 'string' && value.sheetUrl.trim() ? value.sheetUrl.trim() : DEFAULT_RECRUITMENT_SHEET_URL,
+    formUrl: typeof value.formUrl === 'string' && value.formUrl.trim() ? value.formUrl.trim() : DEFAULT_RECRUITMENT_FORM_URL,
+    autoSync: value.autoSync !== false,
+    intervalMinutes: Number(value.intervalMinutes) >= 2 ? Number(value.intervalMinutes) : 10,
+    lastSyncAt: value.lastSyncAt || null,
+    lastResult: value.lastResult || null,
+    lastError: value.lastError || null,
+  };
+}
+
+async function saveSheetSyncConfig(patch) {
+  const current = await getSheetSyncConfig();
+  const next = { ...current, ...patch };
+  await Setting.findOneAndUpdate(
+    { key: SHEET_SYNC_SETTING_KEY },
+    { $set: { value: next, description: 'Recruitment Google Sheet auto-sync configuration' } },
+    { upsert: true }
+  );
+  return next;
+}
+
+// Fetch + parse + upsert applicants from the configured Google Sheet.
+// Throws errors carrying `statusCode` so route handlers can surface them.
+async function importApplicantsFromSheetUrl(rawUrl, actorId = null) {
+  const url = String(rawUrl || '').trim();
+  if (!url) {
+    throw Object.assign(new Error('A Google Sheet URL is required.'), { statusCode: 400 });
+  }
+
+  const csvUrl = toGoogleSheetCsvUrl(url);
+  let csvText = '';
   try {
-    const rawUrl = String(req.body?.sheetUrl || req.body?.url || '').trim();
-    if (!rawUrl) return res.status(400).json({ message: 'A Google Sheet URL is required.' });
+    const response = await axios.get(csvUrl, {
+      responseType: 'text',
+      timeout: 20000,
+      maxRedirects: 5,
+      headers: { 'User-Agent': 'Waraqa-Recruitment-Import/1.0' },
+    });
+    csvText = String(response.data || '');
+  } catch (fetchErr) {
+    throw Object.assign(new Error('Could not read the sheet. Make sure it is shared as "Anyone with the link (Viewer)" or published to the web.'), { statusCode: 422 });
+  }
 
-    const csvUrl = toGoogleSheetCsvUrl(rawUrl);
-    let csvText = '';
-    try {
-      const response = await axios.get(csvUrl, {
-        responseType: 'text',
-        timeout: 20000,
-        maxRedirects: 5,
-        headers: { 'User-Agent': 'Waraqa-Recruitment-Import/1.0' },
-      });
-      csvText = String(response.data || '');
-    } catch (fetchErr) {
-      return res.status(422).json({ message: 'Could not read the sheet. Make sure it is shared as "Anyone with the link (Viewer)" or published to the web.' });
-    }
+  if (/<html/i.test(csvText.slice(0, 500))) {
+    throw Object.assign(new Error('The sheet is not publicly readable. Share it as "Anyone with the link" or publish it as CSV.'), { statusCode: 422 });
+  }
 
-    if (/<html/i.test(csvText.slice(0, 500))) {
-      return res.status(422).json({ message: 'The sheet is not publicly readable. Share it as "Anyone with the link" or publish it as CSV.' });
-    }
+  let rows = [];
+  try {
+    rows = parseCsv(csvText, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+  } catch (parseErr) {
+    throw Object.assign(new Error('The sheet could not be parsed as a table. Ensure the first row contains column headers.'), { statusCode: 422 });
+  }
 
-    let rows = [];
-    try {
-      rows = parseCsv(csvText, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
-    } catch (parseErr) {
-      return res.status(422).json({ message: 'The sheet could not be parsed as a table. Ensure the first row contains column headers.' });
-    }
+  if (!rows.length) {
+    return { message: 'No rows found in the sheet.', imported: 0, updated: 0, duplicates: 0, invalid: 0, totalRows: 0 };
+  }
 
-    if (!rows.length) return res.json({ message: 'No rows found in the sheet.', imported: 0, skipped: 0, duplicates: 0, invalid: 0 });
-
-    // Preload existing emails. Leads (imported/public) can be UPDATED on re-import;
-    // real users and dashboard submissions are protected and only counted as duplicates.
-    const [existingLeads, existingSubs, existingUsers] = await Promise.all([
+  // Preload existing emails. Leads (imported/public) can be UPDATED on re-import;
+  // real users and dashboard submissions are protected and only counted as duplicates.
+  const [existingLeads, existingSubs, existingUsers] = await Promise.all([
       TeacherContractLead.find({}).select('personalInfo.email').lean(),
       TeacherContractSubmission.find({}).select('personalInfo.email user').populate('user', 'email').lean(),
       User.find({ role: { $in: ['teacher', 'admin', 'guardian', 'student'] } }).select('email').lean(),
@@ -2190,7 +2234,7 @@ router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) =
           status: 'new',
           reviewed: false,
           tags: ['imported'],
-          history: [{ at: new Date(), actor: req.user._id, action: 'imported', note: 'Imported from Google Sheet' }],
+          history: [{ at: new Date(), actor: actorId || undefined, action: 'imported', note: 'Imported from Google Sheet' }],
         },
       });
     }
@@ -2204,15 +2248,143 @@ router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) =
       updated = (result?.modifiedCount ?? result?.nModified) || toUpdate.length;
     }
 
-    return res.json({
-      message: `Imported ${imported} applicant${imported === 1 ? '' : 's'}${updated ? `, updated ${updated}` : ''}.`,
-      imported,
-      updated,
-      duplicates,
-      invalid,
-      totalRows: rows.length,
-    });
+  return {
+    message: `Imported ${imported} applicant${imported === 1 ? '' : 's'}${updated ? `, updated ${updated}` : ''}.`,
+    imported,
+    updated,
+    duplicates,
+    invalid,
+    totalRows: rows.length,
+  };
+}
+
+// Run one sync against the configured sheet, recording status in settings.
+// A shared in-flight promise prevents concurrent syncs from stacking up.
+let sheetSyncInFlight = null;
+async function runSheetSync(actorId = null) {
+  if (sheetSyncInFlight) return sheetSyncInFlight;
+  sheetSyncInFlight = (async () => {
+    const config = await getSheetSyncConfig();
+    try {
+      const result = await importApplicantsFromSheetUrl(config.sheetUrl, actorId);
+      await saveSheetSyncConfig({
+        lastSyncAt: new Date().toISOString(),
+        lastResult: {
+          imported: result.imported,
+          updated: result.updated,
+          duplicates: result.duplicates,
+          invalid: result.invalid,
+          totalRows: result.totalRows,
+        },
+        lastError: null,
+      });
+      return result;
+    } catch (err) {
+      await saveSheetSyncConfig({ lastSyncAt: new Date().toISOString(), lastError: err.message }).catch(() => {});
+      throw err;
+    }
+  })().finally(() => { sheetSyncInFlight = null; });
+  return sheetSyncInFlight;
+}
+
+// Auto-sync when the dashboard reads applicants and the data is stale.
+// Never throws — a sheet outage must not break the recruitment page.
+async function maybeAutoSyncSheet() {
+  try {
+    const config = await getSheetSyncConfig();
+    if (!config.autoSync || !config.sheetUrl) return null;
+    const last = config.lastSyncAt ? new Date(config.lastSyncAt).getTime() : 0;
+    if (Date.now() - last < config.intervalMinutes * 60 * 1000) return null;
+    return await runSheetSync(null);
+  } catch (err) {
+    console.error('Recruitment sheet auto-sync failed:', err.message);
+    return null;
+  }
+}
+
+// Background refresh so counts stay fresh even without opening the page.
+const sheetSyncTimer = setInterval(() => { maybeAutoSyncSheet(); }, 10 * 60 * 1000);
+if (typeof sheetSyncTimer.unref === 'function') sheetSyncTimer.unref();
+
+// Admin: read the sync configuration + last status.
+router.get('/sheet-sync', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const config = await getSheetSyncConfig();
+    return res.json({ config });
   } catch (error) {
+    console.error('Get sheet sync config error:', error);
+    return res.status(500).json({ message: 'Failed to load sheet sync settings.' });
+  }
+});
+
+// Admin: change the source sheet/form or auto-sync behavior (full dashboard control).
+router.put('/sheet-sync', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const patch = {};
+    if (typeof req.body?.sheetUrl === 'string') {
+      const sheetUrl = req.body.sheetUrl.trim();
+      if (sheetUrl && !/^https:\/\/docs\.google\.com\/spreadsheets\//.test(sheetUrl)) {
+        return res.status(400).json({ message: 'The sheet URL must be a Google Sheets link (docs.google.com/spreadsheets/...).' });
+      }
+      patch.sheetUrl = sheetUrl || DEFAULT_RECRUITMENT_SHEET_URL;
+    }
+    if (typeof req.body?.formUrl === 'string') {
+      const formUrl = req.body.formUrl.trim();
+      if (formUrl && !/^https:\/\/(docs\.google\.com\/forms|forms\.gle)\//.test(formUrl)) {
+        return res.status(400).json({ message: 'The form URL must be a Google Forms link.' });
+      }
+      patch.formUrl = formUrl || DEFAULT_RECRUITMENT_FORM_URL;
+    }
+    if (typeof req.body?.autoSync === 'boolean') patch.autoSync = req.body.autoSync;
+    if (req.body?.intervalMinutes != null) {
+      const interval = Number(req.body.intervalMinutes);
+      if (!Number.isFinite(interval) || interval < 2 || interval > 24 * 60) {
+        return res.status(400).json({ message: 'Auto-sync interval must be between 2 minutes and 24 hours.' });
+      }
+      patch.intervalMinutes = interval;
+    }
+    const config = await saveSheetSyncConfig(patch);
+    return res.json({ config });
+  } catch (error) {
+    console.error('Save sheet sync config error:', error);
+    return res.status(500).json({ message: 'Failed to save sheet sync settings.' });
+  }
+});
+
+// Admin: force a sync right now.
+router.post('/sheet-sync/run', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await runSheetSync(req.user._id);
+    const config = await getSheetSyncConfig();
+    return res.json({ ...result, config });
+  } catch (error) {
+    if (error.statusCode) return res.status(error.statusCode).json({ message: error.message });
+    console.error('Sheet sync run error:', error);
+    return res.status(500).json({ message: 'Failed to sync applicants from the sheet.' });
+  }
+});
+
+// Legacy manual import (kept for compatibility): also saves the URL as the new source.
+router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const rawUrl = String(req.body?.sheetUrl || req.body?.url || '').trim();
+    if (!rawUrl) return res.status(400).json({ message: 'A Google Sheet URL is required.' });
+    const result = await importApplicantsFromSheetUrl(rawUrl, req.user._id);
+    await saveSheetSyncConfig({
+      sheetUrl: rawUrl,
+      lastSyncAt: new Date().toISOString(),
+      lastResult: {
+        imported: result.imported,
+        updated: result.updated,
+        duplicates: result.duplicates,
+        invalid: result.invalid,
+        totalRows: result.totalRows,
+      },
+      lastError: null,
+    }).catch(() => {});
+    return res.json(result);
+  } catch (error) {
+    if (error.statusCode) return res.status(error.statusCode).json({ message: error.message });
     console.error('Import sheet error:', error);
     return res.status(500).json({ message: 'Failed to import applicants from the sheet.' });
   }

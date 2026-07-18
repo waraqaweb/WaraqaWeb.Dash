@@ -197,6 +197,22 @@ export async function importApplicantsFromSheet(sheetUrl) {
   return data;
 }
 
+// Google Sheet auto-sync configuration (source of truth for applicants).
+export async function getSheetSyncConfig() {
+  const { data } = await api.get(`${BASE}/sheet-sync`);
+  return data.config || null;
+}
+
+export async function saveSheetSyncConfig(payload) {
+  const { data } = await api.put(`${BASE}/sheet-sync`, payload);
+  return data.config || null;
+}
+
+export async function runSheetSyncNow() {
+  const { data } = await api.post(`${BASE}/sheet-sync/run`);
+  return data;
+}
+
 export async function getPendingCandidateEmails() {
   const { data } = await api.get(`${BASE}/pending-emails`);
   return data;

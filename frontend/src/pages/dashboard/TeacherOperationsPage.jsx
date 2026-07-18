@@ -57,6 +57,7 @@ import {
   setTeacherAcceptingStudents,
 } from '../../api/teacherContract';
 import { STANDARD_SUBJECTS } from '../../utils/subjectStandardization';
+import { bumpDomainVersion } from '../../utils/sessionCache';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: TrendingUp },
@@ -622,6 +623,10 @@ export default function TeacherOperationsPage({ isActive }) {
       setImportResult(null);
       const res = await importApplicantsFromSheet(url);
       setImportResult(res);
+      // Invalidate the applicant list cache so the pipeline reflects imports/updates.
+      if ((res?.imported > 0) || (res?.updated > 0)) {
+        bumpDomainVersion('teacher-contract');
+      }
       // Refresh interview list if we imported and are on that tab
       if (res?.imported > 0 && activeTab === 'interviews') {
         try {
@@ -1819,7 +1824,7 @@ export default function TeacherOperationsPage({ isActive }) {
               <h3 className="text-sm font-semibold text-foreground">Import applicants from Google Sheet</h3>
               <button type="button" onClick={() => setShowImportModal(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
             </div>
-            <p className="mb-2 text-[11px] leading-5 text-muted-foreground">Paste a Google Sheet link shared as <span className="font-medium text-foreground">"Anyone with the link (Viewer)"</span> or published to the web. The first row must contain headers (email, name, phone, gender, subjects…). Applicants are de-duplicated by email against existing leads, submissions, and users.</p>
+            <p className="mb-2 text-[11px] leading-5 text-muted-foreground">Paste a Google Sheet link shared as <span className="font-medium text-foreground">"Anyone with the link (Viewer)"</span> or published to the web. The first row must contain headers. All application columns are mapped automatically (personal info, education, experience, technical skills, availability) including Drive links to uploaded files (resume, ID, education docs, audio, recitation, topic explanation). Re-importing the same sheet backfills existing imported applicants. De-duplicated by email against existing leads, submissions, and users.</p>
             <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Sheet URL</span>
               <input value={importUrl} onChange={(e) => setImportUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm" />
             </label>
@@ -1827,7 +1832,7 @@ export default function TeacherOperationsPage({ isActive }) {
             {importResult ? (
               <div className="mt-2 rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
                 <p className="font-semibold">{importResult.message}</p>
-                <p className="mt-0.5 text-green-700">Imported {importResult.imported} • Duplicates skipped {importResult.duplicates} • Invalid {importResult.invalid} • Rows read {importResult.totalRows}</p>
+                <p className="mt-0.5 text-green-700">Imported {importResult.imported} • Updated {importResult.updated || 0} • Duplicates skipped {importResult.duplicates} • Invalid {importResult.invalid} • Rows read {importResult.totalRows}</p>
               </div>
             ) : null}
             <div className="mt-3 flex flex-wrap justify-end gap-1.5">

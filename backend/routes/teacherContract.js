@@ -2011,56 +2011,171 @@ router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) =
 
     if (!rows.length) return res.json({ message: 'No rows found in the sheet.', imported: 0, skipped: 0, duplicates: 0, invalid: 0 });
 
-    // Preload existing emails for dedup (leads + submissions + users).
+    // Preload existing emails. Leads (imported/public) can be UPDATED on re-import;
+    // real users and dashboard submissions are protected and only counted as duplicates.
     const [existingLeads, existingSubs, existingUsers] = await Promise.all([
       TeacherContractLead.find({}).select('personalInfo.email').lean(),
       TeacherContractSubmission.find({}).select('personalInfo.email user').populate('user', 'email').lean(),
       User.find({ role: { $in: ['teacher', 'admin', 'guardian', 'student'] } }).select('email').lean(),
     ]);
-    const existingEmails = new Set();
-    existingLeads.forEach((l) => { if (l?.personalInfo?.email) existingEmails.add(String(l.personalInfo.email).toLowerCase()); });
+    const leadIdByEmail = new Map();
+    existingLeads.forEach((l) => { if (l?.personalInfo?.email) leadIdByEmail.set(String(l.personalInfo.email).toLowerCase(), l._id); });
+    const protectedEmails = new Set();
     existingSubs.forEach((s) => {
-      if (s?.personalInfo?.email) existingEmails.add(String(s.personalInfo.email).toLowerCase());
-      if (s?.user?.email) existingEmails.add(String(s.user.email).toLowerCase());
+      if (s?.personalInfo?.email) protectedEmails.add(String(s.personalInfo.email).toLowerCase());
+      if (s?.user?.email) protectedEmails.add(String(s.user.email).toLowerCase());
     });
-    existingUsers.forEach((u) => { if (u?.email) existingEmails.add(String(u.email).toLowerCase()); });
+    existingUsers.forEach((u) => { if (u?.email) protectedEmails.add(String(u.email).toLowerCase()); });
+
+    const splitList = (value) => String(value || '').split(/[,;/\n]+/).map((x) => x.trim()).filter(Boolean);
+    const asFile = (url) => (url ? { url } : {});
+    const normalizeEligibility = (text) => {
+      const lower = String(text || '').toLowerCase();
+      if (!lower) return '';
+      const hasAzhar = lower.includes('azhar') || lower.includes('أزهر') || lower.includes('ازهر');
+      const hasIjazah = lower.includes('ijaz') || lower.includes('إجاز') || lower.includes('اجاز');
+      if (hasAzhar && hasIjazah) return 'both';
+      if (hasAzhar) return 'al_azhar';
+      if (hasIjazah) return 'ijazah';
+      return 'other';
+    };
+
+    // Build the full personal/application/verification payload from one sheet row.
+    const buildRecordFromRow = (row, email, fullName) => {
+      const val = (cands) => pickColumn(row, cands);
+      const phone = val(['phonenumber', 'phone', 'mobile']);
+      const whatsapp = val(['whatsappnumber', 'whatsapp']) || phone;
+      const gender = val(['gender', 'sex']).toLowerCase();
+      const nationality = val(['nationality']);
+      const country = val(['country']) || nationality;
+      const birthRaw = val(['dateofbirth', 'birthdate', 'birthday', 'dob', 'birth']);
+      const occupation = val(['occupation']);
+      const meetingLink = val(['meetinglink', 'skypeid', 'skype', 'zoomlink', 'preferredmeeting']);
+      let street = val(['streetaddress', 'houseaddress', 'homeaddress', 'address']);
+      if (street.includes('@')) street = '';
+      const city = val(['city']);
+      const positions = val(['positionsinterested', 'positioninterested', 'whichposition', 'positions']);
+      const summary = val(['tellus', 'wantustoknow', 'aboutyou', 'aboutyourself', 'profilesummary', 'summary', 'about', 'experience']);
+      const specialRequests = val(['specialrequest', 'questionsorspecial', 'anyquestions', 'requests']);
+      const eligibility = normalizeEligibility(val(['azhar', 'ijazah', 'ijaza', 'eligibility', 'graduatefrom']));
+      const graduation = val(['graduationstatus', 'graduation', 'graduated']);
+      const faculty = val(['facultyanduniversity', 'faculty', 'university']);
+      const degree = val(['degree']);
+      const certificates = val(['additionalcertificate', 'certificate']);
+      const teachingExp = val(['workexperienceinteaching', 'teachingexperience', 'experienceinteaching', 'yearsofexperience']);
+      const currentJob = val(['currentjob', 'yourcurrentjob']);
+      const classTools = val(['whatdoyouuseforclasses', 'useforclasses', 'classtools', 'usuallyforclasses']);
+      const meetingApps = val(['videomeetingapps', 'meetingapps', 'whichvideomeeting', 'whichmeetingapps']);
+      const officeProducts = val(['microsoftoffice', 'officeproducts', 'whichproducts']);
+      const subjectsCanTeach = val(['subjectscanteach', 'whichsubjects', 'canteach']);
+      const availability = val(['preferredavailability', 'availability', 'availablehours']);
+      const resumeUrl = val(['coverletterorresume', 'resume', 'coverletter', 'cv']);
+      const identityUrl = val(['nationalidorpassport', 'nationalid', 'passport', 'identitydocument', 'idcard']);
+      const educationDocUrl = val(['educationaldocument', 'educationdocument', 'educationcertificate', 'educationaldocuments']);
+      const photoUrl = val(['profilephoto', 'personalphoto', 'photo']);
+      const introUrl = val(['introduceyourself', 'introductionaudio', 'introduction', 'audioclip', 'introaudio']);
+      const recitationUrl = val(['quranicrecitation', 'quranrecitation', 'recitation']);
+      const explanationUrl = val(['explainatopic', 'teachingexplanation', 'explaintopic', 'topicexplanation']);
+
+      let birthDate = null;
+      if (birthRaw) { const d = new Date(birthRaw); if (!Number.isNaN(d.getTime())) birthDate = d; }
+
+      return {
+        personalInfo: {
+          fullName: fullName || email,
+          email,
+          birthDate,
+          mobileNumber: phone,
+          whatsappNumber: whatsapp,
+          meetingLink,
+          gender: gender.includes('female') ? 'female' : (gender.includes('male') ? 'male' : ''),
+          nationality: nationality || country,
+          occupation,
+          address: { street, city, country: country || 'Egypt' },
+        },
+        application: {
+          positionsInterested: splitList(positions),
+          education: {
+            eligibilityPath: eligibility,
+            graduationStatus: graduation,
+            facultyUniversity: faculty,
+            degree,
+            additionalCertificates: certificates,
+          },
+          experience: {
+            teachingExperienceLevel: teachingExp,
+            currentJob,
+            profileSummary: summary,
+            specialRequests,
+          },
+          technicalSkills: {
+            classTools,
+            meetingApps: splitList(meetingApps),
+            officeProducts: splitList(officeProducts),
+          },
+          teachingProfile: {
+            subjectsCanTeach: splitList(subjectsCanTeach),
+            preferredAvailability: availability,
+            alternativeAvailability: '',
+          },
+          files: {
+            resume: asFile(resumeUrl),
+            englishIntroduction: asFile(introUrl),
+            quranRecitation: asFile(recitationUrl),
+            teachingTopicExplanation: asFile(explanationUrl),
+          },
+        },
+        verification: {
+          identityDocument: asFile(identityUrl),
+          educationDocuments: asFile(educationDocUrl),
+          profilePhoto: asFile(photoUrl),
+          introEssay: '',
+        },
+      };
+    };
 
     let imported = 0;
+    let updated = 0;
     let duplicates = 0;
     let invalid = 0;
     const seenInBatch = new Set();
     const toInsert = [];
+    const toUpdate = [];
 
     for (const row of rows) {
       const email = pickColumn(row, ['email', 'e-mail', 'emailaddress']).toLowerCase();
       const fullName = pickColumn(row, ['fullname', 'name', 'applicantname']);
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { invalid += 1; continue; }
-      if (existingEmails.has(email) || seenInBatch.has(email)) { duplicates += 1; continue; }
+      if (seenInBatch.has(email)) { duplicates += 1; continue; }
       seenInBatch.add(email);
 
-      const phone = pickColumn(row, ['phone', 'whatsapp', 'mobile', 'phonenumber']);
-      const gender = pickColumn(row, ['gender', 'sex']).toLowerCase();
-      const country = pickColumn(row, ['country', 'nationality']);
-      const subjects = pickColumn(row, ['subjects', 'subject', 'positions', 'positionsinterested']);
-      const summary = pickColumn(row, ['summary', 'about', 'experience', 'profile', 'notes', 'message']);
+      const record = buildRecordFromRow(row, email, fullName);
+
+      if (leadIdByEmail.has(email)) {
+        // Backfill an existing imported/public lead without touching admin recruitment review.
+        toUpdate.push({
+          updateOne: {
+            filter: { _id: leadIdByEmail.get(email) },
+            update: {
+              $set: {
+                personalInfo: record.personalInfo,
+                application: record.application,
+                verification: record.verification,
+              },
+            },
+          },
+        });
+        continue;
+      }
+      if (protectedEmails.has(email)) { duplicates += 1; continue; }
 
       toInsert.push({
         source: 'public',
         status: 'submitted',
         submittedAt: new Date(),
-        personalInfo: {
-          fullName: fullName || email,
-          email,
-          mobileNumber: phone,
-          whatsappNumber: phone,
-          gender: gender === 'female' ? 'female' : (gender === 'male' ? 'male' : ''),
-          nationality: country,
-          address: { country: country || 'Egypt' },
-        },
-        application: {
-          positionsInterested: subjects ? subjects.split(/[,;/]/).map((s) => s.trim()).filter(Boolean) : [],
-          experience: { profileSummary: summary },
-        },
+        personalInfo: record.personalInfo,
+        application: record.application,
+        verification: record.verification,
         recruitment: {
           status: 'new',
           reviewed: false,
@@ -2074,10 +2189,15 @@ router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) =
       const inserted = await TeacherContractLead.insertMany(toInsert, { ordered: false });
       imported = inserted.length;
     }
+    if (toUpdate.length) {
+      const result = await TeacherContractLead.bulkWrite(toUpdate, { ordered: false });
+      updated = (result?.modifiedCount ?? result?.nModified) || toUpdate.length;
+    }
 
     return res.json({
-      message: `Imported ${imported} applicant${imported === 1 ? '' : 's'}.`,
+      message: `Imported ${imported} applicant${imported === 1 ? '' : 's'}${updated ? `, updated ${updated}` : ''}.`,
       imported,
+      updated,
       duplicates,
       invalid,
       totalRows: rows.length,

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, RefreshCw, Save, Search, UserPlus, UserRound } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, Play, RefreshCw, Save, Search, UserPlus, UserRound, X } from 'lucide-react';
 import { convertCandidateToTeacher, listRecruitmentCampaigns, listTeacherContractResponses, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
@@ -153,29 +153,29 @@ const createDraftFromItem = (item) => ({
 
 const getStatusLabel = (value) => STATUS_OPTIONS.find((option) => option.value === value)?.label || 'New';
 
-const openAsset = async (url, mimeType = '') => {
-  if (!url) return;
+const getDriveId = (url) => {
+  const s = String(url || '');
+  let m = s.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  return '';
+};
 
-  if (!String(url).startsWith('data:')) {
-    window.open(url, '_blank', 'noopener,noreferrer');
-    return;
+// Decide how to render a file inline (image/audio/video player or embedded iframe).
+const resolveMedia = (url, mimeType = '') => {
+  const raw = String(url || '');
+  const lower = raw.toLowerCase();
+  if (/drive\.google\.com|docs\.google\.com/.test(lower)) {
+    const driveId = getDriveId(raw);
+    if (driveId) return { kind: 'iframe', src: `https://drive.google.com/file/d/${driveId}/preview`, download: raw };
+    return { kind: 'iframe', src: raw, download: raw };
   }
-
-  const popup = window.open('', '_blank');
-  if (!popup) return;
-  popup.document.write('<p style="font-family: sans-serif; padding: 16px;">Opening file…</p>');
-
-  try {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    popup.location.replace(blobUrl);
-    popup.addEventListener('beforeunload', () => {
-      URL.revokeObjectURL(blobUrl);
-    }, { once: true });
-  } catch {
-    popup.close();
-  }
+  const type = String(mimeType || '').toLowerCase();
+  if (type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/i.test(lower)) return { kind: 'image', src: raw, download: raw };
+  if (type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|oga)(\?|$)/i.test(lower)) return { kind: 'audio', src: raw, download: raw };
+  if (type.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv)(\?|$)/i.test(lower)) return { kind: 'video', src: raw, download: raw };
+  return { kind: 'iframe', src: raw, download: raw };
 };
 
 export default function TeacherResponsesPanel() {
@@ -192,6 +192,12 @@ export default function TeacherResponsesPanel() {
   const [campaigns, setCampaigns] = useState([]);
   const [convertingId, setConvertingId] = useState('');
   const [convertForm, setConvertForm] = useState({});
+  const [viewer, setViewer] = useState(null);
+
+  const openViewer = (label, url, mimeType) => {
+    if (!url) return;
+    setViewer({ label, ...resolveMedia(url, mimeType) });
+  };
 
   const load = async () => {
     try {
@@ -340,6 +346,51 @@ export default function TeacherResponsesPanel() {
     });
   }, [campaignFilter, items, query, statusFilter]);
 
+  const exportToExcel = () => {
+    const rows = filteredItems;
+    if (!rows.length) return;
+    const headers = [
+      'Name', 'Email', 'Phone', 'WhatsApp', 'Gender', 'Nationality', 'Occupation', 'Birth date', 'Country', 'City', 'Street',
+      'Positions', 'Subjects can teach', 'Eligibility', 'Graduation', 'Faculty/University', 'Degree', 'Certificates',
+      'Teaching experience', 'Current job', 'Class tools', 'Meeting apps', 'Office tools', 'Preferred availability', 'Alternative availability',
+      'Profile summary', 'Special requests', 'Stage', 'Reviewed', 'Tags', 'Overall', 'Submitted at',
+      'Resume', 'Identity', 'Education docs', 'Photo', 'English intro', 'Quran recitation', 'Teaching explanation',
+    ];
+    const esc = (value) => {
+      const s = value == null ? '' : String(value);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const line = (item) => {
+      const p = item.personalInfo || {};
+      const a = item.application || {};
+      const r = item.recruitment || {};
+      const v = item.verification || {};
+      return [
+        p.fullName || item.contract?.fullName, p.email, p.mobileNumber, p.whatsappNumber, p.gender, p.nationality, p.occupation,
+        p.birthDate ? new Date(p.birthDate).toISOString().slice(0, 10) : '', p.address?.country, p.address?.city, p.address?.street,
+        (a.positionsInterested || []).join('; '), (a.teachingProfile?.subjectsCanTeach || []).join('; '),
+        a.education?.eligibilityPath, a.education?.graduationStatus, a.education?.facultyUniversity, a.education?.degree, a.education?.additionalCertificates,
+        a.experience?.teachingExperienceLevel, a.experience?.currentJob, a.technicalSkills?.classTools,
+        (a.technicalSkills?.meetingApps || []).join('; '), (a.technicalSkills?.officeProducts || []).join('; '),
+        a.teachingProfile?.preferredAvailability, a.teachingProfile?.alternativeAvailability, a.experience?.profileSummary, a.experience?.specialRequests,
+        getStatusLabel(r.status || item.status), r.reviewed ? 'Yes' : 'No', (r.tags || []).join('; '), r.overall?.label,
+        item.submittedAt ? new Date(item.submittedAt).toISOString() : '',
+        a.files?.resume?.url, v.identityDocument?.url, v.educationDocuments?.url, v.profilePhoto?.url,
+        a.files?.englishIntroduction?.url, a.files?.quranRecitation?.url, a.files?.teachingTopicExplanation?.url,
+      ].map(esc).join(',');
+    };
+    const csv = `\uFEFF${[headers.join(','), ...rows.map(line)].join('\r\n')}`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = `waraqa-applicants-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(href);
+  };
+
   return (
     <div className="space-y-6">
       {notice ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div> : null}
@@ -398,6 +449,10 @@ export default function TeacherResponsesPanel() {
               <button type="button" onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
                 <RefreshCw className="h-4 w-4" />
                 <span>Refresh</span>
+              </button>
+              <button type="button" onClick={exportToExcel} disabled={!filteredItems.length} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+                <FileSpreadsheet className="h-4 w-4" />
+                <span>Export Excel</span>
               </button>
             </div>
           </div>
@@ -461,7 +516,7 @@ export default function TeacherResponsesPanel() {
                           ].map(([label, url, mimeType]) => (
                             <div key={label} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
                               <span>{label}</span>
-                              {url ? <button type="button" onClick={() => openAsset(url, mimeType)} className="inline-flex items-center gap-1 text-primary hover:underline">Open <ExternalLink className="h-3.5 w-3.5" /></button> : <span className="text-slate-400">—</span>}
+                              {url ? <button type="button" onClick={() => openViewer(label, url, mimeType)} className="inline-flex items-center gap-1 text-primary hover:underline"><Play className="h-3.5 w-3.5" /> View</button> : <span className="text-slate-400">—</span>}
                             </div>
                           ))}
                         </div>
@@ -512,7 +567,7 @@ export default function TeacherResponsesPanel() {
                         ].map(([label, url, mimeType]) => (
                           <div key={label} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
                             <span>{label}</span>
-                            {url ? <button type="button" onClick={() => openAsset(url, mimeType)} className="inline-flex items-center gap-1 text-primary hover:underline">Open <ExternalLink className="h-3.5 w-3.5" /></button> : <span className="text-slate-400">—</span>}
+                            {url ? <button type="button" onClick={() => openViewer(label, url, mimeType)} className="inline-flex items-center gap-1 text-primary hover:underline"><Play className="h-3.5 w-3.5" /> View</button> : <span className="text-slate-400">—</span>}
                           </div>
                         ))}
                       </div>
@@ -627,6 +682,31 @@ export default function TeacherResponsesPanel() {
           }) : <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">No teacher responses found for the current filters.</div>}
           </div>
         </>
+      ) : null}
+
+      {viewer ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setViewer(null)}>
+          <div className="relative w-full max-w-3xl rounded-2xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="truncate text-sm font-semibold text-slate-900">{viewer.label}</p>
+              <div className="flex items-center gap-2">
+                <a href={viewer.download} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Open <ExternalLink className="h-3.5 w-3.5" /></a>
+                <button type="button" onClick={() => setViewer(null)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50"><X className="h-4 w-4" /></button>
+              </div>
+            </div>
+            <div className="flex max-h-[70vh] items-center justify-center overflow-auto rounded-xl bg-slate-50 p-2">
+              {viewer.kind === 'image' ? (
+                <img src={viewer.src} alt={viewer.label} className="max-h-[68vh] w-auto object-contain" />
+              ) : viewer.kind === 'audio' ? (
+                <audio src={viewer.src} controls autoPlay className="w-full" />
+              ) : viewer.kind === 'video' ? (
+                <video src={viewer.src} controls autoPlay className="max-h-[68vh] w-full" />
+              ) : (
+                <iframe title={viewer.label} src={viewer.src} className="h-[68vh] w-full rounded-lg" allow="autoplay" />
+              )}
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

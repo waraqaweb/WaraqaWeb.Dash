@@ -147,6 +147,8 @@ const TENURE_FILTER_OPTIONS = [
   { value: 'senior', label: '2+ years' },
 ];
 
+const GOOGLE_TEACHER_APPLICATION_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfLK5DuXIGA5UNVgNHHhJXpiy9NJRhobB0BOwRFJE38z3rdgA/viewform';
+
 // Left-nav sections for the unified Stats & Business Intelligence view.
 const STATS_NAV_GROUPS = [
   {
@@ -789,7 +791,7 @@ export default function TeacherOperationsPage({ isActive }) {
 
   // Build a ready-to-share recruitment message from the campaign's public copy.
   const buildCampaignMessage = (campaign) => {
-    const link = `${window.location.origin}/teacher-contract?campaign=${campaign.slug}`;
+    const link = GOOGLE_TEACHER_APPLICATION_FORM_URL;
     const headline = (campaign.publicHeadline || campaign.title || "We're hiring teachers at Waraqa").trim();
     const description = (campaign.publicDescription || '').trim();
     const parts = [headline];
@@ -1002,8 +1004,8 @@ export default function TeacherOperationsPage({ isActive }) {
                 <div className="rounded-xl border border-border bg-background p-2.5">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Application form</p>
                   <div className="mt-1 flex items-center gap-1.5">
-                    <input readOnly value={`${window.location.origin}/teacher-contract`} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
-                    <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Application link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
+                    <input readOnly value={GOOGLE_TEACHER_APPLICATION_FORM_URL} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
+                    <button type="button" onClick={() => handleCopy(GOOGLE_TEACHER_APPLICATION_FORM_URL, 'Application link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
                   </div>
                 </div>
                 <div className="rounded-xl border border-border bg-background p-2.5">
@@ -1736,8 +1738,8 @@ export default function TeacherOperationsPage({ isActive }) {
             <div className="mb-2 rounded-xl border border-border bg-background p-2.5">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Generic application link</p>
               <div className="mt-1 flex items-center gap-1.5">
-                <input readOnly value={`${window.location.origin}/teacher-contract`} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
-                <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Application link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
+                <input readOnly value={GOOGLE_TEACHER_APPLICATION_FORM_URL} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
+                <button type="button" onClick={() => handleCopy(GOOGLE_TEACHER_APPLICATION_FORM_URL, 'Application link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
               </div>
               {copyNotice ? <p className="mt-1 text-[11px] text-muted-foreground">{copyNotice}</p> : null}
             </div>
@@ -1750,7 +1752,7 @@ export default function TeacherOperationsPage({ isActive }) {
                       <p className="text-[11px] text-muted-foreground">/{campaign.slug} • {campaign.status} • {campaign.applicationCount} apps</p>
                     </div>
                     <div className="flex shrink-0 gap-1">
-                      <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract?campaign=${campaign.slug}`, 'Campaign link')} title="Copy application link" className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => handleCopy(GOOGLE_TEACHER_APPLICATION_FORM_URL, 'Application link')} title="Copy application link" className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /></button>
                       <button type="button" onClick={() => handleCopy(buildCampaignMessage(campaign), 'Outreach message')} title="Copy outreach message" className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><MessageCircle className="h-3.5 w-3.5" /> Message</button>
                       <button type="button" onClick={() => startEditCampaign(campaign)} title="Edit campaign" className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Edit3 className="h-3.5 w-3.5" /></button>
                     </div>

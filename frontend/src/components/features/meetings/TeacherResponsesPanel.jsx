@@ -230,9 +230,6 @@ function FieldRow({ label, value, wide = false }) {
 function FileActionGrid({ item, openViewer }) {
   const files = [
     ['Resume', item.application?.files?.resume],
-    ['English intro', item.application?.files?.englishIntroduction],
-    ['Quran recitation', item.application?.files?.quranRecitation],
-    ['Teaching explanation', item.application?.files?.teachingTopicExplanation],
   ];
   return (
     <div className="flex flex-wrap gap-2">
@@ -272,11 +269,7 @@ function CandidateFacts({ item, openViewer }) {
         <FieldRow label="Certificates" value={a.education?.additionalCertificates} wide />
         <FieldRow label="Teaching experience" value={a.experience?.teachingExperienceLevel} />
         <FieldRow label="Current job" value={a.experience?.currentJob} wide />
-        <FieldRow label="Class tools" value={a.technicalSkills?.classTools} wide />
-        <FieldRow label="Meeting apps" value={a.technicalSkills?.meetingApps} />
-        <FieldRow label="Office tools" value={a.technicalSkills?.officeProducts} />
         <FieldRow label="What she wants us to know" value={a.experience?.profileSummary} wide />
-        <FieldRow label="Extra sheet notes" value={a.experience?.specialRequests} wide />
       </dl>
     </div>
   );
@@ -288,9 +281,6 @@ function ApplicantTable({ rows, openViewer }) {
   const fileButtons = (item) => {
     const files = [
       ['Resume', item.application?.files?.resume],
-      ['English intro', item.application?.files?.englishIntroduction],
-      ['Quran recitation', item.application?.files?.quranRecitation],
-      ['Teaching explanation', item.application?.files?.teachingTopicExplanation],
     ].filter(([, file]) => file?.url);
     if (!files.length) return <span className="text-slate-400">—</span>;
     return (
@@ -303,7 +293,7 @@ function ApplicantTable({ rows, openViewer }) {
       </div>
     );
   };
-  const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'Class tools', 'Meeting apps', 'Office tools', 'Summary', 'Stage', 'Contact', 'Files'];
+  const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'What we should know', 'Stage', 'Contact', 'Resume'];
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
       <table className="w-full min-w-[1600px] border-collapse text-left text-xs text-slate-700">
@@ -334,9 +324,6 @@ function ApplicantTable({ rows, openViewer }) {
                 <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell(a.education?.additionalCertificates)}</td>
                 <td className="min-w-[160px] border-b border-slate-100 px-3 py-2">{cell(a.experience?.teachingExperienceLevel)}</td>
                 <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell(a.experience?.currentJob)}</td>
-                <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell(a.technicalSkills?.classTools)}</td>
-                <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell((a.technicalSkills?.meetingApps || []).join(', '))}</td>
-                <td className="min-w-[140px] border-b border-slate-100 px-3 py-2">{cell((a.technicalSkills?.officeProducts || []).join(', '))}</td>
                 <td className="min-w-[220px] whitespace-pre-wrap border-b border-slate-100 px-3 py-2">{cell(a.experience?.profileSummary)}</td>
                 <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{getStatusLabel(item?.recruitment?.status || item.status)}</td>
                 <td className="min-w-[150px] border-b border-slate-100 px-3 py-2"><ContactActions item={item} compact /></td>
@@ -528,9 +515,9 @@ export default function TeacherResponsesPanel() {
     const headers = [
       'Name', 'Email', 'Phone', 'WhatsApp', 'Gender', 'Birth date', 'Address',
       'Positions', 'Graduation', 'Faculty/University', 'Degree', 'Certificates',
-      'Teaching experience', 'Current job', 'Class tools', 'Meeting apps', 'Office tools',
+      'Teaching experience', 'Current job',
       'Profile summary', 'Stage', 'Reviewed', 'Tags', 'Overall', 'Submitted at',
-      'Resume', 'English intro', 'Quran recitation', 'Teaching explanation',
+      'Resume',
     ];
     const esc = (value) => {
       const s = value == null ? '' : String(value);
@@ -546,12 +533,11 @@ export default function TeacherResponsesPanel() {
         p.birthDate ? new Date(p.birthDate).toISOString().slice(0, 10) : '', address,
         (a.positionsInterested || []).join('; '),
         a.education?.graduationStatus, a.education?.facultyUniversity, a.education?.degree, a.education?.additionalCertificates,
-        a.experience?.teachingExperienceLevel, a.experience?.currentJob, a.technicalSkills?.classTools,
-        (a.technicalSkills?.meetingApps || []).join('; '), (a.technicalSkills?.officeProducts || []).join('; '),
+        a.experience?.teachingExperienceLevel, a.experience?.currentJob,
         a.experience?.profileSummary,
         getStatusLabel(r.status || item.status), r.reviewed ? 'Yes' : 'No', (r.tags || []).join('; '), r.overall?.label,
         item.submittedAt ? new Date(item.submittedAt).toISOString() : '',
-        a.files?.resume?.url, a.files?.englishIntroduction?.url, a.files?.quranRecitation?.url, a.files?.teachingTopicExplanation?.url,
+        a.files?.resume?.url,
       ].map(esc).join(',');
     };
     const csv = `\uFEFF${[headers.join(','), ...rows.map(line)].join('\r\n')}`;

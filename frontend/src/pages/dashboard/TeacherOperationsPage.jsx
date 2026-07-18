@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Archive,
   BarChart3,
   BriefcaseBusiness,
   CalendarClock,
@@ -66,6 +67,9 @@ const TABS = [
   { id: 'interviews', label: 'Interviews', icon: CalendarClock },
   { id: 'stats', label: 'Stats & BI', icon: BarChart3 },
 ];
+
+// Remember which recruitment tab the admin was on across visits.
+const TAB_STORAGE_KEY = 'waraqa.teacherOps.activeTab';
 
 const BATCH_STATUS_COLORS = {
   draft: 'text-muted-foreground',
@@ -216,7 +220,17 @@ function SectionCard({ title, children, className = '' }) {
 
 export default function TeacherOperationsPage({ isActive }) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem(TAB_STORAGE_KEY);
+      return TABS.some((tab) => tab.id === saved) ? saved : 'overview';
+    } catch {
+      return 'overview';
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(TAB_STORAGE_KEY, activeTab); } catch { /* ignore */ }
+  }, [activeTab]);
   const [summary, setSummary] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState('');
@@ -232,6 +246,7 @@ export default function TeacherOperationsPage({ isActive }) {
   });
   const [showCampaignModal, setShowCampaignModal] = useState(false);
   const [showCampaignDrawer, setShowCampaignDrawer] = useState(false);
+  const [showArchivedCampaigns, setShowArchivedCampaigns] = useState(false);
 
   // Training batch state
   const [batches, setBatches] = useState([]);
@@ -868,6 +883,33 @@ export default function TeacherOperationsPage({ isActive }) {
     }
   };
 
+  // Soft-delete: archived campaigns disappear from the list but stay in the database.
+  const setCampaignArchived = async (campaign, archived) => {
+    if (archived && !window.confirm(`Archive campaign "${campaign.title}"? It will be hidden from the list but kept for records.`)) return;
+    try {
+      setCampaignError('');
+      const saved = await updateRecruitmentCampaign(campaign.id, {
+        title: campaign.title,
+        slug: campaign.slug,
+        status: archived ? 'archived' : 'draft',
+        opensAt: campaign.opensAt || null,
+        closesAt: campaign.closesAt || null,
+        targetApplicants: campaign.targetApplicants,
+        targetHires: campaign.targetHires,
+        roles: { male: Boolean(campaign.roles?.male), female: Boolean(campaign.roles?.female) },
+        subjects: Array.isArray(campaign.subjects) ? campaign.subjects.join(', ') : (campaign.subjects || ''),
+        preferredWindow: campaign.preferredWindow || '',
+        publicHeadline: campaign.publicHeadline || '',
+        publicDescription: campaign.publicDescription || '',
+        internalNotes: campaign.internalNotes || '',
+        reopenLimit: campaign.reopenLimit,
+      });
+      if (saved) setCampaigns((prev) => prev.map((entry) => (entry.id === campaign.id ? saved : entry)));
+    } catch (error) {
+      setCampaignError(error?.response?.data?.message || 'Failed to update campaign.');
+    }
+  };
+
   const liveOverviewCards = useMemo(() => {
     const teachers = summary?.teachers || {};
     const pipeline = summary?.pipeline || {};
@@ -1083,7 +1125,9 @@ export default function TeacherOperationsPage({ isActive }) {
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-3 py-2 shadow-sm">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <BriefcaseBusiness className="h-4 w-4 text-primary" />
-                <span><span className="font-semibold text-foreground">{campaigns.length}</span> campaign{campaigns.length === 1 ? '' : 's'}</span>
+                {(() => { const active = campaigns.filter((c) => c.status !== 'archived').length; return (
+                  <span><span className="font-semibold text-foreground">{active}</span> campaign{active === 1 ? '' : 's'}</span>
+                ); })()}
                 {campaignLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -1744,7 +1788,7 @@ export default function TeacherOperationsPage({ isActive }) {
               {copyNotice ? <p className="mt-1 text-[11px] text-muted-foreground">{copyNotice}</p> : null}
             </div>
             <div className="space-y-2">
-              {(campaigns || []).map((campaign) => (
+              {(campaigns || []).filter((campaign) => (showArchivedCampaigns ? campaign.status === 'archived' : campaign.status !== 'archived')).map((campaign) => (
                 <div key={campaign.id} className="rounded-xl border border-border bg-background p-2.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -1755,6 +1799,7 @@ export default function TeacherOperationsPage({ isActive }) {
                       <button type="button" onClick={() => handleCopy(GOOGLE_TEACHER_APPLICATION_FORM_URL, 'Application link')} title="Copy application link" className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /></button>
                       <button type="button" onClick={() => handleCopy(buildCampaignMessage(campaign), 'Outreach message')} title="Copy outreach message" className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><MessageCircle className="h-3.5 w-3.5" /> Message</button>
                       <button type="button" onClick={() => startEditCampaign(campaign)} title="Edit campaign" className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Edit3 className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => setCampaignArchived(campaign, campaign.status !== 'archived')} title={campaign.status === 'archived' ? 'Restore campaign' : 'Archive campaign'} className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-red-300 hover:text-red-600"><Archive className="h-3.5 w-3.5" /></button>
                     </div>
                   </div>
                   <div className="mt-1.5 grid gap-1 text-[11px] text-foreground">
@@ -1763,7 +1808,12 @@ export default function TeacherOperationsPage({ isActive }) {
                   </div>
                 </div>
               ))}
-              {!campaignLoading && !(campaigns || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No campaigns yet.</div> : null}
+              {!campaignLoading && !(campaigns || []).filter((campaign) => (showArchivedCampaigns ? campaign.status === 'archived' : campaign.status !== 'archived')).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">{showArchivedCampaigns ? 'No archived campaigns.' : 'No campaigns yet.'}</div> : null}
+              {(campaigns || []).some((campaign) => campaign.status === 'archived') || showArchivedCampaigns ? (
+                <button type="button" onClick={() => setShowArchivedCampaigns((open) => !open)} className="w-full rounded-xl border border-dashed border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
+                  {showArchivedCampaigns ? '← Back to active campaigns' : `Show archived (${(campaigns || []).filter((campaign) => campaign.status === 'archived').length})`}
+                </button>
+              ) : null}
             </div>
           </div>
         </div>

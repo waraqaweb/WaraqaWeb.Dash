@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, MessageCircle, Phone, Play, RefreshCw, Save, Search, Settings2, Table2, UserPlus, X } from 'lucide-react';
+import { Archive, ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Search, Settings2, Table2, UserPlus, X } from 'lucide-react';
 import { convertCandidateToTeacher, getSheetSyncConfig, listRecruitmentCampaigns, listTeacherContractResponses, runSheetSyncNow, saveSheetSyncConfig, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { bumpDomainVersion, makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
@@ -256,16 +256,12 @@ function FileActionGrid({ item, openViewer }) {
 }
 
 // All applicant data compressed into a 3-row spreadsheet-style grid.
-function CandidateFacts({ item, openViewer }) {
+function CandidateFacts({ item }) {
   const p = item.personalInfo || {};
   const a = item.application || {};
   const address = [p.address?.street, p.address?.city, p.address?.country].filter(Boolean).join(', ');
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <ContactActions item={item} />
-        <FileActionGrid item={item} openViewer={openViewer} />
-      </div>
       <div className="overflow-x-auto rounded-lg border border-slate-300">
         <table className="w-full min-w-[980px] table-fixed border-collapse">
           <tbody>
@@ -300,7 +296,7 @@ function CandidateFacts({ item, openViewer }) {
 }
 
 // Spreadsheet-style overview of every applicant using only the fields the form collects.
-function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selectedIds, onToggleSelect, onToggleSelectAll }) {
+function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selectedIds, onToggleSelect, onToggleSelectAll, onArchive }) {
   const cell = (value) => (value == null || value === '' ? '—' : value);
   const fileButtons = (item) => {
     const files = [
@@ -320,7 +316,7 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
       </div>
     );
   };
-  const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'What we should know', 'Stage', 'Contact', 'Files'];
+  const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'What we should know', 'Stage', 'Contact', 'Files', ''];
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(row.id));
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -371,6 +367,17 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
                 </td>
                 <td className="min-w-[150px] border-b border-slate-100 px-3 py-2"><ContactActions item={item} compact /></td>
                 <td className="min-w-[180px] border-b border-slate-100 px-3 py-2">{fileButtons(item)}</td>
+                <td className="border-b border-slate-100 px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => onArchive(item)}
+                    disabled={quickStageId === item.id}
+                    title={(item?.recruitment?.status || item.status) === 'archived' ? 'Restore from archive' : 'Archive (hide from list)'}
+                    className="rounded-md border border-slate-200 bg-white p-1.5 text-slate-500 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
+                  >
+                    <Archive className="h-3.5 w-3.5" />
+                  </button>
+                </td>
               </tr>
             );
           })}
@@ -408,9 +415,11 @@ export default function TeacherResponsesPanel() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkStage, setBulkStage] = useState('');
   const [bulkMoving, setBulkMoving] = useState(false);
+  const [viewerMin, setViewerMin] = useState(false);
 
   const openViewer = (label, url, mimeType) => {
     if (!url) return;
+    setViewerMin(false);
     setViewer({ label, ...resolveMedia(url, mimeType) });
   };
 
@@ -521,6 +530,14 @@ export default function TeacherResponsesPanel() {
 
   const toggleSelect = (id) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  // Soft-delete: archiving hides the applicant from the default list but keeps every record.
+  const handleArchive = async (item) => {
+    const isArchived = (item?.recruitment?.status || item.status) === 'archived';
+    const name = item.personalInfo?.fullName || item.personalInfo?.email || 'this applicant';
+    if (!isArchived && !window.confirm(`Archive ${name}? They will disappear from the list but stay saved under the \u201cArchived\u201d stage.`)) return;
+    await handleQuickStage(item, isArchived ? 'new' : 'archived');
   };
 
   const toggleSelectAll = (rows) => {
@@ -667,7 +684,11 @@ export default function TeacherResponsesPanel() {
   const filteredItems = useMemo(() => {
     const normalizedQuery = String(query || '').trim().toLowerCase();
     return items.filter((item) => {
-      if (statusFilter !== 'all' && (item?.recruitment?.status || item.status) !== statusFilter) {
+      const itemStatus = item?.recruitment?.status || item.status || 'new';
+      if (statusFilter === 'all') {
+        // Archived applicants are hidden by default; open the Archived stage to see them.
+        if (itemStatus === 'archived') return false;
+      } else if (itemStatus !== statusFilter) {
         return false;
       }
       if (campaignFilter !== 'all' && String(item?.recruitment?.fit?.campaignId || '') !== String(campaignFilter)) {
@@ -811,7 +832,7 @@ export default function TeacherResponsesPanel() {
                 onClick={() => setStatusFilter('all')}
                 className={`flex min-w-[86px] flex-col items-center rounded-xl border px-3 py-2 text-center transition ${statusFilter === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
               >
-                <span className="text-lg font-bold leading-tight">{summary.total}</span>
+                <span className="text-lg font-bold leading-tight">{summary.total - (funnelCounts.archived || 0)}</span>
                 <span className="text-[10px] font-semibold uppercase tracking-wide opacity-80">All</span>
               </button>
               {STATUS_OPTIONS.map((option, index) => (
@@ -899,6 +920,7 @@ export default function TeacherResponsesPanel() {
                 selectedIds={selectedIds}
                 onToggleSelect={toggleSelect}
                 onToggleSelectAll={toggleSelectAll}
+                onArchive={handleArchive}
               />
             </>
           ) : (
@@ -941,9 +963,24 @@ export default function TeacherResponsesPanel() {
                   </div>
                   {isOpen ? <ChevronUp className="mt-1 h-4 w-4 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 text-slate-400" />}
                 </button>
+                {/* Always-visible actions: contact, resume/recordings, archive — no need to expand */}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ContactActions item={item} />
+                    <FileActionGrid item={item} openViewer={openViewer} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleArchive(item)}
+                    disabled={quickStageId === item.id}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
+                  >
+                    <Archive className="h-3.5 w-3.5" /> {statusValue === 'archived' ? 'Restore' : 'Archive'}
+                  </button>
+                </div>
                 {isOpen ? (
                   <div className="mt-4 space-y-5 border-t border-slate-100 pt-4">
-                    <CandidateFacts item={item} openViewer={openViewer} />
+                    <CandidateFacts item={item} />
 
                     <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -1058,24 +1095,39 @@ export default function TeacherResponsesPanel() {
       ) : null}
 
       {viewer ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setViewer(null)}>
-          <div className="relative w-full max-w-3xl rounded-2xl bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between gap-3">
+        <div
+          className={viewerMin
+            ? 'fixed bottom-4 left-4 z-50 w-[340px] max-w-[calc(100vw-2rem)]'
+            : 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4'}
+          onClick={viewerMin ? undefined : () => setViewer(null)}
+        >
+          <div
+            className={viewerMin
+              ? 'w-full rounded-2xl border border-slate-200 bg-white p-2.5 shadow-2xl'
+              : 'relative w-full max-w-3xl rounded-2xl bg-white p-4 shadow-xl'}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className={`flex items-center justify-between gap-3 ${viewerMin ? 'mb-1.5' : 'mb-3'}`}>
               <p className="truncate text-sm font-semibold text-slate-900">{viewer.label}</p>
-              <div className="flex items-center gap-2">
-                <a href={viewer.download} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Open <ExternalLink className="h-3.5 w-3.5" /></a>
+              <div className="flex shrink-0 items-center gap-2">
+                {!viewerMin ? (
+                  <a href={viewer.download} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Open <ExternalLink className="h-3.5 w-3.5" /></a>
+                ) : null}
+                <button type="button" onClick={() => setViewerMin((min) => !min)} title={viewerMin ? 'Expand player' : 'Minimize — keep playing while you work'} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50">
+                  {viewerMin ? <Maximize2 className="h-4 w-4" /> : <Minimize2 className="h-4 w-4" />}
+                </button>
                 <button type="button" onClick={() => setViewer(null)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50"><X className="h-4 w-4" /></button>
               </div>
             </div>
-            <div className="flex max-h-[70vh] items-center justify-center overflow-auto rounded-xl bg-slate-50 p-2">
+            <div className={viewerMin ? 'overflow-hidden rounded-xl bg-slate-50' : 'flex max-h-[70vh] items-center justify-center overflow-auto rounded-xl bg-slate-50 p-2'}>
               {viewer.kind === 'image' ? (
-                <img src={viewer.src} alt={viewer.label} className="max-h-[68vh] w-auto object-contain" />
+                <img src={viewer.src} alt={viewer.label} className={viewerMin ? 'h-28 w-full object-cover' : 'max-h-[68vh] w-auto object-contain'} />
               ) : viewer.kind === 'audio' ? (
                 <audio src={viewer.src} controls autoPlay className="w-full" />
               ) : viewer.kind === 'video' ? (
-                <video src={viewer.src} controls autoPlay className="max-h-[68vh] w-full" />
+                <video src={viewer.src} controls autoPlay className={viewerMin ? 'h-44 w-full bg-black' : 'max-h-[68vh] w-full'} />
               ) : (
-                <iframe title={viewer.label} src={viewer.src} className="h-[68vh] w-full rounded-lg" allow="autoplay" />
+                <iframe title={viewer.label} src={viewer.src} className={viewerMin ? 'h-44 w-full' : 'h-[68vh] w-full rounded-lg'} allow="autoplay" />
               )}
             </div>
           </div>

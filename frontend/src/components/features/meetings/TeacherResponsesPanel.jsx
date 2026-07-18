@@ -66,6 +66,71 @@ const RATING_FIELDS = [
   ['flexibility', 'Flexibility'],
 ];
 
+const GENDER_TONES = {
+  male: 'bg-blue-50 text-blue-700 border-blue-200',
+  female: 'bg-pink-50 text-pink-700 border-pink-200',
+};
+
+const ELIGIBILITY_LABELS = {
+  al_azhar: 'Al-Azhar',
+  ijazah: 'Ijazah',
+  both: 'Al-Azhar + Ijazah',
+  other: 'Other background',
+};
+
+const ELIGIBILITY_TONES = {
+  al_azhar: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  ijazah: 'bg-amber-50 text-amber-700 border-amber-200',
+  both: 'bg-violet-50 text-violet-700 border-violet-200',
+  other: 'bg-slate-100 text-slate-600 border-slate-200',
+};
+
+// Stable palette so each selection label keeps a consistent color across cards.
+const SELECTION_PALETTE = [
+  'bg-sky-50 text-sky-700 border-sky-200',
+  'bg-teal-50 text-teal-700 border-teal-200',
+  'bg-indigo-50 text-indigo-700 border-indigo-200',
+  'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
+  'bg-lime-50 text-lime-700 border-lime-200',
+  'bg-orange-50 text-orange-700 border-orange-200',
+  'bg-rose-50 text-rose-700 border-rose-200',
+  'bg-cyan-50 text-cyan-700 border-cyan-200',
+];
+
+const toneForLabel = (label) => {
+  const str = String(label || '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  return SELECTION_PALETTE[hash % SELECTION_PALETTE.length];
+};
+
+const buildSelectionChips = (item) => {
+  const chips = [];
+  const gender = String(item?.personalInfo?.gender || '').toLowerCase();
+  if (gender) {
+    chips.push({
+      key: `gender-${gender}`,
+      label: gender === 'male' ? 'Male' : gender === 'female' ? 'Female' : gender,
+      cls: GENDER_TONES[gender] || 'bg-slate-100 text-slate-600 border-slate-200',
+    });
+  }
+  const eligibility = item?.application?.education?.eligibilityPath;
+  if (eligibility) {
+    chips.push({
+      key: `elig-${eligibility}`,
+      label: ELIGIBILITY_LABELS[eligibility] || eligibility,
+      cls: ELIGIBILITY_TONES[eligibility] || 'bg-slate-100 text-slate-600 border-slate-200',
+    });
+  }
+  (item?.application?.teachingProfile?.subjectsCanTeach || []).forEach((subject) => {
+    if (subject) chips.push({ key: `subject-${subject}`, label: subject, cls: toneForLabel(subject) });
+  });
+  (item?.application?.positionsInterested || []).forEach((position) => {
+    if (position) chips.push({ key: `position-${position}`, label: position, cls: toneForLabel(position) });
+  });
+  return chips;
+};
+
 const createDraftFromItem = (item) => ({
   pipelineStatus: item?.recruitment?.status || item?.status || 'new',
   reviewed: item?.recruitment?.reviewed !== false,
@@ -355,6 +420,16 @@ export default function TeacherResponsesPanel() {
                       <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">{formatDateTime(item.submittedAt)}</span>
                       {overall?.label ? <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white">{overall.label}{overall?.score != null ? ` • ${overall.score}%` : ''}</span> : null}
                     </div>
+                    {(() => {
+                      const chips = buildSelectionChips(item);
+                      return chips.length ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {chips.map((chip) => (
+                            <span key={chip.key} className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${chip.cls}`}>{chip.label}</span>
+                          ))}
+                        </div>
+                      ) : null;
+                    })()}
                     <div className="grid gap-2 text-sm text-slate-700 md:grid-cols-4 xl:grid-cols-6">
                       <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Name</p><p className="break-words font-semibold text-slate-900">{item.personalInfo?.fullName || item.contract?.fullName || '—'}</p></div>
                       <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Email</p><p className="break-words">{item.personalInfo?.email || '—'}</p></div>

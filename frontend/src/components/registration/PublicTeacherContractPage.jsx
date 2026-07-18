@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle2, ChevronRight, FileBadge2, FileText, Loader2, Mic, ShieldCheck, Upload, UserRound, Wrench } from 'lucide-react';
+import { CheckCircle2, ChevronRight, FileBadge2, Loader2, Mic, ShieldCheck, Upload, UserRound, Wrench } from 'lucide-react';
 import { listPublicRecruitmentCampaigns, submitPublicTeacherContract } from '../../api/teacherContract';
 import api from '../../api/axios';
 
@@ -107,23 +107,19 @@ export default function PublicTeacherContractPage() {
   };
 
   const validateStep = (targetStep = step) => {
-    if (targetStep === 1 && (!form.contractFullName.trim() || !form.contractAccepted)) {
-      setError('Please write your full legal name and confirm the consent to continue.');
-      return false;
-    }
-    if (targetStep === 2 && (!form.fullName.trim() || !form.email.trim() || !form.birthDate || !form.mobileNumber.trim() || !form.gender || !form.positionsInterested.length || !files.resume)) {
+    if (targetStep === 1 && (!form.fullName.trim() || !form.email.trim() || !form.birthDate || !form.mobileNumber.trim() || !form.gender || !form.nationality.trim() || !form.positionsInterested.length || !files.resume)) {
       setError('Please complete personal information, choose a position, and upload your resume.');
       return false;
     }
-    if (targetStep === 3 && (!form.eligibilityPath || !form.graduationStatus || !form.facultyUniversity.trim() || !form.degree.trim() || !form.teachingExperienceLevel.trim() || !form.currentJob.trim())) {
+    if (targetStep === 2 && (!form.eligibilityPath || !form.graduationStatus || !form.facultyUniversity.trim() || !form.degree.trim() || !form.teachingExperienceLevel.trim() || !form.currentJob.trim())) {
       setError('Please complete the education and experience section.');
       return false;
     }
-    if (targetStep === 4 && (!form.classTools.trim() || !form.meetingApps.length || !form.officeProducts.length || !form.subjectsCanTeach.length || !form.preferredAvailability.trim())) {
+    if (targetStep === 3 && (!form.classTools.trim() || !form.meetingApps.length || !form.officeProducts.length || !form.subjectsCanTeach.length || !form.preferredAvailability.trim())) {
       setError('Please complete the technical skills and teaching profile section.');
       return false;
     }
-    if (targetStep === 5 && (!files.identityDocument || !files.educationDocuments || !files.englishIntroduction || !files.quranRecitation || !files.teachingTopicExplanation)) {
+    if (targetStep === 4 && (!files.identityDocument || !files.educationDocuments || !files.englishIntroduction || !files.quranRecitation || !files.teachingTopicExplanation)) {
       setError('Please upload all required documents and recordings.');
       return false;
     }
@@ -132,7 +128,7 @@ export default function PublicTeacherContractPage() {
   };
 
   const handleSubmit = async () => {
-    for (const targetStep of [1, 2, 3, 4, 5]) {
+    for (const targetStep of [1, 2, 3, 4]) {
       if (!validateStep(targetStep)) return;
     }
 
@@ -149,7 +145,8 @@ export default function PublicTeacherContractPage() {
       Object.entries(files).forEach(([key, file]) => {
         if (file) payload.append(key, file);
       });
-      payload.set('contractAccepted', String(form.contractAccepted));
+      payload.set('contractAccepted', 'true');
+      payload.set('contractFullName', form.fullName.trim());
       await submitPublicTeacherContract(payload);
       setSuccess(true);
     } catch (err) {
@@ -210,28 +207,12 @@ export default function PublicTeacherContractPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {[1, 2, 3, 4, 5].map((item) => <div key={item} className={`h-2.5 w-12 rounded-full ${item <= step ? 'bg-primary' : 'bg-slate-200'}`} />)}
+            {[1, 2, 3, 4].map((item) => <div key={item} className={`h-2.5 w-12 rounded-full ${item <= step ? 'bg-primary' : 'bg-slate-200'}`} />)}
           </div>
         </div>
 
         <div className="mt-6 space-y-8">
           {step === 1 ? (
-            <section className="space-y-5">
-              <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><FileText className="h-5 w-5 text-primary" />Application &amp; process</div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-7 text-slate-700">
-                <p>Upload your resume, answer the questions, and submit the required audio or video samples. Applications that pass the first review stage will move to a 60-minute interview with English, Tajweed, Arabic, and Islamic Studies checks depending on the role. If your interview is successful, we will send you the teaching contract to review and accept as a later step.</p>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <input className={inputClass} placeholder="Full legal name *" value={form.contractFullName} onChange={(e) => updateField('contractFullName', e.target.value)} />
-                <label className={checkboxCardClass}>
-                  <input type="checkbox" checked={form.contractAccepted} onChange={(e) => updateField('contractAccepted', e.target.checked)} />
-                  <span>I confirm the information I provide is accurate and consent to Waraqa reviewing my application.</span>
-                </label>
-              </div>
-            </section>
-          ) : null}
-
-          {step === 2 ? (
             <section className="space-y-5">
               <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><UserRound className="h-5 w-5 text-primary" />Personal information</div>
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -271,7 +252,7 @@ export default function PublicTeacherContractPage() {
             </section>
           ) : null}
 
-          {step === 3 ? (
+          {step === 2 ? (
             <section className="space-y-5">
               <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><FileBadge2 className="h-5 w-5 text-primary" />Education and experience</div>
               <div className="grid gap-4 md:grid-cols-2">
@@ -294,7 +275,7 @@ export default function PublicTeacherContractPage() {
             </section>
           ) : null}
 
-          {step === 4 ? (
+          {step === 3 ? (
             <section className="space-y-5">
               <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Wrench className="h-5 w-5 text-primary" />Technical skills and teaching profile</div>
               <textarea className={inputClass + ' min-h-[120px] resize-y'} placeholder="What do you use for classes usually? *" value={form.classTools} onChange={(e) => updateField('classTools', e.target.value)} />
@@ -336,7 +317,7 @@ export default function PublicTeacherContractPage() {
             </section>
           ) : null}
 
-          {step === 5 ? (
+          {step === 4 ? (
             <section className="space-y-5">
               <div className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Mic className="h-5 w-5 text-primary" />Documents and recordings</div>
               <div className="grid gap-4 md:grid-cols-2">
@@ -363,8 +344,8 @@ export default function PublicTeacherContractPage() {
           <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" onClick={() => setStep((prev) => Math.max(prev - 1, 1))} disabled={step === 1 || saving} className="rounded-full border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 disabled:opacity-50">Back</button>
             <div className="flex items-center gap-3">
-              {step < 5 ? (
-                <button type="button" onClick={() => { if (validateStep()) setStep((prev) => Math.min(prev + 1, 5)); }} className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white shadow-sm"><span>Next</span><ChevronRight className="h-4 w-4" /></button>
+              {step < 4 ? (
+                <button type="button" onClick={() => { if (validateStep()) setStep((prev) => Math.min(prev + 1, 4)); }} className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white shadow-sm"><span>Next</span><ChevronRight className="h-4 w-4" /></button>
               ) : (
                 <button type="button" disabled={saving} onClick={handleSubmit} className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

@@ -782,23 +782,15 @@ export default function TeacherOperationsPage({ isActive }) {
     }
   };
 
-  // Build a ready-to-share recruitment message from a campaign's own fields.
+  // Build a ready-to-share recruitment message from the campaign's public copy.
   const buildCampaignMessage = (campaign) => {
-    const subjects = campaign.subjects?.length ? campaign.subjects.join(', ') : 'Quran, Arabic & Islamic Studies';
-    const preferredWindow = campaign.preferredWindow || 'Flexible hours';
-    const hires = campaign.targetHires || 0;
-    const genders = [campaign.female ? 'female' : null, campaign.male ? 'male' : null].filter(Boolean);
-    const gendersLine = genders.length && genders.length < 2 ? ` (${genders[0]} teachers)` : '';
     const link = `${window.location.origin}/teacher-contract?campaign=${campaign.slug}`;
-    return [
-      `🌟 We're hiring online ${subjects} teachers at Waraqa!${gendersLine}`,
-      '',
-      `📚 Subjects: ${subjects}`,
-      `🕒 Preferred window: ${preferredWindow}`,
-      hires ? `👥 Openings: ${hires}` : null,
-      '',
-      `Apply here: ${link}`,
-    ].filter((line) => line !== null).join('\n');
+    const headline = (campaign.publicHeadline || campaign.title || "We're hiring teachers at Waraqa").trim();
+    const description = (campaign.publicDescription || '').trim();
+    const parts = [headline];
+    if (description) parts.push('', description);
+    parts.push('', `Apply through the application form: ${link}`);
+    return parts.join('\n');
   };
 
   const resetCampaignForm = () => {

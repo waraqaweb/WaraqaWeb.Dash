@@ -178,3 +178,19 @@ export async function importApplicantsFromSheet(sheetUrl) {
   const { data } = await api.post(`${BASE}/import-sheet`, { sheetUrl });
   return data;
 }
+
+export async function getPendingCandidateEmails() {
+  const { data } = await api.get(`${BASE}/pending-emails`);
+  return data;
+}
+
+export async function sendPendingCandidateEmails() {
+  const { data } = await api.post(`${BASE}/send-pending-emails`);
+  return data;
+}
+
+export async function setTeacherAcceptingStudents(teacherId, acceptingNewStudents) {
+  const { data } = await api.put(`/users/${teacherId}/accepting-students`, { acceptingNewStudents });
+  return data;
+}
+

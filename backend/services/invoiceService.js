@@ -6576,25 +6576,6 @@ class InvoiceService {
 
       await InvoiceService.syncInvoiceCoverageClasses(updatedInvoice);
 
-      // Final consistency pass: recompute from paid/refund logs so stored guardian
-      // totals and per-student hours remain aligned with invoice history.
-      if (guardianIdValue) {
-        try {
-          const {
-            computeGuardianHoursFromPaidInvoices,
-            syncComputedHoursToStorage,
-            normalizeId
-          } = require('./guardianHoursService');
-          const gId = normalizeId(guardianIdValue);
-          if (gId) {
-            const hoursMap = await computeGuardianHoursFromPaidInvoices([gId]);
-            await syncComputedHoursToStorage(hoursMap, { syncGuardianTotal: true });
-          }
-        } catch (recomputeErr) {
-          console.warn('[recordInvoiceRefund] guardian-hours recompute failed:', recomputeErr?.message || recomputeErr);
-        }
-      }
-
       await updatedInvoice.populate([
         { path: 'guardian', select: 'firstName lastName email guardianInfo' },
         { path: 'teacher', select: 'firstName lastName email' },
@@ -6833,23 +6814,6 @@ class InvoiceService {
 
       await invoice.save();
       await InvoiceService.syncInvoiceCoverageClasses(invoice);
-
-      if (guardianIdValue) {
-        try {
-          const {
-            computeGuardianHoursFromPaidInvoices,
-            syncComputedHoursToStorage,
-            normalizeId
-          } = require('./guardianHoursService');
-          const gId = normalizeId(guardianIdValue);
-          if (gId) {
-            const hoursMap = await computeGuardianHoursFromPaidInvoices([gId]);
-            await syncComputedHoursToStorage(hoursMap, { syncGuardianTotal: true });
-          }
-        } catch (recomputeErr) {
-          console.warn('[undoLastRefund] guardian-hours recompute failed:', recomputeErr?.message || recomputeErr);
-        }
-      }
 
       await invoice.populate([
         { path: 'guardian', select: 'firstName lastName email guardianInfo' },

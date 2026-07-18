@@ -42,6 +42,7 @@
 			import ExportExcelButton from '../../components/ui/ExportExcelButton';
 			import { fetchAllForExport, mapTeacherRow, downloadExcel } from '../../utils/exportToExcel';
 			import { makeCacheKey, readCache, writeCache } from '../../utils/sessionCache';
+			import { standardizeSubjects } from '../../utils/subjectStandardization';
 
 			const TEACHER_STATUS_TABS = [
 				{ id: 'active', label: 'Active' },
@@ -639,6 +640,11 @@
 															}`}>
 																{teacher.isActive ? 'Active' : 'Inactive'}
 															</span>
+															{teacher.teacherInfo?.acceptingNewStudents === false && (
+																<span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-800">
+																	Not accepting new students
+																</span>
+															)}
 															<span className="flex items-center">
 																<Clock className="h-3 w-3 mr-1" />
 																{/* Prefer the server-computed aggregation for this month when present. */}
@@ -845,7 +851,7 @@
 														<div>
 															<h5 className="text-sm font-medium text-foreground mb-1">Subjects</h5>
 															<div className="flex flex-wrap gap-2">
-																{teacher.teacherInfo.subjects.map((subject, index) => (
+																{standardizeSubjects(teacher.teacherInfo.subjects).map((subject, index) => (
 																	<span key={index} className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full">
 																		{subject}
 																	</span>

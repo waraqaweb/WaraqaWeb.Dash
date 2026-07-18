@@ -355,6 +355,47 @@ const userSchema = new mongoose.Schema({
       type: String,
       trim: true,
     },
+    // Actual joining/start date (admin-adjustable). Older teachers were created
+    // in the system long after they actually started, so createdAt is not a
+    // reliable tenure anchor — this field, when set, takes precedence.
+    joiningDate: {
+      type: Date,
+      default: null,
+    },
+    // Admin-only switch controlling whether this teacher is open to accepting
+    // NEW students. When false, the teacher stays active for existing students
+    // but is surfaced as "not accepting new students" across the platform.
+    acceptingNewStudents: {
+      type: Boolean,
+      default: true,
+    },
+    acceptingStudentsUpdatedAt: {
+      type: Date,
+      default: null,
+    },
+    // Deeper lifecycle tracking: a current stage plus a chronological history
+    // of stage changes, accepting-students toggles, joining-date edits, and
+    // class/hour milestones.
+    lifecycle: {
+      stage: {
+        type: String,
+        enum: ['applied', 'interview', 'hired', 'training', 'active', 'paused', 'left'],
+        default: 'active',
+      },
+      history: [
+        {
+          at: { type: Date, default: Date.now },
+          type: {
+            type: String,
+            enum: ['stage', 'accepting', 'joining', 'milestone', 'note'],
+            default: 'note',
+          },
+          stage: { type: String, trim: true },
+          note: { type: String, trim: true, maxlength: 500 },
+          actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        },
+      ],
+    },
     vacationAllowance: {
       defaultDaysPerYear: {
         type: Number,

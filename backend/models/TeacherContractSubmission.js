@@ -65,6 +65,10 @@ const recruitmentSchema = new mongoose.Schema({
       default: 'pending',
     },
     notes: { type: String, trim: true, default: '', maxlength: 2000 },
+    // Which outcome value we've already emailed the candidate about (so the
+    // "send all pending" queue can drop already-notified candidates).
+    emailSentForOutcome: { type: String, trim: true, default: '', maxlength: 40 },
+    outcomeEmailSentAt: { type: Date, default: null },
   },
   history: [{
     at: { type: Date, default: Date.now },

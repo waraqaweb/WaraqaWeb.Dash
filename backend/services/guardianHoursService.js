@@ -64,25 +64,18 @@ const buildPaidInvoiceAllocations = (invoices = []) => {
       totalItemHours = roundHours(totalItemHours + hours);
     }
 
-    // Sum net paid hours from paymentLogs (positive payments add credit,
-    // refunds subtract credit; tip distributions do not affect guardian hours).
+    // Sum paid hours from paymentLogs (reflects actual payment, survives item removal)
     let totalPaidHours = 0;
-    let hasHoursLogs = false;
     const paymentLogs = Array.isArray(invoice.paymentLogs) ? invoice.paymentLogs : [];
     for (const log of paymentLogs) {
-      if (!log || log.method === 'tip_distribution') continue;
-      const loggedHours = Number(log.paidHours);
-      if (!Number.isFinite(loggedHours) || loggedHours <= 0) continue;
-      const amount = Number(log.amount || 0);
-      const isRefund = log.method === 'refund' || amount < 0;
-      hasHoursLogs = true;
-      totalPaidHours = roundHours(totalPaidHours + (isRefund ? -Math.abs(loggedHours) : Math.abs(loggedHours)));
+      if (!log || Number(log.amount || 0) <= 0) continue;
+      if (log.method === 'refund' || log.method === 'tip_distribution') continue;
+      totalPaidHours = roundHours(totalPaidHours + (Number(log.paidHours) || 0));
     }
 
     // Use paymentLogs.paidHours when available (it reflects what was actually paid,
-    // even if items were later removed e.g. cancelled/refunded classes).
-    // Fall back to item totals only when hours logs are absent.
-    const effectiveCredit = hasHoursLogs ? Math.max(0, totalPaidHours) : totalItemHours;
+    // even if items were later removed e.g. cancelled classes). Fall back to item totals.
+    const effectiveCredit = totalPaidHours > 0 ? totalPaidHours : totalItemHours;
 
     if (totalItemHours > 0 && effectiveCredit > 0) {
       const scale = effectiveCredit / totalItemHours;
@@ -128,7 +121,7 @@ const computeGuardianHoursFromPaidInvoices = async (guardianIds = []) => {
   const invoices = await Invoice.find({
     guardian: { $in: normalized },
     deleted: { $ne: true },
-    status: { $in: ['paid', 'refunded'] }
+    status: 'paid'
   })
     .select('guardian items.student items.duration items.quantityHours paymentLogs.paidHours paymentLogs.amount paymentLogs.method')
     .lean();
@@ -165,9 +158,8 @@ const computeGuardianHoursFromPaidInvoices = async (guardianIds = []) => {
  * Call after computing hours to keep all storage layers consistent.
  * @param {Map} hoursMap - result from computeGuardianHoursFromPaidInvoices
  */
-const syncComputedHoursToStorage = async (hoursMap, options = {}) => {
+const syncComputedHoursToStorage = async (hoursMap) => {
   if (!hoursMap || !hoursMap.size) return;
-  const syncGuardianTotal = options && options.syncGuardianTotal === true;
 
   const User = require('../models/User');
   const Student = require('../models/Student');
@@ -181,7 +173,6 @@ const syncComputedHoursToStorage = async (hoursMap, options = {}) => {
 
       const embedded = Array.isArray(guardian.guardianInfo.students) ? guardian.guardianInfo.students : [];
       let embeddedChanged = false;
-      let totalChanged = false;
 
       for (const es of embedded) {
         // Try to find hours for this embedded student (check embedded _id, then standaloneStudentId)
@@ -212,19 +203,8 @@ const syncComputedHoursToStorage = async (hoursMap, options = {}) => {
         }
       }
 
-      if (syncGuardianTotal && Number.isFinite(Number(entry.totalHours))) {
-        const computedTotal = roundHours(Number(entry.totalHours));
-        if (Math.abs((Number(guardian.guardianInfo.totalHours || 0) || 0) - computedTotal) > 0.001) {
-          guardian.guardianInfo.totalHours = computedTotal;
-          guardian.markModified('guardianInfo.totalHours');
-          totalChanged = true;
-        }
-      }
-
-      if (embeddedChanged || totalChanged) {
-        if (embeddedChanged) {
-          guardian.markModified('guardianInfo.students');
-        }
+      if (embeddedChanged) {
+        guardian.markModified('guardianInfo.students');
         await guardian.save();
       }
     } catch (err) {

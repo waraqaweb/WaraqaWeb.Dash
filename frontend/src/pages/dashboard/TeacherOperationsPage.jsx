@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
   BriefcaseBusiness,
@@ -51,7 +51,11 @@ import {
   getCapacityConfig,
   saveCapacityConfig,
   importApplicantsFromSheet,
+  getPendingCandidateEmails,
+  sendPendingCandidateEmails,
+  setTeacherAcceptingStudents,
 } from '../../api/teacherContract';
+import { STANDARD_SUBJECTS } from '../../utils/subjectStandardization';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: TrendingUp },
@@ -123,6 +127,23 @@ const CAPACITY_DECISION_STYLES = {
   hire: { label: 'Start hiring', badge: 'bg-amber-100 text-amber-700', bar: 'bg-amber-500' },
   urgent: { label: 'Urgent hiring', badge: 'bg-red-100 text-red-700', bar: 'bg-red-500' },
 };
+
+const LIFECYCLE_STAGE_LABELS = {
+  applied: 'Applied',
+  interview: 'Interview',
+  hired: 'Hired',
+  training: 'Training',
+  active: 'Active',
+  paused: 'Paused',
+  left: 'Left',
+};
+
+const TENURE_FILTER_OPTIONS = [
+  { value: 'all', label: 'Any tenure' },
+  { value: 'new', label: 'New (< 6 months)' },
+  { value: 'mid', label: '6–24 months' },
+  { value: 'senior', label: '2+ years' },
+];
 
 const staticPolicyCards = [
   { title: 'Working hours', value: '4h / day', note: '≥3h in Cairo prime windows.', icon: Clock3 },
@@ -232,6 +253,17 @@ export default function TeacherOperationsPage({ isActive }) {
   const [capacityForm, setCapacityForm] = useState(null);
   const [capacitySaving, setCapacitySaving] = useState(false);
 
+  // Pending outcome emails (one-click "send all")
+  const [pendingEmails, setPendingEmails] = useState([]);
+  const [pendingEmailsLoading, setPendingEmailsLoading] = useState(false);
+  const [sendingPending, setSendingPending] = useState(false);
+  const [pendingNotice, setPendingNotice] = useState('');
+
+  // Teacher statistics filters + per-teacher controls
+  const [statsFilters, setStatsFilters] = useState({ subject: 'all', gender: 'all', accepting: 'all', tenure: 'all', availability: 'all' });
+  const [togglingTeacherId, setTogglingTeacherId] = useState('');
+  const [expandedTeacherId, setExpandedTeacherId] = useState('');
+
   const headerCopy = useMemo(() => ({
     title: 'Recruitment',
     subtitle: 'Compact hiring command center: pipeline, training, interviews, and BI in one page.',
@@ -245,6 +277,34 @@ export default function TeacherOperationsPage({ isActive }) {
       return { ...item, value };
     });
   }, [summary]);
+
+  const filteredTeacherRows = useMemo(() => {
+    const rows = summary?.teacherRows || [];
+    return rows.filter((t) => {
+      if (statsFilters.subject !== 'all') {
+        const subs = t.standardizedSubjects || [];
+        if (!subs.includes(statsFilters.subject)) return false;
+      }
+      if (statsFilters.gender !== 'all') {
+        if (String(t.gender || '').toLowerCase() !== statsFilters.gender) return false;
+      }
+      if (statsFilters.accepting !== 'all') {
+        const accepting = t.acceptingNewStudents !== false;
+        if (statsFilters.accepting === 'yes' && !accepting) return false;
+        if (statsFilters.accepting === 'no' && accepting) return false;
+      }
+      if (statsFilters.tenure !== 'all') {
+        const months = Number(t.tenureMonths || 0);
+        if (statsFilters.tenure === 'new' && months >= 6) return false;
+        if (statsFilters.tenure === 'mid' && (months < 6 || months >= 24)) return false;
+        if (statsFilters.tenure === 'senior' && months < 24) return false;
+      }
+      if (statsFilters.availability !== 'all') {
+        if (String(t.availabilityStatus || '') !== statsFilters.availability) return false;
+      }
+      return true;
+    });
+  }, [summary, statsFilters]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -343,6 +403,61 @@ export default function TeacherOperationsPage({ isActive }) {
     return () => { cancelled = true; };
   }, [isActive, activeTab]);
 
+  // Load the list of pending outcome emails for the one-click "send all" panel.
+  const loadPendingEmails = useCallback(async () => {
+    try {
+      setPendingEmailsLoading(true);
+      const data = await getPendingCandidateEmails();
+      setPendingEmails(data?.pending || []);
+    } catch {
+      // Non-fatal: leave the panel empty if it can't load.
+    } finally {
+      setPendingEmailsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isActive || activeTab !== 'interviews') return;
+    loadPendingEmails();
+  }, [isActive, activeTab, loadPendingEmails]);
+
+  const handleSendPendingEmails = async () => {
+    try {
+      setSendingPending(true);
+      setPendingNotice('');
+      const res = await sendPendingCandidateEmails();
+      const sent = res?.sent ?? 0;
+      const failed = res?.failed ?? 0;
+      setPendingNotice(failed ? `Sent ${sent}, ${failed} failed.` : `Sent ${sent} email${sent === 1 ? '' : 's'}.`);
+      await loadPendingEmails();
+      window.setTimeout(() => setPendingNotice(''), 5000);
+    } catch (error) {
+      setPendingNotice(error?.response?.data?.message || 'Failed to send pending emails.');
+    } finally {
+      setSendingPending(false);
+    }
+  };
+
+  const handleToggleAccepting = async (teacherId, next) => {
+    try {
+      setTogglingTeacherId(teacherId);
+      const res = await setTeacherAcceptingStudents(teacherId, next);
+      setSummary((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          teacherRows: (prev.teacherRows || []).map((t) => (
+            t.id === teacherId ? { ...t, acceptingNewStudents: res?.acceptingNewStudents } : t
+          )),
+        };
+      });
+    } catch {
+      // Non-fatal: surface nothing; the toggle simply won't flip.
+    } finally {
+      setTogglingTeacherId('');
+    }
+  };
+
   const openTemplateEditor = () => {
     setLectureDraft(lectureTopics.length ? [...lectureTopics] : ['']);
     setShowTemplateEditor(true);
@@ -424,6 +539,7 @@ export default function TeacherOperationsPage({ isActive }) {
         setInterviewResponses((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
         selectInterview(updated);
       }
+      loadPendingEmails();
     } catch (error) {
       setInterviewError(error?.response?.data?.message || 'Failed to save interview scorecard.');
     } finally {
@@ -443,6 +559,7 @@ export default function TeacherOperationsPage({ isActive }) {
       });
       setEmailNotice(res?.message || 'Email queued.');
       window.setTimeout(() => setEmailNotice(''), 4000);
+      loadPendingEmails();
     } catch (error) {
       setInterviewError(error?.response?.data?.message || 'Failed to send email.');
     } finally {
@@ -926,6 +1043,53 @@ export default function TeacherOperationsPage({ isActive }) {
 
         {activeTab === 'interviews' ? (
           <div className="grid gap-3 xl:grid-cols-[0.9fr_1.1fr]">
+            <SectionCard title="Pending outcome emails" className="xl:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm text-foreground">
+                    {pendingEmailsLoading
+                      ? 'Checking for candidates awaiting an outcome email…'
+                      : pendingEmails.length
+                        ? `${pendingEmails.length} candidate${pendingEmails.length === 1 ? '' : 's'} have a decided outcome but no email sent yet.`
+                        : 'All decided candidates have been emailed. Nothing pending.'}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">Emails are only sent when you press this button — nothing goes out automatically.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={loadPendingEmails}
+                    disabled={pendingEmailsLoading || sendingPending}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60"
+                  >
+                    <Loader2 className={`h-3.5 w-3.5 ${pendingEmailsLoading ? 'animate-spin' : 'hidden'}`} /> Refresh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSendPendingEmails}
+                    disabled={sendingPending || pendingEmailsLoading || !pendingEmails.length}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60"
+                  >
+                    <Send className="h-4 w-4" /> {sendingPending ? 'Sending…' : `Send all${pendingEmails.length ? ` (${pendingEmails.length})` : ''}`}
+                  </button>
+                </div>
+              </div>
+              {pendingNotice ? <p className="mt-2 text-xs font-medium text-green-600 dark:text-green-400">{pendingNotice}</p> : null}
+              {pendingEmails.length ? (
+                <div className="mt-2 space-y-1">
+                  {pendingEmails.map((c) => (
+                    <div key={`${c.source}-${c.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs">
+                      <div className="min-w-0">
+                        <span className="font-semibold text-foreground">{c.name || 'Candidate'}</span>
+                        <span className="ml-1.5 text-muted-foreground">{c.email}</span>
+                      </div>
+                      <span className={`shrink-0 rounded-full bg-muted px-2 py-0.5 font-medium ${INTERVIEW_OUTCOME_COLORS[c.outcome] || 'text-foreground'}`}>{EMAIL_EVENT_LABELS[c.event] || (c.outcome || '').replace(/_/g, ' ')}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </SectionCard>
+
             <SectionCard title="Interview candidates">
               {interviewError ? <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{interviewError}</div> : null}
               <div className="mb-2 rounded-xl border border-border bg-background p-2.5">
@@ -1262,9 +1426,9 @@ export default function TeacherOperationsPage({ isActive }) {
                 ) : (
                   <div className="grid gap-2 sm:grid-cols-2">
                     {[
-                      ['Quran teachers', summary?.teachers?.quranCount ?? 0],
-                      ['Arabic teachers', summary?.teachers?.arabicCount ?? 0],
-                      ['Islamic Studies', summary?.teachers?.islamicStudiesCount ?? 0],
+                      ...STANDARD_SUBJECTS.map((subject) => [subject, summary?.teachers?.subjectBreakdown?.[subject] ?? 0]),
+                      ['Accepting new students', summary?.teachers?.acceptingNewStudentsCount ?? 0],
+                      ['Not accepting', summary?.teachers?.notAcceptingNewStudentsCount ?? 0],
                       ['English-speaking', summary?.teachers?.englishSpeakingCount ?? 0],
                       ['Al-Azhar background', summary?.teachers?.azharCount ?? 0],
                       ['Ijazah background', summary?.teachers?.ijazahCount ?? 0],
@@ -1298,22 +1462,89 @@ export default function TeacherOperationsPage({ isActive }) {
                       <p className="mt-0.5 text-[11px] text-muted-foreground">Teachers with scheduled load; {summary?.teachers?.withoutUpcomingClasses ?? 0} currently have none.</p>
                     </div>
                   </div>
+
+                  {/* Filters */}
+                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-background px-2.5 py-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Filters</span>
+                    <select value={statsFilters.subject} onChange={(e) => setStatsFilters((p) => ({ ...p, subject: e.target.value }))} className="rounded-lg border border-border bg-card px-2 py-1 text-xs text-foreground">
+                      <option value="all">All subjects</option>
+                      {STANDARD_SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <select value={statsFilters.gender} onChange={(e) => setStatsFilters((p) => ({ ...p, gender: e.target.value }))} className="rounded-lg border border-border bg-card px-2 py-1 text-xs text-foreground">
+                      <option value="all">Any gender</option>
+                      <option value="female">Female</option>
+                      <option value="male">Male</option>
+                    </select>
+                    <select value={statsFilters.accepting} onChange={(e) => setStatsFilters((p) => ({ ...p, accepting: e.target.value }))} className="rounded-lg border border-border bg-card px-2 py-1 text-xs text-foreground">
+                      <option value="all">Accepting: any</option>
+                      <option value="yes">Accepting new students</option>
+                      <option value="no">Not accepting</option>
+                    </select>
+                    <select value={statsFilters.tenure} onChange={(e) => setStatsFilters((p) => ({ ...p, tenure: e.target.value }))} className="rounded-lg border border-border bg-card px-2 py-1 text-xs text-foreground">
+                      {TENURE_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                    <select value={statsFilters.availability} onChange={(e) => setStatsFilters((p) => ({ ...p, availability: e.target.value }))} className="rounded-lg border border-border bg-card px-2 py-1 text-xs text-foreground">
+                      <option value="all">Any availability</option>
+                      <option value="custom_set">Custom set</option>
+                      <option value="default_24_7">Default 24/7</option>
+                      <option value="pending_setup">Pending setup</option>
+                    </select>
+                    <span className="ml-auto text-[11px] text-muted-foreground">{filteredTeacherRows.length} of {(summary?.teacherRows || []).length}</span>
+                  </div>
+
                   <div className="space-y-1.5">
-                    {(summary?.teacherRows || []).map((teacher) => (
-                      <div key={teacher.id} className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="font-semibold text-foreground">{teacher.name}</p>
-                            <p className="text-xs text-muted-foreground">{teacher.subjects.join(', ') || 'No subjects yet'} • {teacher.timezone}</p>
+                    {filteredTeacherRows.map((teacher) => {
+                      const accepting = teacher.acceptingNewStudents !== false;
+                      const expanded = expandedTeacherId === teacher.id;
+                      return (
+                        <div key={teacher.id} className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p className="font-semibold text-foreground">{teacher.name}</p>
+                                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{LIFECYCLE_STAGE_LABELS[teacher.lifecycleStage] || teacher.lifecycleStage}</span>
+                                {!accepting ? <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/40 dark:text-red-300">Not accepting new students</span> : null}
+                              </div>
+                              <p className="text-xs text-muted-foreground">{(teacher.standardizedSubjects || []).join(', ') || 'No subjects yet'} • {teacher.timezone}</p>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              {teacher.tenureLabel ? <span className="rounded-full bg-muted px-1.5 py-0.5 font-medium text-foreground">{teacher.tenureLabel} tenure</span> : null}
+                              <span>{teacher.upcomingHours14Days}h/14d • {teacher.studentCount14Days} students • {teacher.monthlyHours}h/mo</span>
+                            </div>
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            {teacher.tenureLabel ? <span className="mr-1 rounded-full bg-muted px-1.5 py-0.5 font-medium text-foreground">{teacher.tenureLabel} tenure</span> : null}
-                            {teacher.upcomingHours14Days}h next 14d • {teacher.studentCount14Days} students • {teacher.monthlyHours}h this month
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleAccepting(teacher.id, !accepting)}
+                              disabled={togglingTeacherId === teacher.id}
+                              className={[
+                                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition disabled:opacity-60',
+                                accepting
+                                  ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300'
+                                  : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100 dark:border-green-900/50 dark:bg-green-900/20 dark:text-green-300',
+                              ].join(' ')}
+                            >
+                              {togglingTeacherId === teacher.id ? <Loader2 className="h-3 w-3 animate-spin" /> : (accepting ? <XCircle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />)}
+                              {accepting ? 'Stop accepting new students' : 'Resume accepting new students'}
+                            </button>
+                            <button type="button" onClick={() => setExpandedTeacherId(expanded ? '' : teacher.id)} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-primary/40">
+                              {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />} Lifecycle
+                            </button>
                           </div>
+                          {expanded ? (
+                            <div className="mt-2 grid gap-1 rounded-lg border border-border bg-card px-2.5 py-2 text-[11px] text-muted-foreground sm:grid-cols-2">
+                              <p><span className="font-semibold text-foreground">Stage:</span> {LIFECYCLE_STAGE_LABELS[teacher.lifecycleStage] || teacher.lifecycleStage}</p>
+                              <p><span className="font-semibold text-foreground">Joined:</span> {teacher.joiningDate ? new Date(teacher.joiningDate).toLocaleDateString() : (teacher.tenureStart ? `${new Date(teacher.tenureStart).toLocaleDateString()} (from account creation)` : 'Unknown')}</p>
+                              <p><span className="font-semibold text-foreground">Tenure:</span> {teacher.tenureMonths != null ? `${teacher.tenureMonths} month${teacher.tenureMonths === 1 ? '' : 's'}` : 'Unknown'}</p>
+                              <p><span className="font-semibold text-foreground">Accepting:</span> {accepting ? 'Yes' : 'No'}</p>
+                              <p><span className="font-semibold text-foreground">Availability:</span> {teacher.availabilityStatus?.replace(/_/g, ' ') || '—'}</p>
+                              <p className="text-[10px]">Edit the joining date from the teacher's profile (admin).</p>
+                            </div>
+                          ) : null}
                         </div>
-                      </div>
-                    ))}
-                    {!(summary?.teacherRows || []).length ? <div className="text-sm text-muted-foreground">No active teachers found.</div> : null}
+                      );
+                    })}
+                    {!filteredTeacherRows.length ? <div className="text-sm text-muted-foreground">{(summary?.teacherRows || []).length ? 'No teachers match the current filters.' : 'No active teachers found.'}</div> : null}
                   </div>
                 </div>
               )}

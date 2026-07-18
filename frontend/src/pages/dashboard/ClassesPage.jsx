@@ -4062,7 +4062,9 @@ fetchClassesRef.current = fetchClasses;
       ...teachers.map((teacher) => ({
         value: teacher._id,
         label: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.email,
-        subLabel: teacher.email || ''
+        subLabel: teacher.teacherInfo?.acceptingNewStudents === false
+          ? `${teacher.email || ''} • Not accepting new students`.trim()
+          : (teacher.email || '')
       }))
     ]
   ), [teachers]);

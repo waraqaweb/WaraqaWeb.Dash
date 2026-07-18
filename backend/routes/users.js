@@ -1972,6 +1972,9 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
 
     // Capture teacher meeting link before mutation so we can propagate changes to upcoming classes.
     const previousTeacherMeetLink = (originalUser.teacherInfo?.googleMeetLink || '').trim();
+    // Capture admin-only teacher lifecycle anchors before mutation so we can log changes.
+    const prevAcceptingNewStudents = originalUser.teacherInfo?.acceptingNewStudents;
+    const prevJoiningDate = originalUser.teacherInfo?.joiningDate || null;
 
     // If the stored document already has an invalid gender value (possible from earlier writes), clear it
     try {
@@ -2286,6 +2289,15 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
     if (updates.teacherInfo && typeof updates.teacherInfo === 'object') {
       delete updates.teacherInfo.customRateOverride;
       delete updates.teacherInfo.effectiveRate;
+      // The joining date, accepting-new-students switch, and lifecycle log are
+      // admin-only. Strip them from non-admin payloads so teachers cannot
+      // self-adjust their tenure anchor or student-acceptance state.
+      if (req.user.role !== 'admin') {
+        delete updates.teacherInfo.acceptingNewStudents;
+        delete updates.teacherInfo.acceptingStudentsUpdatedAt;
+        delete updates.teacherInfo.joiningDate;
+        delete updates.teacherInfo.lifecycle;
+      }
     }
 
     // Apply updates onto the Mongoose document to run hooks/validators
@@ -2299,6 +2311,46 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
 
     console.log('Backend originalUser bio after applying updates:', originalUser.bio);
     console.log('Backend originalUser teacherInfo.bio after applying updates:', originalUser.teacherInfo?.bio);
+
+    // Record admin-only lifecycle changes (accepting-new-students toggle + joining-date edits)
+    if (originalUser.role === 'teacher' && req.user.role === 'admin' && updates.teacherInfo && typeof updates.teacherInfo === 'object') {
+      originalUser.teacherInfo = originalUser.teacherInfo || {};
+      const lifecycle = originalUser.teacherInfo.lifecycle && typeof originalUser.teacherInfo.lifecycle === 'object'
+        ? originalUser.teacherInfo.lifecycle
+        : { stage: 'active', history: [] };
+      if (!Array.isArray(lifecycle.history)) lifecycle.history = [];
+
+      if (Object.prototype.hasOwnProperty.call(updates.teacherInfo, 'acceptingNewStudents')) {
+        const nextAccepting = originalUser.teacherInfo.acceptingNewStudents !== false;
+        const prevAccepting = prevAcceptingNewStudents !== false;
+        if (nextAccepting !== prevAccepting) {
+          originalUser.teacherInfo.acceptingStudentsUpdatedAt = new Date();
+          lifecycle.history.push({
+            at: new Date(),
+            type: 'accepting',
+            note: nextAccepting ? 'Opened for new students' : 'Closed to new students',
+            actor: req.user._id,
+          });
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(updates.teacherInfo, 'joiningDate')) {
+        const nextJoin = originalUser.teacherInfo.joiningDate ? new Date(originalUser.teacherInfo.joiningDate).getTime() : null;
+        const prevJoin = prevJoiningDate ? new Date(prevJoiningDate).getTime() : null;
+        if (nextJoin !== prevJoin) {
+          lifecycle.history.push({
+            at: new Date(),
+            type: 'joining',
+            note: nextJoin ? `Joining date set to ${new Date(nextJoin).toISOString().slice(0, 10)}` : 'Joining date cleared',
+            actor: req.user._id,
+          });
+        }
+      }
+
+      lifecycle.history = lifecycle.history.slice(-100);
+      originalUser.teacherInfo.lifecycle = lifecycle;
+      originalUser.markModified('teacherInfo');
+    }
 
     // Save updated user
     await originalUser.save();
@@ -3628,6 +3680,51 @@ router.delete('/:guardianId/students/:studentId/profile-picture', authenticateTo
   } catch (error) {
     console.error('Delete student picture error:', error);
     res.status(500).json({ message: 'Failed to delete student picture', error: error.message });
+  }
+});
+
+/**
+ * Toggle whether a teacher is accepting NEW students (Admin only)
+ * PUT /api/users/:id/accepting-students
+ */
+router.put('/:id/accepting-students', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const accepting = Boolean(req.body?.acceptingNewStudents);
+    const teacher = await User.findById(id);
+    if (!teacher) return res.status(404).json({ message: 'User not found' });
+    if (teacher.role !== 'teacher') return res.status(400).json({ message: 'Only teachers have a student-acceptance status.' });
+
+    teacher.teacherInfo = teacher.teacherInfo || {};
+    const prev = teacher.teacherInfo.acceptingNewStudents !== false;
+    teacher.teacherInfo.acceptingNewStudents = accepting;
+
+    if (prev !== accepting) {
+      teacher.teacherInfo.acceptingStudentsUpdatedAt = new Date();
+      const lifecycle = teacher.teacherInfo.lifecycle && typeof teacher.teacherInfo.lifecycle === 'object'
+        ? teacher.teacherInfo.lifecycle
+        : { stage: 'active', history: [] };
+      if (!Array.isArray(lifecycle.history)) lifecycle.history = [];
+      lifecycle.history.push({
+        at: new Date(),
+        type: 'accepting',
+        note: accepting ? 'Opened for new students' : 'Closed to new students',
+        actor: req.user._id,
+      });
+      lifecycle.history = lifecycle.history.slice(-100);
+      teacher.teacherInfo.lifecycle = lifecycle;
+    }
+    teacher.markModified('teacherInfo');
+    await teacher.save();
+
+    return res.json({
+      message: accepting ? 'Teacher is now accepting new students.' : 'Teacher is now closed to new students.',
+      acceptingNewStudents: accepting,
+      acceptingStudentsUpdatedAt: teacher.teacherInfo.acceptingStudentsUpdatedAt || null,
+    });
+  } catch (error) {
+    console.error('Toggle accepting-new-students error:', error);
+    return res.status(500).json({ message: 'Failed to update student-acceptance status.' });
   }
 });
 

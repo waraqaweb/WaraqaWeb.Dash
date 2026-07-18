@@ -15,6 +15,7 @@ const User = require('../models/User');
 const Class = require('../models/Class');
 const { authenticateToken, requireTeacherOrAdmin, requireAdmin } = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
+const { standardizeSubjects, STANDARD_SUBJECTS } = require('../utils/subjectStandardization');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -82,6 +83,16 @@ const RECRUITMENT_EMAIL_EVENTS = [
   'completed_unsuitable',
   'failed',
 ];
+
+// Interview outcomes that automatically produce a "pending" outcome email.
+// (interview_invite and missing_info are manual, ad-hoc events — not driven by outcome.)
+const OUTCOME_TO_EMAIL_EVENT = {
+  passed: 'passed',
+  passed_not_selected: 'passed_not_selected',
+  completed_unsuitable: 'completed_unsuitable',
+  failed: 'failed',
+};
+const outcomeEmailEventFor = (outcome) => OUTCOME_TO_EMAIL_EVENT[String(outcome || '').trim()] || null;
 
 const DEFAULT_RECRUITMENT_EMAIL_TEMPLATES = {
   interview_invite: {
@@ -768,8 +779,12 @@ router.get('/operations-summary', authenticateToken, requireAdmin, async (req, r
       const teacherInfo = teacher.teacherInfo || {};
       const qualifications = Array.isArray(teacherInfo.qualifications) ? teacherInfo.qualifications : [];
       const subjects = Array.isArray(teacherInfo.subjects) ? teacherInfo.subjects.filter(Boolean) : [];
+      const standardizedSubjects = standardizeSubjects(subjects);
       const upcoming = upcomingByTeacher.get(String(teacher._id)) || { upcomingHours: 0, upcomingClasses: 0, studentCount: 0 };
-      const tenureStart = teacher.createdAt ? new Date(teacher.createdAt) : null;
+      // Tenure anchors on the admin-set joining date when available, otherwise
+      // falls back to the account creation date.
+      const joiningDate = teacherInfo.joiningDate ? new Date(teacherInfo.joiningDate) : null;
+      const tenureStart = joiningDate || (teacher.createdAt ? new Date(teacher.createdAt) : null);
       const tenureMonths = tenureStart ? Math.max(0, Math.round((now.getTime() - tenureStart.getTime()) / (30.44 * 24 * 60 * 60 * 1000))) : null;
       let tenureLabel = 'Unknown';
       if (tenureMonths != null) {
@@ -785,15 +800,19 @@ router.get('/operations-summary', authenticateToken, requireAdmin, async (req, r
         gender: teacher.gender || '',
         timezone: teacher.timezone || 'Africa/Cairo',
         subjects,
+        standardizedSubjects,
         spokenLanguages: Array.isArray(teacherInfo.spokenLanguages) ? teacherInfo.spokenLanguages.filter(Boolean) : [],
         monthlyHours: Number(teacherInfo.monthlyHours || 0),
         hourlyRate: Number(teacherInfo.hourlyRate || 0),
         availabilityStatus: teacherInfo.availabilityStatus || 'default_24_7',
+        acceptingNewStudents: teacherInfo.acceptingNewStudents !== false,
+        lifecycleStage: teacherInfo.lifecycle?.stage || 'active',
         hasGoogleMeetLink: Boolean(teacherInfo.googleMeetLink),
         qualificationText: qualifications.map((item) => `${item?.degree || ''} ${item?.institution || ''}`.trim()).filter(Boolean),
         upcomingHours14Days: Number(upcoming.upcomingHours || 0),
         upcomingClasses14Days: Number(upcoming.upcomingClasses || 0),
         studentCount14Days: Number(upcoming.studentCount || 0),
+        joiningDate: joiningDate ? joiningDate.toISOString() : null,
         tenureStart: tenureStart ? tenureStart.toISOString() : null,
         tenureMonths,
         tenureLabel,
@@ -805,9 +824,16 @@ router.get('/operations-summary', authenticateToken, requireAdmin, async (req, r
     const distinctStudents14Days = teacherRows.reduce((sum, teacher) => sum + (teacher.studentCount14Days || 0), 0);
     const singleSubjectCount = teacherRows.filter((teacher) => teacher.subjects.length <= 1).length;
     const multiSubjectCount = teacherRows.filter((teacher) => teacher.subjects.length > 1).length;
-    const quranCount = teacherRows.filter((teacher) => includesAny(teacher.subjects, [/quran/i, /tajweed/i])).length;
-    const arabicCount = teacherRows.filter((teacher) => includesAny(teacher.subjects, [/arabic/i, /noor/i])).length;
-    const islamicStudiesCount = teacherRows.filter((teacher) => includesAny(teacher.subjects, [/islamic/i, /fiqh/i, /hadith/i, /tafsir/i])).length;
+    const hasStd = (teacher, subject) => teacher.standardizedSubjects.includes(subject);
+    const quranCount = teacherRows.filter((teacher) => hasStd(teacher, 'Quran (Memorization)') || hasStd(teacher, 'Quran (Recitation/Tajweed)')).length;
+    const arabicCount = teacherRows.filter((teacher) => hasStd(teacher, 'Arabic Language') || hasStd(teacher, 'Reading Basics')).length;
+    const islamicStudiesCount = teacherRows.filter((teacher) => hasStd(teacher, 'Islamic Studies')).length;
+    const subjectBreakdown = STANDARD_SUBJECTS.reduce((acc, subject) => {
+      acc[subject] = teacherRows.filter((teacher) => hasStd(teacher, subject)).length;
+      return acc;
+    }, {});
+    const acceptingNewStudentsCount = teacherRows.filter((teacher) => teacher.acceptingNewStudents).length;
+    const notAcceptingNewStudentsCount = teacherRows.length - acceptingNewStudentsCount;
     const englishSpeakingCount = teacherRows.filter((teacher) => includesAny(teacher.spokenLanguages, [/english/i])).length;
     const azharCount = teacherRows.filter((teacher) => includesAny(teacher.qualificationText, [/azhar/i])).length;
     const ijazahCount = teacherRows.filter((teacher) => includesAny(teacher.qualificationText, [/ijaz/i])).length;
@@ -870,14 +896,16 @@ router.get('/operations-summary', authenticateToken, requireAdmin, async (req, r
         quranCount,
         arabicCount,
         islamicStudiesCount,
+        subjectBreakdown,
+        acceptingNewStudentsCount,
+        notAcceptingNewStudentsCount,
         englishSpeakingCount,
         azharCount,
         ijazahCount,
         googleMeetLinkCount: teacherRows.filter((teacher) => teacher.hasGoogleMeetLink).length,
       },
       teacherRows: teacherRows
-        .sort((a, b) => (b.upcomingHours14Days || 0) - (a.upcomingHours14Days || 0) || (b.monthlyHours || 0) - (a.monthlyHours || 0))
-        .slice(0, 12),
+        .sort((a, b) => (b.upcomingHours14Days || 0) - (a.upcomingHours14Days || 0) || (b.monthlyHours || 0) - (a.monthlyHours || 0)),
       dataCompleteness: {
         reserveAvailabilityTracked: false,
         backupTeacherCoverageTracked: false,
@@ -1644,6 +1672,154 @@ router.put('/email-templates', authenticateToken, requireAdmin, async (req, res)
   }
 });
 
+// Build + enqueue a recruitment email for a single candidate document.
+// Marks the outcome as emailed (interview.emailSentForOutcome) when the event
+// is outcome-driven, and records the send in the candidate history.
+// Returns { to, event }. Throws Error with .statusCode for expected failures.
+async function sendRecruitmentEmailForDoc(doc, event, { notes = '', actorId = null, templates = null, branding = null } = {}) {
+  if (!RECRUITMENT_EMAIL_EVENTS.includes(event)) {
+    const err = new Error('Unsupported email template.');
+    err.statusCode = 400;
+    throw err;
+  }
+  const personalInfo = doc.personalInfo || {};
+  const to = String(personalInfo.email || doc.user?.email || '').trim().toLowerCase();
+  if (!to) {
+    const err = new Error('This candidate has no email address on file.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const resolvedTemplates = templates || (await getRecruitmentEmailTemplates());
+  const template = resolvedTemplates[event] || DEFAULT_RECRUITMENT_EMAIL_TEMPLATES[event] || { subject: '', body: '' };
+  const name = String(personalInfo.fullName || `${doc.user?.firstName || ''} ${doc.user?.lastName || ''}`.trim() || 'there');
+  const baseUrl = (process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '').split(',')[0].replace(/\/$/, '');
+  const interviewLink = `${baseUrl}/public/meetings/evaluation?type=new_teacher_interview`;
+
+  const vars = {
+    name,
+    link: event === 'missing_info' ? `${baseUrl}/teacher-contract` : interviewLink,
+    notes: String(notes || '').trim(),
+  };
+
+  const subject = renderEmailTemplate(template.subject, vars) || 'Waraqa Recruitment';
+  const bodyText = renderEmailTemplate(template.body, vars);
+
+  let resolvedBranding = branding;
+  if (!resolvedBranding) {
+    try { resolvedBranding = await emailService.loadBrandingAndLogo(); } catch { resolvedBranding = {}; }
+  }
+  const htmlBody = `<div style="font-size:15px;line-height:1.6;color:#111827;">${bodyText.split('\n').map((line) => line.trim() ? `<p style="margin:0 0 12px;">${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>` : '<br/>').join('')}</div>`;
+  const html = emailService.baseEmailTemplate({ preheader: subject, body: htmlBody, branding: resolvedBranding });
+
+  await emailService.enqueueEmail({
+    to,
+    subject,
+    html,
+    text: bodyText,
+    type: 'recruitment',
+    relatedId: String(doc._id),
+    priority: 2,
+  });
+
+  doc.recruitment = doc.recruitment || {};
+  // Mark this outcome as emailed so it drops out of the "pending emails" queue.
+  const outcomeForEvent = Object.keys(OUTCOME_TO_EMAIL_EVENT).find((o) => OUTCOME_TO_EMAIL_EVENT[o] === event);
+  if (outcomeForEvent) {
+    doc.recruitment.interview = doc.recruitment.interview || {};
+    doc.recruitment.interview.emailSentForOutcome = doc.recruitment.interview.outcome || outcomeForEvent;
+    doc.recruitment.interview.outcomeEmailSentAt = new Date();
+  }
+  if (!Array.isArray(doc.recruitment.history)) doc.recruitment.history = [];
+  doc.recruitment.history.push({
+    at: new Date(),
+    actor: actorId,
+    action: 'email_sent',
+    note: `Sent "${event}" email to ${to}`,
+  });
+  doc.markModified('recruitment');
+  await doc.save();
+
+  return { to, event };
+}
+
+// Collect candidates whose interview outcome maps to an email that has NOT
+// been sent yet for that outcome.
+async function collectPendingOutcomeEmails() {
+  const pending = [];
+  for (const [source, Model] of [['public', TeacherContractLead], ['dashboard', TeacherContractSubmission]]) {
+    const query = source === 'dashboard' ? { status: 'submitted' } : {};
+    const docs = await Model.find(query)
+      .select('recruitment personalInfo user')
+      .populate('user', 'firstName lastName email')
+      .lean();
+    for (const doc of docs) {
+      const interview = doc?.recruitment?.interview || {};
+      const outcome = String(interview.outcome || '').trim();
+      const event = outcomeEmailEventFor(outcome);
+      if (!event) continue;
+      // Already emailed for the current outcome?
+      if (interview.emailSentForOutcome && interview.emailSentForOutcome === outcome) continue;
+      const email = String(doc?.personalInfo?.email || doc?.user?.email || '').trim().toLowerCase();
+      if (!email) continue;
+      pending.push({
+        source,
+        id: String(doc._id),
+        name: String(doc?.personalInfo?.fullName || `${doc?.user?.firstName || ''} ${doc?.user?.lastName || ''}`.trim() || 'Candidate'),
+        email,
+        outcome,
+        event,
+      });
+    }
+  }
+  return pending;
+}
+
+// List candidates awaiting an outcome email (for the "Send all pending" queue)
+router.get('/pending-emails', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const pending = await collectPendingOutcomeEmails();
+    return res.json({ pending, count: pending.length });
+  } catch (error) {
+    console.error('List pending emails error:', error);
+    return res.status(500).json({ message: 'Failed to load pending emails.' });
+  }
+});
+
+// Send ALL pending outcome emails in one action
+router.post('/send-pending-emails', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const pending = await collectPendingOutcomeEmails();
+    if (!pending.length) return res.json({ message: 'No pending emails to send.', sent: 0, failed: 0, results: [] });
+
+    const templates = await getRecruitmentEmailTemplates();
+    let branding = {};
+    try { branding = await emailService.loadBrandingAndLogo(); } catch { branding = {}; }
+
+    const results = [];
+    let sent = 0;
+    let failed = 0;
+    for (const item of pending) {
+      const Model = resolveResponseModel(item.source);
+      if (!Model) { failed += 1; results.push({ ...item, ok: false, error: 'Unsupported source' }); continue; }
+      try {
+        const doc = await Model.findById(item.id).populate('user', 'firstName lastName email');
+        if (!doc) { failed += 1; results.push({ ...item, ok: false, error: 'Not found' }); continue; }
+        await sendRecruitmentEmailForDoc(doc, item.event, { actorId: req.user._id, templates, branding });
+        sent += 1;
+        results.push({ ...item, ok: true });
+      } catch (err) {
+        failed += 1;
+        results.push({ ...item, ok: false, error: err.message || 'Failed' });
+      }
+    }
+    return res.json({ message: `Queued ${sent} email(s).`, sent, failed, results });
+  } catch (error) {
+    console.error('Send pending emails error:', error);
+    return res.status(500).json({ message: 'Failed to send pending emails.' });
+  }
+});
+
 // Send a per-outcome email to a candidate
 router.post('/responses/:source/:id/send-email', authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -1652,62 +1828,17 @@ router.post('/responses/:source/:id/send-email', authenticateToken, requireAdmin
     if (!Model) return res.status(400).json({ message: 'Unsupported response source.' });
 
     const event = String(req.body?.template || req.body?.event || '').trim();
-    if (!RECRUITMENT_EMAIL_EVENTS.includes(event)) {
-      return res.status(400).json({ message: 'Unsupported email template.' });
-    }
-
     const doc = await Model.findById(req.params.id).populate('user', 'firstName lastName email');
     if (!doc) return res.status(404).json({ message: 'Teacher response not found.' });
 
-    const personalInfo = doc.personalInfo || {};
-    const to = String(personalInfo.email || doc.user?.email || '').trim().toLowerCase();
-    if (!to) return res.status(400).json({ message: 'This candidate has no email address on file.' });
-
-    const templates = await getRecruitmentEmailTemplates();
-    const template = templates[event];
-    const name = String(personalInfo.fullName || `${doc.user?.firstName || ''} ${doc.user?.lastName || ''}`.trim() || 'there');
-    const interviewLink = `${(process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '').split(',')[0].replace(/\/$/, '')}/public/meetings/evaluation?type=new_teacher_interview`;
-
-    const vars = {
-      name,
-      link: event === 'missing_info'
-        ? `${(process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '').split(',')[0].replace(/\/$/, '')}/teacher-contract`
-        : interviewLink,
-      notes: String(req.body?.notes || '').trim(),
-    };
-
-    const subject = renderEmailTemplate(template.subject, vars) || 'Waraqa Recruitment';
-    const bodyText = renderEmailTemplate(template.body, vars);
-
-    let branding = {};
-    try { branding = await emailService.loadBrandingAndLogo(); } catch { branding = {}; }
-    const htmlBody = `<div style="font-size:15px;line-height:1.6;color:#111827;">${bodyText.split('\n').map((line) => line.trim() ? `<p style="margin:0 0 12px;">${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>` : '<br/>').join('')}</div>`;
-    const html = emailService.baseEmailTemplate({ preheader: subject, body: htmlBody, branding });
-
-    await emailService.enqueueEmail({
-      to,
-      subject,
-      html,
-      text: bodyText,
-      type: 'recruitment',
-      relatedId: String(doc._id),
-      priority: 2,
+    const { to } = await sendRecruitmentEmailForDoc(doc, event, {
+      notes: req.body?.notes,
+      actorId: req.user._id,
     });
-
-    // Record in candidate history
-    doc.recruitment = doc.recruitment || {};
-    if (!Array.isArray(doc.recruitment.history)) doc.recruitment.history = [];
-    doc.recruitment.history.push({
-      at: new Date(),
-      actor: req.user._id,
-      action: 'email_sent',
-      note: `Sent "${event}" email to ${to}`,
-    });
-    doc.markModified('recruitment');
-    await doc.save();
 
     return res.json({ message: `Email queued to ${to}.`, sentTo: to, event });
   } catch (error) {
+    if (error.statusCode) return res.status(error.statusCode).json({ message: error.message });
     console.error('Send candidate email error:', error);
     return res.status(500).json({ message: 'Failed to send email.' });
   }

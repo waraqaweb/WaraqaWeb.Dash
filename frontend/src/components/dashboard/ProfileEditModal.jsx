@@ -100,6 +100,12 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
         formData.customRateUSD = (customRateOverride.rateUSD !== undefined && customRateOverride.rateUSD !== null)
           ? customRateOverride.rateUSD
           : '';
+
+        // Joining date (tenure anchor) + accepting-new-students toggle — admin only.
+        formData.joiningDate = targetUser.teacherInfo?.joiningDate
+          ? String(targetUser.teacherInfo.joiningDate).slice(0, 10)
+          : '';
+        formData.acceptingNewStudents = targetUser.teacherInfo?.acceptingNewStudents !== false;
       } else if (targetUser.role === 'guardian') {
         // Extract guardian-specific fields (guardians do not receive bank details in the edit form)
         if (targetUser.guardianInfo?.spokenLanguages !== undefined) {
@@ -628,6 +634,13 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
         };
       }
 
+      // Joining date + accepting-new-students — admin only.
+      if (form.role === 'teacher' && isAdmin) {
+        if (!payload.teacherInfo) payload.teacherInfo = {};
+        payload.teacherInfo.joiningDate = form.joiningDate ? new Date(form.joiningDate).toISOString() : null;
+        payload.teacherInfo.acceptingNewStudents = form.acceptingNewStudents !== false;
+      }
+
       // spokenLanguages for teacher or guardian
       if (form.spokenLanguages && canEdit('spokenLanguages')) {
         if (form.role === 'teacher') {
@@ -992,6 +1005,34 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                         isAdminView={isAdmin}
                       />
                     </div>
+                    {isAdmin && (
+                      <div className="md:col-span-2 rounded-lg border border-border p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <h5 className="font-medium text-foreground">Accepting new students</h5>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              When OFF, this teacher is marked as not accepting new students. This is reflected in their availability and everywhere the teacher is listed for assignment.
+                            </p>
+                          </div>
+                          <Toggle
+                            checked={form.acceptingNewStudents !== false}
+                            onChange={(v) => setField('acceptingNewStudents', v)}
+                          />
+                        </div>
+                        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-medium text-muted-foreground mb-1">Joining date</label>
+                            <input
+                              type="date"
+                              className="w-full min-w-0 border border-border rounded-lg px-3 py-2 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                              value={form.joiningDate || ''}
+                              onChange={(e) => setField('joiningDate', e.target.value)}
+                            />
+                            <p className="mt-1 text-xs text-muted-foreground">Sets the tenure anchor. Leave empty to fall back to the account creation date.</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {isAdmin && (
                       <div className="md:col-span-2 rounded-lg border border-border p-4">
                         <h5 className="font-medium text-foreground">Yearly vacation allowance</h5>

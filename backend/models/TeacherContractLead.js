@@ -47,6 +47,25 @@ const recruitmentSchema = new mongoose.Schema({
     label: { type: String, trim: true, default: '', maxlength: 40 },
     recommendation: { type: String, trim: true, default: '', maxlength: 40 },
   },
+  interview: {
+    scheduledAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    worksElsewhere: { type: Boolean, default: false },
+    scores: {
+      punctuality: { type: Number, default: null, min: 0, max: 10 },
+      english: { type: Number, default: null, min: 0, max: 10 },
+      subjectKnowledge: { type: Number, default: null, min: 0, max: 10 },
+      teaching: { type: Number, default: null, min: 0, max: 10 },
+      flexibility: { type: Number, default: null, min: 0, max: 10 },
+      professionalism: { type: Number, default: null, min: 0, max: 10 },
+    },
+    outcome: {
+      type: String,
+      enum: ['pending', 'passed', 'passed_not_selected', 'completed_unsuitable', 'failed'],
+      default: 'pending',
+    },
+    notes: { type: String, trim: true, default: '', maxlength: 2000 },
+  },
   history: [{
     at: { type: Date, default: Date.now },
     actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

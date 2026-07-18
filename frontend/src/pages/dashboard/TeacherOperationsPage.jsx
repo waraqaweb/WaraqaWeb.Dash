@@ -12,9 +12,14 @@ import {
   Edit3,
   GraduationCap,
   Loader2,
+  MessageCircle,
   Plus,
+  Save,
+  Star,
+  Trash2,
   TrendingUp,
   Users,
+  X,
   XCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -30,15 +35,20 @@ import {
   updateTrainingBatch,
   updateBatchSession,
   updateCandidateOutcome,
+  addBatchSession,
+  removeBatchSession,
+  getLectureTemplate,
+  saveLectureTemplate,
+  listTeacherContractResponses,
+  saveInterviewScorecard,
 } from '../../api/teacherContract';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: TrendingUp },
   { id: 'pipeline', label: 'Pipeline', icon: BriefcaseBusiness },
   { id: 'training', label: 'Training', icon: GraduationCap },
-  { id: 'business-intelligence', label: 'Business Intelligence', icon: BarChart3 },
   { id: 'interviews', label: 'Interviews', icon: CalendarClock },
-  { id: 'stats', label: 'Stats', icon: BarChart3 },
+  { id: 'stats', label: 'Stats & BI', icon: BarChart3 },
 ];
 
 const BATCH_STATUS_COLORS = {
@@ -55,25 +65,35 @@ const OUTCOME_COLORS = {
   dropped: 'text-muted-foreground',
 };
 
+const INTERVIEW_OUTCOMES = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'passed', label: 'Passed' },
+  { value: 'passed_not_selected', label: 'Passed — not selected' },
+  { value: 'completed_unsuitable', label: 'Completed — unsuitable' },
+  { value: 'failed', label: 'Failed' },
+];
+
+const INTERVIEW_SCORE_FIELDS = [
+  { key: 'punctuality', label: 'Punctuality' },
+  { key: 'english', label: 'English' },
+  { key: 'subjectKnowledge', label: 'Subject knowledge' },
+  { key: 'teaching', label: 'Teaching' },
+  { key: 'flexibility', label: 'Flexibility' },
+  { key: 'professionalism', label: 'Professionalism' },
+];
+
+const INTERVIEW_OUTCOME_COLORS = {
+  pending: 'text-muted-foreground',
+  passed: 'text-green-600 dark:text-green-400',
+  passed_not_selected: 'text-amber-600 dark:text-amber-400',
+  completed_unsuitable: 'text-amber-600 dark:text-amber-400',
+  failed: 'text-red-600 dark:text-red-400',
+};
+
 const staticPolicyCards = [
-  {
-    title: 'Working-hours policy',
-    value: '4h reserve / day',
-    note: 'Seed rule for new teachers, with at least 3h inside target Cairo windows.',
-    icon: Clock3,
-  },
-  {
-    title: 'Recruitment trigger',
-    value: '75% occupancy',
-    note: 'Start hiring before schedules are full and raise alerts again at 85%.',
-    icon: TrendingUp,
-  },
-  {
-    title: 'Pipeline focus',
-    value: 'Applicants + coverage',
-    note: 'Review candidate fit by gender, subject, timezone, and target hours.',
-    icon: Users,
-  },
+  { title: 'Working hours', value: '4h / day', note: '≥3h in Cairo prime windows.', icon: Clock3 },
+  { title: 'Hiring trigger', value: '75% full', note: 'Urgent alert at 85%.', icon: TrendingUp },
+  { title: 'Pipeline focus', value: 'Fit + coverage', note: 'Gender · subject · timezone.', icon: Users },
 ];
 
 const compactSignalCards = [
@@ -83,13 +103,6 @@ const compactSignalCards = [
   { key: 'hours14', label: '14d Hours', valuePath: ['teachers', 'totalUpcomingHours14Days'], suffix: 'h' },
   { key: 'accepted', label: 'Accepted', valuePath: ['pipeline', 'byStatus', 'accepted'] },
   { key: 'shortlisted', label: 'Shortlisted', valuePath: ['pipeline', 'byStatus', 'shortlisted'] },
-];
-
-const nextDeliverables = [
-  'Capacity calculations by gender, subject, timezone window, and spare hours.',
-  'Google Drive-backed public candidate application flow inside the dashboard.',
-  'Candidate lifecycle, scoring, rejection categories, and bulk communication.',
-  'One-hour candidate interview meeting type with slot booking and outcomes.',
 ];
 
 function TabButton({ active, icon: Icon, label, onClick }) {
@@ -137,6 +150,8 @@ export default function TeacherOperationsPage({ isActive }) {
     title: '', slug: '', status: 'draft', opensAt: '', closesAt: '', targetApplicants: '', targetHires: '',
     male: false, female: false, subjects: '', preferredWindow: '', publicHeadline: '', publicDescription: '', internalNotes: '', reopenLimit: '',
   });
+  const [showCampaignModal, setShowCampaignModal] = useState(false);
+  const [showCampaignDrawer, setShowCampaignDrawer] = useState(false);
 
   // Training batch state
   const [batches, setBatches] = useState([]);
@@ -147,6 +162,21 @@ export default function TeacherOperationsPage({ isActive }) {
   const [batchForm, setBatchForm] = useState({ title: '', totalSessions: 6, startDate: '', endDate: '', campaignId: '', trainerNotes: '' });
   const [sessionEditing, setSessionEditing] = useState(null); // { batchId, sessionNumber }
   const [sessionForm, setSessionForm] = useState({ title: '', scheduledAt: '', durationMinutes: 60, meetingLink: '', status: 'scheduled', trainerNotes: '' });
+  const [showBatchModal, setShowBatchModal] = useState(false);
+
+  // Lecture template (reusable topics)
+  const [lectureTopics, setLectureTopics] = useState([]);
+  const [lectureDraft, setLectureDraft] = useState([]);
+  const [lectureSaving, setLectureSaving] = useState(false);
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+
+  // Interviews
+  const [interviewResponses, setInterviewResponses] = useState([]);
+  const [interviewLoading, setInterviewLoading] = useState(false);
+  const [interviewError, setInterviewError] = useState('');
+  const [selectedInterviewId, setSelectedInterviewId] = useState('');
+  const [interviewForm, setInterviewForm] = useState(null);
+  const [interviewSaving, setInterviewSaving] = useState(false);
 
   const headerCopy = useMemo(() => ({
     title: 'Recruitment',
@@ -219,6 +249,134 @@ export default function TeacherOperationsPage({ isActive }) {
     return () => { cancelled = true; };
   }, [isActive]);
 
+  // Load reusable lecture template
+  useEffect(() => {
+    if (!isActive) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await getLectureTemplate();
+        if (!cancelled) setLectureTopics(data?.topics || []);
+      } catch (error) {
+        // Non-fatal: fall back to server defaults on batch create.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isActive]);
+
+  // Load interview candidates (shortlisted / interview stages)
+  useEffect(() => {
+    if (!isActive || activeTab !== 'interviews') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setInterviewLoading(true);
+        setInterviewError('');
+        const data = await listTeacherContractResponses();
+        if (!cancelled) {
+          const relevant = (data || []).filter((r) => {
+            const status = r?.recruitment?.status || r?.status;
+            return ['shortlisted', 'interview_pending', 'interviewed', 'accepted'].includes(status);
+          });
+          setInterviewResponses(relevant.length ? relevant : (data || []));
+        }
+      } catch (error) {
+        if (!cancelled) setInterviewError(error?.response?.data?.message || 'Failed to load interview candidates.');
+      } finally {
+        if (!cancelled) setInterviewLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isActive, activeTab]);
+
+  const openTemplateEditor = () => {
+    setLectureDraft(lectureTopics.length ? [...lectureTopics] : ['']);
+    setShowTemplateEditor(true);
+  };
+
+  const handleSaveTemplate = async () => {
+    const cleaned = lectureDraft.map((t) => String(t || '').trim()).filter(Boolean);
+    if (!cleaned.length) return;
+    try {
+      setLectureSaving(true);
+      const data = await saveLectureTemplate(cleaned);
+      setLectureTopics(data?.topics || cleaned);
+      setShowTemplateEditor(false);
+    } catch (error) {
+      setBatchError(error?.response?.data?.message || 'Failed to save lecture template.');
+    } finally {
+      setLectureSaving(false);
+    }
+  };
+
+  const handleAddSession = async (batchId) => {
+    try {
+      setBatchSaving(true);
+      const saved = await addBatchSession(batchId, {});
+      if (saved) setBatches((prev) => prev.map((b) => (b._id === batchId ? saved : b)));
+    } catch (error) {
+      setBatchError(error?.response?.data?.message || 'Failed to add lecture.');
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
+  const handleRemoveSession = async (batchId, sessionNumber) => {
+    try {
+      setBatchSaving(true);
+      const saved = await removeBatchSession(batchId, sessionNumber);
+      if (saved) setBatches((prev) => prev.map((b) => (b._id === batchId ? saved : b)));
+    } catch (error) {
+      setBatchError(error?.response?.data?.message || 'Failed to remove lecture.');
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
+  const selectInterview = (response) => {
+    setSelectedInterviewId(response.id);
+    const iv = response?.recruitment?.interview || {};
+    const scores = iv.scores || {};
+    setInterviewForm({
+      source: response.source,
+      id: response.id,
+      scheduledAt: iv.scheduledAt ? String(iv.scheduledAt).slice(0, 16) : '',
+      completedAt: iv.completedAt ? String(iv.completedAt).slice(0, 16) : '',
+      worksElsewhere: Boolean(iv.worksElsewhere),
+      outcome: iv.outcome || 'pending',
+      notes: iv.notes || '',
+      scores: INTERVIEW_SCORE_FIELDS.reduce((acc, f) => {
+        acc[f.key] = scores[f.key] ?? '';
+        return acc;
+      }, {}),
+    });
+  };
+
+  const handleSaveInterview = async () => {
+    if (!interviewForm) return;
+    try {
+      setInterviewSaving(true);
+      setInterviewError('');
+      const payload = {
+        scheduledAt: interviewForm.scheduledAt || null,
+        completedAt: interviewForm.completedAt || null,
+        worksElsewhere: interviewForm.worksElsewhere,
+        outcome: interviewForm.outcome,
+        notes: interviewForm.notes,
+        scores: interviewForm.scores,
+      };
+      const updated = await saveInterviewScorecard(interviewForm.source, interviewForm.id, payload);
+      if (updated) {
+        setInterviewResponses((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+        selectInterview(updated);
+      }
+    } catch (error) {
+      setInterviewError(error?.response?.data?.message || 'Failed to save interview scorecard.');
+    } finally {
+      setInterviewSaving(false);
+    }
+  };
+
   const handleCreateBatch = async () => {
     if (!batchForm.title.trim()) return;
     try {
@@ -227,6 +385,7 @@ export default function TeacherOperationsPage({ isActive }) {
       const payload = {
         title: batchForm.title,
         totalSessions: Number(batchForm.totalSessions) || 6,
+        topics: lectureTopics.length ? lectureTopics : undefined,
         startDate: batchForm.startDate || null,
         endDate: batchForm.endDate || null,
         campaignId: batchForm.campaignId || null,
@@ -237,6 +396,7 @@ export default function TeacherOperationsPage({ isActive }) {
         setBatches((prev) => [saved, ...prev]);
         setBatchForm({ title: '', totalSessions: 6, startDate: '', endDate: '', campaignId: '', trainerNotes: '' });
         setExpandedBatchId(saved._id);
+        setShowBatchModal(false);
       }
     } catch (error) {
       setBatchError(error?.response?.data?.message || 'Failed to create training batch.');
@@ -317,6 +477,8 @@ export default function TeacherOperationsPage({ isActive }) {
 
   const startEditCampaign = (campaign) => {
     setEditingCampaignId(campaign.id);
+    setShowCampaignModal(true);
+    setShowCampaignDrawer(false);
     setCampaignForm({
       title: campaign.title || '',
       slug: campaign.slug || '',
@@ -365,6 +527,7 @@ export default function TeacherOperationsPage({ isActive }) {
         return exists ? prev.map((item) => item.id === saved.id ? saved : item) : [saved, ...prev];
       });
       resetCampaignForm();
+      setShowCampaignModal(false);
     } catch (error) {
       setCampaignError(error?.response?.data?.message || 'Failed to save recruitment campaign.');
     } finally {
@@ -413,11 +576,11 @@ export default function TeacherOperationsPage({ isActive }) {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setActiveTab('business-intelligence')}
+                onClick={() => setActiveTab('stats')}
                 className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:border-primary/40"
               >
                 <BarChart3 className="h-4 w-4" />
-                <span>Open BI tab</span>
+                <span>Stats &amp; BI</span>
               </button>
               <button
                 type="button"
@@ -503,180 +666,181 @@ export default function TeacherOperationsPage({ isActive }) {
               </div>
             </SectionCard>
 
-            <SectionCard title="What this page will own">
-              <div className="space-y-2">
-                {nextDeliverables.map((item) => (
-                  <div key={item} className="flex items-start gap-2 rounded-xl border border-border bg-background px-3 py-2">
-                    <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                    <p className="text-xs leading-5 text-foreground">{item}</p>
+            <SectionCard title="Quick links">
+              <div className="space-y-1.5">
+                <div className="rounded-xl border border-border bg-background p-2.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Application form</p>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <input readOnly value={`${window.location.origin}/teacher-contract`} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
+                    <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Form link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
                   </div>
-                ))}
+                </div>
+                <div className="rounded-xl border border-border bg-background p-2.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Interview booking</p>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <input readOnly value={newTeacherInterviewLink} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
+                    <button type="button" onClick={() => handleCopy(newTeacherInterviewLink, 'Interview link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  <button type="button" onClick={() => setActiveTab('pipeline')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><BriefcaseBusiness className="h-3.5 w-3.5" /> Pipeline</button>
+                  <button type="button" onClick={() => setActiveTab('training')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><GraduationCap className="h-3.5 w-3.5" /> Training</button>
+                  <button type="button" onClick={() => setActiveTab('interviews')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><CalendarClock className="h-3.5 w-3.5" /> Interviews</button>
+                </div>
+                {copyNotice ? <p className="text-[11px] text-muted-foreground">{copyNotice}</p> : null}
               </div>
             </SectionCard>
           </div>
         ) : null}
 
         {activeTab === 'pipeline' ? (
-          <div className="grid gap-3 xl:grid-cols-[1.05fr_0.95fr]">
-            <SectionCard title="Recruitment campaigns">
-              {campaignError ? <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{campaignError}</div> : null}
-              <div className="grid gap-2 md:grid-cols-2">
-                <label className="text-sm text-foreground">
-                  <span className="mb-1 block font-medium">Campaign title</span>
-                  <input value={campaignForm.title} onChange={(event) => setCampaignForm((prev) => ({ ...prev, title: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                </label>
-                <label className="text-sm text-foreground">
-                  <span className="mb-1 block font-medium">Slug</span>
-                  <input value={campaignForm.slug} onChange={(event) => setCampaignForm((prev) => ({ ...prev, slug: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" placeholder="school-year-2026" />
-                </label>
-                <label className="text-sm text-foreground">
-                  <span className="mb-1 block font-medium">Status</span>
-                  <select value={campaignForm.status} onChange={(event) => setCampaignForm((prev) => ({ ...prev, status: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5">
-                    <option value="draft">Draft</option>
-                    <option value="open">Open</option>
-                    <option value="closed">Closed</option>
-                    <option value="archived">Archived</option>
-                  </select>
-                </label>
-                <label className="text-sm text-foreground">
-                  <span className="mb-1 block font-medium">Preferred Cairo window</span>
-                  <input value={campaignForm.preferredWindow} onChange={(event) => setCampaignForm((prev) => ({ ...prev, preferredWindow: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" placeholder="10 PM - 3 AM Cairo" />
-                </label>
-                <label className="text-sm text-foreground">
-                  <span className="mb-1 block font-medium">Opens at</span>
-                  <input type="datetime-local" value={campaignForm.opensAt} onChange={(event) => setCampaignForm((prev) => ({ ...prev, opensAt: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                </label>
-                <label className="text-sm text-foreground">
-                  <span className="mb-1 block font-medium">Closes at</span>
-                  <input type="datetime-local" value={campaignForm.closesAt} onChange={(event) => setCampaignForm((prev) => ({ ...prev, closesAt: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                </label>
-                <label className="text-sm text-foreground">
-                  <span className="mb-1 block font-medium">Target applicants</span>
-                  <input type="number" min="0" value={campaignForm.targetApplicants} onChange={(event) => setCampaignForm((prev) => ({ ...prev, targetApplicants: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                </label>
-                <label className="text-sm text-foreground">
-                  <span className="mb-1 block font-medium">Target hires</span>
-                  <input type="number" min="0" value={campaignForm.targetHires} onChange={(event) => setCampaignForm((prev) => ({ ...prev, targetHires: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                </label>
-                <label className="text-sm text-foreground md:col-span-2">
-                  <span className="mb-1 block font-medium">Subjects</span>
-                  <input value={campaignForm.subjects} onChange={(event) => setCampaignForm((prev) => ({ ...prev, subjects: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" placeholder="Quran, Arabic, Islamic Studies" />
-                </label>
-                <label className="text-sm text-foreground md:col-span-2">
-                  <span className="mb-1 block font-medium">Public headline</span>
-                  <input value={campaignForm.publicHeadline} onChange={(event) => setCampaignForm((prev) => ({ ...prev, publicHeadline: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                </label>
-                <label className="text-sm text-foreground md:col-span-2">
-                  <span className="mb-1 block font-medium">Public description</span>
-                  <textarea rows={4} value={campaignForm.publicDescription} onChange={(event) => setCampaignForm((prev) => ({ ...prev, publicDescription: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                </label>
-                <label className="text-sm text-foreground md:col-span-2">
-                  <span className="mb-1 block font-medium">Internal notes</span>
-                  <textarea rows={4} value={campaignForm.internalNotes} onChange={(event) => setCampaignForm((prev) => ({ ...prev, internalNotes: event.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                </label>
-                <div className="md:col-span-2 flex flex-wrap items-center gap-3 text-sm text-foreground">
-                  <label className="inline-flex items-center gap-2"><input type="checkbox" checked={campaignForm.male} onChange={(event) => setCampaignForm((prev) => ({ ...prev, male: event.target.checked }))} /> Male teachers</label>
-                  <label className="inline-flex items-center gap-2"><input type="checkbox" checked={campaignForm.female} onChange={(event) => setCampaignForm((prev) => ({ ...prev, female: event.target.checked }))} /> Female teachers</label>
-                </div>
+          <div className="grid gap-2.5">
+            {campaignError ? <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{campaignError}</div> : null}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-3 py-2 shadow-sm">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <BriefcaseBusiness className="h-4 w-4 text-primary" />
+                <span><span className="font-semibold text-foreground">{campaigns.length}</span> campaign{campaigns.length === 1 ? '' : 's'}</span>
+                {campaignLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <button type="button" onClick={saveCampaign} disabled={campaignSaving} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60">
-                  {editingCampaignId ? <Edit3 className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-                  <span>{campaignSaving ? 'Saving…' : editingCampaignId ? 'Update campaign' : 'Create campaign'}</span>
+              <div className="flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => { resetCampaignForm(); setShowCampaignModal(true); }} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm">
+                  <Plus className="h-3.5 w-3.5" /> New campaign
                 </button>
-                {editingCampaignId ? <button type="button" onClick={resetCampaignForm} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Cancel edit</button> : null}
+                <button type="button" onClick={() => setShowCampaignDrawer(true)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3.5 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40">
+                  <BriefcaseBusiness className="h-3.5 w-3.5" /> Campaigns
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
               </div>
-            </SectionCard>
-
-            <SectionCard title="Campaign list">
-              {campaignLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading campaigns…</div> : null}
-              <div className="mb-2 rounded-xl border border-border bg-background p-2.5">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Generic application form link</p>
-                <div className="mt-1.5 flex flex-col gap-1.5 sm:flex-row sm:items-center">
-                  <input readOnly value={`${window.location.origin}/teacher-contract`} className="min-w-0 flex-1 rounded-xl border border-border bg-card px-3 py-2 text-sm text-foreground" />
-                  <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Form link')} className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:border-primary/40">
-                    <Copy className="h-4 w-4" />
-                    <span>Copy</span>
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">Send this link to candidates. Use the per-campaign links below to pre-select a specific campaign.</p>
-                {copyNotice ? <p className="mt-1 text-xs text-muted-foreground">{copyNotice}</p> : null}
-              </div>
-              <div className="space-y-2">
-                {(campaigns || []).map((campaign) => (
-                  <div key={campaign.id} className="rounded-xl border border-border bg-background p-2.5">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <p className="text-base font-semibold text-foreground">{campaign.title}</p>
-                        <p className="text-xs text-muted-foreground">/{campaign.slug} • {campaign.status} • {campaign.applicationCount} applications</p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract?campaign=${campaign.slug}`, 'Campaign link')} className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:border-primary/40">
-                          <Copy className="h-3.5 w-3.5" />
-                          <span>Copy link</span>
-                        </button>
-                        <button type="button" onClick={() => startEditCampaign(campaign)} className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:border-primary/40">
-                          <Edit3 className="h-4 w-4" />
-                          <span>Edit</span>
-                        </button>
-                      </div>
-                    </div>
-                    <div className="mt-2 grid gap-1.5 text-xs text-foreground sm:grid-cols-2">
-                      <div className="rounded-lg border border-border bg-card px-2.5 py-1.5">Subjects: {campaign.subjects?.join(', ') || 'General'}</div>
-                      <div className="rounded-lg border border-border bg-card px-2.5 py-1.5">Window: {campaign.preferredWindow || 'Flexible'}</div>
-                      <div className="rounded-lg border border-border bg-card px-2.5 py-1.5">Applicants target: {campaign.targetApplicants || 0}</div>
-                      <div className="rounded-lg border border-border bg-card px-2.5 py-1.5">Hires target: {campaign.targetHires || 0}</div>
-                    </div>
-                  </div>
-                ))}
-                {!campaignLoading && !(campaigns || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No recruitment campaigns yet.</div> : null}
-              </div>
-            </SectionCard>
-
-            <SectionCard title="Candidate pipeline" className="xl:col-span-2">
-              <p className="mb-4 text-sm text-muted-foreground">
-                This slice keeps campaign planning and candidate review in the same workflow surface.
-              </p>
+            </div>
+            <SectionCard title="Candidate pipeline">
               {isActive ? <TeacherResponsesPanel /> : null}
             </SectionCard>
           </div>
         ) : null}
 
         {activeTab === 'interviews' ? (
-          <div className="grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
-            <SectionCard title="Interview operations">
-              <div className="space-y-2 text-xs leading-5 text-muted-foreground">
-                <p>New-teacher interviews now have a dedicated one-hour meeting type and can use the same booking infrastructure as other Waraqa meetings.</p>
-                <p>Use the meeting availability page to create admin slots, then share the interview link with candidates.</p>
-              </div>
-              <div className="mt-2 rounded-xl border border-border bg-background p-2.5">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">New teacher interview link</p>
-                <div className="mt-1.5 flex flex-col gap-1.5 sm:flex-row sm:items-center">
-                  <input readOnly value={newTeacherInterviewLink} className="min-w-0 flex-1 rounded-xl border border-border bg-card px-3 py-2 text-sm text-foreground" />
-                  <button type="button" onClick={() => handleCopy(newTeacherInterviewLink, 'Interview link')} className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:border-primary/40">
-                    <Copy className="h-4 w-4" />
-                    <span>Copy link</span>
-                  </button>
+          <div className="grid gap-3 xl:grid-cols-[0.9fr_1.1fr]">
+            <SectionCard title="Interview candidates">
+              {interviewError ? <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{interviewError}</div> : null}
+              <div className="mb-2 rounded-xl border border-border bg-background p-2.5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Booking link</p>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <input readOnly value={newTeacherInterviewLink} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
+                  <button type="button" onClick={() => handleCopy(newTeacherInterviewLink, 'Interview link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
+                  <button type="button" onClick={() => navigate('/dashboard/availability')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><CalendarClock className="h-3.5 w-3.5" /> Slots</button>
                 </div>
-                {copyNotice ? <p className="mt-1 text-xs text-muted-foreground">{copyNotice}</p> : null}
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => navigate('/dashboard/availability')}
-                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm"
-                >
-                  <CalendarClock className="h-4 w-4" />
-                  <span>Open meeting availability</span>
-                </button>
-              </div>
+              {interviewLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading candidates…</div>
+              ) : (
+                <div className="space-y-1.5">
+                  {(interviewResponses || []).map((r) => {
+                    const fullName = String(r.personalInfo?.fullName || '').trim();
+                    const userName = `${r.user?.firstName || ''} ${r.user?.lastName || ''}`.trim();
+                    const name = fullName || userName || r.contract?.fullName || r.id;
+                    const outcome = r.recruitment?.interview?.outcome || 'pending';
+                    const selected = selectedInterviewId === r.id;
+                    return (
+                      <button
+                        type="button"
+                        key={r.id}
+                        onClick={() => selectInterview(r)}
+                        className={[
+                          'w-full rounded-xl border px-3 py-2 text-left transition',
+                          selected ? 'border-primary bg-primary/5' : 'border-border bg-background hover:border-primary/40',
+                        ].join(' ')}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="truncate text-sm font-semibold text-foreground">{name}</p>
+                          <span className={`shrink-0 text-[11px] font-semibold ${INTERVIEW_OUTCOME_COLORS[outcome] || 'text-muted-foreground'}`}>{outcome.replace(/_/g, ' ')}</span>
+                        </div>
+                        <p className="truncate text-[11px] text-muted-foreground">{r.recruitment?.status || r.status} • {r.personalInfo?.email || r.user?.email || '—'}</p>
+                      </button>
+                    );
+                  })}
+                  {!(interviewResponses || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No candidates in interview stages yet.</div> : null}
+                </div>
+              )}
             </SectionCard>
-            <SectionCard title="Upcoming implementation">
-              <div className="space-y-2 text-xs leading-5 text-foreground">
-                <div className="rounded-xl border border-border bg-background px-3 py-2">Candidate self-booking from admin-created slots.</div>
-                <div className="rounded-xl border border-border bg-background px-3 py-2">Interview scorecards for punctuality, English, subject knowledge, and professionalism.</div>
-                <div className="rounded-xl border border-border bg-background px-3 py-2">Stage-driven invite, reminder, and outcome emails using the existing mail queue.</div>
-              </div>
+
+            <SectionCard title="Interview scorecard">
+              {!interviewForm ? (
+                <div className="flex h-full min-h-[160px] items-center justify-center rounded-xl border border-dashed border-border bg-background px-4 py-8 text-center text-sm text-muted-foreground">
+                  Select a candidate to record the interview outcome and scores.
+                </div>
+              ) : (() => {
+                const current = interviewResponses.find((r) => r.id === selectedInterviewId);
+                const phone = String(current?.personalInfo?.whatsappNumber || current?.personalInfo?.mobileNumber || current?.user?.phone || '').replace(/[^\d]/g, '');
+                const waText = encodeURIComponent(`Assalamu alaikum, this is Waraqa. Please book your teacher interview here: ${newTeacherInterviewLink}`);
+                return (
+                  <div className="grid gap-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{current?.personalInfo?.fullName || current?.contract?.fullName || 'Candidate'}</p>
+                        <p className="text-[11px] text-muted-foreground">{current?.personalInfo?.email || current?.user?.email || '—'}</p>
+                      </div>
+                      {phone ? (
+                        <a href={`https://wa.me/${phone}?text=${waText}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700">
+                          <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
+                        </a>
+                      ) : null}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-xs text-foreground">
+                        <span className="mb-1 block font-medium">Scheduled</span>
+                        <input type="datetime-local" value={interviewForm.scheduledAt} onChange={(e) => setInterviewForm((p) => ({ ...p, scheduledAt: e.target.value }))} className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
+                      </label>
+                      <label className="text-xs text-foreground">
+                        <span className="mb-1 block font-medium">Completed</span>
+                        <input type="datetime-local" value={interviewForm.completedAt} onChange={(e) => setInterviewForm((p) => ({ ...p, completedAt: e.target.value }))} className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
+                      </label>
+                    </div>
+
+                    <div>
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Scores (0–10)</p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {INTERVIEW_SCORE_FIELDS.map((field) => (
+                          <label key={field.key} className="text-xs text-foreground">
+                            <span className="mb-1 flex items-center gap-1 font-medium"><Star className="h-3 w-3 text-primary" /> {field.label}</span>
+                            <input
+                              type="number" min="0" max="10"
+                              value={interviewForm.scores[field.key]}
+                              onChange={(e) => setInterviewForm((p) => ({ ...p, scores: { ...p.scores, [field.key]: e.target.value } }))}
+                              className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-xs text-foreground">
+                        <span className="mb-1 block font-medium">Outcome</span>
+                        <select value={interviewForm.outcome} onChange={(e) => setInterviewForm((p) => ({ ...p, outcome: e.target.value }))} className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm">
+                          {INTERVIEW_OUTCOMES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </label>
+                      <label className="mt-5 inline-flex items-center gap-2 text-xs text-foreground">
+                        <input type="checkbox" checked={interviewForm.worksElsewhere} onChange={(e) => setInterviewForm((p) => ({ ...p, worksElsewhere: e.target.checked }))} />
+                        Works elsewhere
+                      </label>
+                    </div>
+
+                    <label className="text-xs text-foreground">
+                      <span className="mb-1 block font-medium">Notes</span>
+                      <textarea rows={3} value={interviewForm.notes} onChange={(e) => setInterviewForm((p) => ({ ...p, notes: e.target.value }))} className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm" placeholder="Strengths, concerns, next steps…" />
+                    </label>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      <button type="button" onClick={handleSaveInterview} disabled={interviewSaving} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60">
+                        <Save className="h-4 w-4" /> {interviewSaving ? 'Saving…' : 'Save scorecard'}
+                      </button>
+                      <button type="button" onClick={() => { setSelectedInterviewId(''); setInterviewForm(null); }} className="rounded-full border border-border bg-background px-4 py-1.5 text-sm font-medium text-foreground">Close</button>
+                    </div>
+                  </div>
+                );
+              })()}
             </SectionCard>
           </div>
         ) : null}
@@ -684,48 +848,20 @@ export default function TeacherOperationsPage({ isActive }) {
         {activeTab === 'training' ? (
           <div className="grid gap-3">
             {batchError ? <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{batchError}</div> : null}
-            <div className="grid gap-3 xl:grid-cols-[1fr_1.5fr]">
-              <SectionCard title="Create training batch">
-                <div className="grid gap-2">
-                  <label className="text-sm text-foreground">
-                    <span className="mb-1 block font-medium">Batch title *</span>
-                    <input value={batchForm.title} onChange={(e) => setBatchForm((p) => ({ ...p, title: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" placeholder="e.g. Training Batch — July 2026" />
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="text-sm text-foreground">
-                      <span className="mb-1 block font-medium">Sessions</span>
-                      <input type="number" min="1" max="30" value={batchForm.totalSessions} onChange={(e) => setBatchForm((p) => ({ ...p, totalSessions: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                    </label>
-                    <label className="text-sm text-foreground">
-                      <span className="mb-1 block font-medium">Campaign</span>
-                      <select value={batchForm.campaignId} onChange={(e) => setBatchForm((p) => ({ ...p, campaignId: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5">
-                        <option value="">None</option>
-                        {campaigns.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
-                      </select>
-                    </label>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="text-sm text-foreground">
-                      <span className="mb-1 block font-medium">Start date</span>
-                      <input type="date" value={batchForm.startDate} onChange={(e) => setBatchForm((p) => ({ ...p, startDate: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                    </label>
-                    <label className="text-sm text-foreground">
-                      <span className="mb-1 block font-medium">End date</span>
-                      <input type="date" value={batchForm.endDate} onChange={(e) => setBatchForm((p) => ({ ...p, endDate: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                    </label>
-                  </div>
-                  <label className="text-sm text-foreground">
-                    <span className="mb-1 block font-medium">Trainer notes</span>
-                    <textarea rows={3} value={batchForm.trainerNotes} onChange={(e) => setBatchForm((p) => ({ ...p, trainerNotes: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2.5" />
-                  </label>
-                  <button type="button" onClick={handleCreateBatch} disabled={batchSaving || !batchForm.title.trim()} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60">
-                    <Plus className="h-4 w-4" />
-                    <span>{batchSaving ? 'Creating…' : 'Create batch'}</span>
-                  </button>
-                </div>
-              </SectionCard>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-3 py-2 shadow-sm">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                <GraduationCap className="h-4 w-4 text-primary" />
+                <span><span className="font-semibold text-foreground">{batches.length}</span> batch{batches.length === 1 ? '' : 'es'}</span>
+                <span>•</span>
+                <span><span className="font-semibold text-foreground">{lectureTopics.length}</span> lecture topics</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => setShowBatchModal(true)} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm"><Plus className="h-3.5 w-3.5" /> New batch</button>
+                <button type="button" onClick={openTemplateEditor} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3.5 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40"><Edit3 className="h-3.5 w-3.5" /> Lecture topics</button>
+              </div>
+            </div>
 
-              <SectionCard title="Training batches">
+            <SectionCard title="Training batches">
                 {batchLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading batches…</div> : null}
                 <div className="space-y-2">
                   {(batches || []).map((batch) => {
@@ -767,7 +903,10 @@ export default function TeacherOperationsPage({ isActive }) {
 
                         {isExpanded ? (
                           <div className="border-t border-border px-3 pb-3 pt-2">
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Sessions</p>
+                            <div className="mb-2 flex items-center justify-between">
+                              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Lectures</p>
+                              <button type="button" onClick={() => handleAddSession(batch._id)} disabled={batchSaving} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60"><Plus className="h-3 w-3" /> Add lecture</button>
+                            </div>
                             <div className="space-y-2">
                               {(batch.sessions || []).map((session) => {
                                 const isEditingThis = sessionEditing?.batchId === batch._id && sessionEditing?.sessionNumber === session.sessionNumber;
@@ -804,9 +943,14 @@ export default function TeacherOperationsPage({ isActive }) {
                                           </p>
                                           {session.trainerNotes ? <p className="mt-1 text-xs text-muted-foreground">{session.trainerNotes}</p> : null}
                                         </div>
-                                        <button type="button" onClick={() => startSessionEdit(batch._id, session)} className="shrink-0 rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40">
-                                          <Edit3 className="h-3 w-3" />
-                                        </button>
+                                        <div className="flex shrink-0 items-center gap-1">
+                                          <button type="button" onClick={() => startSessionEdit(batch._id, session)} className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40">
+                                            <Edit3 className="h-3 w-3" />
+                                          </button>
+                                          <button type="button" onClick={() => handleRemoveSession(batch._id, session.sessionNumber)} disabled={batchSaving} className="rounded-full border border-border bg-card px-2 py-1 text-xs text-red-600 hover:border-red-400 disabled:opacity-60">
+                                            <Trash2 className="h-3 w-3" />
+                                          </button>
+                                        </div>
                                       </div>
                                     )}
                                   </div>
@@ -851,7 +995,6 @@ export default function TeacherOperationsPage({ isActive }) {
                   {!batchLoading && !(batches || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No training batches yet.</div> : null}
                 </div>
               </SectionCard>
-            </div>
           </div>
         ) : null}
 
@@ -948,15 +1091,154 @@ export default function TeacherOperationsPage({ isActive }) {
                 </div>
               )}
             </SectionCard>
+
+            <SectionCard title="Business intelligence">
+              <BusinessIntelligencePage isActive={isActive && activeTab === 'stats'} embedded />
+            </SectionCard>
           </div>
         ) : null}
-
-        {activeTab === 'business-intelligence' ? (
-          <SectionCard title="Business Intelligence">
-            <BusinessIntelligencePage isActive={isActive && activeTab === 'business-intelligence'} embedded />
-          </SectionCard>
-        ) : null}
       </div>
+
+      {/* Campaign create/edit modal */}
+      {showCampaignModal ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 sm:p-6" onClick={() => setShowCampaignModal(false)}>
+          <div className="w-full max-w-2xl rounded-2xl border border-border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">{editingCampaignId ? 'Edit campaign' : 'New campaign'}</h3>
+              <button type="button" onClick={() => setShowCampaignModal(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            {campaignError ? <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{campaignError}</div> : null}
+            <div className="grid gap-2 md:grid-cols-2">
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Title</span><input value={campaignForm.title} onChange={(e) => setCampaignForm((p) => ({ ...p, title: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Slug</span><input value={campaignForm.slug} onChange={(e) => setCampaignForm((p) => ({ ...p, slug: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" placeholder="school-year-2026" /></label>
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Status</span>
+                <select value={campaignForm.status} onChange={(e) => setCampaignForm((p) => ({ ...p, status: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2">
+                  <option value="draft">Draft</option><option value="open">Open</option><option value="closed">Closed</option><option value="archived">Archived</option>
+                </select>
+              </label>
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Preferred Cairo window</span><input value={campaignForm.preferredWindow} onChange={(e) => setCampaignForm((p) => ({ ...p, preferredWindow: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" placeholder="10 PM - 3 AM Cairo" /></label>
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Opens at</span><input type="datetime-local" value={campaignForm.opensAt} onChange={(e) => setCampaignForm((p) => ({ ...p, opensAt: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Closes at</span><input type="datetime-local" value={campaignForm.closesAt} onChange={(e) => setCampaignForm((p) => ({ ...p, closesAt: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Target applicants</span><input type="number" min="0" value={campaignForm.targetApplicants} onChange={(e) => setCampaignForm((p) => ({ ...p, targetApplicants: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Target hires</span><input type="number" min="0" value={campaignForm.targetHires} onChange={(e) => setCampaignForm((p) => ({ ...p, targetHires: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              <label className="text-sm text-foreground md:col-span-2"><span className="mb-1 block font-medium">Subjects</span><input value={campaignForm.subjects} onChange={(e) => setCampaignForm((p) => ({ ...p, subjects: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" placeholder="Quran, Arabic, Islamic Studies" /></label>
+              <label className="text-sm text-foreground md:col-span-2"><span className="mb-1 block font-medium">Public headline</span><input value={campaignForm.publicHeadline} onChange={(e) => setCampaignForm((p) => ({ ...p, publicHeadline: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              <label className="text-sm text-foreground md:col-span-2"><span className="mb-1 block font-medium">Public description</span><textarea rows={3} value={campaignForm.publicDescription} onChange={(e) => setCampaignForm((p) => ({ ...p, publicDescription: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              <label className="text-sm text-foreground md:col-span-2"><span className="mb-1 block font-medium">Internal notes</span><textarea rows={2} value={campaignForm.internalNotes} onChange={(e) => setCampaignForm((p) => ({ ...p, internalNotes: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              <div className="md:col-span-2 flex flex-wrap items-center gap-3 text-sm text-foreground">
+                <label className="inline-flex items-center gap-2"><input type="checkbox" checked={campaignForm.male} onChange={(e) => setCampaignForm((p) => ({ ...p, male: e.target.checked }))} /> Male teachers</label>
+                <label className="inline-flex items-center gap-2"><input type="checkbox" checked={campaignForm.female} onChange={(e) => setCampaignForm((p) => ({ ...p, female: e.target.checked }))} /> Female teachers</label>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap justify-end gap-1.5">
+              <button type="button" onClick={() => setShowCampaignModal(false)} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Cancel</button>
+              <button type="button" onClick={saveCampaign} disabled={campaignSaving} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60">
+                {editingCampaignId ? <Edit3 className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                <span>{campaignSaving ? 'Saving…' : editingCampaignId ? 'Update campaign' : 'Create campaign'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Campaign list drawer (from right) */}
+      {showCampaignDrawer ? (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={() => setShowCampaignDrawer(false)}>
+          <div className="h-full w-full max-w-md overflow-y-auto border-l border-border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">Campaigns</h3>
+              <button type="button" onClick={() => setShowCampaignDrawer(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="mb-2 rounded-xl border border-border bg-background p-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Generic form link</p>
+              <div className="mt-1 flex items-center gap-1.5">
+                <input readOnly value={`${window.location.origin}/teacher-contract`} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
+                <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract`, 'Form link')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /> Copy</button>
+              </div>
+              {copyNotice ? <p className="mt-1 text-[11px] text-muted-foreground">{copyNotice}</p> : null}
+            </div>
+            <div className="space-y-2">
+              {(campaigns || []).map((campaign) => (
+                <div key={campaign.id} className="rounded-xl border border-border bg-background p-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground">{campaign.title}</p>
+                      <p className="text-[11px] text-muted-foreground">/{campaign.slug} • {campaign.status} • {campaign.applicationCount} apps</p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <button type="button" onClick={() => handleCopy(`${window.location.origin}/teacher-contract?campaign=${campaign.slug}`, 'Campaign link')} className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Copy className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => startEditCampaign(campaign)} className="rounded-full border border-border bg-card px-2 py-1 text-xs text-foreground hover:border-primary/40"><Edit3 className="h-3.5 w-3.5" /></button>
+                    </div>
+                  </div>
+                  <div className="mt-1.5 grid gap-1 text-[11px] text-foreground">
+                    <div className="rounded-lg border border-border bg-card px-2 py-1">Subjects: {campaign.subjects?.join(', ') || 'General'}</div>
+                    <div className="rounded-lg border border-border bg-card px-2 py-1">Window: {campaign.preferredWindow || 'Flexible'} • Hires: {campaign.targetHires || 0}</div>
+                  </div>
+                </div>
+              ))}
+              {!campaignLoading && !(campaigns || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No campaigns yet.</div> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* New training batch modal */}
+      {showBatchModal ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 sm:p-6" onClick={() => setShowBatchModal(false)}>
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">New training batch</h3>
+              <button type="button" onClick={() => setShowBatchModal(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="grid gap-2">
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Batch title *</span><input value={batchForm.title} onChange={(e) => setBatchForm((p) => ({ ...p, title: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" placeholder="e.g. Training Batch — July 2026" /></label>
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Campaign</span>
+                <select value={batchForm.campaignId} onChange={(e) => setBatchForm((p) => ({ ...p, campaignId: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2">
+                  <option value="">None</option>
+                  {campaigns.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Start date</span><input type="date" value={batchForm.startDate} onChange={(e) => setBatchForm((p) => ({ ...p, startDate: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+                <label className="text-sm text-foreground"><span className="mb-1 block font-medium">End date</span><input type="date" value={batchForm.endDate} onChange={(e) => setBatchForm((p) => ({ ...p, endDate: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              </div>
+              <label className="text-sm text-foreground"><span className="mb-1 block font-medium">Trainer notes</span><textarea rows={2} value={batchForm.trainerNotes} onChange={(e) => setBatchForm((p) => ({ ...p, trainerNotes: e.target.value }))} className="w-full rounded-xl border border-border bg-background px-3 py-2" /></label>
+              <p className="rounded-lg border border-border bg-background px-3 py-2 text-[11px] text-muted-foreground">Lectures are seeded from the {lectureTopics.length || 'default'} shared topics. Add, rename, or remove lectures per batch after creation.</p>
+            </div>
+            <div className="mt-3 flex flex-wrap justify-end gap-1.5">
+              <button type="button" onClick={() => setShowBatchModal(false)} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Cancel</button>
+              <button type="button" onClick={handleCreateBatch} disabled={batchSaving || !batchForm.title.trim()} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60"><Plus className="h-4 w-4" /> {batchSaving ? 'Creating…' : 'Create batch'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Lecture template editor */}
+      {showTemplateEditor ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 sm:p-6" onClick={() => setShowTemplateEditor(false)}>
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">Lecture topics</h3>
+              <button type="button" onClick={() => setShowTemplateEditor(false)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            <p className="mb-2 text-[11px] text-muted-foreground">These topics seed every new training batch. Reorder is by list position.</p>
+            <div className="space-y-1.5">
+              {lectureDraft.map((topic, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <span className="w-5 shrink-0 text-center text-xs text-muted-foreground">{idx + 1}</span>
+                  <input value={topic} onChange={(e) => setLectureDraft((prev) => prev.map((t, i) => (i === idx ? e.target.value : t)))} className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm" placeholder={`Lecture ${idx + 1} topic`} />
+                  <button type="button" onClick={() => setLectureDraft((prev) => prev.filter((_, i) => i !== idx))} className="rounded-full border border-border bg-card px-2 py-1.5 text-red-600 hover:border-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={() => setLectureDraft((prev) => [...prev, ''])} className="mt-2 inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><Plus className="h-3.5 w-3.5" /> Add topic</button>
+            <div className="mt-3 flex flex-wrap justify-end gap-1.5">
+              <button type="button" onClick={() => setShowTemplateEditor(false)} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Cancel</button>
+              <button type="button" onClick={handleSaveTemplate} disabled={lectureSaving} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60"><Save className="h-4 w-4" /> {lectureSaving ? 'Saving…' : 'Save topics'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -45,6 +45,16 @@ const isCloudinaryConfigured = Boolean(
 );
 
 const CONTRACT_TEMPLATE_KEY = 'teacher_contract_template_v1';
+const LECTURE_TEMPLATE_KEY = 'teacher_training_lecture_template_v1';
+const DEFAULT_LECTURE_TOPICS = [
+  'Introduction to Waraqa',
+  'Waraqa Curricula',
+  'Effective Teaching',
+  'Understanding Learners & Building Strong Educational Relationships',
+  'Lesson Management, Time Management & Institutional Commitment',
+  'Professional Lesson Preparation',
+  'Practical Teaching Demos (optional)',
+];
 const RECRUITMENT_RATINGS = ['not_available', 'weak', 'good', 'very_good', 'excellent'];
 const RECRUITMENT_STATUSES = ['new', 'under_review', 'shortlisted', 'interview_pending', 'interviewed', 'accepted', 'rejected', 'archived'];
 const RATING_SCORE = {
@@ -139,6 +149,16 @@ async function getContractTemplateValue() {
   return String(setting?.value || DEFAULT_CONTRACT_TEMPLATE);
 }
 
+async function getLectureTopics() {
+  const setting = await Setting.findOne({ key: LECTURE_TEMPLATE_KEY }).lean();
+  const raw = setting?.value;
+  if (Array.isArray(raw) && raw.length) {
+    const cleaned = raw.map((t) => String(t || '').trim()).filter(Boolean);
+    if (cleaned.length) return cleaned;
+  }
+  return [...DEFAULT_LECTURE_TOPICS];
+}
+
 function normalizeTeacherResponse(source, doc) {
   if (!doc) return null;
 
@@ -172,6 +192,7 @@ function normalizeTeacherResponse(source, doc) {
       fit: recruitment.fit || {},
       evaluation: recruitment.evaluation || {},
       overall: recruitment.overall || {},
+      interview: recruitment.interview || {},
       history: Array.isArray(recruitment.history) ? recruitment.history : [],
     },
     user: plain.user ? {
@@ -719,6 +740,70 @@ router.patch('/responses/:source/:id', authenticateToken, requireAdmin, async (r
   }
 });
 
+// Save an interview scorecard + outcome for a candidate
+router.patch('/responses/:source/:id/interview', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const source = String(req.params.source || '').trim().toLowerCase();
+    const Model = resolveResponseModel(source);
+    if (!Model) return res.status(400).json({ message: 'Unsupported response source.' });
+
+    const doc = await Model.findById(req.params.id)
+      .populate('user', 'firstName lastName email phone')
+      .populate('recruitment.reviewedBy', 'firstName lastName email');
+    if (!doc) return res.status(404).json({ message: 'Teacher response not found.' });
+
+    const body = req.body || {};
+    const recruitment = doc.recruitment || {};
+    const interview = recruitment.interview || {};
+
+    const clampScore = (v) => {
+      if (v == null || v === '') return null;
+      const n = Number(v);
+      if (Number.isNaN(n)) return null;
+      return Math.max(0, Math.min(10, Math.round(n)));
+    };
+
+    if (body.scheduledAt != null) interview.scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
+    if (body.completedAt != null) interview.completedAt = body.completedAt ? new Date(body.completedAt) : null;
+    if (body.worksElsewhere != null) interview.worksElsewhere = Boolean(body.worksElsewhere);
+    if (body.notes != null) interview.notes = String(body.notes || '').trim().slice(0, 2000);
+
+    if (body.scores && typeof body.scores === 'object') {
+      interview.scores = interview.scores || {};
+      ['punctuality', 'english', 'subjectKnowledge', 'teaching', 'flexibility', 'professionalism'].forEach((key) => {
+        if (body.scores[key] !== undefined) interview.scores[key] = clampScore(body.scores[key]);
+      });
+    }
+
+    const validOutcomes = ['pending', 'passed', 'passed_not_selected', 'completed_unsuitable', 'failed'];
+    if (body.outcome != null && validOutcomes.includes(body.outcome)) {
+      interview.outcome = body.outcome;
+    }
+
+    recruitment.interview = interview;
+    recruitment.history = Array.isArray(recruitment.history) ? recruitment.history : [];
+    recruitment.history.push({
+      at: new Date(),
+      actor: req.user?._id || null,
+      action: 'interview_updated',
+      note: interview.outcome && interview.outcome !== 'pending' ? `Interview outcome: ${interview.outcome}` : 'Interview scorecard updated',
+    });
+
+    doc.recruitment = recruitment;
+    doc.markModified('recruitment');
+    await doc.save();
+    await doc.populate('recruitment.reviewedBy', 'firstName lastName email');
+
+    return res.json({
+      message: 'Interview scorecard saved.',
+      response: normalizeTeacherResponse(source, doc),
+    });
+  } catch (error) {
+    console.error('Update interview scorecard error:', error);
+    return res.status(500).json({ message: 'Failed to save interview scorecard.' });
+  }
+});
+
 router.post('/public', fileFields, async (req, res) => {
   try {
     const contractAccepted = String(req.body.contractAccepted || '') === 'true';
@@ -1090,10 +1175,18 @@ router.post('/training-batches', authenticateToken, requireAdmin, async (req, re
     const title = String(body.title || '').trim();
     if (!title) return res.status(400).json({ message: 'Batch title is required.' });
 
-    const totalSessions = Math.min(30, Math.max(1, Number(body.totalSessions || 6) || 6));
-    const sessions = Array.from({ length: totalSessions }, (_, i) => ({
+    const topics = await getLectureTopics();
+    // Explicit list of topics takes priority; otherwise seed from the reusable template.
+    const requestedTopics = Array.isArray(body.topics)
+      ? body.topics.map((t) => String(t || '').trim()).filter(Boolean)
+      : null;
+    const sessionTopics = (requestedTopics && requestedTopics.length)
+      ? requestedTopics
+      : topics.slice(0, Math.min(30, Math.max(1, Number(body.totalSessions || topics.length) || topics.length)));
+    const totalSessions = sessionTopics.length;
+    const sessions = sessionTopics.map((topic, i) => ({
       sessionNumber: i + 1,
-      title: `Session ${i + 1}`,
+      title: topic || `Lecture ${i + 1}`,
       status: 'scheduled',
     }));
 
@@ -1255,6 +1348,83 @@ router.patch('/training-batches/:id/candidates/:candidateId/outcome', authentica
   } catch (error) {
     console.error('Update candidate outcome error:', error);
     return res.status(500).json({ message: 'Failed to update candidate outcome.' });
+  }
+});
+
+// ─── Lecture template (reusable training topics) ─────────────────────────────
+
+router.get('/training-lecture-template', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const topics = await getLectureTopics();
+    return res.json({ topics, defaults: DEFAULT_LECTURE_TOPICS });
+  } catch (error) {
+    console.error('Get lecture template error:', error);
+    return res.status(500).json({ message: 'Failed to load lecture template.' });
+  }
+});
+
+router.put('/training-lecture-template', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const incoming = Array.isArray(req.body?.topics) ? req.body.topics : [];
+    const topics = incoming.map((t) => String(t || '').trim()).filter(Boolean).slice(0, 30);
+    if (!topics.length) return res.status(400).json({ message: 'At least one lecture topic is required.' });
+    await Setting.findOneAndUpdate(
+      { key: LECTURE_TEMPLATE_KEY },
+      { $set: { key: LECTURE_TEMPLATE_KEY, value: topics, updatedBy: req.user._id } },
+      { upsert: true, new: true }
+    );
+    return res.json({ message: 'Lecture template saved.', topics });
+  } catch (error) {
+    console.error('Save lecture template error:', error);
+    return res.status(500).json({ message: 'Failed to save lecture template.' });
+  }
+});
+
+// Add a session (lecture) to a batch
+router.post('/training-batches/:id/sessions', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const batch = await TrainingBatch.findById(req.params.id);
+    if (!batch) return res.status(404).json({ message: 'Training batch not found.' });
+    if (batch.sessions.length >= 30) return res.status(400).json({ message: 'Maximum of 30 lectures reached.' });
+
+    const nextNumber = batch.sessions.reduce((max, s) => Math.max(max, s.sessionNumber || 0), 0) + 1;
+    const title = String(req.body?.title || '').trim() || `Lecture ${nextNumber}`;
+    batch.sessions.push({
+      sessionNumber: nextNumber,
+      title,
+      status: 'scheduled',
+      scheduledAt: req.body?.scheduledAt ? new Date(req.body.scheduledAt) : null,
+    });
+    batch.totalSessions = batch.sessions.length;
+    batch.updatedBy = req.user._id;
+    batch.markModified('sessions');
+    await batch.save();
+    return res.status(201).json({ batch: batch.toObject() });
+  } catch (error) {
+    console.error('Add training session error:', error);
+    return res.status(500).json({ message: 'Failed to add lecture.' });
+  }
+});
+
+// Remove a session (lecture) from a batch
+router.delete('/training-batches/:id/sessions/:sessionNumber', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const sessionNum = Number(req.params.sessionNumber);
+    const batch = await TrainingBatch.findById(req.params.id);
+    if (!batch) return res.status(404).json({ message: 'Training batch not found.' });
+
+    const before = batch.sessions.length;
+    batch.sessions = batch.sessions.filter((s) => s.sessionNumber !== sessionNum);
+    if (batch.sessions.length === before) return res.status(404).json({ message: 'Session not found in this batch.' });
+
+    batch.totalSessions = batch.sessions.length;
+    batch.updatedBy = req.user._id;
+    batch.markModified('sessions');
+    await batch.save();
+    return res.json({ batch: batch.toObject() });
+  } catch (error) {
+    console.error('Remove training session error:', error);
+    return res.status(500).json({ message: 'Failed to remove lecture.' });
   }
 });
 

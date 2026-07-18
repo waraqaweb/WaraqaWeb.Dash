@@ -274,6 +274,8 @@ function pickColumn(row, candidates) {
   const keys = Object.keys(row || {});
   for (const cand of candidates) {
     const target = cand.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const exactKey = keys.find((k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '') === target);
+    if (exactKey && String(row[exactKey] || '').trim()) return String(row[exactKey]).trim();
     const foundKey = keys.find((k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '').includes(target));
     if (foundKey && String(row[foundKey] || '').trim()) return String(row[foundKey]).trim();
   }
@@ -2029,6 +2031,12 @@ router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) =
 
     const splitList = (value) => String(value || '').split(/[,;/\n]+/).map((x) => x.trim()).filter(Boolean);
     const asFile = (url) => (url ? { url } : {});
+    const cellAt = (row, index) => String(Object.values(row || {})[index] || '').trim();
+    const pickFormColumn = (row, candidates, index = null) => {
+      const byHeader = pickColumn(row, candidates);
+      if (byHeader) return byHeader;
+      return Number.isInteger(index) ? cellAt(row, index) : '';
+    };
     const normalizeEligibility = (text) => {
       const lower = String(text || '').toLowerCase();
       if (!lower) return '';
@@ -2042,40 +2050,42 @@ router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) =
 
     // Build the full personal/application/verification payload from one sheet row.
     const buildRecordFromRow = (row, email, fullName) => {
-      const val = (cands) => pickColumn(row, cands);
-      const phone = val(['phonenumber', 'phone', 'mobile']);
-      const whatsapp = val(['whatsappnumber', 'whatsapp']) || phone;
-      const gender = val(['gender', 'sex']).toLowerCase();
-      const nationality = val(['nationality']);
-      const country = val(['country']) || nationality;
-      const birthRaw = val(['dateofbirth', 'birthdate', 'birthday', 'dob', 'birth']);
-      const occupation = val(['occupation']);
-      const meetingLink = val(['meetinglink', 'skypeid', 'skype', 'zoomlink', 'preferredmeeting']);
-      let street = val(['streetaddress', 'houseaddress', 'homeaddress', 'address']);
+      const val = (cands, index) => pickFormColumn(row, cands, index);
+      const phone = val(['Phone Number', 'phonenumber', 'phone', 'mobile'], 5);
+      const whatsapp = val(['WhatsApp Number', 'whatsappnumber', 'whatsapp']) || phone;
+      const gender = val(['Gender', 'gender', 'sex'], 3).toLowerCase();
+      const nationality = val(['Nationality', 'nationality']);
+      const country = val(['Country', 'country']) || nationality;
+      const birthRaw = val(['Date of birth', 'dateofbirth', 'birthdate', 'birthday', 'dob', 'birth'], 6);
+      const occupation = val(['Occupation', 'occupation']);
+      const meetingLink = val(['Meeting link', 'meetinglink', 'skypeid', 'skype', 'zoomlink', 'preferredmeeting']);
+      let street = val(['Address', 'streetaddress', 'houseaddress', 'homeaddress', 'address'], 7);
       if (street.includes('@')) street = '';
-      const city = val(['city']);
-      const positions = val(['positionsinterested', 'positioninterested', 'whichposition', 'positions']);
-      const summary = val(['tellus', 'wantustoknow', 'aboutyou', 'aboutyourself', 'profilesummary', 'summary', 'about', 'experience']);
-      const specialRequests = val(['specialrequest', 'questionsorspecial', 'anyquestions', 'requests']);
-      const eligibility = normalizeEligibility(val(['azhar', 'ijazah', 'ijaza', 'eligibility', 'graduatefrom']));
-      const graduation = val(['graduationstatus', 'graduation', 'graduated']);
-      const faculty = val(['facultyanduniversity', 'faculty', 'university']);
-      const degree = val(['degree']);
-      const certificates = val(['additionalcertificate', 'certificate']);
-      const teachingExp = val(['workexperienceinteaching', 'teachingexperience', 'experienceinteaching', 'yearsofexperience']);
-      const currentJob = val(['currentjob', 'yourcurrentjob']);
-      const classTools = val(['whatdoyouuseforclasses', 'useforclasses', 'classtools', 'usuallyforclasses']);
-      const meetingApps = val(['videomeetingapps', 'meetingapps', 'whichvideomeeting', 'whichmeetingapps']);
-      const officeProducts = val(['microsoftoffice', 'officeproducts', 'whichproducts']);
+      const city = val(['City', 'city']);
+      const positions = val(['Which position(s) are you interested in?', 'positionsinterested', 'positioninterested', 'whichposition', 'positions'], 8);
+      const educationBackground = val(['Column 10', 'studied at', 'alazharuniversity', 'azhar', 'graduatefrom'], 10);
+      const summary = val(['Tell us what you want us to know about you.', 'tellus', 'wantustoknow', 'aboutyou', 'aboutyourself', 'profilesummary', 'summary'], 17);
+      const sheetSummary = val(['Column 2', 'specialrequest', 'questionsorspecial', 'anyquestions', 'requests'], 27);
+      const specialRequests = [educationBackground, sheetSummary].filter(Boolean).join('\n\n');
+      const eligibility = normalizeEligibility(educationBackground || val(['azhar', 'ijazah', 'ijaza', 'eligibility', 'graduatefrom']));
+      const graduation = val(['Graduation', 'graduationstatus', 'graduation', 'graduated'], 11);
+      const faculty = val(['Facutly and University', 'Faculty and University', 'facultyanduniversity', 'facutlyanduniversity', 'faculty', 'university'], 12);
+      const degree = val(['Degree', 'degree'], 13);
+      const certificates = val(['Additional Certificates', 'additionalcertificate', 'certificate'], 14);
+      const teachingExp = val(['Work experience in teaching', 'workexperienceinteaching', 'teachingexperience', 'experienceinteaching', 'yearsofexperience'], 15);
+      const currentJob = val(['What is your current job?', 'currentjob', 'yourcurrentjob'], 16);
+      const classTools = val(['What do you use for Classes usually', 'whatdoyouuseforclasses', 'useforclasses', 'classtools', 'usuallyforclasses'], 18);
+      const meetingApps = val(['Which video meeting apps can you use?', 'videomeetingapps', 'meetingapps', 'whichvideomeeting', 'whichmeetingapps'], 19);
+      const officeProducts = val(['Which products can you use from Microsoft Office?', 'microsoftoffice', 'officeproducts', 'whichproducts'], 20);
       const subjectsCanTeach = val(['subjectscanteach', 'whichsubjects', 'canteach']);
       const availability = val(['preferredavailability', 'availability', 'availablehours']);
-      const resumeUrl = val(['coverletterorresume', 'resume', 'coverletter', 'cv']);
+      const resumeUrl = val(['Submit your cover letter or resume', 'coverletterorresume', 'resume', 'coverletter', 'cv'], 9);
       const identityUrl = val(['nationalidorpassport', 'nationalid', 'passport', 'identitydocument', 'idcard']);
       const educationDocUrl = val(['educationaldocument', 'educationdocument', 'educationcertificate', 'educationaldocuments']);
       const photoUrl = val(['profilephoto', 'personalphoto', 'photo']);
-      const introUrl = val(['introduceyourself', 'introductionaudio', 'introduction', 'audioclip', 'introaudio']);
-      const recitationUrl = val(['quranicrecitation', 'quranrecitation', 'recitation']);
-      const explanationUrl = val(['explainatopic', 'teachingexplanation', 'explaintopic', 'topicexplanation']);
+      const introUrl = val(['Introduce yourself in an audio clip.', 'introduceyourself', 'introductionaudio', 'introduction', 'audioclip', 'introaudio'], 21);
+      const recitationUrl = val(['Record your Quranic Recitation', 'quranicrecitation', 'quranrecitation', 'recitation'], 23);
+      const explanationUrl = val(['Explain a topic related to your field.', 'explainatopic', 'teachingexplanation', 'explainatopic', 'topicexplanation'], 25);
 
       let birthDate = null;
       if (birthRaw) { const d = new Date(birthRaw); if (!Number.isNaN(d.getTime())) birthDate = d; }
@@ -2143,8 +2153,8 @@ router.post('/import-sheet', authenticateToken, requireAdmin, async (req, res) =
     const toUpdate = [];
 
     for (const row of rows) {
-      const email = pickColumn(row, ['email', 'e-mail', 'emailaddress']).toLowerCase();
-      const fullName = pickColumn(row, ['fullname', 'name', 'applicantname']);
+      const email = pickFormColumn(row, ['Email Address', 'email', 'e-mail', 'emailaddress'], 4).toLowerCase();
+      const fullName = pickFormColumn(row, ['Full Name', 'fullname', 'name', 'applicantname'], 1);
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { invalid += 1; continue; }
       if (seenInBatch.has(email)) { duplicates += 1; continue; }
       seenInBatch.add(email);

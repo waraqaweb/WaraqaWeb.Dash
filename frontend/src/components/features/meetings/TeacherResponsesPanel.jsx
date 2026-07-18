@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, MessageCircle, Phone, Play, RefreshCw, Save, Search, Table2, UserPlus, UserRound, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, MessageCircle, Phone, Play, RefreshCw, Save, Search, Table2, UserPlus, X } from 'lucide-react';
 import { convertCandidateToTeacher, listRecruitmentCampaigns, listTeacherContractResponses, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
@@ -209,6 +209,75 @@ function ContactActions({ item, compact = false }) {
       {wa ? <a href={wa} target="_blank" rel="noreferrer" className={`${base} bg-green-600 text-white hover:bg-green-700`}><MessageCircle className={icon} /> WhatsApp</a> : null}
       {mailto ? <a href={mailto} className={`${base} bg-sky-600 text-white hover:bg-sky-700`}><Mail className={icon} /> Email</a> : null}
       {phone && !compact ? <a href={`tel:${phone}`} className={`${base} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50`}><Phone className={icon} /> Call</a> : null}
+    </div>
+  );
+}
+
+const displayValue = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean).join(', ') || '—';
+  return value == null || value === '' ? '—' : value;
+};
+
+function FieldRow({ label, value, wide = false }) {
+  return (
+    <div className={wide ? 'sm:col-span-2 xl:col-span-3' : ''}>
+      <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</dt>
+      <dd className="mt-0.5 whitespace-pre-wrap break-words text-sm text-slate-800">{displayValue(value)}</dd>
+    </div>
+  );
+}
+
+function FileActionGrid({ item, openViewer }) {
+  const files = [
+    ['Resume', item.application?.files?.resume],
+    ['English intro', item.application?.files?.englishIntroduction],
+    ['Quran recitation', item.application?.files?.quranRecitation],
+    ['Teaching explanation', item.application?.files?.teachingTopicExplanation],
+  ];
+  return (
+    <div className="flex flex-wrap gap-2">
+      {files.map(([label, file]) => (
+        file?.url ? (
+          <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType)} className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10">
+            <FileBadge2 className="h-3.5 w-3.5" /> {label}
+          </button>
+        ) : (
+          <span key={label} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-400">
+            <FileBadge2 className="h-3.5 w-3.5" /> {label}: —
+          </span>
+        )
+      ))}
+    </div>
+  );
+}
+
+function CandidateFacts({ item, openViewer }) {
+  const p = item.personalInfo || {};
+  const a = item.application || {};
+  const address = [p.address?.street, p.address?.city, p.address?.country].filter(Boolean).join(', ');
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <ContactActions item={item} />
+        <FileActionGrid item={item} openViewer={openViewer} />
+      </div>
+      <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
+        <FieldRow label="Birth date" value={p.birthDate ? formatDate(p.birthDate) : ''} />
+        <FieldRow label="Gender" value={p.gender} />
+        <FieldRow label="Address" value={address} wide />
+        <FieldRow label="Positions" value={a.positionsInterested} wide />
+        <FieldRow label="Graduation" value={a.education?.graduationStatus} />
+        <FieldRow label="Faculty / university" value={a.education?.facultyUniversity} />
+        <FieldRow label="Degree" value={a.education?.degree} />
+        <FieldRow label="Certificates" value={a.education?.additionalCertificates} wide />
+        <FieldRow label="Teaching experience" value={a.experience?.teachingExperienceLevel} />
+        <FieldRow label="Current job" value={a.experience?.currentJob} wide />
+        <FieldRow label="Class tools" value={a.technicalSkills?.classTools} wide />
+        <FieldRow label="Meeting apps" value={a.technicalSkills?.meetingApps} />
+        <FieldRow label="Office tools" value={a.technicalSkills?.officeProducts} />
+        <FieldRow label="What she wants us to know" value={a.experience?.profileSummary} wide />
+        <FieldRow label="Extra sheet notes" value={a.experience?.specialRequests} wide />
+      </dl>
     </div>
   );
 }
@@ -609,58 +678,8 @@ export default function TeacherResponsesPanel() {
                   {isOpen ? <ChevronUp className="mt-1 h-4 w-4 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 text-slate-400" />}
                 </button>
                 {isOpen ? (
-                  <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
-                    <ContactActions item={item} />
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                      <div className="flex items-center gap-2 font-semibold text-slate-900"><UserRound className="h-4 w-4 text-primary" />Personal details</div>
-                      <div className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2">
-                        <p><span className="font-medium text-slate-800">Birth date:</span> {item.personalInfo?.birthDate ? formatDate(item.personalInfo.birthDate) : '—'}</p>
-                        <p><span className="font-medium text-slate-800">Gender:</span> {item.personalInfo?.gender || '—'}</p>
-                        <p className="sm:col-span-2"><span className="font-medium text-slate-800">Address:</span> {[item.personalInfo?.address?.street, item.personalInfo?.address?.city, item.personalInfo?.address?.country].filter(Boolean).join(', ') || '—'}</p>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-3 lg:grid-cols-2">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                        <div className="font-semibold text-slate-900">Application profile</div>
-                        <p className="mt-2"><span className="font-medium text-slate-800">Positions:</span> {item.application?.positionsInterested?.join(', ') || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Current job:</span> {item.application?.experience?.currentJob || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Teaching experience:</span> {item.application?.experience?.teachingExperienceLevel || '—'}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                        <div className="font-semibold text-slate-900">Education and tools</div>
-                        <p className="mt-2"><span className="font-medium text-slate-800">Graduation:</span> {item.application?.education?.graduationStatus || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Faculty / university:</span> {item.application?.education?.facultyUniversity || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Degree:</span> {item.application?.education?.degree || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Meeting apps:</span> {item.application?.technicalSkills?.meetingApps?.join(', ') || '—'}</p>
-                        <p><span className="font-medium text-slate-800">Office tools:</span> {item.application?.technicalSkills?.officeProducts?.join(', ') || '—'}</p>
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                      <div className="font-semibold text-slate-900">About the candidate</div>
-                      <p className="mt-2 whitespace-pre-wrap"><span className="font-medium text-slate-800">Profile summary:</span> {item.application?.experience?.profileSummary || '—'}</p>
-                      <p className="mt-3 whitespace-pre-wrap"><span className="font-medium text-slate-800">Certificates:</span> {item.application?.education?.additionalCertificates || '—'}</p>
-                      <p className="mt-3 whitespace-pre-wrap"><span className="font-medium text-slate-800">Special requests:</span> {item.application?.experience?.specialRequests || '—'}</p>
-                      <p className="mt-3 whitespace-pre-wrap"><span className="font-medium text-slate-800">Class tools:</span> {item.application?.technicalSkills?.classTools || '—'}</p>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                      <div className="flex items-center gap-2 font-semibold text-slate-900"><FileBadge2 className="h-4 w-4 text-primary" />Application media</div>
-                      <div className="mt-2 grid gap-2 lg:grid-cols-2">
-                        {[
-                          ['Resume', item.application?.files?.resume?.url, item.application?.files?.resume?.mimeType],
-                          ['English introduction', item.application?.files?.englishIntroduction?.url, item.application?.files?.englishIntroduction?.mimeType],
-                          ['Quran recitation', item.application?.files?.quranRecitation?.url, item.application?.files?.quranRecitation?.mimeType],
-                          ['Teaching explanation', item.application?.files?.teachingTopicExplanation?.url, item.application?.files?.teachingTopicExplanation?.mimeType],
-                        ].map(([label, url, mimeType]) => (
-                          <div key={label} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                            <span>{label}</span>
-                            {url ? <button type="button" onClick={() => openViewer(label, url, mimeType)} className="inline-flex items-center gap-1 text-primary hover:underline"><Play className="h-3.5 w-3.5" /> View</button> : <span className="text-slate-400">—</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                  <div className="mt-4 space-y-5 border-t border-slate-100 pt-4">
+                    <CandidateFacts item={item} openViewer={openViewer} />
 
                     <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">

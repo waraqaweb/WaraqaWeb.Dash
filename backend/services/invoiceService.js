@@ -6574,6 +6574,21 @@ class InvoiceService {
 
       await updatedInvoice.save();
 
+      // Canonical reconciliation: recompute guardian hours from invoice logs/classes
+      // and sync storage so refund edge cases cannot leave stale balances.
+      if (guardianIdValue) {
+        try {
+          const { computeGuardianHoursFromPaidInvoices, syncComputedHoursToStorage, normalizeId } = require('./guardianHoursService');
+          const gid = normalizeId(guardianIdValue);
+          if (gid) {
+            const hoursMap = await computeGuardianHoursFromPaidInvoices([gid]);
+            await syncComputedHoursToStorage(hoursMap);
+          }
+        } catch (recomputeErr) {
+          console.warn('[recordInvoiceRefund] guardian hours recompute failed:', recomputeErr?.message || recomputeErr);
+        }
+      }
+
       await InvoiceService.syncInvoiceCoverageClasses(updatedInvoice);
 
       await updatedInvoice.populate([
@@ -6737,6 +6752,20 @@ class InvoiceService {
           console.log('✅ [undoLastRefund] Guardian hours restored', {
             before: guardianBefore, after: guardianAfter, delta: refundHours
           });
+        }
+      }
+
+      // Canonical reconciliation: recompute from payment/class state after undo.
+      if (guardianIdValue) {
+        try {
+          const { computeGuardianHoursFromPaidInvoices, syncComputedHoursToStorage, normalizeId } = require('./guardianHoursService');
+          const gid = normalizeId(guardianIdValue);
+          if (gid) {
+            const hoursMap = await computeGuardianHoursFromPaidInvoices([gid]);
+            await syncComputedHoursToStorage(hoursMap);
+          }
+        } catch (recomputeErr) {
+          console.warn('[undoLastRefund] guardian hours recompute failed:', recomputeErr?.message || recomputeErr);
         }
       }
 

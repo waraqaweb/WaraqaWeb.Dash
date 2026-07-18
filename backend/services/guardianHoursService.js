@@ -64,18 +64,23 @@ const buildPaidInvoiceAllocations = (invoices = []) => {
       totalItemHours = roundHours(totalItemHours + hours);
     }
 
-    // Sum paid hours from paymentLogs (reflects actual payment, survives item removal)
+    // Sum paid hours from paymentLogs (reflects actual payment, survives item removal).
+    // Include negative/refund entries as debits to avoid phantom remaining hours.
     let totalPaidHours = 0;
+    let hasPaidHoursLogs = false;
     const paymentLogs = Array.isArray(invoice.paymentLogs) ? invoice.paymentLogs : [];
     for (const log of paymentLogs) {
-      if (!log || Number(log.amount || 0) <= 0) continue;
-      if (log.method === 'refund' || log.method === 'tip_distribution') continue;
-      totalPaidHours = roundHours(totalPaidHours + (Number(log.paidHours) || 0));
+      if (!log) continue;
+      if (log.method === 'tip_distribution' || log.paymentMethod === 'tip_distribution') continue;
+      const paidHours = Number(log.paidHours);
+      if (!Number.isFinite(paidHours) || Math.abs(paidHours) <= 0) continue;
+      hasPaidHoursLogs = true;
+      totalPaidHours = roundHours(totalPaidHours + paidHours);
     }
 
-    // Use paymentLogs.paidHours when available (it reflects what was actually paid,
-    // even if items were later removed e.g. cancelled classes). Fall back to item totals.
-    const effectiveCredit = totalPaidHours > 0 ? totalPaidHours : totalItemHours;
+    // Use paymentLogs.paidHours whenever logs exist (net of refunds/debits).
+    // Fall back to item totals only when no paidHours logs are present.
+    const effectiveCredit = hasPaidHoursLogs ? Math.max(0, totalPaidHours) : totalItemHours;
 
     if (totalItemHours > 0 && effectiveCredit > 0) {
       const scale = effectiveCredit / totalItemHours;
@@ -173,6 +178,20 @@ const syncComputedHoursToStorage = async (hoursMap) => {
 
       const embedded = Array.isArray(guardian.guardianInfo.students) ? guardian.guardianInfo.students : [];
       let embeddedChanged = false;
+      let guardianInfoChanged = false;
+
+      const computedTotal = roundHours(entry.totalHours || 0);
+      if (Math.abs((guardian.guardianInfo.totalHours || 0) - computedTotal) > 0.001) {
+        guardian.guardianInfo.totalHours = computedTotal;
+        guardianInfoChanged = true;
+      }
+
+      // These values are invoice-derived, so prevent the User pre-save hook from
+      // replacing totalHours with a stale sum of embedded student hours.
+      if (guardian.guardianInfo.autoTotalHours !== false) {
+        guardian.guardianInfo.autoTotalHours = false;
+        guardianInfoChanged = true;
+      }
 
       for (const es of embedded) {
         // Try to find hours for this embedded student (check embedded _id, then standaloneStudentId)
@@ -205,7 +224,22 @@ const syncComputedHoursToStorage = async (hoursMap) => {
 
       if (embeddedChanged) {
         guardian.markModified('guardianInfo.students');
+      }
+      if (guardianInfoChanged) {
+        guardian.markModified('guardianInfo');
+      }
+      if (embeddedChanged || guardianInfoChanged) {
         await guardian.save();
+      }
+
+      try {
+        const Guardian = require('../models/Guardian');
+        await Guardian.updateOne(
+          { $or: [{ user: guardian._id }, { userId: guardian._id }] },
+          { $set: { totalRemainingMinutes: Math.max(0, Math.round(computedTotal * 60)) } }
+        );
+      } catch (guardianSyncErr) {
+        console.warn(`syncComputedHoursToStorage: failed to sync Guardian model for ${guardianId}:`, guardianSyncErr && guardianSyncErr.message);
       }
     } catch (err) {
       console.warn(`syncComputedHoursToStorage: failed for guardian ${guardianId}:`, err && err.message);

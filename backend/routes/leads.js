@@ -1089,7 +1089,6 @@ router.post('/registration/:kind/:id/cancel', authenticateToken, requireAdmin, a
     const { kind, doc } = found;
 
     if (kind === 'lead') {
-      if (doc.status === 'converted') return res.status(409).json({ message: 'Converted leads cannot be cancelled.' });
       doc.status = cancel ? 'archived' : 'new';
       doc.archive = cancel
         ? { archivedAt: new Date(), archivedBy: req.user._id, reason }

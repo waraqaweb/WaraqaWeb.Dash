@@ -14,6 +14,7 @@ const RecruitmentCampaign = require('../models/RecruitmentCampaign');
 const TrainingBatch = require('../models/TrainingBatch');
 const User = require('../models/User');
 const Class = require('../models/Class');
+const Meeting = require('../models/Meeting');
 const { authenticateToken, requireTeacherOrAdmin, requireAdmin } = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
 const { standardizeSubjects, STANDARD_SUBJECTS } = require('../utils/subjectStandardization');
@@ -579,6 +580,95 @@ const populateUserIfSupported = (query, Model, projection) => (
   modelHasUserField(Model) ? query.populate('user', projection) : query
 );
 
+// The interview "Scheduled"/"Completed" timestamps are no longer manually
+// entered by an admin — they're derived automatically from the candidate's
+// booked New Teacher Interview meeting (matched by email). These helpers keep
+// recruitment.interview.scheduledAt/completedAt/meetingId in sync with the
+// most recently booked interview meeting for a candidate.
+const deriveInterviewScheduleFromMeeting = (meeting) => {
+  if (!meeting) return { scheduledAt: null, completedAt: null, meetingId: null };
+  const scheduledAt = meeting.scheduledStart || null;
+  const meetingCompleted = meeting.status === 'completed'
+    || (meeting.scheduledEnd && new Date(meeting.scheduledEnd).getTime() <= Date.now());
+  return {
+    scheduledAt,
+    completedAt: meetingCompleted ? (meeting.scheduledEnd || null) : null,
+    meetingId: meeting._id || null,
+  };
+};
+
+// Batch version used when listing/summarizing many lean (plain-object) docs
+// at once. Mutates the in-memory lean docs AND persists any changes via a
+// single bulkWrite so DB-level filters (e.g. counts by scheduledAt) stay
+// accurate without needing to re-open the full response list first.
+async function syncInterviewSchedulesForLeanDocs(Model, leanDocs = []) {
+  const withEmail = (leanDocs || []).filter((d) => String(d?.personalInfo?.email || '').trim());
+  if (!withEmail.length) return;
+
+  const emails = [...new Set(withEmail.map((d) => String(d.personalInfo.email).trim().toLowerCase()))];
+  const meetings = await Meeting.find({
+    meetingType: 'new_teacher_interview',
+    status: { $ne: 'cancelled' },
+    'bookingPayload.guardianEmail': { $in: emails },
+  }).sort({ scheduledStart: -1 }).lean();
+
+  const byEmail = new Map();
+  meetings.forEach((m) => {
+    const email = m.bookingPayload?.guardianEmail;
+    if (email && !byEmail.has(email)) byEmail.set(email, m); // first = most recent (sorted desc)
+  });
+  if (!byEmail.size) return;
+
+  const bulkOps = [];
+  withEmail.forEach((doc) => {
+    const email = String(doc.personalInfo.email).trim().toLowerCase();
+    const meeting = byEmail.get(email);
+    if (!meeting) return;
+
+    const derived = deriveInterviewScheduleFromMeeting(meeting);
+    const interview = doc.recruitment?.interview || {};
+    const changed = String(interview.scheduledAt || '') !== String(derived.scheduledAt || '')
+      || String(interview.completedAt || '') !== String(derived.completedAt || '')
+      || String(interview.meetingId || '') !== String(derived.meetingId || '');
+    if (!changed) return;
+
+    doc.recruitment = doc.recruitment || {};
+    doc.recruitment.interview = { ...interview, ...derived };
+    bulkOps.push({
+      updateOne: {
+        filter: { _id: doc._id },
+        update: {
+          $set: {
+            'recruitment.interview.scheduledAt': derived.scheduledAt,
+            'recruitment.interview.completedAt': derived.completedAt,
+            'recruitment.interview.meetingId': derived.meetingId,
+          },
+        },
+      },
+    });
+  });
+
+  if (bulkOps.length) await Model.bulkWrite(bulkOps);
+}
+
+// Single-document version used right before saving an interview scorecard
+// update, so the auto-advance-status logic below sees a fresh completedAt.
+async function syncInterviewScheduleForDoc(doc) {
+  const email = String(doc?.personalInfo?.email || '').trim().toLowerCase();
+  if (!email) return;
+  const meeting = await Meeting.findOne({
+    meetingType: 'new_teacher_interview',
+    status: { $ne: 'cancelled' },
+    'bookingPayload.guardianEmail': email,
+  }).sort({ scheduledStart: -1 }).lean();
+  if (!meeting) return;
+
+  const derived = deriveInterviewScheduleFromMeeting(meeting);
+  const recruitment = doc.recruitment || {};
+  recruitment.interview = { ...(recruitment.interview || {}), ...derived };
+  doc.recruitment = recruitment;
+}
+
 router.get('/template', async (req, res) => {
   try {
     const value = await getContractTemplateValue();
@@ -703,6 +793,11 @@ router.get('/responses', authenticateToken, requireAdmin, async (req, res) => {
         .populate('recruitment.reviewedBy', 'firstName lastName email')
         .sort({ submittedAt: -1, createdAt: -1 })
         .lean(),
+    ]);
+
+    await Promise.all([
+      syncInterviewSchedulesForLeanDocs(TeacherContractLead, publicLeads),
+      syncInterviewSchedulesForLeanDocs(TeacherContractSubmission, dashboardSubmissions),
     ]);
 
     const responses = [
@@ -995,26 +1090,35 @@ router.patch('/responses/:source/:id/interview', authenticateToken, requireAdmin
     const doc = await interviewQuery;
     if (!doc) return res.status(404).json({ message: 'Teacher response not found.' });
 
+    // Scheduled/Completed are derived automatically from the candidate's
+    // booked interview meeting — refresh them before applying any other
+    // scorecard changes so the auto-advance logic below sees the latest value.
+    await syncInterviewScheduleForDoc(doc);
+
     const body = req.body || {};
     const recruitment = doc.recruitment || {};
     const interview = recruitment.interview || {};
 
-    const clampScore = (v) => {
-      if (v == null || v === '') return null;
-      const n = Number(v);
-      if (Number.isNaN(n)) return null;
-      return Math.max(0, Math.min(10, Math.round(n)));
-    };
-
-    if (body.scheduledAt != null) interview.scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
-    if (body.completedAt != null) interview.completedAt = body.completedAt ? new Date(body.completedAt) : null;
     if (body.worksElsewhere != null) interview.worksElsewhere = Boolean(body.worksElsewhere);
     if (body.notes != null) interview.notes = String(body.notes || '').trim().slice(0, 2000);
+    if (body.englishTestScore != null) {
+      const pct = Number(body.englishTestScore);
+      interview.englishTestScore = (body.englishTestScore === '' || Number.isNaN(pct))
+        ? null
+        : Math.max(0, Math.min(100, Math.round(pct)));
+    }
 
     if (body.scores && typeof body.scores === 'object') {
       interview.scores = interview.scores || {};
-      ['punctuality', 'english', 'subjectKnowledge', 'teaching', 'flexibility', 'professionalism'].forEach((key) => {
-        if (body.scores[key] !== undefined) interview.scores[key] = clampScore(body.scores[key]);
+      ['punctuality', 'subjectKnowledge', 'teaching', 'flexibility', 'professionalism'].forEach((key) => {
+        if (body.scores[key] !== undefined) interview.scores[key] = normalizeRecruitmentRating(body.scores[key]);
+      });
+    }
+
+    if (body.subjectScores && typeof body.subjectScores === 'object') {
+      interview.subjectScores = interview.subjectScores || {};
+      ['quran', 'arabic', 'islamicStudies', 'readingBasics'].forEach((key) => {
+        if (body.subjectScores[key] !== undefined) interview.subjectScores[key] = normalizeRecruitmentRating(body.subjectScores[key]);
       });
     }
 

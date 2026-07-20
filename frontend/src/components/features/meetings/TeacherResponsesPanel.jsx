@@ -13,6 +13,14 @@ const formatDate = (value) => {
   }
 };
 
+// Grows a textarea to fit its content (starting at one row) so fields like
+// admin notes only take up the vertical space they actually need.
+const autoResizeTextarea = (event) => {
+  const element = event.currentTarget;
+  element.style.height = 'auto';
+  element.style.height = `${Math.min(Math.max(element.scrollHeight, 44), 320)}px`;
+};
+
 const formatDateTime = (value) => {
   try {
     return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value));
@@ -47,6 +55,7 @@ const RATING_OPTIONS = [
 
 // Ordered ratings the star control cycles through (not_available = 0 stars).
 const STAR_RATING_VALUES = ['weak', 'good', 'very_good', 'excellent'];
+export { RATING_OPTIONS, STAR_RATING_VALUES };
 
 const REJECTION_CATEGORY_OPTIONS = [
   { value: '', label: 'Select a category…' },
@@ -73,29 +82,37 @@ const STATUS_TONES = {
 
 // Rating fields tied to a specific subject — only shown for a candidate when
 // they've indicated (via subjectsCanTeach/positionsInterested) that they can
-// teach the matching subject. See resolveSubjectRatingKeys().
+// teach the matching subject. See resolveSubjectRatingKeys(). Only Quran gets
+// its own star box; every other subject shares the single "Topic" rating
+// below since candidates upload one lesson-topic file regardless of how many
+// non-Quran subjects they teach.
 const SUBJECT_RATING_FIELDS = [
+  ['quran', 'Quran'],
+];
+
+// Rating fields shown for every candidate regardless of subjects taught.
+const GENERAL_RATING_FIELDS = [
+  ['english', 'English'],
+  ['teachingDemo', 'Topic'],
+  ['professionalism', 'Professionalism'],
+];
+
+
+const RATING_FIELDS = [...SUBJECT_RATING_FIELDS, ...GENERAL_RATING_FIELDS];
+
+// Full per-subject list (unlike SUBJECT_RATING_FIELDS above) — used by the
+// Interviews tab, which shows one mark per subject the candidate teaches
+// rather than collapsing non-Quran subjects into a single "Topic" field.
+export const ALL_SUBJECT_RATING_FIELDS = [
   ['quran', 'Quran'],
   ['arabic', 'Arabic'],
   ['islamicStudies', 'Islamic Studies'],
   ['readingBasics', 'Reading Basics'],
 ];
 
-// Rating fields shown for every candidate regardless of subjects taught.
-const GENERAL_RATING_FIELDS = [
-  ['english', 'English'],
-  ['teachingDemo', 'Teaching Demo'],
-  ['communication', 'Communication'],
-  ['punctuality', 'Punctuality'],
-  ['professionalism', 'Professionalism'],
-  ['flexibility', 'Flexibility'],
-];
-
-const RATING_FIELDS = [...SUBJECT_RATING_FIELDS, ...GENERAL_RATING_FIELDS];
-
 // Maps the app-wide standardized subject taxonomy to the evaluation rating
 // keys above, so we know which subject-specific fields to show per candidate.
-const SUBJECT_TO_RATING_KEY = {
+export const SUBJECT_TO_RATING_KEY = {
   'Quran (Memorization)': 'quran',
   'Quran (Recitation/Tajweed)': 'quran',
   'Arabic Language': 'arabic',
@@ -104,7 +121,7 @@ const SUBJECT_TO_RATING_KEY = {
 };
 
 /** Which subject-specific rating fields should be shown for this candidate. */
-function resolveSubjectRatingKeys(item) {
+export function resolveSubjectRatingKeys(item, fallbackFields = SUBJECT_RATING_FIELDS) {
   const rawSubjects = [
     ...(item?.application?.teachingProfile?.subjectsCanTeach || []),
     ...(item?.application?.positionsInterested || []),
@@ -117,7 +134,7 @@ function resolveSubjectRatingKeys(item) {
   });
   // Fall back to showing every subject field when we can't confidently match
   // any (e.g. legacy/unparsed data) so nothing is hidden by mistake.
-  if (!keys.size) SUBJECT_RATING_FIELDS.forEach(([key]) => keys.add(key));
+  if (!keys.size) fallbackFields.forEach(([key]) => keys.add(key));
   return keys;
 }
 
@@ -194,7 +211,7 @@ const matchesSearchQuery = (item, query) => {
 
 
 /** Clickable 4-star control for an evaluation rating (not_available = 0 stars). */
-function StarRating({ value, onChange, disabled, compact = false }) {
+export function StarRating({ value, onChange, disabled, compact = false }) {
   const activeIndex = STAR_RATING_VALUES.indexOf(value);
   return (
     <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'}`}>
@@ -1278,11 +1295,11 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                         {/* Row 2: evaluation scorecard, packed as many fields per row as fit */}
                         <div className="mt-4">
                           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation scorecard</p>
-                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                          <div className="flex flex-wrap gap-2">
                             {[...SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)), ...GENERAL_RATING_FIELDS].map(([key, label]) => (
-                              <div key={key} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                              <div key={key} className="w-fit rounded-lg border border-slate-200 bg-white px-2 py-1.5">
                                 <div className="flex items-center justify-between gap-1">
-                                  <p className="truncate text-[11px] font-medium text-slate-600" title={label}>{label}</p>
+                                  <p className="whitespace-nowrap text-[11px] font-medium text-slate-600" title={label}>{label}</p>
                                   {draft.evaluation[key] === 'not_available' ? <span title="Not available / not yet rated"><HelpCircle className="h-3 w-3 shrink-0 text-slate-300" /></span> : null}
                                 </div>
                                 <StarRating
@@ -1299,12 +1316,21 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                         <div className="mt-4 grid gap-3 lg:grid-cols-[1.4fr_1fr]">
                           <label className="text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Admin notes</span>
-                            <textarea value={draft.adminNotes} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, adminNotes: event.target.value })); scheduleAutosave(item, 1200); }} rows={4} placeholder="Interview notes, missing data, strengths, concerns…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
+                            <textarea
+                              value={draft.adminNotes}
+                              onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, adminNotes: event.target.value })); scheduleAutosave(item, 1200); }}
+                              onInput={autoResizeTextarea}
+                              rows={1}
+                              placeholder="Interview notes, missing data, strengths, concerns…"
+                              className="w-full resize-none overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                            />
                           </label>
                           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                            <p><span className="font-semibold text-slate-900">Recommendation:</span> {item?.recruitment?.overall?.recommendation || 'review'}</p>
-                            <p className="mt-1"><span className="font-semibold text-slate-900">Reviewed by:</span> {item?.recruitment?.reviewedBy ? `${item.recruitment.reviewedBy.firstName || ''} ${item.recruitment.reviewedBy.lastName || ''}`.trim() || item.recruitment.reviewedBy.email : '—'}</p>
-                            <p className="mt-1"><span className="font-semibold text-slate-900">Last reviewed:</span> {item?.recruitment?.reviewedAt ? formatDateTime(item.recruitment.reviewedAt) : '—'}</p>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommendation: <span className="normal-case text-slate-900">{item?.recruitment?.overall?.recommendation || 'review'}</span></p>
+                            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+                              <p><span className="font-semibold text-slate-900">Reviewed by:</span> {item?.recruitment?.reviewedBy ? `${item.recruitment.reviewedBy.firstName || ''} ${item.recruitment.reviewedBy.lastName || ''}`.trim() || item.recruitment.reviewedBy.email : '—'}</p>
+                              <p><span className="font-semibold text-slate-900">Last reviewed:</span> {item?.recruitment?.reviewedAt ? formatDateTime(item.recruitment.reviewedAt) : '—'}</p>
+                            </div>
                           </div>
                         </div>
                       </div>

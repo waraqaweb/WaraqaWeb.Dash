@@ -19,7 +19,6 @@ import {
   Save,
   Send,
   Sliders,
-  Star,
   Trash2,
   TrendingUp,
   Upload,
@@ -28,7 +27,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import TeacherResponsesPanel from '../../components/features/meetings/TeacherResponsesPanel';
+import TeacherResponsesPanel, { ALL_SUBJECT_RATING_FIELDS, resolveSubjectRatingKeys, StarRating } from '../../components/features/meetings/TeacherResponsesPanel';
 import BusinessIntelligencePage from './BusinessIntelligencePage';
 import { useSearch } from '../../contexts/SearchContext';
 import {
@@ -98,7 +97,6 @@ const INTERVIEW_OUTCOMES = [
 
 const INTERVIEW_SCORE_FIELDS = [
   { key: 'punctuality', label: 'Punctuality' },
-  { key: 'english', label: 'English' },
   { key: 'subjectKnowledge', label: 'Subject knowledge' },
   { key: 'teaching', label: 'Teaching' },
   { key: 'flexibility', label: 'Flexibility' },
@@ -575,16 +573,24 @@ export default function TeacherOperationsPage({ isActive }) {
     setSelectedInterviewId(response.id);
     const iv = response?.recruitment?.interview || {};
     const scores = iv.scores || {};
+    const subjectScores = iv.subjectScores || {};
     setInterviewForm({
       source: response.source,
       id: response.id,
-      scheduledAt: iv.scheduledAt ? String(iv.scheduledAt).slice(0, 16) : '',
-      completedAt: iv.completedAt ? String(iv.completedAt).slice(0, 16) : '',
+      // Read-only — derived automatically from the candidate's booked
+      // New Teacher Interview meeting (see recruitment.interview.meetingId).
+      scheduledAt: iv.scheduledAt || '',
+      completedAt: iv.completedAt || '',
       worksElsewhere: Boolean(iv.worksElsewhere),
       outcome: iv.outcome || 'pending',
       notes: iv.notes || '',
+      englishTestScore: iv.englishTestScore ?? '',
       scores: INTERVIEW_SCORE_FIELDS.reduce((acc, f) => {
-        acc[f.key] = scores[f.key] ?? '';
+        acc[f.key] = scores[f.key] || 'not_available';
+        return acc;
+      }, {}),
+      subjectScores: ALL_SUBJECT_RATING_FIELDS.reduce((acc, [key]) => {
+        acc[key] = subjectScores[key] || 'not_available';
         return acc;
       }, {}),
     });
@@ -596,12 +602,12 @@ export default function TeacherOperationsPage({ isActive }) {
       setInterviewSaving(true);
       setInterviewError('');
       const payload = {
-        scheduledAt: interviewForm.scheduledAt || null,
-        completedAt: interviewForm.completedAt || null,
         worksElsewhere: interviewForm.worksElsewhere,
         outcome: interviewForm.outcome,
         notes: interviewForm.notes,
+        englishTestScore: interviewForm.englishTestScore === '' ? null : Number(interviewForm.englishTestScore),
         scores: interviewForm.scores,
+        subjectScores: interviewForm.subjectScores,
       };
       const updated = await saveInterviewScorecard(interviewForm.source, interviewForm.id, payload);
       if (updated) {
@@ -707,11 +713,11 @@ export default function TeacherOperationsPage({ isActive }) {
       // advances the pipeline stage on the backend), then send the message.
       const updated = await saveInterviewScorecard(decisionPreview.source, decisionPreview.id, {
         ...(interviewForm ? {
-          scheduledAt: interviewForm.scheduledAt || null,
-          completedAt: interviewForm.completedAt || null,
           worksElsewhere: interviewForm.worksElsewhere,
           notes: interviewForm.notes,
+          englishTestScore: interviewForm.englishTestScore === '' ? null : Number(interviewForm.englishTestScore),
           scores: interviewForm.scores,
+          subjectScores: interviewForm.subjectScores,
         } : {}),
         outcome: decisionPreview.outcome,
       });
@@ -1329,35 +1335,30 @@ export default function TeacherOperationsPage({ isActive }) {
         {activeTab === 'interviews' ? (
           <div className="grid gap-3 xl:grid-cols-[0.9fr_1.1fr]">
             <SectionCard title="Pending outcome emails" className="xl:col-span-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-sm text-foreground">
-                    {pendingEmailsLoading
-                      ? 'Checking for candidates awaiting an outcome email…'
-                      : pendingEmails.length
-                        ? `${pendingEmails.length} candidate${pendingEmails.length === 1 ? '' : 's'} have a decided outcome but no email sent yet.`
-                        : 'All decided candidates have been emailed. Nothing pending.'}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground">Emails are only sent when you press this button — nothing goes out automatically.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={loadPendingEmails}
-                    disabled={pendingEmailsLoading || sendingPending}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60"
-                  >
-                    <Loader2 className={`h-3.5 w-3.5 ${pendingEmailsLoading ? 'animate-spin' : 'hidden'}`} /> Refresh
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSendPendingEmails}
-                    disabled={sendingPending || pendingEmailsLoading || !pendingEmails.length}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60"
-                  >
-                    <Send className="h-4 w-4" /> {sendingPending ? 'Sending…' : `Send all${pendingEmails.length ? ` (${pendingEmails.length})` : ''}`}
-                  </button>
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="min-w-0 flex-1 truncate text-sm text-foreground" title="Emails are only sent when you press this button — nothing goes out automatically.">
+                  {pendingEmailsLoading
+                    ? 'Checking for candidates awaiting an outcome email…'
+                    : pendingEmails.length
+                      ? `${pendingEmails.length} candidate${pendingEmails.length === 1 ? '' : 's'} awaiting an outcome email.`
+                      : 'All decided candidates have been emailed. Nothing pending.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={loadPendingEmails}
+                  disabled={pendingEmailsLoading || sendingPending}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60"
+                >
+                  <Loader2 className={`h-3.5 w-3.5 ${pendingEmailsLoading ? 'animate-spin' : 'hidden'}`} /> Refresh
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSendPendingEmails}
+                  disabled={sendingPending || pendingEmailsLoading || !pendingEmails.length}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60"
+                >
+                  <Send className="h-4 w-4" /> {sendingPending ? 'Sending…' : `Send all${pendingEmails.length ? ` (${pendingEmails.length})` : ''}`}
+                </button>
               </div>
               {pendingNotice ? <p className="mt-2 text-xs font-medium text-green-600 dark:text-green-400">{pendingNotice}</p> : null}
               {pendingEmails.length ? (
@@ -1374,6 +1375,7 @@ export default function TeacherOperationsPage({ isActive }) {
                 </div>
               ) : null}
             </SectionCard>
+
 
             <SectionCard title="Interview candidates">
               {interviewError ? <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{interviewError}</div> : null}
@@ -1425,6 +1427,7 @@ export default function TeacherOperationsPage({ isActive }) {
                 </div>
               ) : (() => {
                 const current = interviewResponses.find((r) => r.id === selectedInterviewId);
+                const subjectRatingKeys = resolveSubjectRatingKeys(current, ALL_SUBJECT_RATING_FIELDS);
                 const phone = String(current?.personalInfo?.whatsappNumber || current?.personalInfo?.mobileNumber || current?.user?.phone || '').replace(/[^\d]/g, '');
                 const email = current?.personalInfo?.email || current?.user?.email || '';
                 const waText = encodeURIComponent(`Assalamu alaikum, this is Waraqa. Please book your teacher interview here: ${newTeacherInterviewLink}`);
@@ -1451,30 +1454,52 @@ export default function TeacherOperationsPage({ isActive }) {
                     </div>
 
                     <div className="grid grid-cols-2 gap-2">
-                      <label className="text-xs text-foreground">
+                      <div className="text-xs text-foreground">
                         <span className="mb-1 block font-medium">Scheduled</span>
-                        <input type="datetime-local" value={interviewForm.scheduledAt} onChange={(e) => setInterviewForm((p) => ({ ...p, scheduledAt: e.target.value }))} className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
-                      </label>
-                      <label className="text-xs text-foreground">
+                        <span className="block truncate rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground" title="Derived automatically from the candidate's booked interview meeting">
+                          {interviewForm.scheduledAt ? new Date(interviewForm.scheduledAt).toLocaleString() : 'No meeting booked yet'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-foreground">
                         <span className="mb-1 block font-medium">Completed</span>
-                        <input type="datetime-local" value={interviewForm.completedAt} onChange={(e) => setInterviewForm((p) => ({ ...p, completedAt: e.target.value }))} className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
-                      </label>
+                        <span className="block truncate rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground" title="Derived automatically once the meeting's scheduled end time has passed">
+                          {interviewForm.completedAt ? new Date(interviewForm.completedAt).toLocaleString() : 'Not yet'}
+                        </span>
+                      </div>
                     </div>
 
                     <div>
-                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Scores (0–10)</p>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Scores</p>
+                      <div className="flex flex-wrap gap-2">
                         {INTERVIEW_SCORE_FIELDS.map((field) => (
-                          <label key={field.key} className="text-xs text-foreground">
-                            <span className="mb-1 flex items-center gap-1 font-medium"><Star className="h-3 w-3 text-primary" /> {field.label}</span>
-                            <input
-                              type="number" min="0" max="10"
+                          <div key={field.key} className="w-fit rounded-lg border border-border bg-background px-2 py-1.5">
+                            <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">{field.label}</p>
+                            <StarRating
+                              compact
                               value={interviewForm.scores[field.key]}
-                              onChange={(e) => setInterviewForm((p) => ({ ...p, scores: { ...p.scores, [field.key]: e.target.value } }))}
-                              className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm"
+                              onChange={(next) => setInterviewForm((p) => ({ ...p, scores: { ...p.scores, [field.key]: next } }))}
                             />
-                          </label>
+                          </div>
                         ))}
+                        {ALL_SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)).map(([key, label]) => (
+                          <div key={key} className="w-fit rounded-lg border border-border bg-background px-2 py-1.5">
+                            <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">{label}</p>
+                            <StarRating
+                              compact
+                              value={interviewForm.subjectScores[key]}
+                              onChange={(next) => setInterviewForm((p) => ({ ...p, subjectScores: { ...p.subjectScores, [key]: next } }))}
+                            />
+                          </div>
+                        ))}
+                        <div className="w-fit rounded-lg border border-border bg-background px-2 py-1.5">
+                          <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">English test score (%)</p>
+                          <input
+                            type="number" min="0" max="100"
+                            value={interviewForm.englishTestScore}
+                            onChange={(e) => setInterviewForm((p) => ({ ...p, englishTestScore: e.target.value }))}
+                            className="w-20 rounded-lg border border-border bg-background px-2 py-1 text-sm"
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -1522,7 +1547,7 @@ export default function TeacherOperationsPage({ isActive }) {
                     <div className="rounded-xl border border-border bg-background p-2.5">
                       <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 2 · Interview decision</p>
                       {!interviewForm.completedAt ? (
-                        <p className="text-[11px] text-muted-foreground">Mark the interview as completed above to record a decision.</p>
+                        <p className="text-[11px] text-muted-foreground">Waiting for the interview meeting's scheduled time to pass before a decision can be recorded.</p>
                       ) : (
                         <>
                           <p className="mb-1.5 text-[11px] text-muted-foreground">Each decision composes a dedicated, human-readable message you can edit before sending.</p>

@@ -51,14 +51,27 @@ const recruitmentSchema = new mongoose.Schema({
   interview: {
     scheduledAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
+    // The booked Meeting (meetingType: new_teacher_interview) this schedule was
+    // derived from. scheduledAt/completedAt are kept in sync with this meeting
+    // automatically and are no longer manually entered by an admin.
+    meetingId: { type: mongoose.Schema.Types.ObjectId, ref: 'Meeting', default: null },
     worksElsewhere: { type: Boolean, default: false },
+    // English test score is a percentage (0-100), not a star rating.
+    englishTestScore: { type: Number, default: null, min: 0, max: 100 },
     scores: {
-      punctuality: { type: Number, default: null, min: 0, max: 10 },
-      english: { type: Number, default: null, min: 0, max: 10 },
-      subjectKnowledge: { type: Number, default: null, min: 0, max: 10 },
-      teaching: { type: Number, default: null, min: 0, max: 10 },
-      flexibility: { type: Number, default: null, min: 0, max: 10 },
-      professionalism: { type: Number, default: null, min: 0, max: 10 },
+      punctuality: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+      subjectKnowledge: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+      teaching: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+      flexibility: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+      professionalism: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    },
+    // Per-subject marks shown only for the subjects the candidate actually
+    // teaches (mirrors the Pipeline tab's per-subject evaluation fields).
+    subjectScores: {
+      quran: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+      arabic: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+      islamicStudies: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+      readingBasics: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
     },
     outcome: {
       type: String,

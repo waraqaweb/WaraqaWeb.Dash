@@ -218,6 +218,8 @@ const displayValue = (value) => {
   return value == null || value === '' ? '—' : value;
 };
 
+const responseKey = (item) => `${item?.source || 'public'}:${item?.id || ''}`;
+
 // One spreadsheet-style cell: tiny header label + value inside a bordered cell.
 function ExcelCell({ label, value, span = 1, clamp = true }) {
   const text = displayValue(value);
@@ -317,7 +319,7 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
     );
   };
   const columns = ['Name', 'Email', 'Phone', 'Gender', 'Birth date', 'Address', 'Positions', 'Graduation', 'Faculty / University', 'Degree', 'Certificates', 'Teaching experience', 'Current job', 'What we should know', 'Stage', 'Contact', 'Files', ''];
-  const allSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(row.id));
+  const allSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(responseKey(row)));
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
       <table className="w-full min-w-[1600px] border-collapse text-left text-xs text-slate-700">
@@ -339,7 +341,7 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
             return (
               <tr key={item.id} className="align-top odd:bg-white even:bg-slate-50/50">
                 <td className="border-b border-slate-100 px-3 py-2">
-                  <input type="checkbox" checked={selectedIds.includes(item.id)} onChange={() => onToggleSelect(item.id)} className="h-3.5 w-3.5 rounded border-slate-300" aria-label={`Select ${p.fullName || p.email || 'candidate'}`} />
+                  <input type="checkbox" checked={selectedIds.includes(responseKey(item))} onChange={() => onToggleSelect(item)} className="h-3.5 w-3.5 rounded border-slate-300" aria-label={`Select ${p.fullName || p.email || 'candidate'}`} />
                 </td>
                 <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2 font-semibold text-slate-900">{cell(p.fullName || item.contract?.fullName)}</td>
                 <td className="whitespace-nowrap border-b border-slate-100 px-3 py-2">{cell(p.email)}</td>
@@ -517,7 +519,7 @@ export default function TeacherResponsesPanel() {
       setError('');
       const updated = await updateTeacherContractResponse(item.source, item.id, { pipelineStatus: status });
       if (updated) {
-        setItems((prev) => prev.map((entry) => (entry.id === item.id ? updated : entry)));
+        setItems((prev) => prev.map((entry) => (entry.id === item.id && entry.source === item.source ? updated : entry)));
         setDrafts((prev) => (prev[item.id] ? { ...prev, [item.id]: createDraftFromItem(updated) } : prev));
         bumpDomainVersion('teacher-contract');
       }
@@ -528,8 +530,9 @@ export default function TeacherResponsesPanel() {
     }
   };
 
-  const toggleSelect = (id) => {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const toggleSelect = (item) => {
+    const key = responseKey(item);
+    setSelectedIds((prev) => (prev.includes(key) ? prev.filter((x) => x !== key) : [...prev, key]));
   };
 
   // Soft-delete: archiving hides the applicant from the default list but keeps every record.
@@ -541,7 +544,7 @@ export default function TeacherResponsesPanel() {
   };
 
   const toggleSelectAll = (rows) => {
-    const ids = rows.map((row) => row.id);
+    const ids = rows.map((row) => responseKey(row));
     setSelectedIds((prev) => (ids.every((id) => prev.includes(id)) ? prev.filter((id) => !ids.includes(id)) : Array.from(new Set([...prev, ...ids]))));
   };
 
@@ -551,15 +554,15 @@ export default function TeacherResponsesPanel() {
       setBulkMoving(true);
       setError('');
       let moved = 0;
-      for (const id of selectedIds) {
-        const item = items.find((entry) => entry.id === id);
+      for (const key of selectedIds) {
+        const item = items.find((entry) => responseKey(entry) === key);
         if (!item) continue;
         // Sequential to keep server load light and preserve history entries.
         // eslint-disable-next-line no-await-in-loop
         const updated = await updateTeacherContractResponse(item.source, item.id, { pipelineStatus: bulkStage });
         if (updated) {
           moved += 1;
-          setItems((prev) => prev.map((entry) => (entry.id === item.id ? updated : entry)));
+          setItems((prev) => prev.map((entry) => (entry.id === item.id && entry.source === item.source ? updated : entry)));
         }
       }
       bumpDomainVersion('teacher-contract');
@@ -611,7 +614,7 @@ export default function TeacherResponsesPanel() {
       const result = await convertCandidateToTeacher(item.source, item.id, { email });
       setNotice(`Teacher account created! Email: ${result.email}. Temporary password: ${result.tempPassword} — share this with the teacher and ask them to change it immediately.`);
       setItems((prev) => prev.map((entry) =>
-        entry.id === item.id
+        entry.id === item.id && entry.source === item.source
           ? { ...entry, recruitment: { ...entry.recruitment, status: 'accepted' } }
           : entry
       ));
@@ -649,10 +652,10 @@ export default function TeacherResponsesPanel() {
       const updated = await updateTeacherContractResponse(item.source, item.id, payload);
       if (!updated) return;
 
-      setItems((prev) => prev.map((entry) => (entry.id === item.id ? updated : entry)));
+      setItems((prev) => prev.map((entry) => (entry.id === item.id && entry.source === item.source ? updated : entry)));
       setDrafts((prev) => ({ ...prev, [item.id]: createDraftFromItem(updated) }));
       setNotice(`Saved review for ${updated.personalInfo?.fullName || updated.contract?.fullName || 'candidate'}.`);
-      writeCache(makeCacheKey('meetings:teacherResponses', 'admin'), { items: items.map((entry) => (entry.id === item.id ? updated : entry)) }, { ttlMs: 5 * 60_000, deps: ['teacher-contract'] });
+      writeCache(makeCacheKey('meetings:teacherResponses', 'admin'), { items: items.map((entry) => (entry.id === item.id && entry.source === item.source ? updated : entry)) }, { ttlMs: 5 * 60_000, deps: ['teacher-contract'] });
     } catch (err) {
       setError(err?.response?.data?.message || 'Failed to save recruitment review');
     } finally {
@@ -685,12 +688,11 @@ export default function TeacherResponsesPanel() {
     const normalizedQuery = String(query || '').trim().toLowerCase();
     return items.filter((item) => {
       const itemStatus = item?.recruitment?.status || item.status || 'new';
-      if (statusFilter === 'all') {
-        // Archived applicants are hidden by default; open the Archived stage to see them.
-        if (itemStatus === 'archived') return false;
-      } else if (itemStatus !== statusFilter) {
+      if (statusFilter !== 'all' && itemStatus !== statusFilter) {
         return false;
       }
+      // Keep archived rows hidden by default, but include them when searching by name/email/phone.
+      if (statusFilter === 'all' && !normalizedQuery && itemStatus === 'archived') return false;
       if (campaignFilter !== 'all' && String(item?.recruitment?.fit?.campaignId || '') !== String(campaignFilter)) {
         return false;
       }

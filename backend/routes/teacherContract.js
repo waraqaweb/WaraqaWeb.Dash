@@ -2064,14 +2064,23 @@ async function importApplicantsFromSheetUrl(rawUrl, actorId = null) {
       TeacherContractSubmission.find({}).select('personalInfo.email user').populate('user', 'email').lean(),
       User.find({ role: { $in: ['teacher', 'admin', 'guardian', 'student'] } }).select('email').lean(),
     ]);
+    const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
     const leadIdByEmail = new Map();
-    existingLeads.forEach((l) => { if (l?.personalInfo?.email) leadIdByEmail.set(String(l.personalInfo.email).toLowerCase(), l._id); });
+    existingLeads.forEach((l) => {
+      const email = normalizeEmail(l?.personalInfo?.email);
+      if (email) leadIdByEmail.set(email, l._id);
+    });
     const protectedEmails = new Set();
     existingSubs.forEach((s) => {
-      if (s?.personalInfo?.email) protectedEmails.add(String(s.personalInfo.email).toLowerCase());
-      if (s?.user?.email) protectedEmails.add(String(s.user.email).toLowerCase());
+      const submissionEmail = normalizeEmail(s?.personalInfo?.email);
+      const userEmail = normalizeEmail(s?.user?.email);
+      if (submissionEmail) protectedEmails.add(submissionEmail);
+      if (userEmail) protectedEmails.add(userEmail);
     });
-    existingUsers.forEach((u) => { if (u?.email) protectedEmails.add(String(u.email).toLowerCase()); });
+    existingUsers.forEach((u) => {
+      const email = normalizeEmail(u?.email);
+      if (email) protectedEmails.add(email);
+    });
 
     const splitList = (value) => String(value || '').split(/[,;/\n]+/).map((x) => x.trim()).filter(Boolean);
     const asFile = (url) => (url ? { url } : {});
@@ -2197,7 +2206,7 @@ async function importApplicantsFromSheetUrl(rawUrl, actorId = null) {
     const toUpdate = [];
 
     for (const row of rows) {
-      const email = pickFormColumn(row, ['Email Address', 'email', 'e-mail', 'emailaddress'], 4).toLowerCase();
+      const email = normalizeEmail(pickFormColumn(row, ['Email Address', 'email', 'e-mail', 'emailaddress'], 4));
       const fullName = pickFormColumn(row, ['Full Name', 'fullname', 'name', 'applicantname'], 1);
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { invalid += 1; continue; }
       if (seenInBatch.has(email)) { duplicates += 1; continue; }

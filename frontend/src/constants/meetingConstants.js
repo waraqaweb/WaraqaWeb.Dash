@@ -41,7 +41,7 @@ export const MEETING_TYPE_DESCRIPTIONS = Object.freeze({
   [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 'Welcome call to learn about your learner and match the right teacher.',
   [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 'Quick check-in to review progress and adjust class plans for existing students.',
   [MEETING_TYPES.TEACHER_SYNC]: 'Monthly teacher sync focused on progress updates and blockers.',
-  [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 'One-hour interview or onboarding call for teacher candidates and newly accepted teachers.',
+  [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 'Get-to-know-you interview for teacher candidates \u2014 your teaching class sessions will run 45\u201360 minutes once onboarded.',
 });
 
 export const getMeetingLabel = (type) => MEETING_TYPE_LABELS[type] || 'Meeting';

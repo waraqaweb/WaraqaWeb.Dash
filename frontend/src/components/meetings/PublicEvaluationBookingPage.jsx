@@ -91,6 +91,7 @@ const PublicEvaluationBookingPage = () => {
   const meetingType = useMemo(() => resolvePublicMeetingType(location.search), [location.search]);
   const detectedTimezone = getBrowserTimezone();
   const isTeacherMeeting = meetingType === MEETING_TYPES.TEACHER_SYNC || meetingType === MEETING_TYPES.NEW_TEACHER_INTERVIEW;
+  const isNewTeacherInterview = meetingType === MEETING_TYPES.NEW_TEACHER_INTERVIEW;
   const isGuardianFollowUp = meetingType === MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP;
   const requiresStudents = !isTeacherMeeting;
   const [timezone, setTimezone] = useState(detectedTimezone);
@@ -424,6 +425,20 @@ const PublicEvaluationBookingPage = () => {
               </div>
             </div>
 
+            {isNewTeacherInterview && (
+              <div className="mt-4 rounded-2xl border border-primary/15 bg-primary/5 p-4">
+                <p className="text-sm font-semibold text-foreground">What to expect on this call</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                  <li>We'll get to know your background, teaching style and experience.</li>
+                  <li>You're welcome to ask us anything about Waraqa, the students and how classes run.</li>
+                  <li>We'll walk you through the next steps and timeline if we move forward together.</li>
+                </ul>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  This call itself is scheduled like any of our team meetings above — once onboarded, your regular class sessions with students will run about 45–60 minutes each.
+                </p>
+              </div>
+            )}
+
             <Link
               to="/dashboard/login"
               className="inline-flex h-9 items-center justify-center rounded-full border border-border bg-primary px-4 text-xs font-semibold text-white"
@@ -492,28 +507,28 @@ const PublicEvaluationBookingPage = () => {
             <div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Input
-                  label={isTeacherSync ? 'Teacher first name' : 'Guardian first name'}
-                  placeholder={isTeacherSync ? 'Teacher first name' : 'Guardian first name'}
+                  label={isTeacherMeeting ? 'Teacher first name' : 'Guardian first name'}
+                  placeholder={isTeacherMeeting ? 'Teacher first name' : 'Guardian first name'}
                   value={guardianFirstName}
                   onChange={(e) => setGuardianFirstName(e.target.value)}
                   disabled={submitting}
                 />
                 <Input
-                  label={isTeacherSync ? 'Teacher last name' : 'Guardian last name'}
-                  placeholder={isTeacherSync ? 'Teacher last name' : 'Guardian last name'}
+                  label={isTeacherMeeting ? 'Teacher last name' : 'Guardian last name'}
+                  placeholder={isTeacherMeeting ? 'Teacher last name' : 'Guardian last name'}
                   value={guardianLastName}
                   onChange={(e) => setGuardianLastName(e.target.value)}
                   disabled={submitting}
                 />
                 <Input
-                  label={isTeacherSync ? 'Teacher email' : 'Your email'}
+                  label={isTeacherMeeting ? 'Teacher email' : 'Your email'}
                   placeholder="name@example.com"
                   value={guardianEmail}
                   onChange={(e) => setGuardianEmail(e.target.value)}
                   disabled={submitting}
                 />
                 <Input
-                  label={isTeacherSync ? 'Teacher phone / WhatsApp' : 'Phone / WhatsApp'}
+                  label={isTeacherMeeting ? 'Teacher phone / WhatsApp' : 'Phone / WhatsApp'}
                   placeholder="+20 ..."
                   value={guardianPhone}
                   onChange={(e) => setGuardianPhone(e.target.value)}
@@ -668,7 +683,7 @@ const PublicEvaluationBookingPage = () => {
                 <textarea
                   className="w-full overflow-hidden rounded-xl border border-border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-ring resize-none"
                   rows={1}
-                  placeholder={isTeacherMeeting ? 'Topics, blockers, schedule, preferred agenda...' : isGuardianFollowUp ? 'Progress, concerns, goals, scheduling notes...' : 'Language level, goals, availability...'}
+                  placeholder={isNewTeacherInterview ? 'Teaching experience, subjects you can teach, questions for us...' : isTeacherMeeting ? 'Topics, blockers, schedule, preferred agenda...' : isGuardianFollowUp ? 'Progress, concerns, goals, scheduling notes...' : 'Language level, goals, availability...'}
                   value={notes}
                   onInput={autoResizeTextarea}
                   onChange={(e) => setNotes(e.target.value)}

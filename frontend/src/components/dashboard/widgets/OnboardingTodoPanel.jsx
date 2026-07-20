@@ -391,6 +391,7 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
   const [body, setBody] = useState('');
   const [details, setDetails] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(true);
+  const [cancelReasonDraft, setCancelReasonDraft] = useState(null); // string when the in-page reason prompt is open, else null
 
   const notes = Array.isArray(row.notes) ? row.notes : [];
 
@@ -733,11 +734,7 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
               <button
                 type="button"
                 disabled={busy === 'cancel'}
-                onClick={() => {
-                  const reason = window.prompt('Reason this registration is cancelled? (optional)') ?? null;
-                  if (reason === null) return; // user pressed Cancel on the prompt
-                  run('cancel', () => cancelRegistration(kind, id, true, reason), 'Marked as cancelled.');
-                }}
+                onClick={() => setCancelReasonDraft('')}
                 className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-50"
               >
                 {kind === 'lead' ? <Archive className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />} Report cancelled
@@ -747,6 +744,47 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
           </div>
         </div>
       </div>
+
+      {cancelReasonDraft !== null ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => setCancelReasonDraft(null)}>
+          <div
+            className="w-full max-w-sm rounded-2xl border border-border bg-white p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold text-foreground">Report cancelled</h3>
+            <p className="mt-1 text-xs text-muted-foreground">Reason this registration is cancelled? (optional)</p>
+            <textarea
+              autoFocus
+              rows={3}
+              value={cancelReasonDraft}
+              onChange={(e) => setCancelReasonDraft(e.target.value)}
+              placeholder="e.g. No response after multiple follow-ups"
+              className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelReasonDraft(null)}
+                className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy === 'cancel'}
+                onClick={() => {
+                  const reason = cancelReasonDraft;
+                  setCancelReasonDraft(null);
+                  run('cancel', () => cancelRegistration(kind, id, true, reason), 'Marked as cancelled.');
+                }}
+                className="rounded-full bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

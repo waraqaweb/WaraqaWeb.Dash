@@ -418,6 +418,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   const [bulkStage, setBulkStage] = useState('');
   const [bulkMoving, setBulkMoving] = useState(false);
   const [viewerMin, setViewerMin] = useState(false);
+  const [archiveConfirmItem, setArchiveConfirmItem] = useState(null);
 
   const openViewer = (label, url, mimeType) => {
     if (!url) return;
@@ -538,9 +539,18 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   // Soft-delete: archiving hides the applicant from the default list but keeps every record.
   const handleArchive = async (item) => {
     const isArchived = (item?.recruitment?.status || item.status) === 'archived';
-    const name = item.personalInfo?.fullName || item.personalInfo?.email || 'this applicant';
-    if (!isArchived && !window.confirm(`Archive ${name}? They will disappear from the list but stay saved under the \u201cArchived\u201d stage.`)) return;
-    await handleQuickStage(item, isArchived ? 'new' : 'archived');
+    if (!isArchived) {
+      setArchiveConfirmItem(item);
+      return;
+    }
+    await handleQuickStage(item, 'new');
+  };
+
+  const confirmArchive = async () => {
+    const item = archiveConfirmItem;
+    setArchiveConfirmItem(null);
+    if (!item) return;
+    await handleQuickStage(item, 'archived');
   };
 
   const toggleSelectAll = (rows) => {
@@ -1061,6 +1071,21 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
               ) : (
                 <iframe title={viewer.label} src={viewer.src} className={viewerMin ? 'h-44 w-full' : 'h-[68vh] w-full rounded-lg'} allow="autoplay" />
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {archiveConfirmItem ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => setArchiveConfirmItem(null)}>
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-slate-900">Archive candidate</h3>
+            <p className="mt-1 text-xs text-slate-600">
+              Archive {archiveConfirmItem.personalInfo?.fullName || archiveConfirmItem.personalInfo?.email || 'this applicant'}? They will disappear from the list but stay saved under the &ldquo;Archived&rdquo; stage.
+            </p>
+            <div className="mt-3 flex justify-end gap-2">
+              <button type="button" onClick={() => setArchiveConfirmItem(null)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700">Cancel</button>
+              <button type="button" onClick={confirmArchive} className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white">Archive</button>
             </div>
           </div>
         </div>

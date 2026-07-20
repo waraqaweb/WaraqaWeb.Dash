@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const crypto = require('crypto');
@@ -561,6 +562,14 @@ const resolveResponseModel = (source) => {
   return null;
 };
 
+// TeacherContractLead (public source) has no top-level `user` field, so blindly
+// calling `.populate('user', ...)` on it throws a StrictPopulateError. These
+// helpers only populate/select `user` when the resolved Model actually has it.
+const modelHasUserField = (Model) => Boolean(Model?.schema?.path('user'));
+const populateUserIfSupported = (query, Model, projection) => (
+  modelHasUserField(Model) ? query.populate('user', projection) : query
+);
+
 router.get('/template', async (req, res) => {
   try {
     const value = await getContractTemplateValue();
@@ -940,9 +949,10 @@ router.patch('/responses/:source/:id', authenticateToken, requireAdmin, async (r
       return res.status(400).json({ message: 'Unsupported response source.' });
     }
 
-    const doc = await Model.findById(req.params.id)
-      .populate('user', 'firstName lastName email phone')
+    let responseQuery = Model.findById(req.params.id)
       .populate('recruitment.reviewedBy', 'firstName lastName email');
+    responseQuery = populateUserIfSupported(responseQuery, Model, 'firstName lastName email phone');
+    const doc = await responseQuery;
 
     if (!doc) {
       return res.status(404).json({ message: 'Teacher response not found.' });
@@ -969,9 +979,10 @@ router.patch('/responses/:source/:id/interview', authenticateToken, requireAdmin
     const Model = resolveResponseModel(source);
     if (!Model) return res.status(400).json({ message: 'Unsupported response source.' });
 
-    const doc = await Model.findById(req.params.id)
-      .populate('user', 'firstName lastName email phone')
+    let interviewQuery = Model.findById(req.params.id)
       .populate('recruitment.reviewedBy', 'firstName lastName email');
+    interviewQuery = populateUserIfSupported(interviewQuery, Model, 'firstName lastName email phone');
+    const doc = await interviewQuery;
     if (!doc) return res.status(404).json({ message: 'Teacher response not found.' });
 
     const body = req.body || {};
@@ -1064,8 +1075,10 @@ const findByContractToken = async (token) => {
   const clean = String(token || '').trim();
   if (!clean) return null;
   for (const [source, Model] of [['public', TeacherContractLead], ['dashboard', TeacherContractSubmission]]) {
+    let tokenQuery = Model.findOne({ 'recruitment.contract.token': clean });
+    tokenQuery = populateUserIfSupported(tokenQuery, Model, 'firstName lastName email');
     // eslint-disable-next-line no-await-in-loop
-    const doc = await Model.findOne({ 'recruitment.contract.token': clean }).populate('user', 'firstName lastName email');
+    const doc = await tokenQuery;
     if (doc) return { source, Model, doc };
   }
   return null;
@@ -1867,10 +1880,10 @@ async function collectPendingOutcomeEmails() {
   const pending = [];
   for (const [source, Model] of [['public', TeacherContractLead], ['dashboard', TeacherContractSubmission]]) {
     const query = source === 'dashboard' ? { status: 'submitted' } : {};
-    const docs = await Model.find(query)
-      .select('recruitment personalInfo user')
-      .populate('user', 'firstName lastName email')
-      .lean();
+    let pendingQuery = Model.find(query)
+      .select(modelHasUserField(Model) ? 'recruitment personalInfo user' : 'recruitment personalInfo');
+    pendingQuery = populateUserIfSupported(pendingQuery, Model, 'firstName lastName email');
+    const docs = await pendingQuery.lean();
     for (const doc of docs) {
       const interview = doc?.recruitment?.interview || {};
       const outcome = String(interview.outcome || '').trim();
@@ -1921,7 +1934,9 @@ router.post('/send-pending-emails', authenticateToken, requireAdmin, async (req,
       const Model = resolveResponseModel(item.source);
       if (!Model) { failed += 1; results.push({ ...item, ok: false, error: 'Unsupported source' }); continue; }
       try {
-        const doc = await Model.findById(item.id).populate('user', 'firstName lastName email');
+        let pendingDocQuery = Model.findById(item.id);
+        pendingDocQuery = populateUserIfSupported(pendingDocQuery, Model, 'firstName lastName email');
+        const doc = await pendingDocQuery;
         if (!doc) { failed += 1; results.push({ ...item, ok: false, error: 'Not found' }); continue; }
         await sendRecruitmentEmailForDoc(doc, item.event, { actorId: req.user._id, templates, branding });
         sent += 1;
@@ -1946,7 +1961,9 @@ router.post('/responses/:source/:id/send-email', authenticateToken, requireAdmin
     if (!Model) return res.status(400).json({ message: 'Unsupported response source.' });
 
     const event = String(req.body?.template || req.body?.event || '').trim();
-    const doc = await Model.findById(req.params.id).populate('user', 'firstName lastName email');
+    let sendEmailQuery = Model.findById(req.params.id);
+    sendEmailQuery = populateUserIfSupported(sendEmailQuery, Model, 'firstName lastName email');
+    const doc = await sendEmailQuery;
     if (!doc) return res.status(404).json({ message: 'Teacher response not found.' });
 
     const { to } = await sendRecruitmentEmailForDoc(doc, event, {

@@ -806,7 +806,26 @@ try {
 
 	$script:CurrentStep = 'running remote deploy over ssh'
 	Write-Step 'Running the server deploy over SSH'
-	$sshResult = Invoke-LoggedNative -FilePath 'ssh' -Arguments ($sshArguments + @("$RemoteUser@$RemoteHost", $remoteInvocation))
+	# The remote script is idempotent (it re-checks running image / lock state on
+	# every invocation), so a dropped SSH session (exit code 255 = client/network-level
+	# failure, e.g. "Connection reset") is safe to retry with a fresh connection.
+	# A real remote failure exits 1 via the script's own `exit 1` and is NOT retried.
+	$maxSshAttempts = 3
+	$sshResult = $null
+	for ($attempt = 1; $attempt -le $maxSshAttempts; $attempt++) {
+		if ($attempt -gt 1) {
+			Write-WarnLine "SSH connection was dropped (attempt $($attempt - 1) of $maxSshAttempts); reconnecting and resuming (the remote deploy is idempotent)..."
+			Start-Sleep -Seconds 5
+		}
+		$sshResult = Invoke-LoggedNative -FilePath 'ssh' -Arguments ($sshArguments + @("$RemoteUser@$RemoteHost", $remoteInvocation))
+		if ($sshResult.ExitCode -eq 0) {
+			break
+		}
+		if ($sshResult.ExitCode -ne 255) {
+			# A real remote failure (e.g. the script's own `exit 1`) — do not retry.
+			break
+		}
+	}
 	if ($sshResult.ExitCode -ne 0) {
 		throw 'Remote deploy failed after the push succeeded. Check the generated failure prompt and server logs.'
 	}

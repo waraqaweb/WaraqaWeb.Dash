@@ -465,6 +465,7 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
     const now = new Date();
     const normEmail = (e) => String(e || '').trim().toLowerCase();
     const normName = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const normPhone = (p) => String(p || '').replace(/\D/g, '');
 
     // 1) Registration-form leads (within the window).
     const leads = await RegistrationLead.find({ createdAt: { $gte: since } })
@@ -543,12 +544,15 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
     const rowsByEmail = new Map();
     const rowsByUid = new Map();
     const rowsByName = new Map();
+    const rowsByPhone = new Map();
     const indexRow = (row) => {
       const e = normEmail(row.personalInfo?.email);
       if (e) rowsByEmail.set(e, row);
       if (row.accountUserId) rowsByUid.set(String(row.accountUserId), row);
       const n = normName(row.personalInfo?.fullName);
       if (n && !rowsByName.has(n)) rowsByName.set(n, row);
+      const p = normPhone(row.personalInfo?.phone);
+      if (p && !rowsByPhone.has(p)) rowsByPhone.set(p, row);
     };
     leadRows.forEach(indexRow);
     signupRows.forEach(indexRow);
@@ -562,8 +566,10 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
     const meetingRows = [];
     const seenMeetingEmails = new Set();
     const seenMeetingNames = new Set();
+    const seenMeetingPhones = new Set();
     meetingDocs.forEach((m) => {
       const email = normEmail(m.bookingPayload?.guardianEmail);
+      const phone = normPhone(m.bookingPayload?.guardianPhone);
       const guardianName = m.bookingPayload?.guardianName || m.attendees?.guardianName || '';
       const nameKey = normName(guardianName);
       const guardian = m.guardianId || (email ? guardiansByEmail.get(email) : null);
@@ -573,6 +579,7 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
       // but never decorate an active funnel row with a cancelled evaluation.
       let existing = email ? rowsByEmail.get(email) : null;
       if (!existing && guardian) existing = rowsByUid.get(String(guardian._id));
+      if (!existing && phone) existing = rowsByPhone.get(phone);
       if (!existing && nameKey) existing = rowsByName.get(nameKey);
       if (existing) {
         if (!cancelled) {
@@ -596,13 +603,16 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
         || m.status === MEETING_STATUSES.COMPLETED
         || m.attendanceStatus === 'attended';
       const isFuture = m.scheduledStart && new Date(m.scheduledStart) >= now;
-      if (!isFuture && !hasProgress) return;
+      const wasRecentlyBooked = m.createdAt && new Date(m.createdAt) >= since;
+      if (!isFuture && !hasProgress && !wasRecentlyBooked) return;
 
       // Only one pure row per email/name (keep the most recent meeting).
       if (email && seenMeetingEmails.has(email)) return;
       if (!email && nameKey && seenMeetingNames.has(nameKey)) return;
+      if (!email && !nameKey && phone && seenMeetingPhones.has(phone)) return;
       if (email) seenMeetingEmails.add(email);
       if (nameKey) seenMeetingNames.add(nameKey);
+      if (phone) seenMeetingPhones.add(phone);
 
       if (guardian && !cancelled) {
         // Returning guardian: existing account, surfaced via a fresh evaluation.
@@ -617,6 +627,7 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
         meetingRows.push(row);
         if (email) rowsByEmail.set(email, row);
         if (nameKey) rowsByName.set(nameKey, row);
+        if (phone) rowsByPhone.set(phone, row);
       }
     });
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Archive, ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Search, Settings2, Table2, UserPlus, X } from 'lucide-react';
+import { Archive, ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Settings2, Table2, UserPlus, X } from 'lucide-react';
 import { convertCandidateToTeacher, getSheetSyncConfig, listRecruitmentCampaigns, listTeacherContractResponses, runSheetSyncNow, saveSheetSyncConfig, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { bumpDomainVersion, makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 
@@ -206,9 +206,10 @@ function ContactActions({ item, compact = false }) {
   const icon = compact ? 'h-3 w-3' : 'h-3.5 w-3.5';
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {wa ? <a href={wa} target="_blank" rel="noreferrer" className={`${base} bg-green-600 text-white hover:bg-green-700`}><MessageCircle className={icon} /> WhatsApp</a> : null}
-      {mailto ? <a href={mailto} className={`${base} bg-sky-600 text-white hover:bg-sky-700`}><Mail className={icon} /> Email</a> : null}
+      {wa ? <a href={wa} target="_blank" rel="noreferrer" className={`${base} bg-green-600 text-white hover:bg-green-700`}><MessageCircle className={icon} /> {compact ? 'WA' : 'WhatsApp'}</a> : null}
+      {mailto ? <a href={mailto} className={`${base} bg-sky-600 text-white hover:bg-sky-700`}><Mail className={icon} /> {compact ? 'Mail' : 'Email'}</a> : null}
       {phone && !compact ? <a href={`tel:${phone}`} className={`${base} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50`}><Phone className={icon} /> Call</a> : null}
+      {phone && compact ? <a href={`tel:${phone}`} className={`${base} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50`}><Phone className={icon} /> Call</a> : null}
     </div>
   );
 }
@@ -231,7 +232,7 @@ function ExcelCell({ label, value, span = 1, clamp = true }) {
   );
 }
 
-function FileActionGrid({ item, openViewer }) {
+function FileActionGrid({ item, openViewer, compact = false }) {
   const files = [
     ['Resume', item.application?.files?.resume, FileBadge2],
     ['Intro audio', item.application?.files?.englishIntroduction, Play],
@@ -247,10 +248,10 @@ function FileActionGrid({ item, openViewer }) {
     );
   }
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-1.5">
       {available.map(([label, file, Icon]) => (
-        <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType)} className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10">
-          <Icon className="h-3.5 w-3.5" /> {label}
+        <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType)} className={`inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/5 text-primary hover:bg-primary/10 ${compact ? 'px-2 py-1 text-[11px] font-medium' : 'px-3 py-1.5 text-xs font-semibold'}`}>
+          <Icon className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} /> {compact ? (label === 'Resume' ? 'CV' : label === 'Intro audio' ? 'Intro' : label === 'Quran recitation' ? 'Quran' : 'Topic') : label}
         </button>
       ))}
     </div>
@@ -399,7 +400,6 @@ export default function TeacherResponsesPanel() {
   const [expandedId, setExpandedId] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [campaignFilter, setCampaignFilter] = useState('all');
-  const [query, setQuery] = useState('');
   const [drafts, setDrafts] = useState({});
   const [savingId, setSavingId] = useState('');
   const [notice, setNotice] = useState('');
@@ -685,29 +685,19 @@ export default function TeacherResponsesPanel() {
   }, [items]);
 
   const filteredItems = useMemo(() => {
-    const normalizedQuery = String(query || '').trim().toLowerCase();
     return items.filter((item) => {
       const itemStatus = item?.recruitment?.status || item.status || 'new';
       if (statusFilter !== 'all' && itemStatus !== statusFilter) {
         return false;
       }
-      // Keep archived rows hidden by default, but include them when searching by name/email/phone.
-      if (statusFilter === 'all' && !normalizedQuery && itemStatus === 'archived') return false;
+      // Keep archived rows hidden by default in "All"; use Archived stage to view them.
+      if (statusFilter === 'all' && itemStatus === 'archived') return false;
       if (campaignFilter !== 'all' && String(item?.recruitment?.fit?.campaignId || '') !== String(campaignFilter)) {
         return false;
       }
-      if (!normalizedQuery) return true;
-      const haystack = [
-        item.personalInfo?.fullName,
-        item.personalInfo?.email,
-        item.personalInfo?.mobileNumber,
-        item.personalInfo?.whatsappNumber,
-        item.personalInfo?.nationality,
-        item.personalInfo?.occupation,
-      ].join(' ').toLowerCase();
-      return haystack.includes(normalizedQuery);
+      return true;
     });
-  }, [campaignFilter, items, query, statusFilter]);
+  }, [campaignFilter, items, statusFilter]);
 
   const exportToExcel = () => {
     const rows = filteredItems;
@@ -760,40 +750,55 @@ export default function TeacherResponsesPanel() {
 
       {!loading ? (
         <>
-          {/* Google Form sync source — full dashboard control over the sheet/account */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${syncConfig?.lastError ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="max-h-[25vh] space-y-2 overflow-auto">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-900">Google Form applications — auto-sync</p>
-                  <p className="truncate text-xs text-slate-500">
-                    {syncConfig?.lastSyncAt ? `Last synced ${formatDateTime(syncConfig.lastSyncAt)}` : 'Not synced yet'}
-                    {syncConfig?.autoSync !== false ? ` • refreshes automatically every ${syncConfig?.intervalMinutes || 10} min` : ' • auto-sync is OFF'}
-                    {syncConfig?.lastResult ? ` • ${syncConfig.lastResult.totalRows ?? 0} rows in sheet` : ''}
+                  <p className="truncate text-xs font-semibold text-slate-900">Recruitment control center</p>
+                  <p className="truncate text-[11px] text-slate-500">
+                    {syncConfig?.lastSyncAt ? `Synced ${formatDateTime(syncConfig.lastSyncAt)}` : 'Not synced yet'}
+                    {syncConfig?.autoSync !== false ? ` • every ${syncConfig?.intervalMinutes || 10}m` : ' • auto OFF'}
+                    {syncConfig?.lastResult ? ` • ${syncConfig.lastResult.totalRows ?? 0} rows` : ''}
                   </p>
-                  {syncConfig?.lastError ? <p className="text-xs font-medium text-rose-600">Last sync error: {syncConfig.lastError}</p> : null}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button type="button" onClick={handleSyncNow} disabled={syncing} className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90 disabled:opacity-50"><RefreshCw className={`h-3 w-3 ${syncing ? 'animate-spin' : ''}`} />{syncing ? 'Sync…' : 'Sync'}</button>
+                  {syncConfig?.sheetUrl ? <a href={syncConfig.sheetUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"><FileSpreadsheet className="h-3 w-3" />Sheet</a> : null}
+                  {syncConfig?.formUrl ? <a href={syncConfig.formUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"><ExternalLink className="h-3 w-3" />Form</a> : null}
+                  <button type="button" onClick={() => setShowSyncSettings((open) => !open)} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"><Settings2 className="h-3 w-3" />Source</button>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={handleSyncNow} disabled={syncing} className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50">
-                  <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} /> {syncing ? 'Syncing…' : 'Sync now'}
+
+              <div className="flex flex-wrap items-stretch gap-1">
+                <button type="button" onClick={() => setStatusFilter('all')} className={`flex min-w-[64px] flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
+                  <span className="text-sm font-bold leading-tight">{summary.total - (funnelCounts.archived || 0)}</span>
+                  <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">All</span>
                 </button>
-                {syncConfig?.sheetUrl ? (
-                  <a href={syncConfig.sheetUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
-                    <FileSpreadsheet className="h-3.5 w-3.5" /> Open sheet
-                  </a>
-                ) : null}
-                {syncConfig?.formUrl ? (
-                  <a href={syncConfig.formUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                    <ExternalLink className="h-3.5 w-3.5" /> Open form
-                  </a>
-                ) : null}
-                <button type="button" onClick={() => setShowSyncSettings((open) => !open)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                  <Settings2 className="h-3.5 w-3.5" /> Source settings
-                </button>
+                {STATUS_OPTIONS.map((option) => (
+                  <button key={option.value} type="button" onClick={() => setStatusFilter((current) => (current === option.value ? 'all' : option.value))} className={`flex min-w-[64px] flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === option.value ? 'ring-2 ring-primary ring-offset-1' : 'hover:opacity-80'} ${STATUS_TONES[option.value] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                    <span className="text-sm font-bold leading-tight">{funnelCounts[option.value] || 0}</span>
+                    <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">{option.label}</span>
+                  </button>
+                ))}
               </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-primary">
+                  <option value="all">All stages</option>
+                  {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <select value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-primary">
+                  <option value="all">All campaigns</option>
+                  {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.title}</option>)}
+                </select>
+                <button type="button" onClick={load} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"><RefreshCw className="h-3 w-3" />Refresh</button>
+                <button type="button" onClick={() => setViewMode((mode) => (mode === 'table' ? 'cards' : 'table'))} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">{viewMode === 'table' ? <><LayoutGrid className="h-3 w-3" />Cards</> : <><Table2 className="h-3 w-3" />Table</>}</button>
+                <button type="button" onClick={exportToExcel} disabled={!filteredItems.length} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"><FileSpreadsheet className="h-3 w-3" />Export</button>
+              </div>
+
+              {syncConfig?.lastError ? <p className="text-[11px] font-medium text-rose-600">Sync error: {syncConfig.lastError}</p> : null}
             </div>
+
             {showSyncSettings ? (
               <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 md:grid-cols-2">
                 <label className="text-xs text-slate-700 md:col-span-2">
@@ -820,83 +825,6 @@ export default function TeacherResponsesPanel() {
                 </div>
               </div>
             ) : null}
-          </div>
-
-          {/* Recruitment funnel — click a stage to filter */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-slate-900">Recruitment funnel</p>
-              <p className="text-xs text-slate-500">{summary.unreviewed} awaiting first review • {summary.total} total applicants</p>
-            </div>
-            <div className="mt-3 flex flex-wrap items-stretch gap-1.5">
-              <button
-                type="button"
-                onClick={() => setStatusFilter('all')}
-                className={`flex min-w-[86px] flex-col items-center rounded-xl border px-3 py-2 text-center transition ${statusFilter === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
-              >
-                <span className="text-lg font-bold leading-tight">{summary.total - (funnelCounts.archived || 0)}</span>
-                <span className="text-[10px] font-semibold uppercase tracking-wide opacity-80">All</span>
-              </button>
-              {STATUS_OPTIONS.map((option, index) => (
-                <React.Fragment key={option.value}>
-                  {index > 0 && index < STATUS_OPTIONS.length - 2 ? <span className="self-center text-slate-300">›</span> : null}
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter((current) => (current === option.value ? 'all' : option.value))}
-                    className={`flex min-w-[86px] flex-col items-center rounded-xl border px-3 py-2 text-center transition ${statusFilter === option.value ? 'ring-2 ring-primary ring-offset-1' : 'hover:opacity-80'} ${STATUS_TONES[option.value] || 'bg-slate-50 text-slate-700 border-slate-200'}`}
-                  >
-                    <span className="text-lg font-bold leading-tight">{funnelCounts[option.value] || 0}</span>
-                    <span className="text-[10px] font-semibold uppercase tracking-wide opacity-80">{option.label}</span>
-                  </button>
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-            <div className="relative w-full lg:max-w-md">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search candidates by name, email, phone, or nationality"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm text-slate-700 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
-              />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
-              >
-                <option value="all">All stages</option>
-                {STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-              <select
-                value={campaignFilter}
-                onChange={(event) => setCampaignFilter(event.target.value)}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
-              >
-                <option value="all">All campaigns</option>
-                {campaigns.map((campaign) => (
-                  <option key={campaign.id} value={campaign.id}>{campaign.title}</option>
-                ))}
-              </select>
-              <button type="button" onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                <RefreshCw className="h-4 w-4" />
-                <span>Refresh</span>
-              </button>
-              <button type="button" onClick={() => setViewMode((mode) => (mode === 'table' ? 'cards' : 'table'))} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                {viewMode === 'table' ? <><LayoutGrid className="h-4 w-4" /><span>Card view</span></> : <><Table2 className="h-4 w-4" /><span>Table view</span></>}
-              </button>
-              <button type="button" onClick={exportToExcel} disabled={!filteredItems.length} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
-                <FileSpreadsheet className="h-4 w-4" />
-                <span>Export Excel</span>
-              </button>
-            </div>
           </div>
 
           {viewMode === 'table' ? (
@@ -935,13 +863,29 @@ export default function TeacherResponsesPanel() {
             const overall = item?.recruitment?.overall || {};
             return (
               <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${sourceTone[source] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>{source}</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${STATUS_TONES[statusValue] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>{getStatusLabel(statusValue)}</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${item?.recruitment?.reviewed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{item?.recruitment?.reviewed ? 'Reviewed' : 'New review'}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{formatDateTime(item.submittedAt)}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <ContactActions item={item} compact />
+                    <FileActionGrid item={item} openViewer={openViewer} compact />
+                    <button
+                      type="button"
+                      onClick={() => handleArchive(item)}
+                      disabled={quickStageId === item.id}
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-500 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
+                    >
+                      <Archive className="h-3 w-3" /> {statusValue === 'archived' ? 'Restore' : 'Archive'}
+                    </button>
+                  </div>
+                </div>
                 <button type="button" onClick={() => { ensureDraft(item); setExpandedId(isOpen ? '' : item.id); }} className="flex w-full items-start justify-between gap-3 text-left">
                   <div className="min-w-0 flex-1 space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${sourceTone[source] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>{source}</span>
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${STATUS_TONES[statusValue] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>{getStatusLabel(statusValue)}</span>
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${item?.recruitment?.reviewed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{item?.recruitment?.reviewed ? 'Reviewed' : 'New review'}</span>
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">{formatDateTime(item.submittedAt)}</span>
                       {overall?.label ? <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white">{overall.label}{overall?.score != null ? ` • ${overall.score}%` : ''}</span> : null}
                     </div>
                     {(() => {
@@ -965,21 +909,6 @@ export default function TeacherResponsesPanel() {
                   </div>
                   {isOpen ? <ChevronUp className="mt-1 h-4 w-4 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 text-slate-400" />}
                 </button>
-                {/* Always-visible actions: contact, resume/recordings, archive — no need to expand */}
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <ContactActions item={item} />
-                    <FileActionGrid item={item} openViewer={openViewer} />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleArchive(item)}
-                    disabled={quickStageId === item.id}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
-                  >
-                    <Archive className="h-3.5 w-3.5" /> {statusValue === 'archived' ? 'Restore' : 'Archive'}
-                  </button>
-                </div>
                 {isOpen ? (
                   <div className="mt-4 space-y-5 border-t border-slate-100 pt-4">
                     <CandidateFacts item={item} />

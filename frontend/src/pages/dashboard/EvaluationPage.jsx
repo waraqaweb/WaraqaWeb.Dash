@@ -142,6 +142,16 @@ const emptyStudent = (name = '') => ({
   adminSummary: '',
 });
 
+const normalizeStudentKey = (value = '') => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+const cloneValue = (value) => {
+  if (Array.isArray(value)) return value.map((item) => cloneValue(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cloneValue(v)]));
+  }
+  return value;
+};
+
 // ─── Customisable content (per-admin, localStorage) ─────────────────────────
 const CUSTOM_KEY = (adminId) => `waraqa.eval.custom.${adminId || 'anon'}`;
 
@@ -380,7 +390,7 @@ const EvaluationPage = ({ isActive = true }) => {
   // Apply a patch to every student in the session (used by "apply to all" toggles).
   const updateAllStudents = useCallback((patch) => {
     updateSession((prev) => {
-      const students = (prev.students || []).map((s) => ({ ...s, ...patch }));
+      const students = (prev.students || []).map((s) => ({ ...s, ...cloneValue(patch) }));
       return { ...prev, students };
     });
   }, [updateSession]);
@@ -424,21 +434,27 @@ const EvaluationPage = ({ isActive = true }) => {
       : (Array.isArray(payload.students) ? payload.students : []);
     updateSession((prev) => {
       if (!prev) return prev;
+      const existingByName = new Map(
+        (prev.students || [])
+          .map((s) => [normalizeStudentKey(s?.name), s])
+          .filter(([k]) => Boolean(k))
+      );
+
       const baseStudents = studentsFromMeeting.length
         ? studentsFromMeeting.map((m, i) => {
-            const existing = (prev.students || [])[i] || emptyStudent();
+            const meetingStudentName = m.studentName || m.name || `Student ${i + 1}`;
+            const existing = existingByName.get(normalizeStudentKey(meetingStudentName)) || emptyStudent();
+            const meetingCourses = Array.isArray(m.courses) ? m.courses.filter(Boolean) : [];
+            const mergedNotes = [m.notes, payload.notes, meeting.notes].filter(Boolean).join('\n').trim();
             return {
               ...existing,
-              name: m.studentName || m.name || existing.name || `Student ${i + 1}`,
+              name: meetingStudentName,
               age: m.age ?? existing.age,
               contactName: existing.contactName || guardianName || '',
               contactEmail: existing.contactEmail || guardianEmail || '',
               contactPhone: existing.contactPhone || guardianPhone || '',
-              desiredSubjects: existing.desiredSubjects?.length
-                ? existing.desiredSubjects
-                : (Array.isArray(m.courses) ? m.courses : []),
-              generalNotes: existing.generalNotes
-                || [m.notes, payload.notes, meeting.notes].filter(Boolean).join('\n').trim(),
+              desiredSubjects: meetingCourses.length ? meetingCourses : (existing.desiredSubjects || []),
+              generalNotes: mergedNotes || existing.generalNotes || '',
             };
           })
         : (prev.students || []);

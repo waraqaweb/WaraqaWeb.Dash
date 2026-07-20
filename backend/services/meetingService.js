@@ -864,7 +864,7 @@ const bookMeeting = async ({
 
   await meeting.save();
 
-  if (meetingType === MEETING_TYPES.NEW_STUDENT_EVALUATION) {
+  if (meetingType === MEETING_TYPES.NEW_STUDENT_EVALUATION && !guardianId) {
     try {
       await RegistrationLead.create({
         source: 'evaluation_booking',

@@ -475,6 +475,10 @@ button.letter-tile:focus-visible {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
+
+.eval-content.is-welcome {
+  overflow: hidden;
+}
 .eval-content::-webkit-scrollbar {
   width: 0;
   height: 0;
@@ -705,12 +709,13 @@ button.letter-tile:focus-visible {
 /* --- Welcome v3: full-height colorful stage with sequential reveal ----- */
 .welcome-stage {
   flex: 1 1 auto;
-  min-height: 100%;
+  min-height: 0;
   display: flex; flex-direction: column;
 }
 .welcome-card.is-tall {
   flex: 1 1 auto;
-  min-height: calc(100dvh - 220px);
+  min-height: 0;
+  height: 100%;
   display: flex; flex-direction: column;
   position: relative; overflow: hidden;
 }
@@ -851,6 +856,50 @@ button.letter-tile:focus-visible {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; margin-top: 16px; padding-top: 12px;
   border-top: 1px dashed rgba(16,185,129,0.3);
+}
+
+/* Compact mode for reduced viewport height (e.g. browser share toolbar) */
+@media (max-height: 840px) {
+  .eval-topbar { border-bottom-color: rgba(16,185,129,0.14); }
+  .eval-topbar.px-4 { padding-top: 0.45rem; padding-bottom: 0.45rem; }
+  .eval-body { padding-top: 6px; padding-bottom: 8px; }
+  .eval-journey-top { padding-top: 4px; }
+
+  .welcome-steps { margin-bottom: 8px; gap: 4px; }
+  .welcome-step { padding: 4px 10px; font-size: 10px; }
+
+  .welcome-card { padding: clamp(10px, 1.4vw, 14px); }
+  .hero-evaluator { gap: 4px; padding: 8px; }
+  .hero-evaluator .halo { width: 98px; height: 98px; }
+  .hero-evaluator h2 { font-size: clamp(1.25rem, 2.1vw, 1.8rem); margin-top: 2px; }
+  .hero-evaluator .greeting-ar { font-size: 0.9rem; }
+  .hero-evaluator .tagline { font-size: 0.84rem; }
+
+  .bio-bullets { margin-top: 10px; gap: 8px; }
+  .bio-bullet { padding: 8px 10px; gap: 8px; }
+  .bio-bullet .dot { width: 24px; height: 24px; font-size: 0.75rem; }
+  .bio-bullet .text { font-size: 0.82rem; line-height: 1.35; }
+
+  .student-form-grid { gap: 8px; }
+  .eval-field-label { margin-bottom: 2px; }
+
+  .welcome-card.is-tall .subject-grid {
+    margin-top: 10px;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+  .subject-card {
+    min-height: 122px;
+    border-radius: 14px;
+    padding: 12px 10px;
+    gap: 6px;
+  }
+  .subject-card .subj-icon { font-size: clamp(2rem, 4vw, 3rem); }
+  .subject-card .subj-title { font-size: 0.92rem; }
+  .subject-card .subj-ar { font-size: 0.88rem; }
+
+  .welcome-footer { margin-top: 10px; padding-top: 8px; }
+  .welcome-cta { padding: 8px 16px; font-size: 0.84rem; }
 }
 .welcome-cta {
   display: inline-flex; align-items: center; gap: 8px;

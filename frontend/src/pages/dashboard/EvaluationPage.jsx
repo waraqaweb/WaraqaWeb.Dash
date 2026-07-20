@@ -725,7 +725,7 @@ const EvaluationPage = ({ isActive = true }) => {
 
       <div className="eval-body">
         {/* Centre — scrollable content */}
-        <main className="eval-content">
+        <main className={`eval-content ${welcomeShown ? 'is-welcome' : ''}`}>
           {welcomeShown ? (
             <>
               {currentMeeting && !meetingPrefilled && (

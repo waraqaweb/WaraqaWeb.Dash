@@ -447,6 +447,7 @@ const buildRecruitmentUpdate = (current = {}, payload = {}, actorId = null) => {
     quran: normalizeRecruitmentRating(payload?.evaluation?.quran ?? current?.evaluation?.quran),
     arabic: normalizeRecruitmentRating(payload?.evaluation?.arabic ?? current?.evaluation?.arabic),
     islamicStudies: normalizeRecruitmentRating(payload?.evaluation?.islamicStudies ?? current?.evaluation?.islamicStudies),
+    readingBasics: normalizeRecruitmentRating(payload?.evaluation?.readingBasics ?? current?.evaluation?.readingBasics),
     teachingDemo: normalizeRecruitmentRating(payload?.evaluation?.teachingDemo ?? current?.evaluation?.teachingDemo),
     communication: normalizeRecruitmentRating(payload?.evaluation?.communication ?? current?.evaluation?.communication),
     punctuality: normalizeRecruitmentRating(payload?.evaluation?.punctuality ?? current?.evaluation?.punctuality),

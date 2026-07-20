@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Archive, ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Settings2, Table2, UserPlus, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Archive, ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Settings2, Star, Table2, UserPlus, X } from 'lucide-react';
 import { convertCandidateToTeacher, getSheetSyncConfig, listRecruitmentCampaigns, listTeacherContractResponses, runSheetSyncNow, saveSheetSyncConfig, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { bumpDomainVersion, makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
+import { standardizeSubject } from '../../../utils/subjectStandardization';
+import { useSearch } from '../../../contexts/SearchContext';
 
 const formatDate = (value) => {
   try {
@@ -43,6 +45,21 @@ const RATING_OPTIONS = [
   { value: 'excellent', label: 'Excellent' },
 ];
 
+// Ordered ratings the star control cycles through (not_available = 0 stars).
+const STAR_RATING_VALUES = ['weak', 'good', 'very_good', 'excellent'];
+
+const REJECTION_CATEGORY_OPTIONS = [
+  { value: '', label: 'Select a category…' },
+  { value: 'not_selected', label: 'Not selected' },
+  { value: 'needs_improvement', label: 'Needs improvement' },
+  { value: 'failed_interview', label: 'Failed interview' },
+  { value: 'unresponsive', label: 'Unresponsive / no-show' },
+  { value: 'availability_mismatch', label: 'Availability / hours mismatch' },
+  { value: 'salary_mismatch', label: 'Salary expectations mismatch' },
+  { value: 'future_pool', label: 'Future pool' },
+  { value: 'other', label: 'Other' },
+];
+
 const STATUS_TONES = {
   new: 'bg-slate-100 text-slate-700 border-slate-200',
   under_review: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -54,17 +71,55 @@ const STATUS_TONES = {
   archived: 'bg-zinc-100 text-zinc-700 border-zinc-200',
 };
 
-const RATING_FIELDS = [
-  ['english', 'English'],
+// Rating fields tied to a specific subject — only shown for a candidate when
+// they've indicated (via subjectsCanTeach/positionsInterested) that they can
+// teach the matching subject. See resolveSubjectRatingKeys().
+const SUBJECT_RATING_FIELDS = [
   ['quran', 'Quran'],
   ['arabic', 'Arabic'],
   ['islamicStudies', 'Islamic Studies'],
+  ['readingBasics', 'Reading Basics'],
+];
+
+// Rating fields shown for every candidate regardless of subjects taught.
+const GENERAL_RATING_FIELDS = [
+  ['english', 'English'],
   ['teachingDemo', 'Teaching Demo'],
   ['communication', 'Communication'],
   ['punctuality', 'Punctuality'],
   ['professionalism', 'Professionalism'],
   ['flexibility', 'Flexibility'],
 ];
+
+const RATING_FIELDS = [...SUBJECT_RATING_FIELDS, ...GENERAL_RATING_FIELDS];
+
+// Maps the app-wide standardized subject taxonomy to the evaluation rating
+// keys above, so we know which subject-specific fields to show per candidate.
+const SUBJECT_TO_RATING_KEY = {
+  'Quran (Memorization)': 'quran',
+  'Quran (Recitation/Tajweed)': 'quran',
+  'Arabic Language': 'arabic',
+  'Islamic Studies': 'islamicStudies',
+  'Reading Basics': 'readingBasics',
+};
+
+/** Which subject-specific rating fields should be shown for this candidate. */
+function resolveSubjectRatingKeys(item) {
+  const rawSubjects = [
+    ...(item?.application?.teachingProfile?.subjectsCanTeach || []),
+    ...(item?.application?.positionsInterested || []),
+  ];
+  const keys = new Set();
+  rawSubjects.forEach((subject) => {
+    const standardized = standardizeSubject(subject);
+    const key = standardized && SUBJECT_TO_RATING_KEY[standardized];
+    if (key) keys.add(key);
+  });
+  // Fall back to showing every subject field when we can't confidently match
+  // any (e.g. legacy/unparsed data) so nothing is hidden by mistake.
+  if (!keys.size) SUBJECT_RATING_FIELDS.forEach(([key]) => keys.add(key));
+  return keys;
+}
 
 const GENDER_TONES = {
   male: 'bg-blue-50 text-blue-700 border-blue-200',
@@ -104,6 +159,50 @@ const toneForLabel = (label) => {
   return SELECTION_PALETTE[hash % SELECTION_PALETTE.length];
 };
 
+/** Clickable 4-star control for an evaluation rating (not_available = 0 stars). */
+function StarRating({ value, onChange, disabled }) {
+  const activeIndex = STAR_RATING_VALUES.indexOf(value);
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex items-center gap-0.5">
+        {STAR_RATING_VALUES.map((option, index) => {
+          const filled = index <= activeIndex;
+          return (
+            <button
+              key={option}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(activeIndex === index ? 'not_available' : option)}
+              title={RATING_OPTIONS.find((o) => o.value === option)?.label}
+              className="rounded p-0.5 disabled:cursor-not-allowed"
+            >
+              <Star className={`h-5 w-5 ${filled ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`} />
+            </button>
+          );
+        })}
+      </div>
+      <span className="text-xs text-slate-500">{RATING_OPTIONS.find((o) => o.value === value)?.label || 'Not Available'}</span>
+    </div>
+  );
+}
+
+/** Small pill showing an item's autosave state ("Saving…", "Saved", error retry). */
+function AutosaveStatus({ status, onRetry }) {
+  if (status === 'saving') {
+    return <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500"><RefreshCw className="h-3 w-3 animate-spin" /> Saving…</span>;
+  }
+  if (status === 'pending') {
+    return <span className="text-xs font-medium text-slate-400">Unsaved changes…</span>;
+  }
+  if (status === 'error') {
+    return <button type="button" onClick={onRetry} className="text-xs font-semibold text-rose-600 underline">Save failed — click to retry</button>;
+  }
+  if (status === 'saved') {
+    return <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600"><Save className="h-3 w-3" /> Saved</span>;
+  }
+  return null;
+}
+
 const buildSelectionChips = (item) => {
   const chips = [];
   const gender = String(item?.personalInfo?.gender || '').toLowerCase();
@@ -137,14 +236,6 @@ const createDraftFromItem = (item) => ({
   adminNotes: item?.recruitment?.adminNotes || '',
   rejectionCategory: item?.recruitment?.rejectionCategory || '',
   tags: Array.isArray(item?.recruitment?.tags) ? item.recruitment.tags.join(', ') : '',
-  fit: {
-    campaignId: item?.recruitment?.fit?.campaignId || '',
-    subjects: Array.isArray(item?.recruitment?.fit?.subjects) ? item.recruitment.fit.subjects.join(', ') : '',
-    genderRequirement: item?.recruitment?.fit?.genderRequirement || '',
-    preferredWindow: item?.recruitment?.fit?.preferredWindow || '',
-    timezoneNotes: item?.recruitment?.fit?.timezoneNotes || '',
-    requiredHoursPerDay: item?.recruitment?.fit?.requiredHoursPerDay ?? '',
-  },
   evaluation: RATING_FIELDS.reduce((acc, [key]) => {
     acc[key] = item?.recruitment?.evaluation?.[key] || 'not_available';
     return acc;
@@ -394,6 +485,7 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
 }
 
 export default function TeacherResponsesPanel({ headerSlot = null }) {
+  const { searchTerm } = useSearch();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -401,7 +493,8 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [campaignFilter, setCampaignFilter] = useState('all');
   const [drafts, setDrafts] = useState({});
-  const [savingId, setSavingId] = useState('');
+  const [autosaveStatus, setAutosaveStatus] = useState({});
+  const autosaveTimers = useRef({});
   const [notice, setNotice] = useState('');
   const [campaigns, setCampaigns] = useState([]);
   const [convertingId, setConvertingId] = useState('');
@@ -596,6 +689,10 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
     return () => { mounted = false; };
   }, []);
 
+  useEffect(() => () => {
+    Object.values(autosaveTimers.current).forEach(clearTimeout);
+  }, []);
+
   const ensureDraft = (item) => {
     setDrafts((prev) => (prev[item.id] ? prev : { ...prev, [item.id]: createDraftFromItem(item) }));
   };
@@ -639,24 +736,22 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
     }
   };
 
-  const handleSave = async (item) => {
-    const draft = drafts[item.id] || createDraftFromItem(item);
+  const performAutosave = async (item) => {
+    const draft = drafts[item.id];
+    if (!draft) return;
+    if (autosaveTimers.current[item.id]) {
+      clearTimeout(autosaveTimers.current[item.id]);
+      delete autosaveTimers.current[item.id];
+    }
     try {
-      setSavingId(item.id);
+      setAutosaveStatus((prev) => ({ ...prev, [item.id]: 'saving' }));
       setError('');
-      setNotice('');
       const payload = {
         pipelineStatus: draft.pipelineStatus,
         reviewed: draft.reviewed,
         adminNotes: draft.adminNotes,
         rejectionCategory: draft.rejectionCategory,
         tags: draft.tags,
-        fit: {
-          ...draft.fit,
-          campaignId: draft.fit.campaignId || null,
-          subjects: draft.fit.subjects,
-          requiredHoursPerDay: draft.fit.requiredHoursPerDay,
-        },
         evaluation: draft.evaluation,
       };
       const updated = await updateTeacherContractResponse(item.source, item.id, payload);
@@ -664,13 +759,24 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
 
       setItems((prev) => prev.map((entry) => (entry.id === item.id && entry.source === item.source ? updated : entry)));
       setDrafts((prev) => ({ ...prev, [item.id]: createDraftFromItem(updated) }));
-      setNotice(`Saved review for ${updated.personalInfo?.fullName || updated.contract?.fullName || 'candidate'}.`);
+      setAutosaveStatus((prev) => ({ ...prev, [item.id]: 'saved' }));
       writeCache(makeCacheKey('meetings:teacherResponses', 'admin'), { items: items.map((entry) => (entry.id === item.id && entry.source === item.source ? updated : entry)) }, { ttlMs: 5 * 60_000, deps: ['teacher-contract'] });
     } catch (err) {
+      setAutosaveStatus((prev) => ({ ...prev, [item.id]: 'error' }));
       setError(err?.response?.data?.message || 'Failed to save recruitment review');
-    } finally {
-      setSavingId('');
     }
+  };
+
+  // Schedules an autosave for an item's current draft. Use a short delay for
+  // immediate controls (selects, star ratings) and a longer one for free-text
+  // fields so we don't fire a save on every keystroke.
+  const scheduleAutosave = (item, delay = 500) => {
+    setAutosaveStatus((prev) => ({ ...prev, [item.id]: 'pending' }));
+    if (autosaveTimers.current[item.id]) clearTimeout(autosaveTimers.current[item.id]);
+    autosaveTimers.current[item.id] = setTimeout(() => {
+      delete autosaveTimers.current[item.id];
+      performAutosave(item);
+    }, delay);
   };
 
   const summary = useMemo(() => ({
@@ -695,6 +801,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   }, [items]);
 
   const filteredItems = useMemo(() => {
+    const query = String(searchTerm || '').trim().toLowerCase();
     return items.filter((item) => {
       const itemStatus = item?.recruitment?.status || item.status || 'new';
       if (statusFilter !== 'all' && itemStatus !== statusFilter) {
@@ -705,9 +812,25 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
       if (campaignFilter !== 'all' && String(item?.recruitment?.fit?.campaignId || '') !== String(campaignFilter)) {
         return false;
       }
+      if (query) {
+        const haystack = [
+          item.personalInfo?.fullName,
+          item.contract?.fullName,
+          item.personalInfo?.email,
+          item.personalInfo?.mobileNumber,
+          item.personalInfo?.whatsappNumber,
+          item.user?.email,
+          item.user?.firstName,
+          item.user?.lastName,
+          ...(item?.application?.positionsInterested || []),
+          ...(item?.application?.teachingProfile?.subjectsCanTeach || []),
+          ...(Array.isArray(item?.recruitment?.tags) ? item.recruitment.tags : []),
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
       return true;
     });
-  }, [campaignFilter, items, statusFilter]);
+  }, [campaignFilter, items, statusFilter, searchTerm]);
 
   const exportToExcel = () => {
     const rows = filteredItems;
@@ -920,7 +1043,9 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                   </div>
                   {isOpen ? <ChevronUp className="mt-1 h-4 w-4 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 text-slate-400" />}
                 </button>
-                {isOpen ? (
+                {isOpen ? (() => {
+                  const subjectRatingKeys = resolveSubjectRatingKeys(item);
+                  return (
                   <div className="mt-4 space-y-5 border-t border-slate-100 pt-4">
                     <CandidateFacts item={item} />
 
@@ -928,67 +1053,49 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-sm font-semibold text-slate-900">Recruitment review</p>
-                          <span className="text-xs text-slate-500">Overall: {item?.recruitment?.overall?.label || 'Not rated'}</span>
+                          <div className="flex items-center gap-3">
+                            <AutosaveStatus status={autosaveStatus[item.id]} onRetry={() => performAutosave(item)} />
+                            <span className="text-xs text-slate-500">Overall: {item?.recruitment?.overall?.label || 'Not rated'}</span>
+                          </div>
                         </div>
                         <div className="mt-4 grid gap-3 md:grid-cols-2">
                           <label className="text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Stage</span>
-                            <select value={draft.pipelineStatus} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, pipelineStatus: event.target.value }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
+                            <select value={draft.pipelineStatus} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, pipelineStatus: event.target.value })); scheduleAutosave(item, 300); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
                               {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                             </select>
                           </label>
                           <label className="text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Rejection category</span>
-                            <input value={draft.rejectionCategory} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, rejectionCategory: event.target.value }))} placeholder="Not selected, needs improvement, future pool…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
-                          </label>
-                          <label className="text-sm text-slate-700 md:col-span-2">
-                            <span className="mb-1 block font-medium">Campaign</span>
-                            <select value={draft.fit.campaignId} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, fit: { ...current.fit, campaignId: event.target.value } }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
-                              <option value="">No campaign</option>
-                              {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.title}</option>)}
+                            <select value={draft.rejectionCategory} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, rejectionCategory: event.target.value })); scheduleAutosave(item, 300); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
+                              {REJECTION_CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                              {draft.rejectionCategory && !REJECTION_CATEGORY_OPTIONS.some((option) => option.value === draft.rejectionCategory)
+                                ? <option value={draft.rejectionCategory}>{draft.rejectionCategory} (legacy)</option>
+                                : null}
                             </select>
                           </label>
                           <label className="text-sm text-slate-700 md:col-span-2">
-                            <span className="mb-1 block font-medium">Subjects</span>
-                            <input value={draft.fit.subjects} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, fit: { ...current.fit, subjects: event.target.value } }))} placeholder="Quran, Arabic, Islamic Studies" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
-                          </label>
-                          <label className="text-sm text-slate-700">
-                            <span className="mb-1 block font-medium">Gender requirement</span>
-                            <input value={draft.fit.genderRequirement} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, fit: { ...current.fit, genderRequirement: event.target.value } }))} placeholder="Male, Female, Either" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
-                          </label>
-                          <label className="text-sm text-slate-700">
-                            <span className="mb-1 block font-medium">Required hours / day</span>
-                            <input type="number" min="0" max="24" step="0.5" value={draft.fit.requiredHoursPerDay} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, fit: { ...current.fit, requiredHoursPerDay: event.target.value } }))} placeholder="4" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
-                          </label>
-                          <label className="text-sm text-slate-700">
-                            <span className="mb-1 block font-medium">Preferred Cairo window</span>
-                            <input value={draft.fit.preferredWindow} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, fit: { ...current.fit, preferredWindow: event.target.value } }))} placeholder="11 PM - 3 AM Cairo" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
-                          </label>
-                          <label className="text-sm text-slate-700">
-                            <span className="mb-1 block font-medium">Timezone notes</span>
-                            <input value={draft.fit.timezoneNotes} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, fit: { ...current.fit, timezoneNotes: event.target.value } }))} placeholder="North America overlap, Australia daytime…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
-                          </label>
-                          <label className="text-sm text-slate-700 md:col-span-2">
                             <span className="mb-1 block font-medium">Tags</span>
-                            <input value={draft.tags} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, tags: event.target.value }))} placeholder="strong english, tajweed, future pool" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
+                            <input value={draft.tags} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, tags: event.target.value })); scheduleAutosave(item, 1200); }} placeholder="strong english, tajweed, future pool" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
                           </label>
                           <label className="text-sm text-slate-700 md:col-span-2">
                             <span className="mb-1 block font-medium">Admin notes</span>
-                            <textarea value={draft.adminNotes} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, adminNotes: event.target.value }))} rows={5} placeholder="Interview notes, missing data, strengths, concerns…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
+                            <textarea value={draft.adminNotes} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, adminNotes: event.target.value })); scheduleAutosave(item, 1200); }} rows={5} placeholder="Interview notes, missing data, strengths, concerns…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
                           </label>
                         </div>
                       </div>
 
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                         <p className="text-sm font-semibold text-slate-900">Evaluation scorecard</p>
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                          {RATING_FIELDS.map(([key, label]) => (
-                            <label key={key} className="text-sm text-slate-700">
-                              <span className="mb-1 block font-medium">{label}</span>
-                              <select value={draft.evaluation[key]} onChange={(event) => updateDraft(item.id, (current) => ({ ...current, evaluation: { ...current.evaluation, [key]: event.target.value } }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
-                                {RATING_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                              </select>
-                            </label>
+                        <div className="mt-4 space-y-3">
+                          {[...SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)), ...GENERAL_RATING_FIELDS].map(([key, label]) => (
+                            <div key={key} className="flex items-center justify-between gap-3 text-sm text-slate-700">
+                              <span className="font-medium">{label}</span>
+                              <StarRating
+                                value={draft.evaluation[key]}
+                                onChange={(nextValue) => { updateDraft(item.id, (current) => ({ ...current, evaluation: { ...current.evaluation, [key]: nextValue } })); scheduleAutosave(item, 300); }}
+                              />
+                            </div>
                           ))}
                         </div>
                         <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
@@ -1019,15 +1126,10 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                           <p className="mt-1.5 text-xs text-emerald-700">This creates a teacher login with a temporary password. The candidate's status will be marked as accepted.</p>
                         </div>
                       ) : null}
-                      <div className="flex justify-end">
-                        <button type="button" onClick={() => handleSave(item)} disabled={savingId === item.id} className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60">
-                          <Save className="h-4 w-4" />
-                          <span>{savingId === item.id ? 'Saving…' : 'Save review'}</span>
-                        </button>
-                      </div>
                     </div>
                   </div>
-                ) : null}
+                  );
+                })() : null}
               </div>
             );
           }) : <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">No teacher responses found for the current filters.</div>}

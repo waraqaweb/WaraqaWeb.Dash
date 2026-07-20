@@ -36,6 +36,7 @@ const recruitmentSchema = new mongoose.Schema({
     quran: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
     arabic: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
     islamicStudies: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
+    readingBasics: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
     teachingDemo: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
     communication: { type: String, enum: recruitmentRatingValues, default: 'not_available' },
     punctuality: { type: String, enum: recruitmentRatingValues, default: 'not_available' },

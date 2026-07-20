@@ -30,6 +30,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import TeacherResponsesPanel from '../../components/features/meetings/TeacherResponsesPanel';
 import BusinessIntelligencePage from './BusinessIntelligencePage';
+import { useSearch } from '../../contexts/SearchContext';
 import {
   createRecruitmentCampaign,
   getTeacherOperationsSummary,
@@ -220,6 +221,7 @@ function SectionCard({ title, children, className = '' }) {
 
 export default function TeacherOperationsPage({ isActive }) {
   const navigate = useNavigate();
+  const { searchTerm } = useSearch();
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const saved = localStorage.getItem(TAB_STORAGE_KEY);
@@ -794,6 +796,24 @@ export default function TeacherOperationsPage({ isActive }) {
 
   const newTeacherInterviewLink = useMemo(() => `${window.location.origin}/public/meetings/evaluation?type=new_teacher_interview`, []);
 
+  const filteredInterviewResponses = useMemo(() => {
+    const query = String(searchTerm || '').trim().toLowerCase();
+    if (!query) return interviewResponses || [];
+    return (interviewResponses || []).filter((r) => {
+      const haystack = [
+        r.personalInfo?.fullName,
+        r.contract?.fullName,
+        r.personalInfo?.email,
+        r.personalInfo?.mobileNumber,
+        r.personalInfo?.whatsappNumber,
+        r.user?.firstName,
+        r.user?.lastName,
+        r.user?.email,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [interviewResponses, searchTerm]);
+
   const handleCopy = async (text, label) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -1218,7 +1238,7 @@ export default function TeacherOperationsPage({ isActive }) {
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading candidates…</div>
               ) : (
                 <div className="space-y-1.5">
-                  {(interviewResponses || []).map((r) => {
+                  {(filteredInterviewResponses || []).map((r) => {
                     const fullName = String(r.personalInfo?.fullName || '').trim();
                     const userName = `${r.user?.firstName || ''} ${r.user?.lastName || ''}`.trim();
                     const name = fullName || userName || r.contract?.fullName || r.id;
@@ -1242,7 +1262,7 @@ export default function TeacherOperationsPage({ isActive }) {
                       </button>
                     );
                   })}
-                  {!(interviewResponses || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No candidates in interview stages yet.</div> : null}
+                  {!(filteredInterviewResponses || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">{(interviewResponses || []).length ? 'No candidates match your search.' : 'No candidates in interview stages yet.'}</div> : null}
                 </div>
               )}
             </SectionCard>

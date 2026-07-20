@@ -959,7 +959,8 @@ router.patch('/responses/:source/:id', authenticateToken, requireAdmin, async (r
     }
 
     doc.recruitment = buildRecruitmentUpdate(doc.recruitment || {}, req.body || {}, req.user?._id || null);
-    await doc.save();
+    doc.markModified('recruitment');
+    await doc.save({ validateModifiedOnly: true });
     await doc.populate('recruitment.reviewedBy', 'firstName lastName email');
 
     return res.json({
@@ -1024,7 +1025,7 @@ router.patch('/responses/:source/:id/interview', authenticateToken, requireAdmin
 
     doc.recruitment = recruitment;
     doc.markModified('recruitment');
-    await doc.save();
+    await doc.save({ validateModifiedOnly: true });
     await doc.populate('recruitment.reviewedBy', 'firstName lastName email');
 
     return res.json({
@@ -1056,7 +1057,7 @@ router.post('/responses/:source/:id/contract-link', authenticateToken, requireAd
     recruitment.contract = contract;
     doc.recruitment = recruitment;
     doc.markModified('recruitment');
-    await doc.save();
+    await doc.save({ validateModifiedOnly: true });
 
     return res.json({
       message: 'Contract link ready.',
@@ -1130,7 +1131,7 @@ router.post('/agreement/:token/accept', async (req, res) => {
     recruitment.contract = contract;
     doc.recruitment = recruitment;
     doc.markModified('recruitment');
-    await doc.save();
+    await doc.save({ validateModifiedOnly: true });
 
     return res.json({
       message: 'Thank you. Your acceptance has been recorded.',
@@ -1470,7 +1471,7 @@ router.post('/responses/:source/:id/convert-to-teacher', authenticateToken, requ
       note: `Converted to teacher account: ${email}`,
     });
     candidate.markModified('recruitment');
-    await candidate.save();
+    await candidate.save({ validateModifiedOnly: true });
 
     return res.status(201).json({
       message: 'Teacher account created successfully.',
@@ -1869,7 +1870,7 @@ async function sendRecruitmentEmailForDoc(doc, event, { notes = '', actorId = nu
     note: `Sent "${event}" email to ${to}`,
   });
   doc.markModified('recruitment');
-  await doc.save();
+  await doc.save({ validateModifiedOnly: true });
 
   return { to, event };
 }

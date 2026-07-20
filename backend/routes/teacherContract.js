@@ -79,6 +79,7 @@ const DEFAULT_CAPACITY_CONFIG = {
 const RECRUITMENT_EMAIL_EVENTS = [
   'interview_invite',
   'missing_info',
+  'screening_rejected',
   'passed',
   'passed_not_selected',
   'completed_unsuitable',
@@ -103,6 +104,13 @@ const DEFAULT_RECRUITMENT_EMAIL_TEMPLATES = {
   missing_info: {
     subject: 'A little more information is needed for your Waraqa application',
     body: 'Dear {{name}},\n\nThank you for your application. Before we can proceed, we need the following details:\n\n{{notes}}\n\nPlease reply to this email or update your application here:\n{{link}}\n\nWaraqa Recruitment Team',
+  },
+  // Early screening rejection (before/without a formal interview). {{reason}}
+  // is composed from the rejection category + evaluation scorecard by the
+  // admin panel, but this default still renders sensibly if sent as-is.
+  screening_rejected: {
+    subject: 'Update on your Waraqa application',
+    body: 'Dear {{name}},\n\nThank you for the time and effort you invested in applying to teach with Waraqa.\n\n{{reason}}\n\nWe wish you all the best in your future endeavors.\n\nWaraqa Recruitment Team',
   },
   passed: {
     subject: 'Congratulations — welcome to Waraqa',
@@ -1015,12 +1023,32 @@ router.patch('/responses/:source/:id/interview', authenticateToken, requireAdmin
       interview.outcome = body.outcome;
     }
 
+    // Auto-advance the pipeline stage alongside the interview decision, so the
+    // candidate naturally moves to their next step without a separate manual
+    // status change. Never override a manually-archived candidate.
+    const fromStatus = recruitment.status;
+    if (fromStatus !== 'archived') {
+      if (interview.outcome === 'passed') {
+        recruitment.status = 'accepted';
+      } else if (interview.outcome === 'failed' || interview.outcome === 'completed_unsuitable') {
+        recruitment.status = 'rejected';
+      } else if (interview.outcome === 'passed_not_selected') {
+        // "Waiting list" — keeps them parked at the interviewed stage rather
+        // than a hard rejection.
+        recruitment.status = 'interviewed';
+      } else if (interview.completedAt && ['interview_pending', 'shortlisted'].includes(fromStatus)) {
+        recruitment.status = 'interviewed';
+      }
+    }
+
     recruitment.interview = interview;
     recruitment.history = Array.isArray(recruitment.history) ? recruitment.history : [];
     recruitment.history.push({
       at: new Date(),
       actor: req.user?._id || null,
       action: 'interview_updated',
+      fromStatus,
+      toStatus: recruitment.status,
       note: interview.outcome && interview.outcome !== 'pending' ? `Interview outcome: ${interview.outcome}` : 'Interview scorecard updated',
     });
 
@@ -1142,6 +1170,50 @@ router.post('/agreement/:token/accept', async (req, res) => {
   } catch (error) {
     console.error('Accept public teacher agreement error:', error);
     return res.status(500).json({ message: 'Failed to record your acceptance.' });
+  }
+});
+
+// Admin-only: record that an accepted candidate told us (by phone/WhatsApp/email)
+// that they no longer wish to continue. There is no public self-service
+// "decline" flow, so this is captured manually from the Interviews tab.
+router.post('/responses/:source/:id/contract-decline', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const source = String(req.params.source || '').trim().toLowerCase();
+    const Model = resolveResponseModel(source);
+    if (!Model) return res.status(400).json({ message: 'Unsupported response source.' });
+
+    const doc = await Model.findById(req.params.id);
+    if (!doc) return res.status(404).json({ message: 'Teacher response not found.' });
+
+    const recruitment = doc.recruitment || {};
+    const contract = recruitment.contract || {};
+    contract.declinedAt = new Date();
+    contract.declineNote = String(req.body?.note || '').trim().slice(0, 1000);
+    recruitment.contract = contract;
+
+    const fromStatus = recruitment.status;
+    recruitment.status = 'rejected';
+    recruitment.history = Array.isArray(recruitment.history) ? recruitment.history : [];
+    recruitment.history.push({
+      at: new Date(),
+      actor: req.user?._id || null,
+      action: 'contract_declined',
+      fromStatus,
+      toStatus: 'rejected',
+      note: contract.declineNote || 'Candidate declined to continue after being accepted.',
+    });
+
+    doc.recruitment = recruitment;
+    doc.markModified('recruitment');
+    await doc.save({ validateModifiedOnly: true });
+
+    return res.json({
+      message: 'Recorded — candidate marked as not continuing.',
+      response: normalizeTeacherResponse(source, doc),
+    });
+  } catch (error) {
+    console.error('Record contract decline error:', error);
+    return res.status(500).json({ message: 'Failed to record decline.' });
   }
 });
 
@@ -1809,7 +1881,7 @@ router.put('/email-templates', authenticateToken, requireAdmin, async (req, res)
 // Marks the outcome as emailed (interview.emailSentForOutcome) when the event
 // is outcome-driven, and records the send in the candidate history.
 // Returns { to, event }. Throws Error with .statusCode for expected failures.
-async function sendRecruitmentEmailForDoc(doc, event, { notes = '', actorId = null, templates = null, branding = null } = {}) {
+async function sendRecruitmentEmailForDoc(doc, event, { notes = '', reason = '', actorId = null, templates = null, branding = null, overrideSubject = '', overrideBody = '' } = {}) {
   if (!RECRUITMENT_EMAIL_EVENTS.includes(event)) {
     const err = new Error('Unsupported email template.');
     err.statusCode = 400;
@@ -1828,15 +1900,24 @@ async function sendRecruitmentEmailForDoc(doc, event, { notes = '', actorId = nu
   const name = String(personalInfo.fullName || `${doc.user?.firstName || ''} ${doc.user?.lastName || ''}`.trim() || 'there');
   const baseUrl = (process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '').split(',')[0].replace(/\/$/, '');
   const interviewLink = `${baseUrl}/public/meetings/evaluation?type=new_teacher_interview`;
+  const resubmitLink = `${baseUrl}/teacher-contract`;
 
   const vars = {
     name,
-    link: event === 'missing_info' ? `${baseUrl}/teacher-contract` : interviewLink,
+    link: (event === 'missing_info' || event === 'screening_rejected') ? resubmitLink : interviewLink,
     notes: String(notes || '').trim(),
+    reason: String(reason || '').trim(),
   };
 
-  const subject = renderEmailTemplate(template.subject, vars) || 'Waraqa Recruitment';
-  const bodyText = renderEmailTemplate(template.body, vars);
+  // Let the admin panel send a fully-composed, already-reviewed subject/body
+  // (e.g. the reason-aware screening rejection message) instead of re-rendering
+  // the stored template — this respects any last-minute edits made in the
+  // preview modal. Falls back to the stored/default template otherwise.
+  const useOverride = Boolean(String(overrideBody || '').trim());
+  const subject = useOverride
+    ? String(overrideSubject || template.subject || 'Waraqa Recruitment').trim().slice(0, 200)
+    : (renderEmailTemplate(template.subject, vars) || 'Waraqa Recruitment');
+  const bodyText = useOverride ? String(overrideBody).slice(0, 8000) : renderEmailTemplate(template.body, vars);
 
   let resolvedBranding = branding;
   if (!resolvedBranding) {
@@ -1970,7 +2051,10 @@ router.post('/responses/:source/:id/send-email', authenticateToken, requireAdmin
 
     const { to } = await sendRecruitmentEmailForDoc(doc, event, {
       notes: req.body?.notes,
+      reason: req.body?.reason,
       actorId: req.user._id,
+      overrideSubject: req.body?.subject,
+      overrideBody: req.body?.body,
     });
 
     return res.json({ message: `Email queued to ${to}.`, sentTo: to, event });

@@ -79,6 +79,10 @@ const recruitmentSchema = new mongoose.Schema({
     acceptedAt: { type: Date, default: null },
     acceptedName: { type: String, trim: true, default: '', maxlength: 200 },
     acceptedIp: { type: String, trim: true, default: '', maxlength: 60 },
+    // Recorded manually by an admin when a candidate says they no longer
+    // wish to continue after being accepted (no public self-service flow).
+    declinedAt: { type: Date, default: null },
+    declineNote: { type: String, trim: true, default: '', maxlength: 1000 },
   },
   history: [{
     at: { type: Date, default: Date.now },

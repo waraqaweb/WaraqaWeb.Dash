@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Settings2, Star, Table2, UserPlus, X } from 'lucide-react';
-import { convertCandidateToTeacher, getSheetSyncConfig, listRecruitmentCampaigns, listTeacherContractResponses, runSheetSyncNow, saveSheetSyncConfig, updateTeacherContractResponse } from '../../../api/teacherContract';
+import { Archive, ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, HelpCircle, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Send, Settings2, Star, Table2, UserPlus, X } from 'lucide-react';
+import { convertCandidateToTeacher, getRecruitmentEmailTemplates, getSheetSyncConfig, listRecruitmentCampaigns, listTeacherContractResponses, runSheetSyncNow, saveSheetSyncConfig, sendCandidateEmail, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { bumpDomainVersion, makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 import { standardizeSubject } from '../../../utils/subjectStandardization';
 import { useSearch } from '../../../contexts/SearchContext';
@@ -159,11 +159,45 @@ const toneForLabel = (label) => {
   return SELECTION_PALETTE[hash % SELECTION_PALETTE.length];
 };
 
+// Session-scoped key for remembering the admin's active stage/campaign filters
+// across navigation within the same browser tab session.
+const FILTER_STORAGE_KEY = 'waraqa.teacherResponses.filters';
+
+const loadStoredFilters = () => {
+  try {
+    const raw = sessionStorage.getItem(FILTER_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
+// Shared by the candidate list AND the stage-pill counters so the numbers
+// shown always match what a click on that stage will actually display.
+const matchesSearchQuery = (item, query) => {
+  if (!query) return true;
+  const haystack = [
+    item.personalInfo?.fullName,
+    item.contract?.fullName,
+    item.personalInfo?.email,
+    item.personalInfo?.mobileNumber,
+    item.personalInfo?.whatsappNumber,
+    item.user?.email,
+    item.user?.firstName,
+    item.user?.lastName,
+    ...(item?.application?.positionsInterested || []),
+    ...(item?.application?.teachingProfile?.subjectsCanTeach || []),
+    ...(Array.isArray(item?.recruitment?.tags) ? item.recruitment.tags : []),
+  ].filter(Boolean).join(' ').toLowerCase();
+  return haystack.includes(query);
+};
+
+
 /** Clickable 4-star control for an evaluation rating (not_available = 0 stars). */
-function StarRating({ value, onChange, disabled }) {
+function StarRating({ value, onChange, disabled, compact = false }) {
   const activeIndex = STAR_RATING_VALUES.indexOf(value);
   return (
-    <div className="flex items-center gap-2">
+    <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'}`}>
       <div className="flex items-center gap-0.5">
         {STAR_RATING_VALUES.map((option, index) => {
           const filled = index <= activeIndex;
@@ -176,12 +210,16 @@ function StarRating({ value, onChange, disabled }) {
               title={RATING_OPTIONS.find((o) => o.value === option)?.label}
               className="rounded p-0.5 disabled:cursor-not-allowed"
             >
-              <Star className={`h-5 w-5 ${filled ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`} />
+              <Star className={`${compact ? 'h-3.5 w-3.5' : 'h-5 w-5'} ${filled ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`} />
             </button>
           );
         })}
       </div>
-      <span className="text-xs text-slate-500">{RATING_OPTIONS.find((o) => o.value === value)?.label || 'Not Available'}</span>
+      {!compact ? (
+        value && value !== 'not_available'
+          ? <span className="text-xs text-slate-500">{RATING_OPTIONS.find((o) => o.value === value)?.label}</span>
+          : <span title="Not available / not yet rated"><HelpCircle className="h-4 w-4 text-slate-300" /></span>
+      ) : null}
     </div>
   );
 }
@@ -243,6 +281,97 @@ const createDraftFromItem = (item) => ({
 });
 
 const getStatusLabel = (value) => STATUS_OPTIONS.find((option) => option.value === value)?.label || 'New';
+
+// Mirrors the backend's {{var}} substitution so client-side previews match
+// exactly what will be sent once the admin hits "Send email".
+const renderTemplateVars = (text, vars = {}) => String(text || '').replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => (
+  vars[key] == null ? '' : String(vars[key])
+));
+
+// Base, human-readable explanation per rejection category — kept warm and
+// professional regardless of the underlying reason.
+const REJECTION_REASON_TEXT = {
+  '': 'After careful review, we have decided not to move forward with your application at this time.',
+  not_selected: 'After careful review, we have decided not to move forward with your application at this time.',
+  needs_improvement: 'After reviewing your application and submitted materials, we found some areas that need further development before we can move forward.',
+  failed_interview: 'After your interview, we found that this is not the right fit for our current openings.',
+  unresponsive: 'We were unable to reach you or receive the requested information in time to continue your application.',
+  availability_mismatch: 'Your available teaching hours do not currently align with our open schedules.',
+  salary_mismatch: 'We were unable to reach an agreement on compensation that works for both sides at this time.',
+  future_pool: 'While we are not moving forward right now, we would like to keep your profile on file and reach out as soon as a suitable opening becomes available.',
+  other: 'After careful review, we have decided not to move forward with your application at this time.',
+};
+
+// Categories where it makes sense to also name specific weak-rated skill
+// areas as supporting detail (skipped for logistics-only reasons like
+// availability/salary/unresponsive, where naming "weak skills" wouldn't apply).
+const REJECTION_CATEGORIES_WITH_SKILL_DETAIL = new Set(['not_selected', 'needs_improvement', 'failed_interview', 'other', '']);
+
+// Scorecard fields that are assessed FROM a submitted file. Left "not
+// available" here usually means the file was missing, unreadable, or in the
+// wrong language — not that the candidate is weak — so it gets its own
+// general (non-accusatory) clause inviting them to resubmit, rather than
+// being treated as a skill weakness.
+const FILE_BASED_RATING_FIELDS = new Set(['english', 'quran', 'teachingDemo']);
+
+/** Builds the human-readable "why" paragraph from the rejection category + scorecard. */
+function composeRejectionReason(draft, subjectRatingKeys, resubmitLink) {
+  const category = draft.rejectionCategory || '';
+  let text = REJECTION_REASON_TEXT[category] || REJECTION_REASON_TEXT[''];
+
+  if (REJECTION_CATEGORIES_WITH_SKILL_DETAIL.has(category)) {
+    const visibleFields = [...SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)), ...GENERAL_RATING_FIELDS];
+    const weakLabels = visibleFields.filter(([key]) => draft.evaluation?.[key] === 'weak').map(([, label]) => label);
+    if (weakLabels.length) {
+      const list = weakLabels.length === 1
+        ? weakLabels[0]
+        : `${weakLabels.slice(0, -1).join(', ')} and ${weakLabels[weakLabels.length - 1]}`;
+      text += ` In particular, we noted room for growth in: ${list}.`;
+    }
+  }
+
+  const hasMissingFiles = [...FILE_BASED_RATING_FIELDS].some((key) => (draft.evaluation?.[key] || 'not_available') === 'not_available');
+  if (hasMissingFiles) {
+    text += ` We also weren't able to fully review one or more of the materials you submitted — this can happen if a file didn't upload correctly, was sent in a different language than requested, or the link could not be opened. If you'd like to complete or resend your application materials, please use this link: ${resubmitLink}`;
+  }
+
+  return text;
+}
+
+/**
+ * Composes a ready-to-send subject/body for the candidate's CURRENT pipeline
+ * stage. Only "rejected" and "interview_pending" are automated here — later
+ * stages (post-interview outcomes) already have their own dedicated email
+ * flow in the Interviews tab.
+ */
+function buildRecruitmentMessage(item, draft, subjectRatingKeys, emailTemplates) {
+  const name = item?.personalInfo?.fullName || item?.contract?.fullName || `${item?.user?.firstName || ''} ${item?.user?.lastName || ''}`.trim() || 'there';
+
+  if (draft.pipelineStatus === 'rejected') {
+    const template = emailTemplates?.templates?.screening_rejected || emailTemplates?.defaults?.screening_rejected
+      || { subject: 'Update on your Waraqa application', body: 'Dear {{name}},\n\n{{reason}}\n\nWaraqa Recruitment Team' };
+    const resubmitLink = `${window.location.origin}/teacher-contract`;
+    const reason = composeRejectionReason(draft, subjectRatingKeys, resubmitLink);
+    return {
+      event: 'screening_rejected',
+      subject: renderTemplateVars(template.subject, { name }),
+      body: renderTemplateVars(template.body, { name, reason }),
+    };
+  }
+
+  if (draft.pipelineStatus === 'interview_pending') {
+    const template = emailTemplates?.templates?.interview_invite || emailTemplates?.defaults?.interview_invite
+      || { subject: 'Your Waraqa teacher interview', body: 'Dear {{name}},\n\nPlease book a slot here:\n{{link}}\n\nWaraqa Recruitment Team' };
+    const link = `${window.location.origin}/public/meetings/evaluation?type=new_teacher_interview`;
+    return {
+      event: 'interview_invite',
+      subject: renderTemplateVars(template.subject, { name, link }),
+      body: renderTemplateVars(template.body, { name, link }),
+    };
+  }
+
+  return null;
+}
 
 const getDriveId = (url) => {
   const s = String(url || '');
@@ -390,7 +519,7 @@ function CandidateFacts({ item }) {
 }
 
 // Spreadsheet-style overview of every applicant using only the fields the form collects.
-function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selectedIds, onToggleSelect, onToggleSelectAll, onArchive }) {
+function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selectedIds, onToggleSelect, onToggleSelectAll, onArchive, searchTerm }) {
   const cell = (value) => (value == null || value === '' ? '—' : value);
   const fileButtons = (item) => {
     const files = [
@@ -476,7 +605,7 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
             );
           })}
           {!rows.length ? (
-            <tr><td colSpan={columns.length + 1} className="px-3 py-6 text-center text-slate-500">No teacher responses found for the current filters.</td></tr>
+            <tr><td colSpan={columns.length + 1} className="px-3 py-6 text-center text-slate-500">{searchTerm ? `No candidates match "${searchTerm}" for the current filters.` : 'No teacher responses found for the current filters.'}</td></tr>
           ) : null}
         </tbody>
       </table>
@@ -490,9 +619,17 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [expandedId, setExpandedId] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [campaignFilter, setCampaignFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(() => loadStoredFilters().statusFilter || 'all');
+  const [campaignFilter, setCampaignFilter] = useState(() => loadStoredFilters().campaignFilter || 'all');
   const [drafts, setDrafts] = useState({});
+  // Mirrors `drafts` synchronously so the debounced autosave always reads the
+  // very latest edits, even when a save fires from a stale render closure
+  // (previously caused rapid star clicks to be sent/saved with old values,
+  // which then overwrote the UI back to "not selected").
+  const draftsRef = useRef({});
+  useEffect(() => {
+    draftsRef.current = drafts;
+  }, [drafts]);
   const [autosaveStatus, setAutosaveStatus] = useState({});
   const autosaveTimers = useRef({});
   const [notice, setNotice] = useState('');
@@ -512,6 +649,9 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   const [bulkMoving, setBulkMoving] = useState(false);
   const [viewerMin, setViewerMin] = useState(false);
   const [archiveConfirmItem, setArchiveConfirmItem] = useState(null);
+  const [emailTemplates, setEmailTemplates] = useState(null);
+  const [messagePreview, setMessagePreview] = useState(null);
+  const [sendingMessage, setSendingMessage] = useState(false);
 
   const openViewer = (label, url, mimeType) => {
     if (!url) return;
@@ -689,9 +829,28 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
     return () => { mounted = false; };
   }, []);
 
+  // Loaded once so the "prepare message" preview renders the admin's actual
+  // customized templates (subject/body + {{name}}/{{reason}}/{{link}} vars).
+  useEffect(() => {
+    let mounted = true;
+    getRecruitmentEmailTemplates().then((data) => {
+      if (mounted) setEmailTemplates(data || null);
+    }).catch(() => {
+      if (mounted) setEmailTemplates(null);
+    });
+    return () => { mounted = false; };
+  }, []);
+
   useEffect(() => () => {
     Object.values(autosaveTimers.current).forEach(clearTimeout);
   }, []);
+
+  // Remember the active stage/campaign filters for the rest of this browser session.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ statusFilter, campaignFilter }));
+    } catch { /* ignore */ }
+  }, [statusFilter, campaignFilter]);
 
   const ensureDraft = (item) => {
     setDrafts((prev) => (prev[item.id] ? prev : { ...prev, [item.id]: createDraftFromItem(item) }));
@@ -737,7 +896,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   };
 
   const performAutosave = async (item) => {
-    const draft = drafts[item.id];
+    const draft = draftsRef.current[item.id];
     if (!draft) return;
     if (autosaveTimers.current[item.id]) {
       clearTimeout(autosaveTimers.current[item.id]);
@@ -779,26 +938,70 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
     }, delay);
   };
 
-  const summary = useMemo(() => ({
-    total: items.length,
-    publicCount: items.filter((item) => item.source === 'public').length,
-    dashboardCount: items.filter((item) => item.source === 'dashboard').length,
-    unreviewed: items.filter((item) => !item?.recruitment?.reviewed).length,
-    shortlisted: items.filter((item) => item?.recruitment?.status === 'shortlisted').length,
-    interviewPending: items.filter((item) => item?.recruitment?.status === 'interview_pending').length,
-  }), [items]);
+  // Opens the reason/invite-message preview for the candidate's current
+  // stage (rejected -> why; interview_pending -> booking invite).
+  const openMessagePreview = (item) => {
+    const draft = draftsRef.current[item.id] || createDraftFromItem(item);
+    const subjectRatingKeys = resolveSubjectRatingKeys(item);
+    const message = buildRecruitmentMessage(item, draft, subjectRatingKeys, emailTemplates);
+    if (!message) return;
+    setMessagePreview({ item, ...message });
+  };
 
-  // Live funnel counts per pipeline stage.
+  const handleSendPreviewEmail = async () => {
+    if (!messagePreview) return;
+    const { item, event, subject, body } = messagePreview;
+    const to = item?.personalInfo?.email || item?.user?.email || '';
+    if (!to) {
+      setError('This candidate has no email address on file.');
+      return;
+    }
+    try {
+      setSendingMessage(true);
+      setError('');
+      await sendCandidateEmail(item.source, item.id, { event, subject, body });
+      setNotice(`Email queued to ${to}.`);
+      setMessagePreview(null);
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to send email.');
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
+  const openPreviewWhatsapp = () => {
+    if (!messagePreview) return;
+    const { item, body } = messagePreview;
+    const wa = waLink(item?.personalInfo?.whatsappNumber || item?.personalInfo?.mobileNumber);
+    if (!wa) {
+      setError('This candidate has no WhatsApp/phone number on file.');
+      return;
+    }
+    window.open(`${wa}?text=${encodeURIComponent(body)}`, '_blank', 'noreferrer');
+  };
+
+  // Live funnel counts per pipeline stage. These honor the current search
+  // and campaign filter (but not the stage filter itself) so a badge's
+  // number always matches what clicking that stage will actually show.
   const funnelCounts = useMemo(() => {
+    const query = String(searchTerm || '').trim().toLowerCase();
     const counts = {};
     STATUS_OPTIONS.forEach((option) => { counts[option.value] = 0; });
     items.forEach((item) => {
+      if (campaignFilter !== 'all' && String(item?.recruitment?.fit?.campaignId || '') !== String(campaignFilter)) return;
+      if (!matchesSearchQuery(item, query)) return;
       const status = item?.recruitment?.status || item.status || 'new';
       if (counts[status] != null) counts[status] += 1;
       else counts.new += 1;
     });
     return counts;
-  }, [items]);
+  }, [items, campaignFilter, searchTerm]);
+
+  // "All" = every non-archived stage under the current search/campaign filter.
+  const allStagesCount = useMemo(() => (
+    STATUS_OPTIONS.filter((option) => option.value !== 'archived')
+      .reduce((sum, option) => sum + (funnelCounts[option.value] || 0), 0)
+  ), [funnelCounts]);
 
   const filteredItems = useMemo(() => {
     const query = String(searchTerm || '').trim().toLowerCase();
@@ -812,22 +1015,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
       if (campaignFilter !== 'all' && String(item?.recruitment?.fit?.campaignId || '') !== String(campaignFilter)) {
         return false;
       }
-      if (query) {
-        const haystack = [
-          item.personalInfo?.fullName,
-          item.contract?.fullName,
-          item.personalInfo?.email,
-          item.personalInfo?.mobileNumber,
-          item.personalInfo?.whatsappNumber,
-          item.user?.email,
-          item.user?.firstName,
-          item.user?.lastName,
-          ...(item?.application?.positionsInterested || []),
-          ...(item?.application?.teachingProfile?.subjectsCanTeach || []),
-          ...(Array.isArray(item?.recruitment?.tags) ? item.recruitment.tags : []),
-        ].filter(Boolean).join(' ').toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
+      if (!matchesSearchQuery(item, query)) return false;
       return true;
     });
   }, [campaignFilter, items, statusFilter, searchTerm]);
@@ -903,31 +1091,29 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-stretch gap-1">
-                <button type="button" onClick={() => setStatusFilter('all')} className={`flex min-w-[64px] flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
-                  <span className="text-sm font-bold leading-tight">{summary.total - (funnelCounts.archived || 0)}</span>
-                  <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">All</span>
-                </button>
-                {STATUS_OPTIONS.map((option) => (
-                  <button key={option.value} type="button" onClick={() => setStatusFilter((current) => (current === option.value ? 'all' : option.value))} className={`flex min-w-[64px] flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === option.value ? 'ring-2 ring-primary ring-offset-1' : 'hover:opacity-80'} ${STATUS_TONES[option.value] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>
-                    <span className="text-sm font-bold leading-tight">{funnelCounts[option.value] || 0}</span>
-                    <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">{option.label}</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-stretch gap-1">
+                  <button type="button" onClick={() => setStatusFilter('all')} className={`flex min-w-[64px] flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
+                    <span className="text-sm font-bold leading-tight">{allStagesCount}</span>
+                    <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">All</span>
                   </button>
-                ))}
-              </div>
+                  {STATUS_OPTIONS.map((option) => (
+                    <button key={option.value} type="button" onClick={() => setStatusFilter((current) => (current === option.value ? 'all' : option.value))} className={`flex min-w-[64px] flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === option.value ? 'ring-2 ring-primary ring-offset-1' : 'hover:opacity-80'} ${STATUS_TONES[option.value] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                      <span className="text-sm font-bold leading-tight">{funnelCounts[option.value] || 0}</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">{option.label}</span>
+                    </button>
+                  ))}
+                </div>
 
-              <div className="flex flex-wrap items-center gap-1.5">
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-primary">
-                  <option value="all">All stages</option>
-                  {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-                <select value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-primary">
-                  <option value="all">All campaigns</option>
-                  {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.title}</option>)}
-                </select>
-                <button type="button" onClick={load} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"><RefreshCw className="h-3 w-3" />Refresh</button>
-                <button type="button" onClick={() => setViewMode((mode) => (mode === 'table' ? 'cards' : 'table'))} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">{viewMode === 'table' ? <><LayoutGrid className="h-3 w-3" />Cards</> : <><Table2 className="h-3 w-3" />Table</>}</button>
-                <button type="button" onClick={exportToExcel} disabled={!filteredItems.length} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"><FileSpreadsheet className="h-3 w-3" />Export</button>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <select value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-primary">
+                    <option value="all">All campaigns</option>
+                    {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.title}</option>)}
+                  </select>
+                  <button type="button" onClick={load} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"><RefreshCw className="h-3 w-3" />Refresh</button>
+                  <button type="button" onClick={() => setViewMode((mode) => (mode === 'table' ? 'cards' : 'table'))} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">{viewMode === 'table' ? <><LayoutGrid className="h-3 w-3" />Cards</> : <><Table2 className="h-3 w-3" />Table</>}</button>
+                  <button type="button" onClick={exportToExcel} disabled={!filteredItems.length} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"><FileSpreadsheet className="h-3 w-3" />Export</button>
+                </div>
               </div>
 
               {syncConfig?.lastError ? <p className="text-[11px] font-medium text-rose-600">Sync error: {syncConfig.lastError}</p> : null}
@@ -985,6 +1171,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                 onToggleSelect={toggleSelect}
                 onToggleSelectAll={toggleSelectAll}
                 onArchive={handleArchive}
+                searchTerm={searchTerm}
               />
             </>
           ) : (
@@ -1049,16 +1236,24 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                   <div className="mt-4 space-y-5 border-t border-slate-100 pt-4">
                     <CandidateFacts item={item} />
 
-                    <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                    <div className="grid gap-4">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
                           <p className="text-sm font-semibold text-slate-900">Recruitment review</p>
-                          <div className="flex items-center gap-3">
+                          <div className="flex flex-wrap items-center gap-3">
                             <AutosaveStatus status={autosaveStatus[item.id]} onRetry={() => performAutosave(item)} />
                             <span className="text-xs text-slate-500">Overall: {item?.recruitment?.overall?.label || 'Not rated'}</span>
+                            {draft.pipelineStatus === 'rejected' || draft.pipelineStatus === 'interview_pending' ? (
+                              <button type="button" onClick={() => openMessagePreview(item)} className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90">
+                                <Send className="h-3 w-3" />
+                                {draft.pipelineStatus === 'rejected' ? 'Prepare rejection message' : 'Prepare interview invite'}
+                              </button>
+                            ) : null}
                           </div>
                         </div>
-                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+
+                        {/* Row 1: stage / rejection category / tags */}
+                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
                           <label className="text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Stage</span>
                             <select value={draft.pipelineStatus} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, pipelineStatus: event.target.value })); scheduleAutosave(item, 300); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
@@ -1074,34 +1269,43 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                                 : null}
                             </select>
                           </label>
-                          <label className="text-sm text-slate-700 md:col-span-2">
+                          <label className="text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Tags</span>
                             <input value={draft.tags} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, tags: event.target.value })); scheduleAutosave(item, 1200); }} placeholder="strong english, tajweed, future pool" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
                           </label>
-                          <label className="text-sm text-slate-700 md:col-span-2">
-                            <span className="mb-1 block font-medium">Admin notes</span>
-                            <textarea value={draft.adminNotes} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, adminNotes: event.target.value })); scheduleAutosave(item, 1200); }} rows={5} placeholder="Interview notes, missing data, strengths, concerns…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
-                          </label>
                         </div>
-                      </div>
 
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-sm font-semibold text-slate-900">Evaluation scorecard</p>
-                        <div className="mt-4 space-y-3">
-                          {[...SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)), ...GENERAL_RATING_FIELDS].map(([key, label]) => (
-                            <div key={key} className="flex items-center justify-between gap-3 text-sm text-slate-700">
-                              <span className="font-medium">{label}</span>
-                              <StarRating
-                                value={draft.evaluation[key]}
-                                onChange={(nextValue) => { updateDraft(item.id, (current) => ({ ...current, evaluation: { ...current.evaluation, [key]: nextValue } })); scheduleAutosave(item, 300); }}
-                              />
-                            </div>
-                          ))}
+                        {/* Row 2: evaluation scorecard, packed as many fields per row as fit */}
+                        <div className="mt-4">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation scorecard</p>
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                            {[...SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)), ...GENERAL_RATING_FIELDS].map(([key, label]) => (
+                              <div key={key} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                                <div className="flex items-center justify-between gap-1">
+                                  <p className="truncate text-[11px] font-medium text-slate-600" title={label}>{label}</p>
+                                  {draft.evaluation[key] === 'not_available' ? <span title="Not available / not yet rated"><HelpCircle className="h-3 w-3 shrink-0 text-slate-300" /></span> : null}
+                                </div>
+                                <StarRating
+                                  compact
+                                  value={draft.evaluation[key]}
+                                  onChange={(nextValue) => { updateDraft(item.id, (current) => ({ ...current, evaluation: { ...current.evaluation, [key]: nextValue } })); scheduleAutosave(item, 300); }}
+                                />
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                          <p><span className="font-semibold text-slate-900">Recommendation:</span> {item?.recruitment?.overall?.recommendation || 'review'}</p>
-                          <p className="mt-1"><span className="font-semibold text-slate-900">Reviewed by:</span> {item?.recruitment?.reviewedBy ? `${item.recruitment.reviewedBy.firstName || ''} ${item.recruitment.reviewedBy.lastName || ''}`.trim() || item.recruitment.reviewedBy.email : '—'}</p>
-                          <p className="mt-1"><span className="font-semibold text-slate-900">Last reviewed:</span> {item?.recruitment?.reviewedAt ? formatDateTime(item.recruitment.reviewedAt) : '—'}</p>
+
+                        {/* Row 3: admin notes + review summary */}
+                        <div className="mt-4 grid gap-3 lg:grid-cols-[1.4fr_1fr]">
+                          <label className="text-sm text-slate-700">
+                            <span className="mb-1 block font-medium">Admin notes</span>
+                            <textarea value={draft.adminNotes} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, adminNotes: event.target.value })); scheduleAutosave(item, 1200); }} rows={4} placeholder="Interview notes, missing data, strengths, concerns…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
+                          </label>
+                          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                            <p><span className="font-semibold text-slate-900">Recommendation:</span> {item?.recruitment?.overall?.recommendation || 'review'}</p>
+                            <p className="mt-1"><span className="font-semibold text-slate-900">Reviewed by:</span> {item?.recruitment?.reviewedBy ? `${item.recruitment.reviewedBy.firstName || ''} ${item.recruitment.reviewedBy.lastName || ''}`.trim() || item.recruitment.reviewedBy.email : '—'}</p>
+                            <p className="mt-1"><span className="font-semibold text-slate-900">Last reviewed:</span> {item?.recruitment?.reviewedAt ? formatDateTime(item.recruitment.reviewedAt) : '—'}</p>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1132,7 +1336,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                 })() : null}
               </div>
             );
-          }) : <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">No teacher responses found for the current filters.</div>}
+          }) : <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">{searchTerm ? `No candidates match "${searchTerm}" for the current filters.` : 'No teacher responses found for the current filters.'}</div>}
           </div>
           )}
         </>
@@ -1188,6 +1392,45 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
             <div className="mt-3 flex justify-end gap-2">
               <button type="button" onClick={() => setArchiveConfirmItem(null)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700">Cancel</button>
               <button type="button" onClick={confirmArchive} className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white">Archive</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {messagePreview ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => setMessagePreview(null)}>
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-slate-900">
+              {messagePreview.event === 'screening_rejected' ? 'Rejection message' : 'Interview invite message'}
+            </h3>
+            <p className="mt-1 text-xs text-slate-600">
+              Review and edit before sending to {messagePreview.item?.personalInfo?.fullName || messagePreview.item?.personalInfo?.email || 'this applicant'}. Nothing is sent until you choose an action below.
+            </p>
+            <label className="mt-3 block text-xs font-medium text-slate-700">
+              Subject
+              <input
+                value={messagePreview.subject}
+                onChange={(event) => setMessagePreview((prev) => ({ ...prev, subject: event.target.value }))}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+              />
+            </label>
+            <label className="mt-3 block text-xs font-medium text-slate-700">
+              Message
+              <textarea
+                value={messagePreview.body}
+                onChange={(event) => setMessagePreview((prev) => ({ ...prev, body: event.target.value }))}
+                rows={9}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+              />
+            </label>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => setMessagePreview(null)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700">Close</button>
+              <button type="button" onClick={openPreviewWhatsapp} className="inline-flex items-center gap-1 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700">
+                <MessageCircle className="h-3.5 w-3.5" /> Open WhatsApp
+              </button>
+              <button type="button" onClick={handleSendPreviewEmail} disabled={sendingMessage} className="inline-flex items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50">
+                <Mail className="h-3.5 w-3.5" /> {sendingMessage ? 'Sending…' : 'Send email'}
+              </button>
             </div>
           </div>
         </div>

@@ -668,7 +668,7 @@ const PublicEvaluationBookingPage = () => {
                 <textarea
                   className="w-full overflow-hidden rounded-xl border border-border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-ring resize-none"
                   rows={1}
-                  placeholder={isTeacherSync ? 'Topics, blockers, schedule, preferred agenda...' : isGuardianFollowUp ? 'Progress, concerns, goals, scheduling notes...' : 'Language level, goals, availability...'}
+                  placeholder={isTeacherMeeting ? 'Topics, blockers, schedule, preferred agenda...' : isGuardianFollowUp ? 'Progress, concerns, goals, scheduling notes...' : 'Language level, goals, availability...'}
                   value={notes}
                   onInput={autoResizeTextarea}
                   onChange={(e) => setNotes(e.target.value)}

@@ -86,6 +86,12 @@ export async function generateContractLink(source, id) {
   return data;
 }
 
+// Admin: record that an accepted candidate told us they no longer wish to continue.
+export async function declineContract(source, id, note) {
+  const { data } = await api.post(`${BASE}/responses/${source}/${id}/contract-decline`, { note });
+  return data;
+}
+
 // Public: fetch the contract text + acceptance status for a token.
 export async function getPublicTeacherAgreement(token) {
   const { data } = await api.get(`${BASE}/agreement/${token}`);

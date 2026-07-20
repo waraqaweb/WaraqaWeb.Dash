@@ -429,6 +429,13 @@ const EvaluationPage = ({ isActive = true }) => {
     const guardianPhone = meeting.guardianPhone
       || payload.guardianPhone
       || '';
+    // The timezone the student/guardian actually selected while booking the
+    // meeting — this is the SOURCE timezone the admin's availability entries
+    // (typed in that person's local clock) should be converted FROM. Without
+    // this, availability slots default to Cairo as their "source", so no
+    // real conversion happens and the Cairo-labeled message just echoes the
+    // raw entered numbers.
+    const meetingTimezone = meeting.timezone || payload.timezone || '';
     const studentsFromMeeting = Array.isArray(meeting.students) && meeting.students.length
       ? meeting.students
       : (Array.isArray(payload.students) ? payload.students : []);
@@ -455,6 +462,7 @@ const EvaluationPage = ({ isActive = true }) => {
               contactPhone: existing.contactPhone || guardianPhone || '',
               desiredSubjects: meetingCourses.length ? meetingCourses : (existing.desiredSubjects || []),
               generalNotes: mergedNotes || existing.generalNotes || '',
+              availabilityTimezone: existing.availabilityTimezone || meetingTimezone || existing.availabilityTimezone,
             };
           })
         : (prev.students || []);
@@ -3929,31 +3937,33 @@ const LinksSlide = ({
 
   return (
     <div>
+      <div className="rounded-2xl border border-emerald-200 bg-white/60 p-3 space-y-2.5">
       {students.length > 0 && active && (
-        <div className="mb-5">
-          <div className="flex items-baseline justify-between mb-2">
-            <h3 className="text-lg font-semibold text-emerald-900">Wrap-up details</h3>
-            <span className="font-naskh text-emerald-700/80 text-sm" dir="rtl">تفاصيل الختام</span>
+        <div>
+          <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+            <h3 className="text-sm font-semibold text-emerald-900 inline-flex items-baseline gap-1.5">
+              Wrap-up details
+              <span className="font-naskh text-emerald-700/70 text-xs" dir="rtl">· تفاصيل الختام</span>
+            </h3>
+            {students.length > 1 && (
+              <div className="flex flex-wrap gap-1">
+                {students.map((s, i) => (
+                  <button
+                    key={s._id || i}
+                    type="button"
+                    onClick={() => onPickStudent && onPickStudent(i)}
+                    className={`px-2 py-0.5 rounded-full text-[11px] inline-flex items-center gap-1 border font-display-en ${
+                      i === activeStudentIdx ? 'bg-emerald-600 text-white border-emerald-600 shadow' : 'bg-white/70 border-emerald-200 text-emerald-800'
+                    }`}
+                  >
+                    <bdi>{s.name || `Student ${i + 1}`}</bdi>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
-          {students.length > 1 && (
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {students.map((s, i) => (
-                <button
-                  key={s._id || i}
-                  type="button"
-                  onClick={() => onPickStudent && onPickStudent(i)}
-                  className={`px-2.5 py-1 rounded-full text-[11px] inline-flex items-center gap-1 border font-display-en ${
-                    i === activeStudentIdx ? 'bg-emerald-600 text-white border-emerald-600 shadow' : 'bg-white/70 border-emerald-200 text-emerald-800'
-                  }`}
-                >
-                  <bdi>{s.name || `Student ${i + 1}`}</bdi>
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="grid sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
             <WrapUpField
               label="Contact email"
               ar="البريد الإلكتروني"
@@ -3972,27 +3982,36 @@ const LinksSlide = ({
               showApplyAll={students.length > 1}
               placeholder="+1 555 123 4567"
             />
+            <div>
+              <label className="eval-field-label">Default WhatsApp <span className="font-normal text-emerald-700/60">(fallback)</span></label>
+              <input
+                className="eval-input"
+                placeholder="+1 555 123 4567"
+                value={waDraft}
+                onChange={(e) => setWaDraft(e.target.value)}
+                onBlur={() => { if (waDraft !== whatsappNumber) onSaveWhatsappNumber(waDraft); }}
+                title="Used when the student has no contact phone"
+              />
+            </div>
           </div>
         </div>
       )}
 
       {/* Important links */}
-      <div className="mb-6 rounded-2xl border border-emerald-100 bg-white/60 p-4">
-        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-          <div>
-            <h3 className="text-lg font-semibold text-emerald-900 inline-flex items-center gap-2">
-              <LinkIcon className="h-4 w-4" /> Important links
-            </h3>
-            <p className="text-xs text-emerald-700/70">Tick the ones to include in the feedback email & WhatsApp message.</p>
-          </div>
-          <div className="flex items-center gap-2">
+      <div className="border-t border-emerald-100 pt-2.5">
+        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+          <h3 className="text-sm font-semibold text-emerald-900 inline-flex items-center gap-1.5">
+            <LinkIcon className="h-4 w-4" /> Important links
+            <span className="text-[11px] font-normal text-emerald-700/70">— tick to include in email &amp; WhatsApp</span>
+          </h3>
+          <div className="flex items-center gap-1.5">
             {!editingLinks && (
               <>
                 <button type="button" onClick={copyAll} className="text-xs px-2.5 py-1 rounded-full border border-emerald-300 bg-white text-emerald-800 inline-flex items-center gap-1">
                   <Copy className="h-3 w-3" /> Copy all
                 </button>
                 <button type="button" onClick={() => setEditingLinks(true)} className="text-xs px-2.5 py-1 rounded-full bg-emerald-700 text-white inline-flex items-center gap-1">
-                  <Pencil className="h-3 w-3" /> Edit links
+                  <Pencil className="h-3 w-3" /> Edit
                 </button>
               </>
             )}
@@ -4012,10 +4031,10 @@ const LinksSlide = ({
         {!linksLoaded && <div className="text-sm text-emerald-700">Loading links…</div>}
 
         {editingLinks ? (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {draftLinks.map((l, idx) => (
-              <div key={idx} className="rounded-xl border border-emerald-100 bg-white/80 p-3">
-                <div className="grid sm:grid-cols-2 gap-2">
+              <div key={idx} className="rounded-lg border border-emerald-100 bg-white/80 p-2">
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.5fr_2fr] gap-1.5">
                   <input
                     className="eval-input"
                     placeholder="Label (e.g. Pricing)"
@@ -4028,21 +4047,21 @@ const LinksSlide = ({
                     value={l.url}
                     onChange={(e) => updateDraftLink(idx, { url: e.target.value })}
                   />
+                  <input
+                    className="eval-input"
+                    placeholder="Short description (shown in the email)"
+                    value={l.description}
+                    onChange={(e) => updateDraftLink(idx, { description: e.target.value })}
+                  />
                 </div>
-                <input
-                  className="eval-input mt-2"
-                  placeholder="Short description (shown in the email)"
-                  value={l.description}
-                  onChange={(e) => updateDraftLink(idx, { description: e.target.value })}
-                />
-                <div className="mt-2 flex items-center justify-between">
+                <div className="mt-1.5 flex items-center justify-between">
                   <label className="inline-flex items-center gap-1.5 text-xs text-emerald-800">
                     <input
                       type="checkbox"
                       checked={Boolean(l.includeInFeedback)}
                       onChange={(e) => updateDraftLink(idx, { includeInFeedback: e.target.checked })}
                     />
-                    Include by default in feedback email & WhatsApp
+                    Include by default
                   </label>
                   <button type="button" onClick={() => removeDraftLink(idx)} className="text-rose-700 hover:text-rose-900 text-xs inline-flex items-center gap-1">
                     <Trash2 className="h-3 w-3" /> Remove
@@ -4055,58 +4074,37 @@ const LinksSlide = ({
             </button>
           </div>
         ) : (
-          <div className="grid sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-1.5">
             {(links || []).map((l, idx) => (
-              <div key={`${l.url}-${idx}`} className="rounded-xl border border-emerald-100 bg-white/80 p-3 flex items-start gap-2">
+              <div key={`${l.url}-${idx}`} className="rounded-lg border border-emerald-100 bg-white/80 px-2 py-1.5 flex items-start gap-1.5">
                 <input
                   type="checkbox"
-                  className="mt-1"
+                  className="mt-0.5"
                   checked={Boolean(l.includeInFeedback)}
                   onChange={() => toggleIncluded(idx)}
                   title="Include in feedback email & WhatsApp"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-emerald-900 truncate">{l.label}</div>
-                  <a className="text-xs text-emerald-700 underline truncate block" href={l.url} target="_blank" rel="noreferrer">{l.url}</a>
-                  {l.description && <div className="text-[11px] text-emerald-700/80 mt-0.5">{l.description}</div>}
+                  <div className="text-xs font-semibold text-emerald-900 truncate">{l.label}</div>
+                  <a className="text-[11px] text-emerald-700 underline truncate block" href={l.url} target="_blank" rel="noreferrer">{l.url}</a>
+                  {l.description && <div className="text-[10px] text-emerald-700/80 truncate" title={l.description}>{l.description}</div>}
                 </div>
                 <button type="button" onClick={() => { navigator.clipboard?.writeText(l.url); showToast('Copied'); }}
-                  className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs inline-flex items-center gap-1 shrink-0">
+                  className="p-1 rounded-full bg-emerald-50 text-emerald-700 shrink-0" title="Copy link">
                   <Copy className="h-3 w-3" />
                 </button>
               </div>
             ))}
             {(!links || links.length === 0) && linksLoaded && (
-              <div className="text-sm text-emerald-700/80 italic col-span-full">No links yet. Click <strong>Edit links</strong> to add some.</div>
+              <div className="text-sm text-emerald-700/80 italic col-span-full">No links yet. Click <strong>Edit</strong> to add some.</div>
             )}
           </div>
         )}
       </div>
 
-      {/* WhatsApp default number */}
-      <div className="mb-6 rounded-2xl border border-emerald-100 bg-white/60 p-4">
-        <div className="flex items-baseline justify-between mb-2">
-          <h4 className="text-sm font-semibold text-emerald-900 inline-flex items-center gap-2">
-            <MessageCircle className="h-4 w-4" /> Default WhatsApp number
-          </h4>
-          <span className="text-[11px] text-emerald-700/70">Used when the student has no contact phone</span>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-2">
-          <input
-            className="eval-input flex-1"
-            placeholder="+1 555 123 4567"
-            value={waDraft}
-            onChange={(e) => setWaDraft(e.target.value)}
-            onBlur={() => {
-              if (waDraft !== whatsappNumber) onSaveWhatsappNumber(waDraft);
-            }}
-          />
-        </div>
-      </div>
-
       {/* Closing actions */}
-      <div className="mb-4 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/70 to-white p-4">
-        <h4 className="text-sm font-semibold text-emerald-900 mb-3 inline-flex items-center gap-1">
+      <div className="border-t border-emerald-100 pt-2.5">
+        <h4 className="text-sm font-semibold text-emerald-900 mb-2 inline-flex items-center gap-1.5">
           <Send className="h-4 w-4" /> Closing actions for <bdi>{active?.name || 'this student'}</bdi>
         </h4>
 
@@ -4128,11 +4126,11 @@ const LinksSlide = ({
                   setPreviewOpen(true);
                 }}
                 disabled={sending}
-                className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-sm inline-flex items-center gap-1 disabled:opacity-50"
+                className="px-3 py-1.5 rounded-full bg-emerald-700 text-white text-sm inline-flex items-center gap-1 disabled:opacity-50 shrink-0"
               ><Send className="h-3 w-3" /> Preview &amp; send</button>
             </div>
             {feedbackLink && (
-              <div className="mt-2 text-[11px] flex items-center gap-2 text-emerald-800 break-all">
+              <div className="mt-1.5 text-[11px] flex items-center gap-2 text-emerald-800 break-all">
                 <LinkIcon className="h-3 w-3" />
                 <a href={feedbackLink} className="underline flex-1 min-w-0 truncate" target="_blank" rel="noreferrer">{feedbackLink}</a>
                 <button type="button" className="text-emerald-700 underline shrink-0" onClick={() => { navigator.clipboard?.writeText(feedbackLink); showToast('Link copied'); }}>Copy</button>
@@ -4141,7 +4139,7 @@ const LinksSlide = ({
             <div className="text-[11px] text-emerald-700/70 mt-1">
               {includedLinks.length > 0
                 ? `Will include ${includedLinks.length} important link${includedLinks.length === 1 ? '' : 's'}.`
-                : 'No links will be included — tick links above to add them.'}
+                : 'No links will be included — tick links above.'}
             </div>
           </div>
 
@@ -4157,12 +4155,13 @@ const LinksSlide = ({
               <button
                 type="button"
                 onClick={sendWhatsApp}
-                className="px-3 py-1.5 rounded-full bg-emerald-600 text-white text-sm inline-flex items-center gap-1"
+                className="px-3 py-1.5 rounded-full bg-emerald-600 text-white text-sm inline-flex items-center gap-1 shrink-0"
               ><MessageCircle className="h-3 w-3" /> Open</button>
             </div>
             <div className="text-[11px] text-emerald-700/70 mt-1">Opens WhatsApp Web with a prefilled message including the selected links.</div>
           </div>
         </div>
+      </div>
       </div>
 
       {previewOpen && active && (

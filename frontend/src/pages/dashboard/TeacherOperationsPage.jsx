@@ -48,6 +48,8 @@ import {
   listTeacherContractResponses,
   saveInterviewScorecard,
   generateContractLink,
+  declineContract,
+  addCandidateToBatch,
   getRecruitmentEmailTemplates,
   saveRecruitmentEmailTemplates,
   sendCandidateEmail,
@@ -64,8 +66,8 @@ import { bumpDomainVersion } from '../../utils/sessionCache';
 const TABS = [
   { id: 'overview', label: 'Overview', icon: TrendingUp },
   { id: 'pipeline', label: 'Pipeline', icon: BriefcaseBusiness },
-  { id: 'training', label: 'Training', icon: GraduationCap },
   { id: 'interviews', label: 'Interviews', icon: CalendarClock },
+  { id: 'training', label: 'Training', icon: GraduationCap },
   { id: 'stats', label: 'Stats & BI', icon: BarChart3 },
 ];
 
@@ -128,6 +130,21 @@ const EMAIL_EVENT_LABELS = {
   completed_unsuitable: 'Completed — unsuitable',
   failed: 'Not moving forward',
 };
+
+// The three post-interview decisions surfaced as one-click buttons once the
+// interview is marked completed. Each maps onto an existing outcome/email
+// event so no backend changes to the outcome enum were needed.
+const INTERVIEW_DECISIONS = [
+  { outcome: 'passed', label: 'Accept', className: 'bg-green-600 hover:bg-green-700 text-white' },
+  { outcome: 'passed_not_selected', label: 'Keep in waiting list', className: 'bg-amber-500 hover:bg-amber-600 text-white' },
+  { outcome: 'failed', label: 'Reject', className: 'bg-red-600 hover:bg-red-700 text-white' },
+];
+
+// Mirrors the backend's {{var}} substitution so the client-side preview
+// matches exactly what will be sent once the admin hits "Send".
+const renderTemplateVars = (text, vars = {}) => String(text || '').replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => (
+  vars[key] == null ? '' : String(vars[key])
+));
 
 const CAPACITY_DECISION_STYLES = {
   ok: { label: 'Healthy', badge: 'bg-green-100 text-green-700', bar: 'bg-green-500' },
@@ -277,6 +294,14 @@ export default function TeacherOperationsPage({ isActive }) {
   const [emailSending, setEmailSending] = useState(false);
   const [emailNotice, setEmailNotice] = useState('');
   const [contractLinkState, setContractLinkState] = useState({ id: '', url: '', loading: false, notice: '' });
+  const [decisionPreview, setDecisionPreview] = useState(null); // { source, id, outcome, event, subject, body }
+  const [decisionSending, setDecisionSending] = useState(false);
+  const [declineNote, setDeclineNote] = useState('');
+  const [decliningContract, setDecliningContract] = useState(false);
+  const [showDeclineForm, setShowDeclineForm] = useState(false);
+  const [addToBatchId, setAddToBatchId] = useState('');
+  const [addingToBatch, setAddingToBatch] = useState(false);
+  const [addToBatchNotice, setAddToBatchNotice] = useState('');
 
   // Sheet import
   const [showImportModal, setShowImportModal] = useState(false);
@@ -432,11 +457,11 @@ export default function TeacherOperationsPage({ isActive }) {
         setInterviewError('');
         const data = await listTeacherContractResponses();
         if (!cancelled) {
-          const relevant = (data || []).filter((r) => {
-            const status = r?.recruitment?.status || r?.status;
-            return ['shortlisted', 'interview_pending', 'interviewed', 'accepted'].includes(status);
-          });
-          setInterviewResponses(relevant.length ? relevant : (data || []));
+          // The Interviews tab is a focused queue of candidates awaiting their
+          // interview — decided/awaiting-decision candidates naturally fall
+          // out of this list once their outcome moves them to the next step.
+          const relevant = (data || []).filter((r) => (r?.recruitment?.status || r?.status) === 'interview_pending');
+          setInterviewResponses(relevant);
         }
       } catch (error) {
         if (!cancelled) setInterviewError(error?.response?.data?.message || 'Failed to load interview candidates.');
@@ -630,6 +655,132 @@ export default function TeacherOperationsPage({ isActive }) {
         : r)));
     } catch (error) {
       setContractLinkState((p) => ({ ...p, loading: false, notice: error?.response?.data?.message || 'Failed to generate contract link.' }));
+    }
+  };
+
+  // Composes a ready-to-edit subject/body for one of the three post-interview
+  // decisions (accept / waiting list / reject), pulling the current email
+  // template and folding in the admin's interview notes as the human-readable
+  // "reason", then opens the preview modal — nothing is sent until "Send".
+  const openDecisionPreview = async (outcome) => {
+    if (!interviewForm) return;
+    const current = interviewResponses.find((r) => r.id === selectedInterviewId);
+    if (!current) return;
+    let templates = emailTemplates;
+    if (!templates) {
+      try {
+        const data = await getRecruitmentEmailTemplates();
+        templates = data?.templates || {};
+        setEmailTemplates(templates);
+      } catch {
+        templates = {};
+      }
+    }
+    const event = OUTCOME_TO_EMAIL_EVENT[outcome] || 'failed';
+    const template = templates?.[event] || { subject: 'Waraqa Recruitment', body: 'Dear {{name}},\n\nWaraqa Recruitment Team' };
+    const name = current?.personalInfo?.fullName || current?.contract?.fullName
+      || `${current?.user?.firstName || ''} ${current?.user?.lastName || ''}`.trim() || 'there';
+    const reason = String(interviewForm.notes || '').trim();
+    let body = renderTemplateVars(template.body, { name, reason, notes: reason });
+    if (reason && !/\{\{\s*(reason|notes)\s*\}\}/.test(template.body || '')) {
+      // The default outcome templates don't include a {{reason}} placeholder,
+      // so fold the admin's interview notes in as a closing note the admin
+      // can still edit before sending.
+      body = body.replace(/\n\n(Waraqa Recruitment Team)\s*$/, `\n\n${reason}\n\n$1`);
+    }
+    setDecisionPreview({
+      source: interviewForm.source,
+      id: interviewForm.id,
+      outcome,
+      event,
+      subject: renderTemplateVars(template.subject, { name }),
+      body,
+    });
+  };
+
+  const handleSendDecision = async () => {
+    if (!decisionPreview) return;
+    try {
+      setDecisionSending(true);
+      setInterviewError('');
+      // Persist the decision as the scorecard outcome first (this is what
+      // advances the pipeline stage on the backend), then send the message.
+      const updated = await saveInterviewScorecard(decisionPreview.source, decisionPreview.id, {
+        ...(interviewForm ? {
+          scheduledAt: interviewForm.scheduledAt || null,
+          completedAt: interviewForm.completedAt || null,
+          worksElsewhere: interviewForm.worksElsewhere,
+          notes: interviewForm.notes,
+          scores: interviewForm.scores,
+        } : {}),
+        outcome: decisionPreview.outcome,
+      });
+      if (updated) {
+        setInterviewResponses((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+        selectInterview(updated);
+      }
+      const res = await sendCandidateEmail(decisionPreview.source, decisionPreview.id, {
+        event: decisionPreview.event,
+        subject: decisionPreview.subject,
+        body: decisionPreview.body,
+      });
+      setEmailNotice(res?.message || 'Email queued.');
+      window.setTimeout(() => setEmailNotice(''), 4000);
+      setDecisionPreview(null);
+      loadPendingEmails();
+    } catch (error) {
+      setInterviewError(error?.response?.data?.message || 'Failed to record the decision and send the email.');
+    } finally {
+      setDecisionSending(false);
+    }
+  };
+
+  // Manual negative confirmation: the candidate was accepted but told us
+  // (by phone/WhatsApp/email) they don't want to continue.
+  const handleDeclineContract = async () => {
+    if (!interviewForm) return;
+    try {
+      setDecliningContract(true);
+      setInterviewError('');
+      const res = await declineContract(interviewForm.source, interviewForm.id, declineNote);
+      if (res?.response) {
+        setInterviewResponses((prev) => prev.map((r) => (r.id === res.response.id ? res.response : r)));
+        selectInterview(res.response);
+      }
+      setShowDeclineForm(false);
+      setDeclineNote('');
+    } catch (error) {
+      setInterviewError(error?.response?.data?.message || 'Failed to record the decline.');
+    } finally {
+      setDecliningContract(false);
+    }
+  };
+
+  // Once accepted + confirmed, move the candidate to the next step by
+  // enrolling them in a training batch.
+  const handleAddToTrainingBatch = async () => {
+    if (!interviewForm || !addToBatchId) return;
+    const current = interviewResponses.find((r) => r.id === selectedInterviewId);
+    if (!current) return;
+    try {
+      setAddingToBatch(true);
+      setAddToBatchNotice('');
+      const name = current?.personalInfo?.fullName || current?.contract?.fullName
+        || `${current?.user?.firstName || ''} ${current?.user?.lastName || ''}`.trim() || 'Candidate';
+      const email = current?.personalInfo?.email || current?.user?.email || '';
+      const saved = await addCandidateToBatch(addToBatchId, {
+        candidateId: interviewForm.id,
+        candidateSource: interviewForm.source,
+        displayName: name,
+        email,
+      });
+      if (saved) setBatches((prev) => prev.map((b) => (b._id === saved._id ? saved : b)));
+      setAddToBatchNotice('Added to the training batch.');
+      window.setTimeout(() => setAddToBatchNotice(''), 4000);
+    } catch (error) {
+      setAddToBatchNotice(error?.response?.data?.message || 'Failed to add to the training batch.');
+    } finally {
+      setAddingToBatch(false);
     }
   };
 
@@ -1079,8 +1230,8 @@ export default function TeacherOperationsPage({ isActive }) {
                 </div>
                 <div className="flex flex-wrap gap-1.5 pt-0.5">
                   <button type="button" onClick={() => setActiveTab('pipeline')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><BriefcaseBusiness className="h-3.5 w-3.5" /> Pipeline</button>
-                  <button type="button" onClick={() => setActiveTab('training')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><GraduationCap className="h-3.5 w-3.5" /> Training</button>
                   <button type="button" onClick={() => setActiveTab('interviews')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><CalendarClock className="h-3.5 w-3.5" /> Interviews</button>
+                  <button type="button" onClick={() => setActiveTab('training')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><GraduationCap className="h-3.5 w-3.5" /> Training</button>
                   <button type="button" onClick={openEmailTemplates} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><Mail className="h-3.5 w-3.5" /> Email templates</button>
                   <button type="button" onClick={openCapacitySettings} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><Sliders className="h-3.5 w-3.5" /> Capacity rules</button>
                 </div>
@@ -1330,9 +1481,9 @@ export default function TeacherOperationsPage({ isActive }) {
                     <div className="grid grid-cols-2 gap-2">
                       <label className="text-xs text-foreground">
                         <span className="mb-1 block font-medium">Outcome</span>
-                        <select value={interviewForm.outcome} onChange={(e) => setInterviewForm((p) => ({ ...p, outcome: e.target.value }))} className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm">
-                          {INTERVIEW_OUTCOMES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
+                        <span className={`block rounded-lg border border-border bg-background px-2 py-1.5 text-sm font-medium ${INTERVIEW_OUTCOME_COLORS[interviewForm.outcome] || 'text-foreground'}`}>
+                          {INTERVIEW_OUTCOMES.find((o) => o.value === interviewForm.outcome)?.label || 'Pending'}
+                        </span>
                       </label>
                       <label className="mt-5 inline-flex items-center gap-2 text-xs text-foreground">
                         <input type="checkbox" checked={interviewForm.worksElsewhere} onChange={(e) => setInterviewForm((p) => ({ ...p, worksElsewhere: e.target.checked }))} />
@@ -1353,11 +1504,8 @@ export default function TeacherOperationsPage({ isActive }) {
                     </div>
 
                     <div className="rounded-xl border border-border bg-background p-2.5">
-                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Send email to candidate</p>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 1 · Interview invite</p>
                       <div className="flex flex-wrap gap-1.5">
-                        <button type="button" onClick={() => handleSendCandidateEmail(OUTCOME_TO_EMAIL_EVENT[interviewForm.outcome] || 'interview_invite')} disabled={emailSending} className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background shadow-sm disabled:opacity-60">
-                          <Send className="h-3.5 w-3.5" /> {emailSending ? 'Sending…' : `Send: ${EMAIL_EVENT_LABELS[OUTCOME_TO_EMAIL_EVENT[interviewForm.outcome] || 'interview_invite']}`}
-                        </button>
                         <button type="button" onClick={() => handleSendCandidateEmail('interview_invite')} disabled={emailSending} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
                           <Mail className="h-3.5 w-3.5" /> Interview invite
                         </button>
@@ -1368,19 +1516,46 @@ export default function TeacherOperationsPage({ isActive }) {
                           <Edit3 className="h-3.5 w-3.5" /> Edit templates
                         </button>
                       </div>
-                      <p className="mt-1.5 text-[11px] text-muted-foreground">The "missing info" email includes the notes above. Save the scorecard first so the outcome-matched email is correct.</p>
-                      {emailNotice ? <p className="mt-1 text-[11px] font-medium text-green-600 dark:text-green-400">{emailNotice}</p> : null}
+                      {emailNotice ? <p className="mt-1.5 text-[11px] font-medium text-green-600 dark:text-green-400">{emailNotice}</p> : null}
                     </div>
 
                     <div className="rounded-xl border border-border bg-background p-2.5">
-                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Contract (after passing the interview)</p>
-                      {current?.recruitment?.contract?.acceptedAt ? (
+                      <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 2 · Interview decision</p>
+                      {!interviewForm.completedAt ? (
+                        <p className="text-[11px] text-muted-foreground">Mark the interview as completed above to record a decision.</p>
+                      ) : (
+                        <>
+                          <p className="mb-1.5 text-[11px] text-muted-foreground">Each decision composes a dedicated, human-readable message you can edit before sending.</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {INTERVIEW_DECISIONS.map((d) => (
+                              <button
+                                key={d.outcome}
+                                type="button"
+                                onClick={() => openDecisionPreview(d.outcome)}
+                                disabled={interviewSaving}
+                                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-60 ${d.className}`}
+                              >
+                                {d.outcome === interviewForm.outcome ? <CheckCircle2 className="h-3.5 w-3.5" /> : null} {d.label}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-border bg-background p-2.5">
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 3 · Confirm & contract (after accepting)</p>
+                      {current?.recruitment?.contract?.declinedAt ? (
+                        <p className="text-[11px] font-medium text-red-600 dark:text-red-400">
+                          Candidate told us on {new Date(current.recruitment.contract.declinedAt).toLocaleString()} they don't want to continue{current.recruitment.contract.declineNote ? `: "${current.recruitment.contract.declineNote}"` : '.'}
+                        </p>
+                      ) : current?.recruitment?.contract?.acceptedAt ? (
                         <p className="text-[11px] font-medium text-green-600 dark:text-green-400">
-                          Accepted by {current.recruitment.contract.acceptedName || 'candidate'} on {new Date(current.recruitment.contract.acceptedAt).toLocaleString()}.
+                          Confirmed by {current.recruitment.contract.acceptedName || 'candidate'} on {new Date(current.recruitment.contract.acceptedAt).toLocaleString()} — ready for training.
                         </p>
                       ) : (
                         <p className="text-[11px] text-muted-foreground">
-                          Generate a private link for the candidate to review and accept the contract.
+                          Generate a private link for the candidate to review and accept the contract, confirming they want to continue.
                           {current?.recruitment?.contract?.sentAt ? ` Link last generated ${new Date(current.recruitment.contract.sentAt).toLocaleString()}.` : ''}
                         </p>
                       )}
@@ -1389,12 +1564,42 @@ export default function TeacherOperationsPage({ isActive }) {
                           {contractLinkState.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
                           {current?.recruitment?.contract?.token ? 'Regenerate & copy contract link' : 'Generate & copy contract link'}
                         </button>
+                        {!current?.recruitment?.contract?.acceptedAt && !current?.recruitment?.contract?.declinedAt ? (
+                          <button type="button" onClick={() => setShowDeclineForm((v) => !v)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-red-600 hover:border-red-300">
+                            <XCircle className="h-3.5 w-3.5" /> Candidate won't continue
+                          </button>
+                        ) : null}
                       </div>
                       {contractLinkState.id === selectedInterviewId && contractLinkState.url ? (
                         <input readOnly value={contractLinkState.url} onFocus={(e) => e.target.select()} className="mt-1.5 w-full rounded-lg border border-border bg-card px-2 py-1.5 text-[11px] text-foreground" />
                       ) : null}
                       {contractLinkState.id === selectedInterviewId && contractLinkState.notice ? <p className="mt-1 text-[11px] text-muted-foreground">{contractLinkState.notice}</p> : null}
+                      {showDeclineForm ? (
+                        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-2">
+                          <textarea rows={2} value={declineNote} onChange={(e) => setDeclineNote(e.target.value)} className="w-full rounded-lg border border-red-200 bg-white px-2 py-1.5 text-xs" placeholder="Optional: why did they decline? (e.g. accepted another offer, schedule no longer works…)" />
+                          <div className="mt-1.5 flex gap-1.5">
+                            <button type="button" onClick={handleDeclineContract} disabled={decliningContract} className="rounded-full bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60">{decliningContract ? 'Saving…' : 'Confirm — mark as rejected'}</button>
+                            <button type="button" onClick={() => setShowDeclineForm(false)} className="rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-foreground">Cancel</button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
+
+                    {current?.recruitment?.contract?.acceptedAt ? (
+                      <div className="rounded-xl border border-border bg-background p-2.5">
+                        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 4 · Move to training</p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <select value={addToBatchId} onChange={(e) => setAddToBatchId(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs">
+                            <option value="">Select a training batch…</option>
+                            {(batches || []).map((b) => <option key={b._id} value={b._id}>{b.title}</option>)}
+                          </select>
+                          <button type="button" onClick={handleAddToTrainingBatch} disabled={!addToBatchId || addingToBatch} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm disabled:opacity-60">
+                            <GraduationCap className="h-3.5 w-3.5" /> {addingToBatch ? 'Adding…' : 'Add to batch'}
+                          </button>
+                        </div>
+                        {addToBatchNotice ? <p className="mt-1 text-[11px] text-muted-foreground">{addToBatchNotice}</p> : null}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })()}

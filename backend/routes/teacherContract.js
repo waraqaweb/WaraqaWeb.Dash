@@ -459,6 +459,13 @@ const buildRecruitmentUpdate = (current = {}, payload = {}, actorId = null) => {
   const noteForHistory = String(payload.historyNote || adminNotes || '').trim().slice(0, 1000);
   const history = Array.isArray(current.history) ? [...current.history] : [];
   const statusChanged = previousStatus !== nextStatus;
+  const rawCampaignId = payload?.fit?.campaignId ?? current?.fit?.campaignId ?? null;
+  const normalizedCampaignId = (() => {
+    if (rawCampaignId == null) return null;
+    const text = String(rawCampaignId).trim();
+    if (!text) return null;
+    return mongoose.Types.ObjectId.isValid(text) ? text : null;
+  })();
 
   history.push({
     at: new Date(),
@@ -478,7 +485,7 @@ const buildRecruitmentUpdate = (current = {}, payload = {}, actorId = null) => {
     rejectionCategory: String(payload.rejectionCategory ?? current.rejectionCategory ?? '').trim(),
     tags: normalizeStringArray(payload.tags ?? current.tags),
     fit: {
-      campaignId: payload?.fit?.campaignId ?? current?.fit?.campaignId ?? null,
+      campaignId: normalizedCampaignId,
       subjects: normalizeStringArray(payload?.fit?.subjects ?? current?.fit?.subjects),
       genderRequirement: String(payload?.fit?.genderRequirement ?? current?.fit?.genderRequirement ?? '').trim(),
       preferredWindow: String(payload?.fit?.preferredWindow ?? current?.fit?.preferredWindow ?? '').trim(),

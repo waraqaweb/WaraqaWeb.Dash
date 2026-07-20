@@ -393,7 +393,7 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
   );
 }
 
-export default function TeacherResponsesPanel() {
+export default function TeacherResponsesPanel({ headerSlot = null }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -752,6 +752,7 @@ export default function TeacherResponsesPanel() {
         <>
           <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
             <div className="max-h-[25vh] space-y-2 overflow-auto">
+              {headerSlot ? <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-2">{headerSlot}</div> : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-xs font-semibold text-slate-900">Recruitment control center</p>

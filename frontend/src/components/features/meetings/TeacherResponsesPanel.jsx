@@ -697,7 +697,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   const [syncConfig, setSyncConfig] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [showSyncSettings, setShowSyncSettings] = useState(false);
-  const [syncDraft, setSyncDraft] = useState({ sheetUrl: '', formUrl: '', autoSync: true, intervalMinutes: 10 });
+  const [syncDraft, setSyncDraft] = useState({ sheetUrl: '', formUrl: '', autoSync: true, intervalMinutes: 720 });
   const [savingSync, setSavingSync] = useState(false);
   const [quickStageId, setQuickStageId] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
@@ -754,7 +754,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
           sheetUrl: config.sheetUrl || '',
           formUrl: config.formUrl || '',
           autoSync: config.autoSync !== false,
-          intervalMinutes: config.intervalMinutes || 10,
+          intervalMinutes: config.intervalMinutes || 720,
         });
       }
     } catch { /* non-fatal */ }
@@ -790,7 +790,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
         sheetUrl: syncDraft.sheetUrl,
         formUrl: syncDraft.formUrl,
         autoSync: Boolean(syncDraft.autoSync),
-        intervalMinutes: Number(syncDraft.intervalMinutes) || 10,
+        intervalMinutes: Number(syncDraft.intervalMinutes) || 720,
       });
       if (config) setSyncConfig(config);
       setNotice('Sync source saved. New submissions will be pulled from this sheet automatically.');
@@ -1142,7 +1142,9 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                   <p className="truncate text-xs font-semibold text-slate-900">Recruitment control center</p>
                   <p className="truncate text-[11px] text-slate-500">
                     {syncConfig?.lastSyncAt ? `Synced ${formatDateTime(syncConfig.lastSyncAt)}` : 'Not synced yet'}
-                    {syncConfig?.autoSync !== false ? ` • every ${syncConfig?.intervalMinutes || 10}m` : ' • auto OFF'}
+                    {syncConfig?.autoSync !== false
+                      ? ` • every ${(syncConfig?.intervalMinutes || 720) >= 60 ? `${Math.round((syncConfig?.intervalMinutes || 720) / 60)}h` : `${syncConfig?.intervalMinutes}m`}`
+                      : ' • auto OFF'}
                     {syncConfig?.lastResult ? ` • ${syncConfig.lastResult.totalRows ?? 0} rows` : ''}
                   </p>
                 </div>
@@ -1447,7 +1449,16 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
               ) : viewer.kind === 'video' ? (
                 <video src={viewer.src} controls autoPlay className={viewerMin ? 'h-44 w-full bg-black' : 'max-h-[68vh] w-full'} />
               ) : (
-                <iframe title={viewer.label} src={viewer.src} className={viewerMin ? 'h-44 w-full' : 'h-[68vh] w-full rounded-lg'} allow="autoplay" />
+                <div className="w-full">
+                  <iframe title={viewer.label} src={viewer.src} className={viewerMin ? 'h-44 w-full' : 'h-[64vh] w-full rounded-lg'} allow="autoplay" />
+                  {!viewerMin && /drive\.google\.com|docs\.google\.com/.test(String(viewer.src)) ? (
+                    <p className="mt-1.5 text-center text-[11px] text-slate-500">
+                      Blank preview? The Drive file isn&apos;t shared publicly — use{' '}
+                      <a href={viewer.download} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline">Open</a>{' '}
+                      to view it in Drive (sharing must be &ldquo;Anyone with the link&rdquo;).
+                    </p>
+                  ) : null}
+                </div>
               )}
             </div>
           </div>

@@ -1963,9 +1963,6 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
       }
     }
 
-    console.log('Backend updates after filtering:', updates);
-    console.log('Backend bio after filtering:', updates.bio);
-
     // Fetch current user document to compute diffs and preserve middleware hooks
     const originalUser = await User.findById(req.params.id).select('-password');
     if (!originalUser) return res.status(404).json({ message: 'User not found' });
@@ -2007,17 +2004,12 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
     } catch (cleanuperr) {
       console.warn('Failed to cleanup guardian fields', cleanuperr);
     }
-    console.log('Backend originalUser bio before update:', originalUser.bio);
-    console.log('Backend originalUser role:', originalUser.role);
-    console.log('Backend originalUser teacherInfo.bio before update:', originalUser.teacherInfo?.bio);
-
     // Handle bio field based on user role
     if (updates.bio !== undefined) {
       if (originalUser.role === 'teacher') {
         // For teachers, bio is stored in teacherInfo.bio
         if (!updates.teacherInfo) updates.teacherInfo = {};
         updates.teacherInfo.bio = updates.bio;
-        console.log('Backend: Moving bio to teacherInfo.bio for teacher:', updates.bio);
       }
       // Remove top-level bio since it's not in the schema for any role
       delete updates.bio;
@@ -2309,9 +2301,6 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
       originalUser[key] = updates[key];
     });
 
-    console.log('Backend originalUser bio after applying updates:', originalUser.bio);
-    console.log('Backend originalUser teacherInfo.bio after applying updates:', originalUser.teacherInfo?.bio);
-
     // Record admin-only lifecycle changes (accepting-new-students toggle + joining-date edits)
     if (originalUser.role === 'teacher' && req.user.role === 'admin' && updates.teacherInfo && typeof updates.teacherInfo === 'object') {
       originalUser.teacherInfo = originalUser.teacherInfo || {};
@@ -2356,8 +2345,6 @@ router.put('/:id', authenticateToken, requireResourceAccess('user'), async (req,
     await originalUser.save();
 
     const updatedUser = await User.findById(req.params.id).select('-password');
-    console.log('Backend final saved user bio:', updatedUser.bio);
-    console.log('Backend final saved user teacherInfo.bio:', updatedUser.teacherInfo?.bio);
 
     // If profile now has key fields, mark onboarding completed
     try {

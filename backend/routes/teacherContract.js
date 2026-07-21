@@ -779,9 +779,10 @@ router.put('/template', authenticateToken, requireAdmin, async (req, res) => {
 
 router.get('/responses', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    // Keep the funnel fresh automatically: pull new Google Form submissions
-    // from the linked sheet when the data is stale (no manual import needed).
-    await maybeAutoSyncSheet();
+    // Keep the funnel fresh automatically: kick off a background sheet sync
+    // when the data is stale, but never block the page response on Google —
+    // freshly imported rows show up on the next refresh instead.
+    maybeAutoSyncSheet().catch(() => {});
 
     const [publicLeads, dashboardSubmissions] = await Promise.all([
       TeacherContractLead.find({})
@@ -2212,11 +2213,17 @@ const DEFAULT_RECRUITMENT_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLS
 async function getSheetSyncConfig() {
   const doc = await Setting.findOne({ key: SHEET_SYNC_SETTING_KEY }).lean();
   const value = doc?.value || {};
+  const storedInterval = Number(value.intervalMinutes);
+  // Default: twice a day. Admins can still lower it (min 2m) or turn
+  // auto-sync off entirely and use the manual "Sync now" button.
+  // Stored value 10 was the old hardcoded default (never user-chosen) —
+  // migrate it to the new default too.
+  const intervalMinutes = storedInterval >= 2 && storedInterval !== 10 ? storedInterval : 720;
   return {
     sheetUrl: typeof value.sheetUrl === 'string' && value.sheetUrl.trim() ? value.sheetUrl.trim() : DEFAULT_RECRUITMENT_SHEET_URL,
     formUrl: typeof value.formUrl === 'string' && value.formUrl.trim() ? value.formUrl.trim() : DEFAULT_RECRUITMENT_FORM_URL,
     autoSync: value.autoSync !== false,
-    intervalMinutes: Number(value.intervalMinutes) >= 2 ? Number(value.intervalMinutes) : 10,
+    intervalMinutes,
     lastSyncAt: value.lastSyncAt || null,
     lastResult: value.lastResult || null,
     lastError: value.lastError || null,
@@ -2526,7 +2533,9 @@ async function maybeAutoSyncSheet() {
 }
 
 // Background refresh so counts stay fresh even without opening the page.
-const sheetSyncTimer = setInterval(() => { maybeAutoSyncSheet(); }, 10 * 60 * 1000);
+// Ticks hourly; maybeAutoSyncSheet only actually syncs when the data is
+// older than the configured interval (default 12h => twice a day).
+const sheetSyncTimer = setInterval(() => { maybeAutoSyncSheet(); }, 60 * 60 * 1000);
 if (typeof sheetSyncTimer.unref === 'function') sheetSyncTimer.unref();
 
 // Admin: read the sync configuration + last status.

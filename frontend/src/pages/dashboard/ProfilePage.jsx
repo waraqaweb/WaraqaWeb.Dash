@@ -39,7 +39,6 @@ export default function ProfilePage() {
   }, [profile]);
 
   const fetchProfile = useCallback(async () => {
-    console.log('fetchProfile called - refreshing user data');
     const requestSignature = JSON.stringify({ userId: user?._id });
     if (fetchProfileInFlightRef.current && fetchProfileKeyRef.current === requestSignature) {
       return;
@@ -80,7 +79,6 @@ export default function ProfilePage() {
       if (requestId !== fetchProfileRequestIdRef.current) {
         return;
       }
-      console.log('fetchProfile response:', res.data.user);
       setProfile(res.data.user);
       writeCache(cacheKey, res.data.user, { ttlMs: 5 * 60_000, deps: ['users'] });
     } catch (err) {
@@ -169,11 +167,14 @@ export default function ProfilePage() {
   }, [user?._id]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user?._id) return;
     setIsAdmin(user.role === 'admin');
     fetchProfile();
     if (user.role === 'admin') fetchAllUsers();
-  }, [user, fetchProfile, fetchAllUsers]);
+    // Key on the user id (not the whole object) so context refreshes that
+    // produce a new object reference don't retrigger a profile refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?._id, user?.role, fetchProfile, fetchAllUsers]);
 
   const [editModalUser, setEditModalUser] = useState(null);
 
@@ -666,7 +667,6 @@ export default function ProfilePage() {
                   {profile.role === 'teacher' && (
                     <div className="col-span-1 md:col-span-2">
                       <label className="text-base font-semibold text-foreground mb-1 block">Bio</label>
-                      {console.log('ProfilePage rendering bio: teacherInfo.bio:', profile.teacherInfo?.bio)}
                       <textarea className="w-full border border-border rounded-lg px-3 py-3 text-base bg-muted/40" value={profile.teacherInfo?.bio || ''} disabled />
                     </div>
                   )}

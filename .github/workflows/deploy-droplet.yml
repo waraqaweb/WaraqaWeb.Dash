@@ -156,12 +156,7 @@ jobs:
           deploy/scripts/deploy.sh pull
 
           echo "[deploy] git_head_after=$(git rev-parse --short HEAD)"
-          echo "[deploy] pruning old docker images"
-          # Use -a so unused *tagged* per-commit GHCR images are removed too
-          # (dangling-only prune lets ~2.5GB images pile up until the disk fills).
-          # Keep a 48h rollback window; never prune volumes (mongo + library data).
-          docker image prune -af --filter "until=48h" || true
-          docker builder prune -f --filter "until=48h" || true
+          echo "[deploy] disk cleanup already handled inside deploy.sh (keeps newest 2 image tags per service)"
           df -h / | tail -1 || true
 
           echo "[deploy] workflow completed successfully"

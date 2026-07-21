@@ -236,12 +236,23 @@ compose exec -T backend sh -lc '
 '
 
 # Reclaim disk so the droplet does not fill up over time. Per-commit GHCR image
-# tags accumulate quickly (~2.5GB each), so a dangling-only prune ("-f" without
-# "-a") is NOT enough — it leaves the old *tagged* images behind. Use "-af" to
-# drop unused tagged images while keeping a 48h rollback window, plus build cache.
-# Never prune volumes here (mongo data + library assets live in volumes).
-echo "[deploy] Reclaiming disk: pruning unused images/build cache older than 48h..."
-docker image prune -af --filter "until=48h" >/dev/null 2>&1 || true
+# tags accumulate quickly (~2.5GB each). With multiple deploys per day, an
+# age-based filter (e.g. "until=48h") is NOT enough — a whole day's worth of
+# tags can pile up and fill the disk before they age out (this happened once).
+# Instead, keep only the KEEP_IMAGE_TAGS most-recently-created tags per GHCR
+# repo (regardless of age) so there's always a small rollback window, and drop
+# everything else. Never prune volumes here (mongo data + library assets live
+# in volumes).
+echo "[deploy] Reclaiming disk: keeping newest images, pruning the rest..."
+KEEP_IMAGE_TAGS="${KEEP_IMAGE_TAGS:-2}"
+for repo in ghcr.io/waraqaweb/waraqa-backend ghcr.io/waraqaweb/waraqa-frontend ghcr.io/waraqaweb/waraqa-nginx; do
+  old_ids="$(docker images "$repo" --format '{{.CreatedAt}}|{{.ID}}' 2>/dev/null | sort -r | awk -F'|' -v n="$KEEP_IMAGE_TAGS" 'NR>n{print $2}' | sort -u)"
+  if [[ -n "$old_ids" ]]; then
+    # shellcheck disable=SC2086
+    docker rmi $old_ids >/dev/null 2>&1 || true
+  fi
+done
+docker image prune -f >/dev/null 2>&1 || true
 docker builder prune -f --filter "until=48h" >/dev/null 2>&1 || true
 df -h / | tail -1 || true
 

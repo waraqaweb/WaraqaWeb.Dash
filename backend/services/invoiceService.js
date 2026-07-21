@@ -3240,12 +3240,13 @@ class InvoiceService {
    * domino-shift engine has back-filled each paid invoice's freed capacity with
    * later delivered/scheduled classes.
    *
-   * A credit adjustment (class_deleted / duration_changed / manual credit) on a
-   * PAID invoice is "settled by delivery" when that invoice's paid capacity is
-   * fully backed by real classes (shortfall <= 1 minute). In that case the
-   * guardian already received the service they paid for (a later class shifted
-   * in to replace the removed one), so the credit is confirmed — we only flip
-   * the `settled` flag and NEVER move guardian hours or paid totals.
+   * A credit adjustment (class_deleted / class_cancelled / duration_changed /
+   * manual credit) on a PAID invoice is "settled by delivery" when that
+   * invoice's paid capacity is fully backed by real classes (shortfall
+   * <= 1 minute). In that case the guardian already received the service they
+   * paid for (a later class shifted in to replace the removed one), so the
+   * credit is confirmed — we only flip the `settled` flag and NEVER move
+   * guardian hours or paid totals.
    *
    * Credits on invoices that are NOT fully backed are left untouched and
    * reported under `stillOwed`, so nothing the guardian is genuinely owed gets
@@ -3260,7 +3261,10 @@ class InvoiceService {
    */
   static async reconcileGuardianCredits(guardianId, { adminUserId = null, dryRun = true } = {}) {
     const EPS_MIN = 1;
-    const RECONCILABLE_REASONS = ['class_deleted', 'duration_changed', 'manual'];
+    // A cancelled/removed class credit (class_cancelled) is settled by delivery
+    // back-fill exactly like a deleted class — both represent an undelivered
+    // class removed from the invoice that a later shifted-in class can cover.
+    const RECONCILABLE_REASONS = ['class_deleted', 'duration_changed', 'class_cancelled', 'manual'];
     const round3 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 1000) / 1000;
     const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
 

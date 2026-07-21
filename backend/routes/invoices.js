@@ -554,43 +554,89 @@ router.get('/public/:slug', async (req, res) => {
       await invoice.save();
     }
 
-    const snapshot = invoice.getExportSnapshot({ includeActivity: false });
+    // Guardian invoices are chain-rebalanced (classes flow across the invoice
+    // chain to fill each invoice to its capacity). The admin dashboard and the
+    // emailed invoice both render this rebalanced list, so the guardian-facing
+    // public link must show exactly the same classes and billing period.
+    // Otherwise the guardian sees a stale set of rows (old dates / outdated
+    // statuses) that no longer matches the period the invoice actually bills.
+    // This only changes the displayed rows/period — the financial totals below
+    // come from the stored invoice and are never recomputed from this list.
+    let rebalancedItems = null;
+    const isManualInvoice = invoice?.billingType === 'manual' || invoice?.generationSource === 'manual';
+    if (invoice.type === 'guardian_invoice' && !isManualInvoice) {
+      try {
+        const dynamicClasses = await InvoiceService.buildDynamicClassListRebalanced(invoice);
+        const dynItems = Array.isArray(dynamicClasses?.items) ? dynamicClasses.items : [];
+        if (dynItems.length > 0) {
+          // The rebalance engine already applied guardian billing waivers:
+          // classes hidden from the guardian carry hiddenFromGuardian (removed
+          // here for privacy) and waived-but-visible classes already carry
+          // amount 0. No extra waiver post-processing is needed on this path.
+          rebalancedItems = dynItems.filter((it) => it && it.hiddenFromGuardian !== true);
+
+          // Sync the shown billing period to the classes actually rendered.
+          const dates = rebalancedItems
+            .map((it) => new Date(it.date))
+            .filter((d) => !Number.isNaN(d.getTime()));
+          if (dates.length) {
+            const minDate = new Date(Math.min(...dates.map((d) => d.getTime())));
+            const maxDate = new Date(Math.max(...dates.map((d) => d.getTime())));
+            invoice.billingPeriod = invoice.billingPeriod || {};
+            invoice.billingPeriod.startDate = minDate;
+            invoice.billingPeriod.endDate = maxDate;
+          }
+        }
+      } catch (dynErr) {
+        console.warn('[public invoice] rebalanced class build failed:', dynErr?.message || dynErr);
+      }
+    }
+
+    const snapshot = invoice.getExportSnapshot(
+      rebalancedItems
+        ? { includeActivity: false, itemsOverride: rebalancedItems }
+        : { includeActivity: false }
+    );
     snapshot.invoiceName = invoice.invoiceName;
     snapshot.invoiceSlug = invoice.invoiceSlug;
 
-    // Apply per-class guardian billing waivers to the public view:
+    // Fallback path only (manual invoices or if the rebalance engine failed):
+    // the stored items are rendered, so per-class guardian billing waivers must
+    // still be applied here:
     //  - Classes hidden from the guardian are removed entirely (privacy).
     //  - Waived-but-visible classes are marked and shown at $0 (no charge).
     // Displayed financial totals come straight from the stored snapshot /
     // adjustment ledger, so mutating the row list here is purely cosmetic and
     // never corrupts a paid invoice's amounts.
-    try {
-      const waiverByClassId = new Map();
-      (Array.isArray(invoice.items) ? invoice.items : []).forEach((entry) => {
-        const cls = entry && entry.class;
-        const classId = cls && cls._id ? String(cls._id) : null;
-        const gw = cls && cls.billingWaiver && cls.billingWaiver.guardian;
-        if (classId && gw && gw.waived === true) {
-          waiverByClassId.set(classId, {
-            hidden: gw.hiddenFromGuardian === true,
-            reason: typeof gw.reason === 'string' ? gw.reason : ''
-          });
-        }
-      });
+    if (!rebalancedItems) {
+      try {
+        const waiverByClassId = new Map();
+        (Array.isArray(invoice.items) ? invoice.items : []).forEach((entry) => {
+          const cls = entry && entry.class;
+          const classId = cls && cls._id ? String(cls._id) : null;
+          const gw = cls && cls.billingWaiver && cls.billingWaiver.guardian;
+          if (classId && gw && gw.waived === true) {
+            waiverByClassId.set(classId, {
+              hidden: gw.hiddenFromGuardian === true,
+              reason: typeof gw.reason === 'string' ? gw.reason : ''
+            });
+          }
+        });
 
-      if (waiverByClassId.size > 0 && Array.isArray(snapshot.items)) {
-        snapshot.items = snapshot.items
-          .map((item) => {
-            const classId = item && item.classId ? String(item.classId) : null;
-            const waiver = classId ? waiverByClassId.get(classId) : null;
-            if (!waiver) return item;
-            if (waiver.hidden) return null; // remove hidden rows
-            return { ...item, amount: 0, waivedForGuardian: true, waiverReason: waiver.reason };
-          })
-          .filter(Boolean);
+        if (waiverByClassId.size > 0 && Array.isArray(snapshot.items)) {
+          snapshot.items = snapshot.items
+            .map((item) => {
+              const classId = item && item.classId ? String(item.classId) : null;
+              const waiver = classId ? waiverByClassId.get(classId) : null;
+              if (!waiver) return item;
+              if (waiver.hidden) return null; // remove hidden rows
+              return { ...item, amount: 0, waivedForGuardian: true, waiverReason: waiver.reason };
+            })
+            .filter(Boolean);
+        }
+      } catch (waiverErr) {
+        console.warn('[public invoice] waiver post-processing failed:', waiverErr.message);
       }
-    } catch (waiverErr) {
-      console.warn('[public invoice] waiver post-processing failed:', waiverErr.message);
     }
 
     res.json({ success: true, invoice: snapshot, readOnly: true });

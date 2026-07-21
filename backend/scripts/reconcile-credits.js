@@ -29,7 +29,7 @@ const getArg = (name) => {
 };
 const onlyGuardian = getArg('--guardian');
 const apply = argv.includes('--apply');
-const UNSETTLED_REASONS = ['class_deleted', 'duration_changed', 'manual'];
+const UNSETTLED_REASONS = ['class_deleted', 'duration_changed', 'class_cancelled', 'manual'];
 
 async function main() {
   await mongoose.connect(process.env.MONGODB_URI || 'mongodb://mongo:27017/waraqadb');

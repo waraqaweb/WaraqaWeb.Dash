@@ -27,6 +27,7 @@ import {
   Ban,
   Eye,
   EyeOff,
+  CheckCircle2,
   RotateCcw
 } from 'lucide-react';
 
@@ -3111,18 +3112,11 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
             </div>
           )}
 
-          {/* All credits reconciled confirmation (shown after settling clears the banner) */}
+          {/* Compact confirmation once all covered credits are settled (no button needed) */}
           {isAdmin && guardianUnsettled.length === 0 && reconcileResult && !reconcileResult.error && (reconcileResult.settled?.length > 0) && (
-            <div className="mx-4 mb-4 sm:mx-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 px-5 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
-                <Sparkles className="h-4 w-4" />
-                Credits reconciled
-              </div>
-              <div className="mt-1 text-xs text-emerald-700">
-                Settled {reconcileResult.settled.length} credit(s) already covered by later classes shifted into the paid invoice(s).
-                {reconcileResult.stillOwed?.length ? ` ${reconcileResult.stillOwed.length} credit(s) are still genuinely owed and were left untouched.` : ''}
-                {' '}Guardian hours unchanged ({reconcileResult.hoursAfter}h).
-              </div>
+            <div className="mx-4 mb-4 sm:mx-8 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-2 text-xs font-medium text-emerald-700">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span>Credits settled · hours unchanged · no action needed</span>
             </div>
           )}
 

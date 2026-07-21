@@ -1100,7 +1100,16 @@ invoiceSchema.methods.getExportSnapshot = function(options = {}) {
     return trimmed || null;
   };
 
-  (Array.isArray(this.items) ? this.items : []).forEach((entry, index) => {
+  // Callers (e.g. the guardian-facing public invoice route) may pass a
+  // pre-computed, chain-rebalanced class list so the displayed rows/statuses
+  // match the admin dashboard and the emailed invoice. This only affects the
+  // rendered line items, day/student/teacher aggregation and the class-date
+  // range — the stored financial totals below are never recomputed from it.
+  const sourceItems = Array.isArray(options.itemsOverride)
+    ? options.itemsOverride
+    : (Array.isArray(this.items) ? this.items : []);
+
+  sourceItems.forEach((entry, index) => {
     if (!entry) return;
     const item = entry.toObject ? entry.toObject() : entry;
 
@@ -1413,7 +1422,7 @@ invoiceSchema.methods.getExportSnapshot = function(options = {}) {
       uniqueDays: uniqueDayEntries
     },
     counts: {
-      lessonCount: Array.isArray(this.items) ? this.items.length : 0,
+      lessonCount: sourceItems.length,
       studentCount: studentTotals.length,
       teacherCount: teacherTotals.length,
       dayCount: uniqueDayEntries.length

@@ -45,7 +45,7 @@ const guardianHoursService = require('../services/guardianHoursService');
 
 // ── settings ────────────────────────────────────────────────────────────────
 const EPS_MIN = 1;          // 1-minute tolerance for capacity comparisons
-const UNSETTLED_REASONS = ['class_deleted', 'duration_changed', 'manual'];
+const UNSETTLED_REASONS = ['class_deleted', 'duration_changed', 'class_cancelled', 'manual'];
 
 // ── arg parsing ───────────────────────────────────────────────────────────--
 const argv = process.argv.slice(2);

@@ -157,6 +157,45 @@ const ELIGIBILITY_TONES = {
   other: 'bg-slate-100 text-slate-600 border-slate-200',
 };
 
+// Degree/subject-count/credential ranking used ONLY to order the "Under
+// review" stage, so admins see the strongest applicants first. The `degree`
+// field is free-form text synced from the Google Form (no fixed enum), so we
+// rank it via keyword matching rather than an exact value match.
+const DEGREE_RANK_PATTERNS = [
+  { rank: 5, patterns: [/ph\.?\s?d/i, /doctor/i] },
+  { rank: 4, patterns: [/master/i, /\bm\.?a\.?\b/i, /\bm\.?sc\.?\b/i, /magist(er|ir)/i] },
+  { rank: 3, patterns: [/bachelor/i, /\bb\.?a\.?\b/i, /\bb\.?sc\.?\b/i, /licen[cs]e/i, /undergraduate/i] },
+  { rank: 2, patterns: [/diploma/i, /associate/i] },
+  { rank: 1, patterns: [/high\s?school/i, /secondary/i] },
+];
+
+const rankDegree = (degreeText) => {
+  const text = String(degreeText || '').trim();
+  if (!text) return 0;
+  const match = DEGREE_RANK_PATTERNS.find(({ patterns }) => patterns.some((re) => re.test(text)));
+  return match ? match.rank : 1; // unrecognized-but-present text still outranks having no degree at all
+};
+
+// Al-Azhar/Ijazah credentials outrank other backgrounds; holding both outranks either alone.
+const ELIGIBILITY_RANK = { both: 3, al_azhar: 2, ijazah: 2, other: 1 };
+const rankEligibility = (path) => ELIGIBILITY_RANK[path] || 0;
+
+// Orders candidates in the "Under review" stage strongest-first:
+// 1) highest academic degree, 2) most subjects they can teach,
+// 3) Al-Azhar/Ijazah credential holders, 4) most recent submission (tie-breaker).
+const sortUnderReviewCandidates = (rows) => [...rows].sort((a, b) => {
+  const aEdu = a?.application?.education || {};
+  const bEdu = b?.application?.education || {};
+  const degreeDiff = rankDegree(bEdu.degree) - rankDegree(aEdu.degree);
+  if (degreeDiff !== 0) return degreeDiff;
+  const subjectsDiff = (b?.application?.teachingProfile?.subjectsCanTeach?.length || 0)
+    - (a?.application?.teachingProfile?.subjectsCanTeach?.length || 0);
+  if (subjectsDiff !== 0) return subjectsDiff;
+  const eligibilityDiff = rankEligibility(bEdu.eligibilityPath) - rankEligibility(aEdu.eligibilityPath);
+  if (eligibilityDiff !== 0) return eligibilityDiff;
+  return new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0);
+});
+
 // Stable palette so each selection label keeps a consistent color across cards.
 const SELECTION_PALETTE = [
   'bg-sky-50 text-sky-700 border-sky-200',
@@ -1037,8 +1076,15 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
     });
   }, [campaignFilter, items, statusFilter, searchTerm]);
 
+  // Strongest-applicant-first ordering, applied only to the "Under review"
+  // stage (see sortUnderReviewCandidates above). Other stages/tabs keep the
+  // default order.
+  const sortedItems = useMemo(() => (
+    statusFilter === 'under_review' ? sortUnderReviewCandidates(filteredItems) : filteredItems
+  ), [filteredItems, statusFilter]);
+
   const exportToExcel = () => {
-    const rows = filteredItems;
+    const rows = sortedItems;
     if (!rows.length) return;
     const headers = [
       'Name', 'Email', 'Phone', 'WhatsApp', 'Gender', 'Birth date', 'Address',
@@ -1129,7 +1175,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                   </select>
                   <button type="button" onClick={load} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"><RefreshCw className="h-3 w-3" />Refresh</button>
                   <button type="button" onClick={() => setViewMode((mode) => (mode === 'table' ? 'cards' : 'table'))} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">{viewMode === 'table' ? <><LayoutGrid className="h-3 w-3" />Cards</> : <><Table2 className="h-3 w-3" />Table</>}</button>
-                  <button type="button" onClick={exportToExcel} disabled={!filteredItems.length} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"><FileSpreadsheet className="h-3 w-3" />Export</button>
+                  <button type="button" onClick={exportToExcel} disabled={!sortedItems.length} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"><FileSpreadsheet className="h-3 w-3" />Export</button>
                 </div>
               </div>
 
@@ -1180,7 +1226,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                 </div>
               ) : null}
               <ApplicantTable
-                rows={filteredItems}
+                rows={sortedItems}
                 openViewer={openViewer}
                 onQuickStage={handleQuickStage}
                 quickStageId={quickStageId}
@@ -1193,7 +1239,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
             </>
           ) : (
           <div className="space-y-3">
-          {filteredItems.length ? filteredItems.map((item) => {
+          {sortedItems.length ? sortedItems.map((item) => {
             const isOpen = expandedId === item.id;
             const source = item.source || 'public';
             const draft = drafts[item.id] || createDraftFromItem(item);

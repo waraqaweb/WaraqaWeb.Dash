@@ -127,15 +127,25 @@ export const AuthProvider = ({ children }) => {
     };
   }, [socket]);
 
-  // If the backend tells us the token is invalid/expired during an active session,
-  // clear auth state so the UI can redirect back to login.
+  // If the backend tells us the token is invalid/expired/deactivated/locked during
+  // an active session, clear auth state so the UI can redirect back to login.
+  // Without this, a deactivated/locked account keeps its optimistically-cached
+  // user in place while every API call 401s, leaving the dashboard stuck in a
+  // broken "failed to load" state instead of bouncing back to the login screen.
   useEffect(() => {
     const interceptorId = api.interceptors.response.use(
       (response) => response,
       (error) => {
         const status = error?.response?.status;
         const apiError = error?.response?.data?.error || error?.authErrorCode;
-        if (status === 401 && (apiError === 'INVALID_TOKEN' || apiError === 'TOKEN_EXPIRED')) {
+        const forcesLogout = status === 401 && [
+          'INVALID_TOKEN',
+          'TOKEN_EXPIRED',
+          'ACCOUNT_DEACTIVATED',
+          'ACCOUNT_LOCKED',
+          'USER_NOT_FOUND',
+        ].includes(apiError);
+        if (forcesLogout) {
           try { localStorage.removeItem('token'); } catch (e) {}
           try { localStorage.removeItem(USER_CACHE_KEY); } catch (e) {}
           try { window.sessionStorage?.removeItem(__entitySearchCacheUserScopeKey); } catch (e) {}

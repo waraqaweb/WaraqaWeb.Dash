@@ -3236,6 +3236,138 @@ class InvoiceService {
   }
 
   /**
+   * Reconcile a guardian's unsettled paid-invoice credits by confirming the
+   * domino-shift engine has back-filled each paid invoice's freed capacity with
+   * later delivered/scheduled classes.
+   *
+   * A credit adjustment (class_deleted / duration_changed / manual credit) on a
+   * PAID invoice is "settled by delivery" when that invoice's paid capacity is
+   * fully backed by real classes (shortfall <= 1 minute). In that case the
+   * guardian already received the service they paid for (a later class shifted
+   * in to replace the removed one), so the credit is confirmed — we only flip
+   * the `settled` flag and NEVER move guardian hours or paid totals.
+   *
+   * Credits on invoices that are NOT fully backed are left untouched and
+   * reported under `stillOwed`, so nothing the guardian is genuinely owed gets
+   * hidden.
+   *
+   * Read-only when `dryRun` is true (the default). Idempotent (already-settled
+   * credits are skipped) and reversible (see the /unsettle endpoint).
+   *
+   * @param {string|Object} guardianId
+   * @param {{ adminUserId?: string, dryRun?: boolean }} [opts]
+   * @returns {Promise<Object>} summary
+   */
+  static async reconcileGuardianCredits(guardianId, { adminUserId = null, dryRun = true } = {}) {
+    const EPS_MIN = 1;
+    const RECONCILABLE_REASONS = ['class_deleted', 'duration_changed', 'manual'];
+    const round3 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 1000) / 1000;
+    const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
+
+    const gId = guardianId?._id || guardianId;
+    if (!gId) throw new Error('guardianId is required');
+
+    const guardianBefore = await User.findById(gId).select('guardianInfo.totalHours role').lean();
+    const hoursBefore = Number(guardianBefore?.guardianInfo?.totalHours || 0);
+
+    const summary = {
+      guardianId: String(gId),
+      dryRun: Boolean(dryRun),
+      hoursBefore: round3(hoursBefore),
+      hoursAfter: null,
+      hoursChanged: false,
+      settled: [],
+      stillOwed: [],
+      invoices: []
+    };
+
+    // 1. Domino truth: what each invoice's paid capacity is actually backed by.
+    const chain = await InvoiceService.rebalanceGuardianInvoices(gId);
+    const rebById = new Map();
+    for (const inv of chain.invoices || []) rebById.set(String(inv.invoiceId), inv);
+
+    // 2. Load full paid-invoice docs so we can persist settle flags.
+    const paidInvoices = await Invoice.find({
+      guardian: gId,
+      type: 'guardian_invoice',
+      deleted: { $ne: true },
+      status: 'paid'
+    });
+
+    for (const inv of paidInvoices) {
+      const reb = rebById.get(String(inv._id));
+      const capacityMin = reb && Number.isFinite(reb.capacityMinutes) ? reb.capacityMinutes : null;
+      const usedMin = reb ? Number(reb.usedMinutes || 0) : 0;
+      const shortfallMin = capacityMin != null ? Math.max(0, capacityMin - usedMin) : 0;
+      const fullyBacked = shortfallMin <= EPS_MIN;
+
+      const unsettled = (inv.adjustments || []).filter(
+        (a) => a && a.type === 'credit' && a.settled !== true && RECONCILABLE_REASONS.includes(a.reason)
+      );
+      if (!unsettled.length) continue;
+
+      const invLabel = inv.invoiceNumber || inv.invoiceSlug || String(inv._id);
+      summary.invoices.push({
+        invoiceId: String(inv._id),
+        invoiceNumber: invLabel,
+        capacityHours: capacityMin != null ? round3(capacityMin / 60) : null,
+        backfilledHours: round3(usedMin / 60),
+        shortfallHours: round3(shortfallMin / 60),
+        fullyBacked
+      });
+
+      let dirty = false;
+      for (const adj of unsettled) {
+        const entry = {
+          invoiceId: String(inv._id),
+          invoiceNumber: invLabel,
+          adjustmentId: String(adj._id),
+          reason: adj.reason,
+          description: adj.description,
+          hours: round3(Math.abs(Number(adj.hoursDelta || 0))),
+          amount: round2(Math.abs(Number(adj.amountDelta || 0)))
+        };
+        if (fullyBacked) {
+          if (!dryRun) {
+            adj.settled = true;
+            adj.settledAt = new Date();
+            adj.settledBy = adminUserId || undefined;
+            adj.settledInInvoiceId = inv._id; // back-filled within the same paid invoice
+            dirty = true;
+          }
+          summary.settled.push(entry);
+        } else {
+          summary.stillOwed.push({ ...entry, shortfallHours: round3(shortfallMin / 60) });
+        }
+      }
+
+      if (dirty && !dryRun) {
+        inv._skipRecalculate = true; // settling must never recompute paid totals
+        await inv.save();
+        try {
+          const settledIds = summary.settled
+            .filter((s) => s.invoiceId === String(inv._id))
+            .map((s) => s.adjustmentId);
+          await inv.recordAuditEntry({
+            action: 'update',
+            actorId: adminUserId,
+            diff: { creditsReconciled: settledIds },
+            meta: { description: `Reconciled ${settledIds.length} credit(s) settled by delivery back-fill` }
+          });
+        } catch (e) { /* audit is best-effort */ }
+      }
+    }
+
+    // 3. Verify guardian hours were NOT moved (settle only flips a flag).
+    const guardianAfter = await User.findById(gId).select('guardianInfo.totalHours').lean();
+    const hoursAfter = Number(guardianAfter?.guardianInfo?.totalHours || 0);
+    summary.hoursAfter = round3(hoursAfter);
+    summary.hoursChanged = Math.abs(hoursAfter - hoursBefore) > 0.01;
+
+    return summary;
+  }
+
+  /**
    * Get the rebalanced dynamic class list for a SINGLE invoice.
    * This calls rebalanceGuardianInvoices, then returns just the data for
    * the requested invoice. This replaces the old buildDynamicClassList

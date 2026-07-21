@@ -217,6 +217,8 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
   const [settlingAdj, setSettlingAdj] = useState(null); // adjustment _id being settled/unsettled
   const [showAdjDetails, setShowAdjDetails] = useState(false);
   const [guardianUnsettled, setGuardianUnsettled] = useState([]); // unsettled adjustments from OTHER invoices
+  const [reconciling, setReconciling] = useState(false); // reconcile-credits request in flight
+  const [reconcileResult, setReconcileResult] = useState(null); // last reconcile summary
   const [siblings, setSiblings] = useState({ prev: null, next: null }); // prev/next invoice for same guardian
   // Cache teacher names by id to avoid losing labels if snapshots are missing in subsequent updates
   const teacherNameCacheRef = useRef({});
@@ -1907,6 +1909,32 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
     }
   }, [invoice?._id]);
 
+  // Admin: reconcile the guardian's unsettled paid-invoice credits. Confirms each
+  // credit is already covered by a later class that shifted into the paid invoice
+  // (domino back-fill) and settles it. Credits still genuinely owed are left
+  // untouched. Only flips the `settled` flag — never moves guardian hours.
+  const handleReconcileCredits = useCallback(async () => {
+    const guardianId = invoice?.guardian?._id || invoice?.guardian;
+    if (!guardianId) return;
+    setReconciling(true);
+    setReconcileResult(null);
+    try {
+      const { data } = await api.post(`/invoices/guardian/${guardianId}/reconcile-credits`);
+      setReconcileResult(data);
+      // Refresh the unsettled list so settled credits drop off the banner.
+      try {
+        const { data: ref } = await api.get(`/invoices/guardian/${guardianId}/unsettled-adjustments`);
+        if (Array.isArray(ref?.adjustments)) {
+          setGuardianUnsettled(ref.adjustments.filter((a) => String(a.invoiceId) !== String(invoice?._id)));
+        }
+      } catch { /* ignore refresh error */ }
+    } catch (err) {
+      setReconcileResult({ error: err?.response?.data?.message || 'Failed to reconcile credits' });
+    } finally {
+      setReconciling(false);
+    }
+  }, [invoice?.guardian, invoice?._id]);
+
   // Admin: waive / recount / toggle-visibility of a single class for the guardian.
   const handleToggleGuardianWaiver = useCallback(async (classId, patch) => {
     if (!isAdmin || !classId) return;
@@ -3043,22 +3071,57 @@ const InvoiceViewModal = ({ invoiceSlug, invoiceId, initialInvoice = null, onClo
 
           {/* Unsettled credits banner from other paid invoices */}
           {isAdmin && guardianUnsettled.length > 0 && (
-            <div className="mx-4 mb-4 sm:mx-8 rounded-2xl border border-emerald-200 bg-emerald-50/50 px-5 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+            <div className="mx-4 mb-4 sm:mx-8 rounded-2xl border border-amber-200 bg-amber-50/60 px-5 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
                 <Sparkles className="h-4 w-4" />
                 Guardian has unsettled credits from paid invoices
               </div>
               <div className="mt-2 space-y-1">
                 {guardianUnsettled.map((adj) => (
-                  <div key={adj._id} className="flex items-center gap-2 text-xs text-emerald-700">
+                  <div key={adj._id} className="flex items-center gap-2 text-xs text-amber-700">
                     <span className="font-medium">{adj.invoiceNumber}:</span>
                     <span>{adj.description}</span>
                     <span className="font-semibold">${Math.abs(adj.amountDelta || 0).toFixed(2)}</span>
                   </div>
                 ))}
               </div>
-              <div className="mt-2 text-xs font-semibold text-emerald-800">
-                Total unsettled credit: ${guardianUnsettled.reduce((s, a) => s + Math.abs(a.amountDelta || 0), 0).toFixed(2)}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-semibold text-amber-800">
+                  Total unsettled credit: ${guardianUnsettled.reduce((s, a) => s + Math.abs(a.amountDelta || 0), 0).toFixed(2)}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleReconcileCredits}
+                  disabled={reconciling}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-200 disabled:opacity-60"
+                  title="Confirm each credit is already covered by a later class shifted into the paid invoice, then settle it. Nothing still owed is settled and guardian hours stay unchanged."
+                >
+                  {reconciling ? 'Reconciling…' : 'Reconcile & settle covered credits'}
+                </button>
+              </div>
+              {reconcileResult && !reconcileResult.error && (
+                <div className="mt-2 text-xs text-amber-700">
+                  Settled {reconcileResult.settled?.length || 0} · still owed {reconcileResult.stillOwed?.length || 0}
+                  {reconcileResult.hoursChanged ? ' · ⚠ hours changed — check server logs' : ' · guardian hours unchanged'}
+                </div>
+              )}
+              {reconcileResult?.error && (
+                <div className="mt-2 text-xs font-semibold text-red-600">{reconcileResult.error}</div>
+              )}
+            </div>
+          )}
+
+          {/* All credits reconciled confirmation (shown after settling clears the banner) */}
+          {isAdmin && guardianUnsettled.length === 0 && reconcileResult && !reconcileResult.error && (reconcileResult.settled?.length > 0) && (
+            <div className="mx-4 mb-4 sm:mx-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 px-5 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+                <Sparkles className="h-4 w-4" />
+                Credits reconciled
+              </div>
+              <div className="mt-1 text-xs text-emerald-700">
+                Settled {reconcileResult.settled.length} credit(s) already covered by later classes shifted into the paid invoice(s).
+                {reconcileResult.stillOwed?.length ? ` ${reconcileResult.stillOwed.length} credit(s) are still genuinely owed and were left untouched.` : ''}
+                {' '}Guardian hours unchanged ({reconcileResult.hoursAfter}h).
               </div>
             </div>
           )}

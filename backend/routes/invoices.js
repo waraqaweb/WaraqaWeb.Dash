@@ -1680,7 +1680,7 @@ router.get('/guardian/:guardianId/unsettled-adjustments', authenticateToken, req
     const invoices = await Invoice.find({
       guardian: req.params.guardianId,
       'adjustments.0': { $exists: true }
-    }).select('invoiceNumber adjustments guardianFinancial.hourlyRate status').lean();
+    }).select('invoiceNumber invoiceSlug adjustments guardianFinancial.hourlyRate status').lean();
 
     const unsettled = [];
     for (const inv of invoices) {
@@ -1689,7 +1689,7 @@ router.get('/guardian/:guardianId/unsettled-adjustments', authenticateToken, req
           unsettled.push({
             ...adj,
             invoiceId: inv._id,
-            invoiceNumber: inv.invoiceNumber,
+            invoiceNumber: inv.invoiceNumber || inv.invoiceSlug,
             invoiceStatus: inv.status
           });
         }
@@ -1701,6 +1701,33 @@ router.get('/guardian/:guardianId/unsettled-adjustments', authenticateToken, req
   } catch (err) {
     console.error('Get unsettled adjustments error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch unsettled adjustments' });
+  }
+});
+
+// -----------------------------------------------------------------
+// Reconcile a guardian's unsettled paid-invoice credits by delivery.
+// Settles only credits whose paid invoice is fully backed by real
+// (delivered/scheduled) classes via the domino-shift engine. Credits
+// that are still genuinely owed are left untouched. Only flips the
+// `settled` flag — never moves guardian hours or paid totals.
+// Pass ?dryRun=1 to preview without persisting.
+// -----------------------------------------------------------------
+router.post('/guardian/:guardianId/reconcile-credits', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true' || req.body?.dryRun === true;
+    const summary = await InvoiceService.reconcileGuardianCredits(req.params.guardianId, {
+      adminUserId: req.user._id,
+      dryRun
+    });
+    if (summary.hoursChanged) {
+      // Settling only flips a flag, so hours must be identical before/after.
+      // If they ever differ, surface it loudly for investigation.
+      console.error('[reconcile-credits] guardian hours changed unexpectedly', summary);
+    }
+    res.json({ success: true, ...summary });
+  } catch (err) {
+    console.error('Reconcile guardian credits error:', err);
+    res.status(500).json({ success: false, message: 'Failed to reconcile guardian credits' });
   }
 });
 

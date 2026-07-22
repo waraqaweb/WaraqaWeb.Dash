@@ -493,7 +493,6 @@ const resolveMedia = (url, mimeType = '', hint = '') => {
       return {
         kind: isVideo ? 'video' : 'audio',
         src: `https://drive.google.com/uc?export=download&id=${driveId}`,
-        fallback: preview,
         download: raw,
       };
     }
@@ -508,9 +507,12 @@ const resolveMedia = (url, mimeType = '', hint = '') => {
 // Fully custom audio/video player (own play/pause + seek bar + 5s/10s jump
 // buttons all drawn inside the same dark box) instead of relying on the
 // browser's native <audio>/<video> controls chrome, whose own transport
-// buttons vary by browser and don't include a jump control. `onFail` lets
-// the viewer swap to the Drive preview iframe when direct streaming isn't
-// possible (file not shared publicly).
+// buttons vary by browser and don't include a jump control. `onFail` tells
+// the viewer direct streaming didn't work (e.g. the file isn't shared
+// publicly) so it can show an inline notice — we deliberately do NOT swap to
+// Google's Drive preview widget here, since that has its own play/seek/
+// volume chrome that would silently replace our controls after ~1s once the
+// file finishes failing to decode.
 function MediaPlayer({ kind, src, min, onFail }) {
   const mediaRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -853,6 +855,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
       index: safeIndex,
       label: file.label,
       scoreKey: file.scoreKey,
+      streamFailed: false,
       ...media,
     });
   };
@@ -865,7 +868,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
       const nextIndex = (prev.index + delta + prev.files.length) % prev.files.length;
       const file = prev.files[nextIndex];
       const media = resolveMedia(file.url, file.mimeType, file.hint);
-      return { ...prev, index: nextIndex, label: file.label, scoreKey: file.scoreKey, ...media };
+      return { ...prev, index: nextIndex, label: file.label, scoreKey: file.scoreKey, streamFailed: false, ...media };
     });
   };
 
@@ -1613,13 +1616,23 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
               {viewer.kind === 'image' ? (
                 <img src={viewer.src} alt={viewer.label} className={viewerMin ? 'h-28 w-full object-cover' : 'max-h-[68vh] w-auto object-contain'} />
               ) : viewer.kind === 'audio' || viewer.kind === 'video' ? (
-                <MediaPlayer
-                  key={viewer.src}
-                  kind={viewer.kind}
-                  src={viewer.src}
-                  min={viewerMin}
-                  onFail={viewer.fallback ? () => setViewer((current) => (current && current.fallback ? { ...current, kind: 'iframe', src: current.fallback, fallback: null } : current)) : undefined}
-                />
+                viewer.streamFailed ? (
+                  <div className={`flex w-full flex-col items-center justify-center gap-2 rounded-xl bg-slate-900 text-center text-white ${viewerMin ? 'p-4' : 'p-8'}`}>
+                    <p className="text-sm font-medium">Can&apos;t stream this file directly</p>
+                    <p className="text-xs text-white/60">The Drive file may not be shared publicly yet (sharing must be &ldquo;Anyone with the link&rdquo;).</p>
+                    <a href={viewer.download} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold hover:bg-white/25">
+                      Open in Drive <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  </div>
+                ) : (
+                  <MediaPlayer
+                    key={viewer.src}
+                    kind={viewer.kind}
+                    src={viewer.src}
+                    min={viewerMin}
+                    onFail={() => setViewer((current) => (current ? { ...current, streamFailed: true } : current))}
+                  />
+                )
               ) : (
                 <div className="w-full">
                   <iframe title={viewer.label} src={viewer.src} className={viewerMin ? 'h-44 w-full' : 'h-[64vh] w-full rounded-lg'} allow="autoplay" />

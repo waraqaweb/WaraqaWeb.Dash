@@ -482,17 +482,23 @@ const resolveMedia = (url, mimeType = '', hint = '') => {
   if (/drive\.google\.com|docs\.google\.com/.test(lower)) {
     const driveId = getDriveId(raw);
     const preview = driveId ? `https://drive.google.com/file/d/${driveId}/preview` : raw;
-    // Audio/video recordings: stream the file directly so the native player
-    // (with jump controls) works. If direct streaming fails — e.g. the file
-    // isn't shared publicly — the viewer falls back to the Drive preview
-    // iframe, which is the previous behaviour.
-    const generic = !type || type === 'application/octet-stream';
-    const isAudio = type.startsWith('audio/') || (generic && hint === 'audio');
-    const isVideo = type.startsWith('video/') || (generic && hint === 'video');
+    // Audio/video recordings: stream the file directly so our custom player
+    // (with jump controls) works. `hint` comes from the form field itself
+    // (Intro/Quran/Topic uploads are always voice recordings) and is trusted
+    // over `mimeType`, because some recorders/mobile uploads tag audio-only
+    // clips as a video/* container — trusting mimeType there would put the
+    // file in a real <video> tag, and Chrome silently replaces a controls-
+    // less <video> with no visual track with its own default playback UI a
+    // moment after metadata loads (looks like "another player takes over").
+    // If direct streaming genuinely fails (e.g. file not shared publicly),
+    // the viewer falls back to the Drive preview iframe.
+    const isAudio = hint === 'audio' || type.startsWith('audio/');
+    const isVideo = !isAudio && (hint === 'video' || type.startsWith('video/'));
     if (driveId && (isAudio || isVideo)) {
       return {
         kind: isVideo ? 'video' : 'audio',
         src: `https://drive.google.com/uc?export=download&id=${driveId}`,
+        fallback: preview,
         download: raw,
       };
     }
@@ -506,20 +512,21 @@ const resolveMedia = (url, mimeType = '', hint = '') => {
 
 // Fully custom audio/video player (own play/pause + seek bar + 5s/10s jump
 // buttons all drawn inside the same dark box) instead of relying on the
-// browser's native <audio>/<video> controls chrome, whose own transport
-// buttons vary by browser and don't include a jump control. `onFail` tells
-// the viewer direct streaming didn't work (e.g. the file isn't shared
-// publicly) so it can show an inline notice — we deliberately do NOT swap to
-// Google's Drive preview widget here, since that has its own play/seek/
-// volume chrome that would silently replace our controls after ~1s once the
-// file finishes failing to decode.
+// browser's native <audio>/<video> controls chrome. The transport + skip
+// buttons only render once we've confirmed the file actually loaded
+// (onLoadedMetadata) — never before, and never followed by a swap to a
+// different-looking player — so there's no flash of controls that then get
+// replaced. `onFail` tells the viewer direct streaming didn't work so it can
+// silently open the file another way instead.
 function MediaPlayer({ kind, src, min, onFail }) {
   const mediaRef = useRef(null);
+  const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
   useEffect(() => {
+    setReady(false);
     setPlaying(false);
     setCurrentTime(0);
     setDuration(0);
@@ -560,7 +567,7 @@ function MediaPlayer({ kind, src, min, onFail }) {
     onError: onFail,
     onPlay: () => setPlaying(true),
     onPause: () => setPlaying(false),
-    onLoadedMetadata: (event) => setDuration(event.currentTarget.duration),
+    onLoadedMetadata: (event) => { setReady(true); setDuration(event.currentTarget.duration); },
     onTimeUpdate: (event) => setCurrentTime(event.currentTarget.currentTime),
   };
 
@@ -571,20 +578,28 @@ function MediaPlayer({ kind, src, min, onFail }) {
       ) : (
         <audio {...mediaProps} className="hidden" />
       )}
-      <div className="flex items-center gap-2">
-        <button type="button" onClick={togglePlay} title={playing ? 'Pause' : 'Play'} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25">
-          {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-px" />}
-        </button>
-        <input type="range" min={0} max={100} value={progress} onChange={handleSeek} className="h-1 flex-1 accent-white" />
-        <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-white/70">{formatTime(currentTime)}</span>
-      </div>
-      <div className="mt-2 flex items-center justify-center gap-1.5">
-        {[[-10, '−10s'], [-5, '−5s'], [5, '+5s'], [10, '+10s']].map(([seconds, label]) => (
-          <button key={label} type="button" onClick={() => skip(seconds)} title={`Jump ${label}`} className="min-w-[44px] rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-white/20">
-            {label}
-          </button>
-        ))}
-      </div>
+      {!ready ? (
+        <div className={`flex items-center justify-center text-xs text-white/50 ${kind === 'video' ? '' : min ? 'py-8' : 'py-14'}`}>
+          Loading…
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={togglePlay} title={playing ? 'Pause' : 'Play'} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25">
+              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-px" />}
+            </button>
+            <input type="range" min={0} max={100} value={progress} onChange={handleSeek} className="h-1 flex-1 accent-white" />
+            <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-white/70">{formatTime(currentTime)}</span>
+          </div>
+          <div className="mt-2 flex items-center justify-center gap-1.5">
+            {[[-10, '−10s'], [-5, '−5s'], [5, '+5s'], [10, '+10s']].map(([seconds, label]) => (
+              <button key={label} type="button" onClick={() => skip(seconds)} title={`Jump ${label}`} className="min-w-[44px] rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-white/20">
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -855,7 +870,6 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
       index: safeIndex,
       label: file.label,
       scoreKey: file.scoreKey,
-      streamFailed: false,
       ...media,
     });
   };
@@ -868,7 +882,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
       const nextIndex = (prev.index + delta + prev.files.length) % prev.files.length;
       const file = prev.files[nextIndex];
       const media = resolveMedia(file.url, file.mimeType, file.hint);
-      return { ...prev, index: nextIndex, label: file.label, scoreKey: file.scoreKey, streamFailed: false, ...media };
+      return { ...prev, index: nextIndex, label: file.label, scoreKey: file.scoreKey, ...media };
     });
   };
 
@@ -1616,23 +1630,13 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
               {viewer.kind === 'image' ? (
                 <img src={viewer.src} alt={viewer.label} className={viewerMin ? 'h-28 w-full object-cover' : 'max-h-[68vh] w-auto object-contain'} />
               ) : viewer.kind === 'audio' || viewer.kind === 'video' ? (
-                viewer.streamFailed ? (
-                  <div className={`flex w-full flex-col items-center justify-center gap-2 rounded-xl bg-slate-900 text-center text-white ${viewerMin ? 'p-4' : 'p-8'}`}>
-                    <p className="text-sm font-medium">Can&apos;t stream this file directly</p>
-                    <p className="text-xs text-white/60">The Drive file may not be shared publicly yet (sharing must be &ldquo;Anyone with the link&rdquo;).</p>
-                    <a href={viewer.download} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold hover:bg-white/25">
-                      Open in Drive <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  </div>
-                ) : (
-                  <MediaPlayer
-                    key={viewer.src}
-                    kind={viewer.kind}
-                    src={viewer.src}
-                    min={viewerMin}
-                    onFail={() => setViewer((current) => (current ? { ...current, streamFailed: true } : current))}
-                  />
-                )
+                <MediaPlayer
+                  key={viewer.src}
+                  kind={viewer.kind}
+                  src={viewer.src}
+                  min={viewerMin}
+                  onFail={viewer.fallback ? () => setViewer((current) => (current && current.fallback ? { ...current, kind: 'iframe', src: current.fallback, fallback: null } : current)) : undefined}
+                />
               ) : (
                 <div className="w-full">
                   <iframe title={viewer.label} src={viewer.src} className={viewerMin ? 'h-44 w-full' : 'h-[64vh] w-full rounded-lg'} allow="autoplay" />

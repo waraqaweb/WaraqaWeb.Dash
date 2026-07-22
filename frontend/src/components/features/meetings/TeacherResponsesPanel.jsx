@@ -439,20 +439,66 @@ const getDriveId = (url) => {
 };
 
 // Decide how to render a file inline (image/audio/video player or embedded iframe).
-const resolveMedia = (url, mimeType = '') => {
+// `hint` tells us what kind of file a form field is expected to hold (e.g. the
+// three recording uploads are audio) when Drive URLs carry no mime type.
+const resolveMedia = (url, mimeType = '', hint = '') => {
   const raw = String(url || '');
   const lower = raw.toLowerCase();
+  const type = String(mimeType || '').toLowerCase();
   if (/drive\.google\.com|docs\.google\.com/.test(lower)) {
     const driveId = getDriveId(raw);
-    if (driveId) return { kind: 'iframe', src: `https://drive.google.com/file/d/${driveId}/preview`, download: raw };
-    return { kind: 'iframe', src: raw, download: raw };
+    const preview = driveId ? `https://drive.google.com/file/d/${driveId}/preview` : raw;
+    // Audio/video recordings: stream the file directly so the native player
+    // (with jump controls) works. If direct streaming fails — e.g. the file
+    // isn't shared publicly — the viewer falls back to the Drive preview
+    // iframe, which is the previous behaviour.
+    const generic = !type || type === 'application/octet-stream';
+    const isAudio = type.startsWith('audio/') || (generic && hint === 'audio');
+    const isVideo = type.startsWith('video/') || (generic && hint === 'video');
+    if (driveId && (isAudio || isVideo)) {
+      return {
+        kind: isVideo ? 'video' : 'audio',
+        src: `https://drive.google.com/uc?export=download&id=${driveId}`,
+        fallback: preview,
+        download: raw,
+      };
+    }
+    return { kind: 'iframe', src: preview, download: raw };
   }
-  const type = String(mimeType || '').toLowerCase();
   if (type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/i.test(lower)) return { kind: 'image', src: raw, download: raw };
   if (type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|oga)(\?|$)/i.test(lower)) return { kind: 'audio', src: raw, download: raw };
   if (type.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv)(\?|$)/i.test(lower)) return { kind: 'video', src: raw, download: raw };
   return { kind: 'iframe', src: raw, download: raw };
 };
+
+// Native audio/video player with 5s/10s jump controls (works in the mini
+// floating player and expanded view). `onFail` lets the viewer swap to the
+// Drive preview iframe when direct streaming isn't possible.
+function MediaPlayer({ kind, src, min, onFail }) {
+  const mediaRef = useRef(null);
+  const skip = (seconds) => {
+    const el = mediaRef.current;
+    if (!el) return;
+    const next = Math.max(0, el.currentTime + seconds);
+    el.currentTime = Number.isFinite(el.duration) ? Math.min(next, el.duration) : next;
+  };
+  return (
+    <div className={`w-full ${min ? 'p-1.5' : ''}`}>
+      {kind === 'video' ? (
+        <video ref={mediaRef} src={src} controls autoPlay onError={onFail} className={min ? 'h-44 w-full rounded-lg bg-black' : 'max-h-[58vh] w-full rounded-lg bg-black'} />
+      ) : (
+        <audio ref={mediaRef} src={src} controls autoPlay onError={onFail} className="w-full" />
+      )}
+      <div className={`flex items-center justify-center gap-1.5 ${min ? 'mt-1.5' : 'mt-2'}`}>
+        {[[-10, '−10s'], [-5, '−5s'], [5, '+5s'], [10, '+10s']].map(([seconds, label]) => (
+          <button key={label} type="button" onClick={() => skip(seconds)} title={`Jump ${label}`} className="min-w-[44px] rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // Build a WhatsApp deep link from any phone format (Egyptian local numbers default to +20).
 const waLink = (phone) => {
@@ -510,10 +556,10 @@ function ExcelCell({ label, value, span = 1, clamp = true }) {
 
 function FileActionGrid({ item, openViewer, compact = false }) {
   const files = [
-    ['Resume', item.application?.files?.resume, FileBadge2],
-    ['Intro audio', item.application?.files?.englishIntroduction, Play],
-    ['Quran recitation', item.application?.files?.quranRecitation, Play],
-    ['Topic explanation', item.application?.files?.teachingTopicExplanation, Play],
+    ['Resume', item.application?.files?.resume, FileBadge2, 'doc'],
+    ['Intro audio', item.application?.files?.englishIntroduction, Play, 'audio'],
+    ['Quran recitation', item.application?.files?.quranRecitation, Play, 'audio'],
+    ['Topic explanation', item.application?.files?.teachingTopicExplanation, Play, 'audio'],
   ];
   const available = files.filter(([, file]) => file?.url);
   if (!available.length) {
@@ -525,8 +571,8 @@ function FileActionGrid({ item, openViewer, compact = false }) {
   }
   return (
     <div className="flex flex-wrap gap-1.5">
-      {available.map(([label, file, Icon]) => (
-        <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType)} className={`inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/5 text-primary hover:bg-primary/10 ${compact ? 'px-2 py-1 text-[11px] font-medium' : 'px-3 py-1.5 text-xs font-semibold'}`}>
+      {available.map(([label, file, Icon, hint]) => (
+        <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType, hint)} className={`inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/5 text-primary hover:bg-primary/10 ${compact ? 'px-2 py-1 text-[11px] font-medium' : 'px-3 py-1.5 text-xs font-semibold'}`}>
           <Icon className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} /> {compact ? (label === 'Resume' ? 'CV' : label === 'Intro audio' ? 'Intro' : label === 'Quran recitation' ? 'Quran' : 'Topic') : label}
         </button>
       ))}
@@ -579,16 +625,16 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
   const cell = (value) => (value == null || value === '' ? '—' : value);
   const fileButtons = (item) => {
     const files = [
-      ['Resume', item.application?.files?.resume],
-      ['Intro', item.application?.files?.englishIntroduction],
-      ['Recitation', item.application?.files?.quranRecitation],
-      ['Explanation', item.application?.files?.teachingTopicExplanation],
+      ['Resume', item.application?.files?.resume, 'doc'],
+      ['Intro', item.application?.files?.englishIntroduction, 'audio'],
+      ['Recitation', item.application?.files?.quranRecitation, 'audio'],
+      ['Explanation', item.application?.files?.teachingTopicExplanation, 'audio'],
     ].filter(([, file]) => file?.url);
     if (!files.length) return <span className="text-slate-400">—</span>;
     return (
       <div className="flex flex-wrap gap-1">
-        {files.map(([label, file]) => (
-          <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType)} className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10">
+        {files.map(([label, file, hint]) => (
+          <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType, hint)} className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10">
             <Play className="h-3 w-3" />{label}
           </button>
         ))}
@@ -709,10 +755,13 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   const [messagePreview, setMessagePreview] = useState(null);
   const [sendingMessage, setSendingMessage] = useState(false);
 
-  const openViewer = (label, url, mimeType) => {
+  const openViewer = (label, url, mimeType, hint) => {
     if (!url) return;
-    setViewerMin(false);
-    setViewer({ label, ...resolveMedia(url, mimeType) });
+    const media = resolveMedia(url, mimeType, hint);
+    // Recordings open in the small floating player first — use the
+    // maximize button to expand.
+    setViewerMin(media.kind === 'audio' || media.kind === 'video');
+    setViewer({ label, ...media });
   };
 
   const load = async () => {
@@ -1444,10 +1493,14 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
             <div className={viewerMin ? 'overflow-hidden rounded-xl bg-slate-50' : 'flex max-h-[70vh] items-center justify-center overflow-auto rounded-xl bg-slate-50 p-2'}>
               {viewer.kind === 'image' ? (
                 <img src={viewer.src} alt={viewer.label} className={viewerMin ? 'h-28 w-full object-cover' : 'max-h-[68vh] w-auto object-contain'} />
-              ) : viewer.kind === 'audio' ? (
-                <audio src={viewer.src} controls autoPlay className="w-full" />
-              ) : viewer.kind === 'video' ? (
-                <video src={viewer.src} controls autoPlay className={viewerMin ? 'h-44 w-full bg-black' : 'max-h-[68vh] w-full'} />
+              ) : viewer.kind === 'audio' || viewer.kind === 'video' ? (
+                <MediaPlayer
+                  key={viewer.src}
+                  kind={viewer.kind}
+                  src={viewer.src}
+                  min={viewerMin}
+                  onFail={viewer.fallback ? () => setViewer((current) => (current && current.fallback ? { ...current, kind: 'iframe', src: current.fallback, fallback: null } : current)) : undefined}
+                />
               ) : (
                 <div className="w-full">
                   <iframe title={viewer.label} src={viewer.src} className={viewerMin ? 'h-44 w-full' : 'h-[64vh] w-full rounded-lg'} allow="autoplay" />

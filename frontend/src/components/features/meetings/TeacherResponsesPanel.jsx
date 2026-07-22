@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ChevronDown, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, HelpCircle, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Send, Settings2, Star, Table2, UserPlus, X } from 'lucide-react';
+import { Archive, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, HelpCircle, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Pause, Phone, Play, RefreshCw, Save, Send, Settings2, Star, Table2, UserPlus, X } from 'lucide-react';
 import { convertCandidateToTeacher, getRecruitmentEmailTemplates, getSheetSyncConfig, listRecruitmentCampaigns, listTeacherContractResponses, runSheetSyncNow, saveSheetSyncConfig, sendCandidateEmail, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { bumpDomainVersion, makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 import { standardizeSubject } from '../../../utils/subjectStandardization';
@@ -96,6 +96,40 @@ const GENERAL_RATING_FIELDS = [
   ['teachingDemo', 'Topic'],
   ['professionalism', 'Professionalism'],
 ];
+
+// Display order requested for the scorecard: English, Quran, Topic,
+// Professionalism (Quran is skipped when the candidate doesn't teach it —
+// see SUBJECT_RATING_FIELDS / resolveSubjectRatingKeys).
+const RATING_FIELD_ORDER = ['english', 'quran', 'teachingDemo', 'professionalism'];
+const RATING_FIELD_LABELS = Object.fromEntries([...SUBJECT_RATING_FIELDS, ...GENERAL_RATING_FIELDS]);
+const RATING_SUBJECT_KEYS = new Set(SUBJECT_RATING_FIELDS.map(([key]) => key));
+
+// The four uploadable candidate files, in the fixed order they should open/
+// navigate in the viewer. `scoreKey` links a recording to the evaluation
+// field that should be scored while it plays (resume has none).
+const CANDIDATE_FILE_FIELDS = [
+  { key: 'resume', label: 'Resume', shortLabel: 'CV', tableLabel: 'Resume', hint: 'doc', scoreKey: null },
+  { key: 'englishIntroduction', label: 'Intro audio', shortLabel: 'Intro', tableLabel: 'Intro', hint: 'audio', scoreKey: 'english' },
+  { key: 'quranRecitation', label: 'Quran recitation', shortLabel: 'Quran', tableLabel: 'Recitation', hint: 'audio', scoreKey: 'quran' },
+  { key: 'teachingTopicExplanation', label: 'Topic explanation', shortLabel: 'Topic', tableLabel: 'Explanation', hint: 'audio', scoreKey: 'teachingDemo' },
+];
+
+// The ordered, available (has a URL) files for one candidate — shared by the
+// card grid, the spreadsheet table, and the viewer's prev/next navigation so
+// all three agree on ordering.
+const getCandidateFiles = (item) => CANDIDATE_FILE_FIELDS
+  .map((field) => ({ ...field, file: item?.application?.files?.[field.key] }))
+  .filter((entry) => entry.file?.url)
+  .map((entry) => ({
+    key: entry.key,
+    label: entry.label,
+    shortLabel: entry.shortLabel,
+    tableLabel: entry.tableLabel,
+    hint: entry.hint,
+    scoreKey: entry.scoreKey,
+    url: entry.file.url,
+    mimeType: entry.file.mimeType,
+  }));
 
 
 const RATING_FIELDS = [...SUBJECT_RATING_FIELDS, ...GENERAL_RATING_FIELDS];
@@ -471,27 +505,80 @@ const resolveMedia = (url, mimeType = '', hint = '') => {
   return { kind: 'iframe', src: raw, download: raw };
 };
 
-// Native audio/video player with 5s/10s jump controls (works in the mini
-// floating player and expanded view). `onFail` lets the viewer swap to the
-// Drive preview iframe when direct streaming isn't possible.
+// Fully custom audio/video player (own play/pause + seek bar + 5s/10s jump
+// buttons all drawn inside the same dark box) instead of relying on the
+// browser's native <audio>/<video> controls chrome, whose own transport
+// buttons vary by browser and don't include a jump control. `onFail` lets
+// the viewer swap to the Drive preview iframe when direct streaming isn't
+// possible (file not shared publicly).
 function MediaPlayer({ kind, src, min, onFail }) {
   const mediaRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  }, [src]);
+
+  const togglePlay = () => {
+    const el = mediaRef.current;
+    if (!el) return;
+    if (el.paused) el.play().catch(() => {}); else el.pause();
+  };
+
   const skip = (seconds) => {
     const el = mediaRef.current;
     if (!el) return;
     const next = Math.max(0, el.currentTime + seconds);
     el.currentTime = Number.isFinite(el.duration) ? Math.min(next, el.duration) : next;
   };
+
+  const handleSeek = (event) => {
+    const el = mediaRef.current;
+    const ratio = Number(event.target.value) / 100;
+    if (el && Number.isFinite(el.duration)) el.currentTime = ratio * el.duration;
+    setCurrentTime(ratio * (duration || 0));
+  };
+
+  const formatTime = (seconds) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
+
+  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const mediaProps = {
+    ref: mediaRef,
+    src,
+    autoPlay: true,
+    onError: onFail,
+    onPlay: () => setPlaying(true),
+    onPause: () => setPlaying(false),
+    onLoadedMetadata: (event) => setDuration(event.currentTarget.duration),
+    onTimeUpdate: (event) => setCurrentTime(event.currentTarget.currentTime),
+  };
+
   return (
-    <div className={`w-full ${min ? 'p-1.5' : ''}`}>
+    <div className={`w-full rounded-xl bg-slate-900 ${min ? 'p-2' : 'p-3'}`}>
       {kind === 'video' ? (
-        <video ref={mediaRef} src={src} controls autoPlay onError={onFail} className={min ? 'h-44 w-full rounded-lg bg-black' : 'max-h-[58vh] w-full rounded-lg bg-black'} />
+        <video {...mediaProps} className={min ? 'mb-2 h-32 w-full rounded-lg bg-black object-contain' : 'mb-2 max-h-[48vh] w-full rounded-lg bg-black object-contain'} />
       ) : (
-        <audio ref={mediaRef} src={src} controls autoPlay onError={onFail} className="w-full" />
+        <audio {...mediaProps} className="hidden" />
       )}
-      <div className={`flex items-center justify-center gap-1.5 ${min ? 'mt-1.5' : 'mt-2'}`}>
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={togglePlay} title={playing ? 'Pause' : 'Play'} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25">
+          {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-px" />}
+        </button>
+        <input type="range" min={0} max={100} value={progress} onChange={handleSeek} className="h-1 flex-1 accent-white" />
+        <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-white/70">{formatTime(currentTime)}</span>
+      </div>
+      <div className="mt-2 flex items-center justify-center gap-1.5">
         {[[-10, '−10s'], [-5, '−5s'], [5, '+5s'], [10, '+10s']].map(([seconds, label]) => (
-          <button key={label} type="button" onClick={() => skip(seconds)} title={`Jump ${label}`} className="min-w-[44px] rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">
+          <button key={label} type="button" onClick={() => skip(seconds)} title={`Jump ${label}`} className="min-w-[44px] rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-white/20">
             {label}
           </button>
         ))}
@@ -555,14 +642,8 @@ function ExcelCell({ label, value, span = 1, clamp = true }) {
 }
 
 function FileActionGrid({ item, openViewer, compact = false }) {
-  const files = [
-    ['Resume', item.application?.files?.resume, FileBadge2, 'doc'],
-    ['Intro audio', item.application?.files?.englishIntroduction, Play, 'audio'],
-    ['Quran recitation', item.application?.files?.quranRecitation, Play, 'audio'],
-    ['Topic explanation', item.application?.files?.teachingTopicExplanation, Play, 'audio'],
-  ];
-  const available = files.filter(([, file]) => file?.url);
-  if (!available.length) {
+  const files = getCandidateFiles(item);
+  if (!files.length) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-400">
         <FileBadge2 className="h-3.5 w-3.5" /> No files
@@ -571,11 +652,14 @@ function FileActionGrid({ item, openViewer, compact = false }) {
   }
   return (
     <div className="flex flex-wrap gap-1.5">
-      {available.map(([label, file, Icon, hint]) => (
-        <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType, hint)} className={`inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/5 text-primary hover:bg-primary/10 ${compact ? 'px-2 py-1 text-[11px] font-medium' : 'px-3 py-1.5 text-xs font-semibold'}`}>
-          <Icon className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} /> {compact ? (label === 'Resume' ? 'CV' : label === 'Intro audio' ? 'Intro' : label === 'Quran recitation' ? 'Quran' : 'Topic') : label}
-        </button>
-      ))}
+      {files.map((file, index) => {
+        const Icon = file.scoreKey ? Play : FileBadge2;
+        return (
+          <button key={file.key} type="button" onClick={() => openViewer(item, index)} className={`inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/5 text-primary hover:bg-primary/10 ${compact ? 'px-2 py-1 text-[11px] font-medium' : 'px-3 py-1.5 text-xs font-semibold'}`}>
+            <Icon className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} /> {compact ? file.shortLabel : file.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -624,18 +708,13 @@ function CandidateFacts({ item }) {
 function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selectedIds, onToggleSelect, onToggleSelectAll, onArchive, searchTerm }) {
   const cell = (value) => (value == null || value === '' ? '—' : value);
   const fileButtons = (item) => {
-    const files = [
-      ['Resume', item.application?.files?.resume, 'doc'],
-      ['Intro', item.application?.files?.englishIntroduction, 'audio'],
-      ['Recitation', item.application?.files?.quranRecitation, 'audio'],
-      ['Explanation', item.application?.files?.teachingTopicExplanation, 'audio'],
-    ].filter(([, file]) => file?.url);
+    const files = getCandidateFiles(item);
     if (!files.length) return <span className="text-slate-400">—</span>;
     return (
       <div className="flex flex-wrap gap-1">
-        {files.map(([label, file, hint]) => (
-          <button key={label} type="button" onClick={() => openViewer(label, file.url, file.mimeType, hint)} className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10">
-            <Play className="h-3 w-3" />{label}
+        {files.map((file, index) => (
+          <button key={file.key} type="button" onClick={() => openViewer(item, index)} className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10">
+            <Play className="h-3 w-3" />{file.tableLabel}
           </button>
         ))}
       </div>
@@ -755,13 +834,39 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   const [messagePreview, setMessagePreview] = useState(null);
   const [sendingMessage, setSendingMessage] = useState(false);
 
-  const openViewer = (label, url, mimeType, hint) => {
-    if (!url) return;
-    const media = resolveMedia(url, mimeType, hint);
-    // Recordings open in the small floating player first — use the
-    // maximize button to expand.
+  // Opens the viewer for one candidate file (by index into their ordered
+  // file list). Recordings open in the small floating player first — use
+  // the maximize button to expand. `files`/`index` are kept on the viewer
+  // state so the prev/next buttons can cycle through the same candidate's
+  // other files without needing to look the item back up by id.
+  const openViewer = (item, index) => {
+    const files = getCandidateFiles(item);
+    if (!files.length) return;
+    const safeIndex = Math.max(0, Math.min(index, files.length - 1));
+    const file = files[safeIndex];
+    const media = resolveMedia(file.url, file.mimeType, file.hint);
     setViewerMin(media.kind === 'audio' || media.kind === 'video');
-    setViewer({ label, ...media });
+    setViewer({
+      itemId: item.id,
+      itemSource: item.source,
+      files,
+      index: safeIndex,
+      label: file.label,
+      scoreKey: file.scoreKey,
+      ...media,
+    });
+  };
+
+  // Moves the open viewer to the previous/next file for the same candidate
+  // (wraps around). Keeps the current mini/expanded state as-is.
+  const navigateViewer = (delta) => {
+    setViewer((prev) => {
+      if (!prev || !prev.files?.length) return prev;
+      const nextIndex = (prev.index + delta + prev.files.length) % prev.files.length;
+      const file = prev.files[nextIndex];
+      const media = resolveMedia(file.url, file.mimeType, file.hint);
+      return { ...prev, index: nextIndex, label: file.label, scoreKey: file.scoreKey, ...media };
+    });
   };
 
   const load = async () => {
@@ -1175,6 +1280,12 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
     URL.revokeObjectURL(href);
   };
 
+  // The candidate + live draft behind the currently open viewer (if any) —
+  // used to show/edit the relevant evaluation score (English/Quran/Topic)
+  // right next to the recording that's playing.
+  const viewerItem = viewer ? items.find((entry) => entry.id === viewer.itemId && entry.source === viewer.itemSource) : null;
+  const viewerDraft = viewer && viewerItem ? (drafts[viewer.itemId] || createDraftFromItem(viewerItem)) : null;
+
   return (
     <div className="space-y-6">
       {notice ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div> : null}
@@ -1352,11 +1463,14 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
 
                     <div className="grid gap-4">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                           <p className="text-sm font-semibold text-slate-900">Recruitment review</p>
-                          <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-500">
                             <AutosaveStatus status={autosaveStatus[item.id]} onRetry={() => performAutosave(item)} />
-                            <span className="text-xs text-slate-500">Overall: {item?.recruitment?.overall?.label || 'Not rated'}</span>
+                            <span>Overall: {item?.recruitment?.overall?.label || 'Not rated'}</span>
+                            <span>Recommendation: <span className="text-slate-900">{item?.recruitment?.overall?.recommendation || 'review'}</span></span>
+                            <span><span className="font-semibold text-slate-900">Reviewed by:</span> {item?.recruitment?.reviewedBy ? `${item.recruitment.reviewedBy.firstName || ''} ${item.recruitment.reviewedBy.lastName || ''}`.trim() || item.recruitment.reviewedBy.email : '—'}</span>
+                            <span><span className="font-semibold text-slate-900">Last reviewed:</span> {item?.recruitment?.reviewedAt ? formatDateTime(item.recruitment.reviewedAt) : '—'}</span>
                             {draft.pipelineStatus === 'rejected' || draft.pipelineStatus === 'interview_pending' ? (
                               <button type="button" onClick={() => openMessagePreview(item)} className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90">
                                 <Send className="h-3 w-3" />
@@ -1389,29 +1503,28 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                           </label>
                         </div>
 
-                        {/* Row 2: evaluation scorecard, packed as many fields per row as fit */}
-                        <div className="mt-4">
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation scorecard</p>
-                          <div className="flex flex-wrap gap-2">
-                            {[...SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)), ...GENERAL_RATING_FIELDS].map(([key, label]) => (
-                              <div key={key} className="w-fit rounded-lg border border-slate-200 bg-white px-2 py-1.5">
-                                <div className="flex items-center justify-between gap-1">
-                                  <p className="whitespace-nowrap text-[11px] font-medium text-slate-600" title={label}>{label}</p>
-                                  {draft.evaluation[key] === 'not_available' ? <span title="Not available / not yet rated"><HelpCircle className="h-3 w-3 shrink-0 text-slate-300" /></span> : null}
+                        {/* Row 2: evaluation scorecard (English, Quran, Topic, Professionalism)
+                            next to Admin notes — notes shrink first if the scorecard needs the room. */}
+                        <div className="mt-4 flex flex-wrap items-start gap-4">
+                          <div className="min-w-[260px] flex-auto">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation scorecard</p>
+                            <div className="flex flex-wrap gap-2">
+                              {RATING_FIELD_ORDER.filter((key) => !RATING_SUBJECT_KEYS.has(key) || subjectRatingKeys.has(key)).map((key) => (
+                                <div key={key} className="w-fit rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <p className="whitespace-nowrap text-[11px] font-medium text-slate-600" title={RATING_FIELD_LABELS[key]}>{RATING_FIELD_LABELS[key]}</p>
+                                    {draft.evaluation[key] === 'not_available' ? <span title="Not available / not yet rated"><HelpCircle className="h-3 w-3 shrink-0 text-slate-300" /></span> : null}
+                                  </div>
+                                  <StarRating
+                                    compact
+                                    value={draft.evaluation[key]}
+                                    onChange={(nextValue) => { updateDraft(item.id, (current) => ({ ...current, evaluation: { ...current.evaluation, [key]: nextValue } })); scheduleAutosave(item, 300); }}
+                                  />
                                 </div>
-                                <StarRating
-                                  compact
-                                  value={draft.evaluation[key]}
-                                  onChange={(nextValue) => { updateDraft(item.id, (current) => ({ ...current, evaluation: { ...current.evaluation, [key]: nextValue } })); scheduleAutosave(item, 300); }}
-                                />
-                              </div>
-                            ))}
+                              ))}
+                            </div>
                           </div>
-                        </div>
-
-                        {/* Row 3: admin notes + review summary */}
-                        <div className="mt-4 grid gap-3 lg:grid-cols-[1.4fr_1fr]">
-                          <label className="text-sm text-slate-700">
+                          <label className="min-w-[200px] max-w-sm flex-1 text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Admin notes</span>
                             <textarea
                               value={draft.adminNotes}
@@ -1422,13 +1535,6 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                               className="w-full resize-none overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
                             />
                           </label>
-                          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommendation: <span className="normal-case text-slate-900">{item?.recruitment?.overall?.recommendation || 'review'}</span></p>
-                            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
-                              <p><span className="font-semibold text-slate-900">Reviewed by:</span> {item?.recruitment?.reviewedBy ? `${item.recruitment.reviewedBy.firstName || ''} ${item.recruitment.reviewedBy.lastName || ''}`.trim() || item.recruitment.reviewedBy.email : '—'}</p>
-                              <p><span className="font-semibold text-slate-900">Last reviewed:</span> {item?.recruitment?.reviewedAt ? formatDateTime(item.recruitment.reviewedAt) : '—'}</p>
-                            </div>
-                          </div>
                         </div>
                       </div>
                     </div>
@@ -1479,7 +1585,20 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
             onClick={(event) => event.stopPropagation()}
           >
             <div className={`flex items-center justify-between gap-3 ${viewerMin ? 'mb-1.5' : 'mb-3'}`}>
-              <p className="truncate text-sm font-semibold text-slate-900">{viewer.label}</p>
+              <div className="flex min-w-0 items-center gap-1">
+                {viewer.files?.length > 1 ? (
+                  <>
+                    <button type="button" onClick={() => navigateViewer(-1)} title="Previous file" className="shrink-0 rounded-lg border border-slate-200 p-1 text-slate-500 hover:bg-slate-50">
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => navigateViewer(1)} title="Next file" className="shrink-0 rounded-lg border border-slate-200 p-1 text-slate-500 hover:bg-slate-50">
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </>
+                ) : null}
+                <p className="truncate text-sm font-semibold text-slate-900">{viewer.label}</p>
+                {viewer.files?.length > 1 ? <span className="shrink-0 text-[11px] text-slate-400">{viewer.index + 1}/{viewer.files.length}</span> : null}
+              </div>
               <div className="flex shrink-0 items-center gap-2">
                 {!viewerMin ? (
                   <a href={viewer.download} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Open <ExternalLink className="h-3.5 w-3.5" /></a>
@@ -1514,6 +1633,20 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                 </div>
               )}
             </div>
+            {viewer.scoreKey && viewerItem ? (
+              <div className={`flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 ${viewerMin ? 'mt-1.5' : 'mt-3'}`}>
+                <p className="text-xs font-medium text-slate-600">{RATING_FIELD_LABELS[viewer.scoreKey]} score</p>
+                <StarRating
+                  compact
+                  value={viewerDraft?.evaluation?.[viewer.scoreKey]}
+                  onChange={(nextValue) => {
+                    ensureDraft(viewerItem);
+                    updateDraft(viewerItem.id, (current) => ({ ...current, evaluation: { ...current.evaluation, [viewer.scoreKey]: nextValue } }));
+                    scheduleAutosave(viewerItem, 300);
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

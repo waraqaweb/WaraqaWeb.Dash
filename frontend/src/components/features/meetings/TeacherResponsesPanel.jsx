@@ -4,6 +4,11 @@ import { convertCandidateToTeacher, getRecruitmentEmailTemplates, getSheetSyncCo
 import { bumpDomainVersion, makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 import { standardizeSubject } from '../../../utils/subjectStandardization';
 import { useSearch } from '../../../contexts/SearchContext';
+import {
+  TEACHER_OPERATIONS_VIEW_KEY,
+  createDefaultTeacherResponsesFilters,
+  candidateMatchesResponsesFilters
+} from '../../../constants/teacherResponsesFilters';
 
 const formatDate = (value) => {
   try {
@@ -539,8 +544,9 @@ function MediaPlayer({ kind, src, min, onFail }) {
           src={src}
           controls
           autoPlay
+          playsInline
           onError={onFail}
-          className={min ? 'h-32 w-full rounded-lg bg-black object-contain' : 'max-h-[48vh] w-full rounded-lg bg-black object-contain'}
+          className={min ? 'aspect-video w-full rounded-lg bg-black object-contain' : 'max-h-[48vh] w-full rounded-lg bg-black object-contain'}
         />
       ) : (
         <audio key={src} src={src} controls autoPlay onError={onFail} className="w-full" />
@@ -747,7 +753,8 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
 }
 
 export default function TeacherResponsesPanel({ headerSlot = null }) {
-  const { searchTerm } = useSearch();
+  const { searchTerm, viewFilters } = useSearch();
+  const opsFilters = viewFilters[TEACHER_OPERATIONS_VIEW_KEY] || createDefaultTeacherResponsesFilters();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1151,13 +1158,14 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
     STATUS_OPTIONS.forEach((option) => { counts[option.value] = 0; });
     items.forEach((item) => {
       if (campaignFilter !== 'all' && String(item?.recruitment?.fit?.campaignId || '') !== String(campaignFilter)) return;
+      if (!candidateMatchesResponsesFilters(item, opsFilters)) return;
       if (!matchesSearchQuery(item, query)) return;
       const status = item?.recruitment?.status || item.status || 'new';
       if (counts[status] != null) counts[status] += 1;
       else counts.new += 1;
     });
     return counts;
-  }, [items, campaignFilter, searchTerm]);
+  }, [items, campaignFilter, searchTerm, opsFilters]);
 
   // "All" = every non-archived stage under the current search/campaign filter.
   const allStagesCount = useMemo(() => (
@@ -1177,10 +1185,11 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
       if (campaignFilter !== 'all' && String(item?.recruitment?.fit?.campaignId || '') !== String(campaignFilter)) {
         return false;
       }
+      if (!candidateMatchesResponsesFilters(item, opsFilters)) return false;
       if (!matchesSearchQuery(item, query)) return false;
       return true;
     });
-  }, [campaignFilter, items, statusFilter, searchTerm]);
+  }, [campaignFilter, items, statusFilter, searchTerm, opsFilters]);
 
   // Strongest-applicant-first ordering, applied only to the "Under review"
   // stage (see sortUnderReviewCandidates above). Other stages/tabs keep the
@@ -1559,7 +1568,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                 <button type="button" onClick={() => setViewer(null)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50"><X className="h-4 w-4" /></button>
               </div>
             </div>
-            <div className={viewerMin ? 'overflow-hidden rounded-xl bg-slate-50' : 'flex max-h-[70vh] items-center justify-center overflow-auto rounded-xl bg-slate-50 p-2'}>
+            <div className={viewerMin ? 'rounded-xl bg-slate-50' : 'flex max-h-[70vh] items-center justify-center overflow-auto rounded-xl bg-slate-50 p-2'}>
               {viewer.kind === 'image' ? (
                 <img src={viewer.src} alt={viewer.label} className={viewerMin ? 'h-28 w-full object-cover' : 'max-h-[68vh] w-auto object-contain'} />
               ) : viewer.kind === 'audio' || viewer.kind === 'video' ? (

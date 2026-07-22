@@ -7,6 +7,14 @@ import {
   createDefaultTeacherSalaryFilters,
   TEACHER_SALARY_STATUS_OPTIONS
 } from '../../constants/teacherSalaryFilters';
+import {
+  TEACHER_OPERATIONS_VIEW_KEY,
+  createDefaultTeacherResponsesFilters,
+  CANDIDATE_GENDER_OPTIONS,
+  CANDIDATE_DEGREE_OPTIONS,
+  CANDIDATE_SCORE_OPTIONS
+} from '../../constants/teacherResponsesFilters';
+import { STANDARD_SUBJECTS } from '../../utils/subjectStandardization';
 
 const placeholderMap = {
   home: 'Search dashboard...',
@@ -26,7 +34,8 @@ const placeholderMap = {
   settings: 'Search settings...',
   profile: 'Search profile information...',
   library: 'Search the library by subject, title, or tag...',
-  availability: 'Search leads by guardian, student, email, or phone...'
+  availability: 'Search leads by guardian, student, email, or phone...',
+  'teacher-operations': 'Search candidates by name, email, or phone...'
 };
 
 const AVAILABILITY_VIEW_KEY = 'availability';
@@ -141,21 +150,29 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
   const actionableFilters = currentFilters.filter((filter) => Boolean(filter.value));
   const isTeacherSalaryView = activeView === TEACHER_SALARY_VIEW_KEY;
   const isAvailabilityView = activeView === AVAILABILITY_VIEW_KEY;
+  const isTeacherOperationsView = activeView === TEACHER_OPERATIONS_VIEW_KEY;
   const salaryFilterState = viewFilters[TEACHER_SALARY_VIEW_KEY];
   const resolvedSalaryFilters = salaryFilterState || createDefaultTeacherSalaryFilters();
   const availabilityFilterState = viewFilters[AVAILABILITY_VIEW_KEY];
   const resolvedAvailabilityFilters = availabilityFilterState || createDefaultAvailabilityFilters();
+  const opsFilterState = viewFilters[TEACHER_OPERATIONS_VIEW_KEY];
+  const resolvedOpsFilters = opsFilterState || createDefaultTeacherResponsesFilters();
   const salaryFilterCount = useMemo(() => (
     Object.values(resolvedSalaryFilters).filter(Boolean).length
   ), [resolvedSalaryFilters]);
   const availabilityFilterCount = useMemo(() => (
     Object.entries(resolvedAvailabilityFilters).filter(([key, value]) => value && value !== createDefaultAvailabilityFilters()[key]).length
   ), [resolvedAvailabilityFilters]);
-  const hasFilters = actionableFilters.length > 0 || isTeacherSalaryView || isAvailabilityView;
+  const opsFilterCount = useMemo(() => (
+    Object.entries(resolvedOpsFilters).filter(([key, value]) => value && value !== createDefaultTeacherResponsesFilters()[key]).length
+  ), [resolvedOpsFilters]);
+  const hasFilters = actionableFilters.length > 0 || isTeacherSalaryView || isAvailabilityView || isTeacherOperationsView;
   const filterIndicatorCount = isTeacherSalaryView
     ? salaryFilterCount
     : isAvailabilityView
       ? availabilityFilterCount
+    : isTeacherOperationsView
+      ? opsFilterCount
     : (globalFilter !== 'all' ? 1 : 0);
 
   // Reset filter when changing pages
@@ -175,6 +192,12 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
     if (availabilityFilterState) return;
     setFiltersForView(AVAILABILITY_VIEW_KEY, createDefaultAvailabilityFilters());
   }, [isAvailabilityView, availabilityFilterState, setFiltersForView]);
+
+  useEffect(() => {
+    if (!isTeacherOperationsView) return;
+    if (opsFilterState) return;
+    setFiltersForView(TEACHER_OPERATIONS_VIEW_KEY, createDefaultTeacherResponsesFilters());
+  }, [isTeacherOperationsView, opsFilterState, setFiltersForView]);
 
   // Fetch teachers for salary filters once
   useEffect(() => {
@@ -396,6 +419,91 @@ const GlobalSearchBar = ({ activeView = 'default' }) => {
                     >
                       <option value="viewer">My timezone</option>
                       <option value="lead">Lead timezone</option>
+                    </select>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      onClick={() => setShowFilters(false)}
+                      className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : isTeacherOperationsView ? (
+                <div className="absolute right-0 top-full mt-1 w-80 bg-card border border-border rounded-md shadow-lg z-50 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-foreground">Candidate filters</p>
+                    <button
+                      onClick={() => setFiltersForView(TEACHER_OPERATIONS_VIEW_KEY, createDefaultTeacherResponsesFilters())}
+                      className="text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                    >
+                      Reset
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-muted-foreground">Gender</label>
+                    <select
+                      value={resolvedOpsFilters.gender || 'all'}
+                      onChange={(e) => updateViewFilters(TEACHER_OPERATIONS_VIEW_KEY, { gender: e.target.value })}
+                      className="w-full rounded-md border border-border px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      {CANDIDATE_GENDER_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-muted-foreground">Subject they teach</label>
+                    <select
+                      value={resolvedOpsFilters.subject || 'all'}
+                      onChange={(e) => updateViewFilters(TEACHER_OPERATIONS_VIEW_KEY, { subject: e.target.value })}
+                      className="w-full rounded-md border border-border px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      <option value="all">All subjects</option>
+                      {STANDARD_SUBJECTS.map(subject => (
+                        <option key={subject} value={subject}>{subject}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-muted-foreground">Degree</label>
+                    <select
+                      value={resolvedOpsFilters.degree || 'all'}
+                      onChange={(e) => updateViewFilters(TEACHER_OPERATIONS_VIEW_KEY, { degree: e.target.value })}
+                      className="w-full rounded-md border border-border px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      {CANDIDATE_DEGREE_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-muted-foreground">Faculty / University</label>
+                    <input
+                      type="text"
+                      value={resolvedOpsFilters.faculty || ''}
+                      onChange={(e) => updateViewFilters(TEACHER_OPERATIONS_VIEW_KEY, { faculty: e.target.value })}
+                      placeholder="e.g. Al-Azhar"
+                      className="w-full rounded-md border border-border px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-muted-foreground">General score</label>
+                    <select
+                      value={resolvedOpsFilters.score || 'all'}
+                      onChange={(e) => updateViewFilters(TEACHER_OPERATIONS_VIEW_KEY, { score: e.target.value })}
+                      className="w-full rounded-md border border-border px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      {CANDIDATE_SCORE_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                     </select>
                   </div>
 

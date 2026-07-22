@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, HelpCircle, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Pause, Phone, Play, RefreshCw, Save, Send, Settings2, Star, Table2, UserPlus, X } from 'lucide-react';
+import { Archive, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, HelpCircle, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Send, Settings2, Star, Table2, UserPlus, X } from 'lucide-react';
 import { convertCandidateToTeacher, getRecruitmentEmailTemplates, getSheetSyncConfig, listRecruitmentCampaigns, listTeacherContractResponses, runSheetSyncNow, saveSheetSyncConfig, sendCandidateEmail, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { bumpDomainVersion, makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 import { standardizeSubject } from '../../../utils/subjectStandardization';
@@ -79,6 +79,19 @@ const STATUS_TONES = {
   rejected: 'bg-rose-50 text-rose-700 border-rose-200',
   archived: 'bg-zinc-100 text-zinc-700 border-zinc-200',
 };
+
+// Colors the overall evaluation badge by how strong it is (labels come from
+// computeRecruitmentOverall on the backend), so the most important signal on
+// the card — how this candidate scored overall — is visible at a glance.
+const OVERALL_TONES = {
+  'excellent': 'bg-emerald-600 text-white border-emerald-600',
+  'very good': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  good: 'bg-sky-50 text-sky-700 border-sky-200',
+  weak: 'bg-rose-50 text-rose-700 border-rose-200',
+  'needs review': 'bg-amber-50 text-amber-700 border-amber-200',
+  'not rated': 'bg-slate-100 text-slate-500 border-slate-200',
+};
+const overallTone = (label) => OVERALL_TONES[String(label || '').toLowerCase()] || 'bg-slate-900 text-white border-slate-900';
 
 // Rating fields tied to a specific subject — only shown for a candidate when
 // they've indicated (via subjectsCanTeach/positionsInterested) that they can
@@ -510,95 +523,27 @@ const resolveMedia = (url, mimeType = '', hint = '') => {
   return { kind: 'iframe', src: raw, download: raw };
 };
 
-// Fully custom audio/video player (own play/pause + seek bar + 5s/10s jump
-// buttons all drawn inside the same dark box) instead of relying on the
-// browser's native <audio>/<video> controls chrome. The transport + skip
-// buttons only render once we've confirmed the file actually loaded
-// (onLoadedMetadata) — never before, and never followed by a swap to a
-// different-looking player — so there's no flash of controls that then get
-// replaced. `onFail` tells the viewer direct streaming didn't work so it can
-// silently open the file another way instead.
+// Plain audio/video playback using the browser's own native controls. A
+// custom skinned player (own play/pause + seek + skip buttons) was tried
+// here but kept getting visually clobbered — first by Google's Drive iframe
+// widget swapping in on error, then by Chrome auto-decorating a controls-
+// less <video> with its own playback chrome, then by a loading-state flash
+// before the custom controls appeared. Native `controls` sidesteps all of
+// that: no extra chrome, no loading flash, no buttons to fight over.
 function MediaPlayer({ kind, src, min, onFail }) {
-  const mediaRef = useRef(null);
-  const [ready, setReady] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-
-  useEffect(() => {
-    setReady(false);
-    setPlaying(false);
-    setCurrentTime(0);
-    setDuration(0);
-  }, [src]);
-
-  const togglePlay = () => {
-    const el = mediaRef.current;
-    if (!el) return;
-    if (el.paused) el.play().catch(() => {}); else el.pause();
-  };
-
-  const skip = (seconds) => {
-    const el = mediaRef.current;
-    if (!el) return;
-    const next = Math.max(0, el.currentTime + seconds);
-    el.currentTime = Number.isFinite(el.duration) ? Math.min(next, el.duration) : next;
-  };
-
-  const handleSeek = (event) => {
-    const el = mediaRef.current;
-    const ratio = Number(event.target.value) / 100;
-    if (el && Number.isFinite(el.duration)) el.currentTime = ratio * el.duration;
-    setCurrentTime(ratio * (duration || 0));
-  };
-
-  const formatTime = (seconds) => {
-    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${String(s).padStart(2, '0')}`;
-  };
-
-  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const mediaProps = {
-    ref: mediaRef,
-    src,
-    autoPlay: true,
-    onError: onFail,
-    onPlay: () => setPlaying(true),
-    onPause: () => setPlaying(false),
-    onLoadedMetadata: (event) => { setReady(true); setDuration(event.currentTarget.duration); },
-    onTimeUpdate: (event) => setCurrentTime(event.currentTarget.currentTime),
-  };
-
   return (
     <div className={`w-full rounded-xl bg-slate-900 ${min ? 'p-2' : 'p-3'}`}>
       {kind === 'video' ? (
-        <video {...mediaProps} className={min ? 'mb-2 h-32 w-full rounded-lg bg-black object-contain' : 'mb-2 max-h-[48vh] w-full rounded-lg bg-black object-contain'} />
+        <video
+          key={src}
+          src={src}
+          controls
+          autoPlay
+          onError={onFail}
+          className={min ? 'h-32 w-full rounded-lg bg-black object-contain' : 'max-h-[48vh] w-full rounded-lg bg-black object-contain'}
+        />
       ) : (
-        <audio {...mediaProps} className="hidden" />
-      )}
-      {!ready ? (
-        <div className={`flex items-center justify-center text-xs text-white/50 ${kind === 'video' ? '' : min ? 'py-8' : 'py-14'}`}>
-          Loading…
-        </div>
-      ) : (
-        <>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={togglePlay} title={playing ? 'Pause' : 'Play'} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25">
-              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-px" />}
-            </button>
-            <input type="range" min={0} max={100} value={progress} onChange={handleSeek} className="h-1 flex-1 accent-white" />
-            <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-white/70">{formatTime(currentTime)}</span>
-          </div>
-          <div className="mt-2 flex items-center justify-center gap-1.5">
-            {[[-10, '−10s'], [-5, '−5s'], [5, '+5s'], [10, '+10s']].map(([seconds, label]) => (
-              <button key={label} type="button" onClick={() => skip(seconds)} title={`Jump ${label}`} className="min-w-[44px] rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-white/20">
-                {label}
-              </button>
-            ))}
-          </div>
-        </>
+        <audio key={src} src={src} controls autoPlay onError={onFail} className="w-full" />
       )}
     </div>
   );
@@ -681,25 +626,17 @@ function FileActionGrid({ item, openViewer, compact = false }) {
   );
 }
 
-// All applicant data compressed into a 3-row spreadsheet-style grid.
+// Application-specific facts not already shown on the card header (contact
+// info, gender, address, submission time and stage all live there — see the
+// card header above — so this table only covers education/experience, which
+// has nowhere else to go).
 function CandidateFacts({ item }) {
-  const p = item.personalInfo || {};
   const a = item.application || {};
-  const address = [p.address?.street, p.address?.city, p.address?.country].filter(Boolean).join(', ');
   return (
     <div className="space-y-3">
       <div className="overflow-x-auto rounded-lg border border-slate-300">
-        <table className="w-full min-w-[980px] table-fixed border-collapse">
+        <table className="w-full min-w-[820px] table-fixed border-collapse">
           <tbody>
-            <tr>
-              <ExcelCell label="Name" value={p.fullName || item.contract?.fullName} />
-              <ExcelCell label="Email" value={p.email} />
-              <ExcelCell label="Phone" value={p.mobileNumber} />
-              <ExcelCell label="WhatsApp" value={p.whatsappNumber} />
-              <ExcelCell label="Birth date" value={p.birthDate ? formatDate(p.birthDate) : ''} />
-              <ExcelCell label="Gender" value={p.gender} />
-              <ExcelCell label="Address" value={address} />
-            </tr>
             <tr>
               <ExcelCell label="Positions" value={a.positionsInterested} span={2} />
               <ExcelCell label="Graduation" value={a.education?.graduationStatus} />
@@ -710,9 +647,7 @@ function CandidateFacts({ item }) {
             </tr>
             <tr>
               <ExcelCell label="Current job" value={a.experience?.currentJob} span={2} />
-              <ExcelCell label="What we should know" value={a.experience?.profileSummary} span={3} clamp={false} />
-              <ExcelCell label="Submitted" value={item.submittedAt ? formatDateTime(item.submittedAt) : ''} />
-              <ExcelCell label="Stage" value={getStatusLabel(item?.recruitment?.status || item.status)} />
+              <ExcelCell label="What we should know" value={a.experience?.profileSummary} span={5} clamp={false} />
             </tr>
           </tbody>
         </table>
@@ -1432,6 +1367,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${STATUS_TONES[statusValue] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>{getStatusLabel(statusValue)}</span>
                     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${item?.recruitment?.reviewed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{item?.recruitment?.reviewed ? 'Reviewed' : 'New review'}</span>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{formatDateTime(item.submittedAt)}</span>
+                    {overall?.label ? <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${overallTone(overall.label)}`}>{overall.label}{overall?.score != null ? ` • ${overall.score}%` : ''}</span> : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     <ContactActions item={item} compact />
@@ -1448,9 +1384,6 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                 </div>
                 <button type="button" onClick={() => { ensureDraft(item); setExpandedId(isOpen ? '' : item.id); }} className="flex w-full items-start justify-between gap-3 text-left">
                   <div className="min-w-0 flex-1 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {overall?.label ? <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white">{overall.label}{overall?.score != null ? ` • ${overall.score}%` : ''}</span> : null}
-                    </div>
                     {(() => {
                       const chips = buildSelectionChips(item);
                       return chips.length ? (

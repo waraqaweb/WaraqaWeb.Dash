@@ -30,6 +30,7 @@ import { useNavigate } from 'react-router-dom';
 import TeacherResponsesPanel, { ALL_SUBJECT_RATING_FIELDS, resolveSubjectRatingKeys, StarRating } from '../../components/features/meetings/TeacherResponsesPanel';
 import BusinessIntelligencePage from './BusinessIntelligencePage';
 import { useSearch } from '../../contexts/SearchContext';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   createRecruitmentCampaign,
   getTeacherOperationsSummary,
@@ -144,6 +145,60 @@ const renderTemplateVars = (text, vars = {}) => String(text || '').replace(/\{\{
   vars[key] == null ? '' : String(vars[key])
 ));
 
+// Normalizes any phone number into the digits-only, international format
+// wa.me expects. Egyptian mobile numbers are usually written locally
+// (010/011/012/015…) or with a leading 0020 — this smartly adds the +20
+// country code only when one isn't already present, so numbers that already
+// include a country code are left untouched.
+function formatEgyptWhatsapp(rawPhone) {
+  let digits = String(rawPhone || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('00')) digits = digits.slice(2); // e.g. 0020xxxxxxxxxx -> 20xxxxxxxxxx
+  else if (/^(010|011|012|015)/.test(digits)) digits = `20${digits.slice(1)}`; // local Egyptian mobile -> +20
+  else if (digits.startsWith('0')) digits = `20${digits.slice(1)}`; // any other local number — best-effort default to Egypt
+  return digits;
+}
+
+// Shared, professionally phrased interview-invite message used for both the
+// WhatsApp and email quick-action buttons, so candidates get the same tone
+// regardless of channel. {{senderName}} is the currently logged-in admin.
+function buildInterviewInviteMessage(senderName, link) {
+  const name = senderName || 'the Waraqa Recruitment Team';
+  return `Assalamu alaykum,\n\nDear Respected Teacher,\n\nI am ${name} from Waraqa Institute for Quran, Arabic, and Islamic Studies for non-native Arabic speakers.\n\nWe are pleased to inform you that your application to join our teaching team has been preliminarily accepted, and we would be delighted to invite you to an online introductory interview at a time that is most convenient for you, in sha' Allah.\n\nPlease choose your preferred interview time using the following link:\n\n${link}\n\nWe look forward to meeting you soon and ask Allah to make our efforts and yours sincere for His sake alone.\n\nJazakum Allahu khayran, and may Allah bless you.`;
+}
+
+// Post-interview decision reasons — phrased warmly and professionally
+// regardless of the outcome. "" (Custom) falls back to the admin's own
+// scorecard notes, preserving the previous free-text behavior.
+const DECISION_REASON_TEXT = {
+  '': '',
+  higher_scoring_applicants: "We were genuinely impressed by your application and interview. At this time, other candidates achieved higher results in our initial assessment for the specific openings we currently have. We would be glad to reach out to you again should a suitable opportunity arise in the future, in sha' Allah.",
+  needs_improvement: 'After reviewing your interview and application materials, we found some areas that would benefit from further development before we are able to move forward at this time.',
+  future_pool: "While we are not able to move forward with your application right now, we would like to keep your profile on file and reach out as soon as a suitable opening becomes available, in sha' Allah.",
+  insufficient_resources: 'Unfortunately, we were unable to complete our review of your application because one or more of the required materials were not submitted. If you would like to complete your application, please resend the missing file(s) whenever convenient.',
+  other: 'After careful review, we have decided not to move forward with your application at this time.',
+};
+
+const DECISION_REASON_OPTIONS = [
+  { value: '', label: 'Custom (use notes below)' },
+  { value: 'higher_scoring_applicants', label: 'Other applicants scored higher' },
+  { value: 'needs_improvement', label: 'Needs improvement' },
+  { value: 'future_pool', label: 'Future pool' },
+  { value: 'insufficient_resources', label: 'Missing required file(s)' },
+  { value: 'other', label: 'Other' },
+];
+
+// Folds a reason into the outcome email template: uses the {{reason}}/{{notes}}
+// placeholder when the template defines one, otherwise appends the reason
+// just above the closing signature line (mirrors the backend's own fallback).
+function composeDecisionBody(template, name, reason) {
+  let body = renderTemplateVars(template?.body, { name, reason, notes: reason });
+  if (reason && !/\{\{\s*(reason|notes)\s*\}\}/.test(template?.body || '')) {
+    body = body.replace(/\n\n(Waraqa Recruitment Team)\s*$/, `\n\n${reason}\n\n$1`);
+  }
+  return body;
+}
+
 const CAPACITY_DECISION_STYLES = {
   ok: { label: 'Healthy', badge: 'bg-green-100 text-green-700', bar: 'bg-green-500' },
   hire: { label: 'Start hiring', badge: 'bg-amber-100 text-amber-700', bar: 'bg-amber-500' },
@@ -237,6 +292,7 @@ function SectionCard({ title, children, className = '' }) {
 export default function TeacherOperationsPage({ isActive }) {
   const navigate = useNavigate();
   const { searchTerm } = useSearch();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const saved = localStorage.getItem(TAB_STORAGE_KEY);
@@ -292,7 +348,7 @@ export default function TeacherOperationsPage({ isActive }) {
   const [emailSending, setEmailSending] = useState(false);
   const [emailNotice, setEmailNotice] = useState('');
   const [contractLinkState, setContractLinkState] = useState({ id: '', url: '', loading: false, notice: '' });
-  const [decisionPreview, setDecisionPreview] = useState(null); // { source, id, outcome, event, subject, body }
+  const [decisionPreview, setDecisionPreview] = useState(null); // { source, id, outcome, event, template, name, reasonCategory, phone, email, subject, body }
   const [decisionSending, setDecisionSending] = useState(false);
   const [declineNote, setDeclineNote] = useState('');
   const [decliningContract, setDecliningContract] = useState(false);
@@ -666,8 +722,9 @@ export default function TeacherOperationsPage({ isActive }) {
 
   // Composes a ready-to-edit subject/body for one of the three post-interview
   // decisions (accept / waiting list / reject), pulling the current email
-  // template and folding in the admin's interview notes as the human-readable
-  // "reason", then opens the preview modal — nothing is sent until "Send".
+  // template and defaulting the "reason" to the admin's interview notes (a
+  // reason category can be picked instead in the modal itself), then opens
+  // the preview modal — nothing is sent until "Send".
   const openDecisionPreview = async (outcome) => {
     if (!interviewForm) return;
     const current = interviewResponses.find((r) => r.id === selectedInterviewId);
@@ -686,22 +743,55 @@ export default function TeacherOperationsPage({ isActive }) {
     const template = templates?.[event] || { subject: 'Waraqa Recruitment', body: 'Dear {{name}},\n\nWaraqa Recruitment Team' };
     const name = current?.personalInfo?.fullName || current?.contract?.fullName
       || `${current?.user?.firstName || ''} ${current?.user?.lastName || ''}`.trim() || 'there';
+    const reasonCategory = '';
     const reason = String(interviewForm.notes || '').trim();
-    let body = renderTemplateVars(template.body, { name, reason, notes: reason });
-    if (reason && !/\{\{\s*(reason|notes)\s*\}\}/.test(template.body || '')) {
-      // The default outcome templates don't include a {{reason}} placeholder,
-      // so fold the admin's interview notes in as a closing note the admin
-      // can still edit before sending.
-      body = body.replace(/\n\n(Waraqa Recruitment Team)\s*$/, `\n\n${reason}\n\n$1`);
-    }
+    const phone = formatEgyptWhatsapp(current?.personalInfo?.whatsappNumber || current?.personalInfo?.mobileNumber || current?.user?.phone);
+    const email = current?.personalInfo?.email || current?.user?.email || '';
     setDecisionPreview({
       source: interviewForm.source,
       id: interviewForm.id,
       outcome,
       event,
+      template,
+      name,
+      reasonCategory,
+      phone,
+      email,
       subject: renderTemplateVars(template.subject, { name }),
-      body,
+      body: composeDecisionBody(template, name, reason),
     });
+  };
+
+  // Re-composes the message body when the admin picks a rejection-reason
+  // category in the modal (or switches back to "Custom" to use the notes).
+  const handleDecisionReasonChange = (category) => {
+    setDecisionPreview((prev) => {
+      if (!prev) return prev;
+      const reason = category ? DECISION_REASON_TEXT[category] : String(interviewForm?.notes || '').trim();
+      return { ...prev, reasonCategory: category, body: composeDecisionBody(prev.template, prev.name, reason) };
+    });
+  };
+
+  // Persists the decision as the scorecard outcome (this is what advances
+  // the pipeline stage on the backend). Shared by both the email and
+  // WhatsApp send actions below.
+  const persistDecisionOutcome = async () => {
+    if (!decisionPreview) return null;
+    const updated = await saveInterviewScorecard(decisionPreview.source, decisionPreview.id, {
+      ...(interviewForm ? {
+        worksElsewhere: interviewForm.worksElsewhere,
+        notes: interviewForm.notes,
+        englishTestScore: interviewForm.englishTestScore === '' ? null : Number(interviewForm.englishTestScore),
+        scores: interviewForm.scores,
+        subjectScores: interviewForm.subjectScores,
+      } : {}),
+      outcome: decisionPreview.outcome,
+    });
+    if (updated) {
+      setInterviewResponses((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      selectInterview(updated);
+    }
+    return updated;
   };
 
   const handleSendDecision = async () => {
@@ -709,22 +799,7 @@ export default function TeacherOperationsPage({ isActive }) {
     try {
       setDecisionSending(true);
       setInterviewError('');
-      // Persist the decision as the scorecard outcome first (this is what
-      // advances the pipeline stage on the backend), then send the message.
-      const updated = await saveInterviewScorecard(decisionPreview.source, decisionPreview.id, {
-        ...(interviewForm ? {
-          worksElsewhere: interviewForm.worksElsewhere,
-          notes: interviewForm.notes,
-          englishTestScore: interviewForm.englishTestScore === '' ? null : Number(interviewForm.englishTestScore),
-          scores: interviewForm.scores,
-          subjectScores: interviewForm.subjectScores,
-        } : {}),
-        outcome: decisionPreview.outcome,
-      });
-      if (updated) {
-        setInterviewResponses((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-        selectInterview(updated);
-      }
+      await persistDecisionOutcome();
       const res = await sendCandidateEmail(decisionPreview.source, decisionPreview.id, {
         event: decisionPreview.event,
         subject: decisionPreview.subject,
@@ -736,6 +811,26 @@ export default function TeacherOperationsPage({ isActive }) {
       loadPendingEmails();
     } catch (error) {
       setInterviewError(error?.response?.data?.message || 'Failed to record the decision and send the email.');
+    } finally {
+      setDecisionSending(false);
+    }
+  };
+
+  // Same decision persistence as email, but opens WhatsApp with the composed
+  // message instead of sending via the backend mailer — the admin still
+  // presses send in WhatsApp manually (no auto-send API), same pattern as
+  // the interview-invite WhatsApp button.
+  const handleSendDecisionWhatsapp = async () => {
+    if (!decisionPreview || !decisionPreview.phone) return;
+    try {
+      setDecisionSending(true);
+      setInterviewError('');
+      await persistDecisionOutcome();
+      window.open(`https://wa.me/${decisionPreview.phone}?text=${encodeURIComponent(decisionPreview.body)}`, '_blank', 'noopener,noreferrer');
+      setDecisionPreview(null);
+      loadPendingEmails();
+    } catch (error) {
+      setInterviewError(error?.response?.data?.message || 'Failed to record the decision.');
     } finally {
       setDecisionSending(false);
     }
@@ -1428,10 +1523,12 @@ export default function TeacherOperationsPage({ isActive }) {
               ) : (() => {
                 const current = interviewResponses.find((r) => r.id === selectedInterviewId);
                 const subjectRatingKeys = resolveSubjectRatingKeys(current, ALL_SUBJECT_RATING_FIELDS);
-                const phone = String(current?.personalInfo?.whatsappNumber || current?.personalInfo?.mobileNumber || current?.user?.phone || '').replace(/[^\d]/g, '');
+                const phone = formatEgyptWhatsapp(current?.personalInfo?.whatsappNumber || current?.personalInfo?.mobileNumber || current?.user?.phone);
                 const email = current?.personalInfo?.email || current?.user?.email || '';
-                const waText = encodeURIComponent(`Assalamu alaikum, this is Waraqa. Please book your teacher interview here: ${newTeacherInterviewLink}`);
-                const mailtoHref = email ? `mailto:${email}?subject=${encodeURIComponent('Waraqa Institute — teacher interview')}&body=${encodeURIComponent(`Assalamu alaikum,\n\nThank you for applying to Waraqa. Please book your teacher interview here:\n${newTeacherInterviewLink}\n\nWaraqa Institute`)}` : '';
+                const senderName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim();
+                const inviteMessage = buildInterviewInviteMessage(senderName, newTeacherInterviewLink);
+                const waText = encodeURIComponent(inviteMessage);
+                const mailtoHref = email ? `mailto:${email}?subject=${encodeURIComponent('Waraqa Institute — Teacher Interview Invitation')}&body=${encodeURIComponent(inviteMessage)}` : '';
                 return (
                   <div className="grid gap-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2224,6 +2321,64 @@ export default function TeacherOperationsPage({ isActive }) {
             <div className="mt-3 flex flex-wrap justify-end gap-1.5">
               <button type="button" onClick={() => setShowCapacityModal(false)} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Cancel</button>
               <button type="button" onClick={handleSaveCapacity} disabled={capacitySaving || !capacityForm} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60"><Save className="h-4 w-4" /> {capacitySaving ? 'Saving…' : 'Save rules'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Post-interview decision preview (accept / waiting list / reject) */}
+      {decisionPreview ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 sm:p-6" onClick={() => setDecisionPreview(null)}>
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">{INTERVIEW_DECISIONS.find((d) => d.outcome === decisionPreview.outcome)?.label || 'Decision'} message</h3>
+              <button type="button" onClick={() => setDecisionPreview(null)} className="rounded-full p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            <p className="mb-2 text-xs text-muted-foreground">Review and edit before sending to {decisionPreview.name || 'this candidate'}. Nothing is sent until you choose an action below.</p>
+
+            {decisionPreview.outcome !== 'passed' ? (
+              <label className="mb-2 block text-xs text-foreground">
+                <span className="mb-1 block font-medium">Reason</span>
+                <select
+                  value={decisionPreview.reasonCategory}
+                  onChange={(e) => handleDecisionReasonChange(e.target.value)}
+                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                >
+                  {DECISION_REASON_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            <label className="mb-2 block text-xs text-foreground">
+              <span className="mb-1 block font-medium">Subject</span>
+              <input
+                value={decisionPreview.subject}
+                onChange={(e) => setDecisionPreview((prev) => ({ ...prev, subject: e.target.value }))}
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+              />
+            </label>
+            <label className="mb-3 block text-xs text-foreground">
+              <span className="mb-1 block font-medium">Message</span>
+              <textarea
+                rows={9}
+                value={decisionPreview.body}
+                onChange={(e) => setDecisionPreview((prev) => ({ ...prev, body: e.target.value }))}
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+              />
+            </label>
+
+            <div className="flex flex-wrap justify-end gap-1.5">
+              <button type="button" onClick={() => setDecisionPreview(null)} className="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground">Cancel</button>
+              {decisionPreview.phone ? (
+                <button type="button" onClick={handleSendDecisionWhatsapp} disabled={decisionSending} className="inline-flex items-center gap-2 rounded-full bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 disabled:opacity-60">
+                  <MessageCircle className="h-4 w-4" /> {decisionSending ? 'Saving…' : 'Save & open WhatsApp'}
+                </button>
+              ) : null}
+              <button type="button" onClick={handleSendDecision} disabled={decisionSending} className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60">
+                <Send className="h-4 w-4" /> {decisionSending ? 'Sending…' : 'Save & send email'}
+              </button>
             </div>
           </div>
         </div>

@@ -157,13 +157,17 @@ const clampRange = (rangeStart, rangeEnd) => {
   };
 };
 
-const fetchBusyMeetings = async ({ adminId, meetingType, rangeStart, rangeEnd }) => {
+const fetchBusyMeetings = async ({ adminId, meetingType, rangeStart, rangeEnd, buffer = 0 }) => {
+  // Widen the fetch window by the buffer so a meeting just outside
+  // [rangeStart, rangeEnd] whose buffered gap still pokes into the range
+  // isn't missed (mirrors the buffer applied when computing free segments).
+  const bufferMs = buffer * 60000;
   return Meeting.find({
     adminId,
     meetingType,
     status: { $in: BLOCKING_STATUSES },
-    scheduledStart: { $lt: rangeEnd },
-    scheduledEnd: { $gt: rangeStart }
+    scheduledStart: { $lt: new Date(rangeEnd.getTime() + bufferMs) },
+    scheduledEnd: { $gt: new Date(rangeStart.getTime() - bufferMs) }
   }).select('scheduledStart scheduledEnd buffers');
 };
 
@@ -267,7 +271,7 @@ const computeAvailabilityWindows = async ({
   }
 
   const [busyMeetings, systemVacations, meetingTimeOff] = await Promise.all([
-    fetchBusyMeetings({ adminId, meetingType, rangeStart: scopedStart, rangeEnd: scopedEnd }),
+    fetchBusyMeetings({ adminId, meetingType, rangeStart: scopedStart, rangeEnd: scopedEnd, buffer }),
     fetchSystemVacations({ rangeStart: scopedStart, rangeEnd: scopedEnd }),
     fetchMeetingTimeOff({ adminId, rangeStart: scopedStart, rangeEnd: scopedEnd })
   ]);
@@ -287,12 +291,20 @@ const computeAvailabilityWindows = async ({
         continue;
       }
 
+      // Apply the buffer BEFORE filtering for overlap with this slot window.
+      // Filtering on the raw (unbuffered) meeting times first would wrongly
+      // drop a meeting that ends exactly at (or just before) this slot's
+      // start — e.g. a 6-7pm booking right before a 7-8pm slot — even though
+      // the buffered gap it requires pokes into this slot. That mismatch is
+      // exactly what let a slot render as "available" here while the actual
+      // booking check (assertSlotAvailability, which always applies the
+      // buffer) correctly rejected it with a 409 overlap error.
       const overlappingMeetings = busyMeetings
-        .filter((meeting) => meeting.scheduledStart < slotEndUtc && meeting.scheduledEnd > slotStartUtc)
         .map((meeting) => ({
           start: new Date(meeting.scheduledStart.getTime() - buffer * 60000),
           end: new Date(meeting.scheduledEnd.getTime() + buffer * 60000)
-        }));
+        }))
+        .filter((interval) => interval.start < slotEndUtc && interval.end > slotStartUtc);
 
       const overlappingVacations = (systemVacations || [])
         .filter((vac) => vac.startDate < slotEndUtc && vac.endDate > slotStartUtc)

@@ -186,7 +186,7 @@ function formatEgyptWhatsapp(rawPhone) {
 // regardless of channel. {{senderName}} is the currently logged-in admin.
 function buildInterviewInviteMessage(senderName, link) {
   const name = senderName || 'the Waraqa Recruitment Team';
-  return `Assalamu alaykum,\n\nDear Respected Teacher,\n\nI am ${name} from Waraqa Institute for Quran, Arabic, and Islamic Studies for non-native Arabic speakers.\n\nWe are pleased to inform you that your application to join our teaching team has been preliminarily accepted, and we would be delighted to invite you to an online introductory interview at a time that is most convenient for you, in sha' Allah.\n\nPlease choose your preferred interview time using the following link:\n\n${link}\n\nWe look forward to meeting you soon and ask Allah to make our efforts and yours sincere for His sake alone.\n\nJazakum Allahu khayran, and may Allah bless you.`;
+  return `Assalamu alaykum,\n\nDear Respected Teacher,\n\nWe are pleased to inform you that your application to join our teaching team has been preliminarily accepted, and we would be delighted to invite you to an online introductory interview at a time that is most convenient for you, in sha' Allah.\n\nPlease choose your preferred interview time using the following link:\n\n${link}\n\nWe look forward to meeting you soon and ask Allah to make our efforts and yours sincere for His sake alone.\n\nJazakum Allahu khayran, and may Allah bless you.`;
 }
 
 // Shared, professionally phrased post-interview feedback request used for

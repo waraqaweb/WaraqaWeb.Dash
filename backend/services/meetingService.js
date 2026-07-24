@@ -552,8 +552,69 @@ const buildCalendarLinks = (meeting, admin) => {
   return {
     icsContent: icsLines.join('\r\n'),
     googleCalendarLink,
-    outlookCalendarLink
+    outlookCalendarLink,
+    meetingLink
   };
+};
+
+// Teacher-side meeting types have no real "guardian" — bookingPayload.guardianEmail
+// is reused generic storage that actually holds the candidate/teacher's own contact
+// email for these types (mirrors the same rule in notificationService.js).
+const TEACHER_SIDE_MEETING_TYPES = [MEETING_TYPES.TEACHER_SYNC, MEETING_TYPES.NEW_TEACHER_INTERVIEW];
+
+// Emails the teacher (or, for not-yet-onboarded interview candidates, the
+// contact email on file) a booking confirmation with the scheduled time and
+// the admin's meeting link as a "Join Meeting" button. Fire-and-forget: a
+// failure here must never break booking/rescheduling.
+const sendTeacherMeetingConfirmationEmail = async ({ meeting, calendarLinks }) => {
+  try {
+    let recipient = null;
+    let recipientUserId = null;
+    if (meeting.teacherId) {
+      const teacherUser = await User.findById(meeting.teacherId).select('email firstName lastName timezone');
+      if (!teacherUser?.email) return;
+      recipient = teacherUser;
+      recipientUserId = teacherUser._id;
+    } else if (TEACHER_SIDE_MEETING_TYPES.includes(meeting.meetingType) && meeting.bookingPayload?.guardianEmail) {
+      recipient = {
+        email: meeting.bookingPayload.guardianEmail,
+        firstName: meeting.bookingPayload.guardianName || '',
+        timezone: meeting.bookingPayload.timezone || meeting.timezone
+      };
+    }
+    if (!recipient?.email) return;
+
+    if (recipientUserId) {
+      const { shouldSendEmail } = require('../utils/emailPreferenceCheck');
+      if (!(await shouldSendEmail(recipientUserId, 'meetingScheduled'))) return;
+    }
+
+    const branding = await emailService.loadBrandingAndLogo();
+    const { subject, html, text, attachments } = emailService.buildMeetingScheduledEmail({
+      recipient,
+      meeting: {
+        startTime: meeting.scheduledStart,
+        durationMinutes: meeting.durationMinutes,
+        meetingType: meeting.meetingType,
+        meetingLink: calendarLinks?.meetingLink || ''
+      },
+      calendarLink: calendarLinks?.googleCalendarLink,
+      icsContent: calendarLinks?.icsContent,
+      branding
+    });
+    await emailService.enqueueEmail({
+      to: recipient.email,
+      subject,
+      html,
+      text,
+      attachments,
+      type: 'meetingScheduled',
+      userId: recipientUserId || undefined,
+      relatedId: String(meeting._id)
+    });
+  } catch (err) {
+    console.error('[meetingService] Failed to send teacher meeting confirmation email:', err.message);
+  }
 };
 
 const formatMeetingResponse = (meeting, admin) => {
@@ -933,6 +994,7 @@ const bookMeeting = async ({
 
   const calendarLinks = buildCalendarLinks(meeting, admin);
   await notificationService.notifyMeetingScheduled({ meeting, adminUser: admin, triggeredBy: requester });
+  sendTeacherMeetingConfirmationEmail({ meeting, calendarLinks }).catch(() => {});
   return { meeting: formatMeetingResponse(meeting), calendarLinks };
 };
 
@@ -1164,11 +1226,17 @@ const sendRescheduleEmails = async ({ meeting, prevStart, prevEnd, reason }) => 
       const v = String(e).trim().toLowerCase();
       if (v && /.+@.+\..+/.test(v)) recipients.add(v);
     };
-    addEmail(meeting.bookingPayload?.guardianEmail);
+    // Teacher-side meetings (teacher sync / interview) get their own dedicated
+    // "meeting scheduled" confirmation email (with the admin's Join link) sent
+    // separately from rescheduleMeeting — skip them here to avoid duplicates.
+    const isTeacherSideMeeting = TEACHER_SIDE_MEETING_TYPES.includes(meeting.meetingType);
+    if (!isTeacherSideMeeting) {
+      addEmail(meeting.bookingPayload?.guardianEmail);
+    }
     if (Array.isArray(meeting.attendees?.additionalEmails)) {
       meeting.attendees.additionalEmails.forEach(addEmail);
     }
-    if (meeting.teacherId) {
+    if (meeting.teacherId && !isTeacherSideMeeting) {
       try {
         const teacher = await User.findById(meeting.teacherId).select('email');
         if (teacher?.email) addEmail(teacher.email);
@@ -1281,6 +1349,8 @@ const rescheduleMeeting = async ({ meetingId, adminId, startTime, endTime, durat
   await meeting.save();
   // Fire-and-forget email to guardian + teacher (+ additional emails)
   sendRescheduleEmails({ meeting, prevStart, prevEnd, reason }).catch(() => {});
+  const calendarLinks = buildCalendarLinks(meeting, admin);
+  sendTeacherMeetingConfirmationEmail({ meeting, calendarLinks }).catch(() => {});
   return formatMeetingResponse(meeting, admin);
 };
 

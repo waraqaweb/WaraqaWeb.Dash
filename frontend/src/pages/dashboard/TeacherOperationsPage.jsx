@@ -113,6 +113,27 @@ const INTERVIEW_OUTCOME_COLORS = {
   failed: 'text-red-600 dark:text-red-400',
 };
 
+// Until an outcome is decided, the "Interview candidates" queue badge should
+// reflect where the candidate is in the booking/meeting lifecycle (matched by
+// email to the candidate's booked New Teacher Interview meeting — see
+// syncInterviewSchedulesForLeanDocs on the backend) instead of a flat
+// "pending" label.
+const MEETING_STAGE_COLORS = {
+  awaiting: 'text-muted-foreground',
+  scheduled: 'text-sky-600 dark:text-sky-400',
+  completed: 'text-amber-600 dark:text-amber-400',
+};
+
+// Returns null once an outcome has actually been decided (the existing
+// outcome badge/color takes over in that case).
+const getCandidateMeetingStage = (response) => {
+  const iv = response?.recruitment?.interview || {};
+  if (iv.outcome && iv.outcome !== 'pending') return null;
+  if (iv.completedAt) return { key: 'completed', label: 'Interview done' };
+  if (iv.scheduledAt) return { key: 'scheduled', label: 'Scheduled' };
+  return { key: 'awaiting', label: 'Awaiting booking' };
+};
+
 // Maps an interview outcome to the recruitment email template event sent to the candidate.
 const OUTCOME_TO_EMAIL_EVENT = {
   pending: 'interview_invite',
@@ -523,10 +544,21 @@ export default function TeacherOperationsPage({ isActive }) {
         setInterviewError('');
         const data = await listTeacherContractResponses();
         if (!cancelled) {
-          // The Interviews tab is a focused queue of candidates awaiting their
-          // interview — decided/awaiting-decision candidates naturally fall
-          // out of this list once their outcome moves them to the next step.
-          const relevant = (data || []).filter((r) => (r?.recruitment?.status || r?.status) === 'interview_pending');
+          // The Interviews tab is a focused queue of candidates who have
+          // actually BOOKED (or completed) their interview meeting — not
+          // merely "interview_pending" candidates who were sent an invite but
+          // haven't scheduled yet (those stay solely in the Pipeline tab
+          // until they book, avoiding the same name showing in both places
+          // with nothing to do here). A candidate falls out of this list once
+          // an outcome is decided, moving them to their next stage.
+          const relevant = (data || []).filter((r) => {
+            const status = r?.recruitment?.status || r?.status;
+            if (['accepted', 'rejected', 'archived'].includes(status)) return false;
+            const outcome = r?.recruitment?.interview?.outcome || 'pending';
+            if (outcome !== 'pending') return false;
+            const iv = r?.recruitment?.interview || {};
+            return Boolean(iv.scheduledAt || iv.completedAt);
+          });
           setInterviewResponses(relevant);
         }
       } catch (error) {
@@ -1144,8 +1176,7 @@ export default function TeacherOperationsPage({ isActive }) {
 
   const filteredInterviewResponses = useMemo(() => {
     const query = String(searchTerm || '').trim().toLowerCase();
-    if (!query) return interviewResponses || [];
-    return (interviewResponses || []).filter((r) => {
+    const base = !query ? (interviewResponses || []) : (interviewResponses || []).filter((r) => {
       const haystack = [
         r.personalInfo?.fullName,
         r.contract?.fullName,
@@ -1157,6 +1188,14 @@ export default function TeacherOperationsPage({ isActive }) {
         r.user?.email,
       ].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(query);
+    });
+    // Nearest booked interview time first; candidates without a scheduled
+    // meeting yet sort to the end (Array.sort is stable, so their relative
+    // order among themselves is preserved).
+    return [...base].sort((a, b) => {
+      const aTime = a.recruitment?.interview?.scheduledAt ? new Date(a.recruitment.interview.scheduledAt).getTime() : Infinity;
+      const bTime = b.recruitment?.interview?.scheduledAt ? new Date(b.recruitment.interview.scheduledAt).getTime() : Infinity;
+      return aTime - bTime;
     });
   }, [interviewResponses, searchTerm]);
 
@@ -1604,6 +1643,8 @@ export default function TeacherOperationsPage({ isActive }) {
                     const userName = `${r.user?.firstName || ''} ${r.user?.lastName || ''}`.trim();
                     const name = fullName || userName || r.contract?.fullName || r.id;
                     const outcome = r.recruitment?.interview?.outcome || 'pending';
+                    const meetingStage = getCandidateMeetingStage(r);
+                    const scheduledAt = r.recruitment?.interview?.scheduledAt;
                     const selected = selectedInterviewId === r.id;
                     return (
                       <button
@@ -1617,13 +1658,16 @@ export default function TeacherOperationsPage({ isActive }) {
                       >
                         <div className="flex items-center justify-between gap-2">
                           <p className="truncate text-sm font-semibold text-foreground">{name}</p>
-                          <span className={`shrink-0 text-[11px] font-semibold ${INTERVIEW_OUTCOME_COLORS[outcome] || 'text-muted-foreground'}`}>{outcome.replace(/_/g, ' ')}</span>
+                          <span className={`shrink-0 text-[11px] font-semibold ${meetingStage ? MEETING_STAGE_COLORS[meetingStage.key] : (INTERVIEW_OUTCOME_COLORS[outcome] || 'text-muted-foreground')}`}>
+                            {meetingStage ? meetingStage.label : outcome.replace(/_/g, ' ')}
+                          </span>
                         </div>
                         <p className="truncate text-[11px] text-muted-foreground">{r.recruitment?.status || r.status} • {r.personalInfo?.email || r.user?.email || '—'}</p>
+                        {scheduledAt ? <p className="truncate text-[11px] text-sky-600 dark:text-sky-400">📅 {new Date(scheduledAt).toLocaleString()}</p> : null}
                       </button>
                     );
                   })}
-                  {!(filteredInterviewResponses || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">{(interviewResponses || []).length ? 'No candidates match your search.' : 'No candidates in interview stages yet.'}</div> : null}
+                  {!(filteredInterviewResponses || []).length ? <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">{(interviewResponses || []).length ? 'No candidates match your search.' : 'No booked interviews yet — candidates appear here once they schedule via the booking link above.'}</div> : null}
                 </div>
               )}
             </SectionCard>

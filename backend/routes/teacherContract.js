@@ -627,23 +627,51 @@ async function syncInterviewSchedulesForLeanDocs(Model, leanDocs = []) {
 
     const derived = deriveInterviewScheduleFromMeeting(meeting);
     const interview = doc.recruitment?.interview || {};
-    const changed = String(interview.scheduledAt || '') !== String(derived.scheduledAt || '')
+    const scheduleChanged = String(interview.scheduledAt || '') !== String(derived.scheduledAt || '')
       || String(interview.completedAt || '') !== String(derived.completedAt || '')
       || String(interview.meetingId || '') !== String(derived.meetingId || '');
-    if (!changed) return;
+
+    // Auto-advance the pipeline stage the moment the booked interview meeting
+    // has actually happened, so a candidate never sits stuck on "Interview
+    // pending" just because nobody opened their scorecard yet — mirrors the
+    // manual auto-advance that already runs in
+    // PATCH /responses/:source/:id/interview, but fires passively on every
+    // list load instead of requiring an admin to save the scorecard first.
+    const currentStatus = normalizeRecruitmentStatus(doc.recruitment?.status);
+    const outcome = interview.outcome || 'pending';
+    const shouldAdvanceStatus = Boolean(derived.completedAt)
+      && outcome === 'pending'
+      && ['interview_pending', 'shortlisted'].includes(currentStatus);
+
+    if (!scheduleChanged && !shouldAdvanceStatus) return;
 
     doc.recruitment = doc.recruitment || {};
     doc.recruitment.interview = { ...interview, ...derived };
+    const set = {
+      'recruitment.interview.scheduledAt': derived.scheduledAt,
+      'recruitment.interview.completedAt': derived.completedAt,
+      'recruitment.interview.meetingId': derived.meetingId,
+    };
+
+    if (shouldAdvanceStatus) {
+      doc.recruitment.status = 'interviewed';
+      doc.recruitment.history = Array.isArray(doc.recruitment.history) ? doc.recruitment.history : [];
+      doc.recruitment.history.push({
+        at: new Date(),
+        actor: null,
+        action: 'interview_updated',
+        fromStatus: currentStatus,
+        toStatus: 'interviewed',
+        note: 'Interview meeting completed — auto-advanced to Interviewed.',
+      });
+      set['recruitment.status'] = 'interviewed';
+      set['recruitment.history'] = doc.recruitment.history;
+    }
+
     bulkOps.push({
       updateOne: {
         filter: { _id: doc._id },
-        update: {
-          $set: {
-            'recruitment.interview.scheduledAt': derived.scheduledAt,
-            'recruitment.interview.completedAt': derived.completedAt,
-            'recruitment.interview.meetingId': derived.meetingId,
-          },
-        },
+        update: { $set: set },
       },
     });
   });
@@ -2525,11 +2553,29 @@ async function maybeAutoSyncSheet() {
     if (!config.autoSync || !config.sheetUrl) return null;
     const last = config.lastSyncAt ? new Date(config.lastSyncAt).getTime() : 0;
     if (Date.now() - last < config.intervalMinutes * 60 * 1000) return null;
+    // Once every recruitment campaign's window has closed, stop pulling the
+    // sheet automatically — there's nothing new to expect until a campaign
+    // reopens, so admins sync manually (via the "Sync" button) instead.
+    if (!(await hasActiveRecruitmentCampaign())) return null;
     return await runSheetSync(null);
   } catch (err) {
     console.error('Recruitment sheet auto-sync failed:', err.message);
     return null;
   }
+}
+
+// True when at least one campaign is currently open (status 'open' AND, if
+// opensAt/closesAt are set, "now" falls inside that window) — mirrors the
+// isOpenWindow check in normalizeCampaign().
+async function hasActiveRecruitmentCampaign() {
+  const now = new Date();
+  return RecruitmentCampaign.exists({
+    status: 'open',
+    $and: [
+      { $or: [{ opensAt: null }, { opensAt: { $lte: now } }] },
+      { $or: [{ closesAt: null }, { closesAt: { $gte: now } }] },
+    ],
+  });
 }
 
 // Background refresh so counts stay fresh even without opening the page.

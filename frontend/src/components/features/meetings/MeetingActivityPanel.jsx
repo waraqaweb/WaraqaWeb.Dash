@@ -1,12 +1,41 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CalendarPlus, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, ClipboardPaste, FileText, RefreshCw, Trash2, Users, Pencil, XCircle, UserCheck, UserX, Ban, Bell, History, X } from 'lucide-react';
-import { listMeetings, rescheduleMeeting, deleteMeeting, hardDeleteMeeting, updateMeetingAttendance, sendMeetingReminder } from '../../../api/meetings';
-import { MEETING_TYPE_LABELS, MEETING_TYPE_TONES } from '../../../constants/meetingConstants';
+import { CalendarClock, CalendarPlus, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, ClipboardPaste, RefreshCw, Trash2, Users, Pencil, UserCheck, UserX, Ban, Bell, History, X } from 'lucide-react';
+import { listMeetings, rescheduleMeeting, hardDeleteMeeting, updateMeetingAttendance, sendMeetingReminder } from '../../../api/meetings';
+import { MEETING_TYPE_LABELS, MEETING_TYPE_TONES, MEETING_TYPES } from '../../../constants/meetingConstants';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
-import MeetingReportModal from '../../dashboard/MeetingReportModal';
 import PasteMeetingModal from './PasteMeetingModal';
 
 const PAGE_SIZE = 6;
+
+// Teacher-side meetings (candidate interviews + teacher syncs) are shown with a
+// distinguishing tag/color so they don't blend into student-facing meetings.
+const TEACHER_MEETING_TYPES = [MEETING_TYPES.TEACHER_SYNC, MEETING_TYPES.NEW_TEACHER_INTERVIEW];
+const getMeetingGroup = (meetingType) => (TEACHER_MEETING_TYPES.includes(meetingType) ? 'teacher' : 'student');
+const GROUP_LABELS = { teacher: 'Teacher', student: 'Student' };
+const GROUP_TAG_TONES = {
+  teacher: 'bg-violet-100 text-violet-700 border-violet-300',
+  student: 'bg-sky-100 text-sky-700 border-sky-300',
+};
+const GROUP_BORDER_ACCENT = {
+  teacher: 'border-l-4 border-l-violet-400',
+  student: 'border-l-4 border-l-sky-400',
+};
+
+// A meeting counts as "resolved" (moves from Scheduled -> Responses) as soon as
+// attendance is marked anywhere, a report is filed, or its status leaves
+// 'scheduled' — not only when a report has been submitted.
+const isResolvedMeeting = (m) => Boolean(m?.report?.submittedAt || m?.attendanceStatus || (m?.status && m.status !== 'scheduled'));
+
+const GROUP_FILTER_KEY = 'waraqa.meetingsPanel.groupFilter';
+const getInitialGroupFilter = () => {
+  if (typeof window === 'undefined') return 'all';
+  try {
+    const stored = window.localStorage.getItem(GROUP_FILTER_KEY);
+    return ['all', 'student', 'teacher'].includes(stored) ? stored : 'all';
+  } catch {
+    return 'all';
+  }
+};
 
 const toneByStatus = {
   scheduled: 'bg-sky-50 text-sky-700 border-sky-200',
@@ -71,15 +100,22 @@ export default function MeetingActivityPanel({ timezone }) {
   const [rescheduleStart, setRescheduleStart] = useState('');
   const [rescheduleSaving, setRescheduleSaving] = useState(false);
   const [rescheduleError, setRescheduleError] = useState('');
-  const [reportMeeting, setReportMeeting] = useState(null);
   const [busyId, setBusyId] = useState('');
   const [scheduledPage, setScheduledPage] = useState(1);
   const [reportedPage, setReportedPage] = useState(1);
+  const [groupFilter, setGroupFilterState] = useState(getInitialGroupFilter);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [allOpen, setAllOpen] = useState(false);
   const [allItems, setAllItems] = useState([]);
   const [allLoading, setAllLoading] = useState(false);
   const [allError, setAllError] = useState('');
+
+  const setGroupFilter = (value) => {
+    setGroupFilterState(value);
+    setScheduledPage(1);
+    setReportedPage(1);
+    try { window.localStorage.setItem(GROUP_FILTER_KEY, value); } catch { /* ignore */ }
+  };
 
   const load = async () => {
     try {
@@ -87,7 +123,7 @@ export default function MeetingActivityPanel({ timezone }) {
       const past = new Date(now);
       past.setMonth(past.getMonth() - 2);
       const future = new Date(now);
-      future.setMonth(future.getMonth() + 2);
+      future.setMonth(future.getMonth() + 6);
       const cacheKey = makeCacheKey('meetings:activity', 'admin', {
         start: past.toISOString().slice(0, 10),
         end: future.toISOString().slice(0, 10),
@@ -122,14 +158,16 @@ export default function MeetingActivityPanel({ timezone }) {
     const scheduledList = [];
     const reportedList = [];
     (items || []).forEach((item) => {
-      if (item?.report?.submittedAt) reportedList.push(item);
+      if (groupFilter !== 'all' && getMeetingGroup(item?.meetingType) !== groupFilter) return;
+      if (isResolvedMeeting(item)) reportedList.push(item);
       else scheduledList.push(item);
     });
     return {
-      scheduled: scheduledList.sort((a, b) => new Date(b.scheduledStart) - new Date(a.scheduledStart)),
+      // Soonest upcoming meeting first, so it's immediately visible instead of buried on a later page.
+      scheduled: scheduledList.sort((a, b) => new Date(a.scheduledStart) - new Date(b.scheduledStart)),
       reported: reportedList.sort((a, b) => new Date(b.report?.submittedAt || b.updatedAt) - new Date(a.report?.submittedAt || a.updatedAt)),
     };
-  }, [items]);
+  }, [items, groupFilter]);
 
   const openReschedule = (meeting) => {
     setRescheduleId(meeting._id);
@@ -162,19 +200,6 @@ export default function MeetingActivityPanel({ timezone }) {
     }
   };
 
-  const cancelOne = async (meetingId) => {
-    if (!window.confirm('Cancel this meeting? It stays in history but is marked cancelled.')) return;
-    setBusyId(meetingId);
-    try {
-      const updated = await deleteMeeting(meetingId);
-      setItems((prev) => prev.map((m) => (m._id === meetingId ? { ...m, ...updated } : m)));
-    } catch (err) {
-      setError(err?.response?.data?.message || 'Failed to cancel meeting');
-    } finally {
-      setBusyId('');
-    }
-  };
-
   const deleteOne = async (meetingId) => {
     if (!window.confirm('Permanently delete this meeting? This cannot be undone.')) return;
     setBusyId(meetingId);
@@ -198,11 +223,6 @@ export default function MeetingActivityPanel({ timezone }) {
     } finally {
       setBusyId('');
     }
-  };
-
-  const handleReportSaved = (updated) => {
-    if (!updated?._id) return;
-    setItems((prev) => prev.map((m) => (m._id === updated._id ? { ...m, ...updated } : m)));
   };
 
   const sendReminder = async (meeting) => {
@@ -264,34 +284,34 @@ export default function MeetingActivityPanel({ timezone }) {
     const studentNames = (meeting?.bookingPayload?.students || []).map((student) => student.studentName).filter(Boolean);
     const contactName = meeting?.attendees?.teacherName || meeting?.bookingPayload?.guardianName;
     const contactEmail = meeting?.bookingPayload?.guardianEmail;
+    const group = getMeetingGroup(meeting?.meetingType);
     return (
-      <div key={meeting._id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div key={meeting._id} className={`rounded-2xl border border-slate-200 bg-white p-3 shadow-sm ${GROUP_BORDER_ACCENT[group]}`}>
         <button type="button" onClick={() => setExpandedId(isOpen ? '' : meeting._id)} className="flex w-full items-start justify-between gap-3 text-left">
-          <div className="min-w-0 space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${toneByStatus[meeting.status] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>
-                {meeting.status || 'scheduled'}
+          <div className="min-w-0 space-y-1">
+            {/* Row 1: group tag, type, status/attendance, and the time (bold). */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${GROUP_TAG_TONES[group]}`}>
+                {GROUP_LABELS[group]}
               </span>
-              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${MEETING_TYPE_TONES[meeting.meetingType] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${MEETING_TYPE_TONES[meeting.meetingType] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                 {MEETING_TYPE_LABELS[meeting.meetingType] || 'Meeting'}
               </span>
-              {meeting?.attendanceStatus ? (
-                <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                  {attendanceLabels[meeting.attendanceStatus] || meeting.attendanceStatus}
-                </span>
-              ) : null}
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${toneByStatus[meeting.status] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                {attendanceLabels[meeting.attendanceStatus] || meeting.status || 'scheduled'}
+              </span>
+              <span className="ml-auto inline-flex items-center gap-1 text-sm font-semibold text-slate-900">
+                {mode === 'reported' ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <CalendarClock className="h-3.5 w-3.5 text-sky-600" />}
+                {formatWhen(meeting.scheduledStart, timezone || meeting.timezone)}
+              </span>
             </div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-              {mode === 'reported' ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <CalendarClock className="h-4 w-4 text-sky-600" />}
-              <span>{formatWhen(meeting.scheduledStart, timezone || meeting.timezone)}</span>
-            </div>
+            {/* Row 2: who it's with. */}
             <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
               {studentNames.length ? <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" />{studentNames.join(', ')}</span> : null}
               {contactName ? <span>{contactName}</span> : null}
-              {meeting?.report?.submittedAt ? <span className="inline-flex items-center gap-1"><FileText className="h-3.5 w-3.5" />{formatWhen(meeting.report.submittedAt, timezone || meeting.timezone)}</span> : null}
             </div>
           </div>
-          {isOpen ? <ChevronUp className="mt-1 h-4 w-4 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 text-slate-400" />}
+          {isOpen ? <ChevronUp className="mt-1 h-4 w-4 flex-shrink-0 text-slate-400" /> : <ChevronDown className="mt-1 h-4 w-4 flex-shrink-0 text-slate-400" />}
         </button>
         <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
           {/* Attendance group */}
@@ -316,16 +336,18 @@ export default function MeetingActivityPanel({ timezone }) {
             >
               <UserX className="h-4 w-4" />
             </button>
-            <button
-              type="button"
-              title="Cancel (no penalty)"
-              aria-label="Cancel (no penalty)"
-              disabled={busyId === meeting._id}
-              onClick={(e) => { e.stopPropagation(); markAttendance(meeting._id, 'cancelled_no_penalty'); }}
-              className={iconBtn('border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100')}
-            >
-              <Ban className="h-4 w-4" />
-            </button>
+            {meeting.status !== 'cancelled' ? (
+              <button
+                type="button"
+                title="Cancel meeting"
+                aria-label="Cancel meeting"
+                disabled={busyId === meeting._id}
+                onClick={(e) => { e.stopPropagation(); markAttendance(meeting._id, 'cancelled_no_penalty'); }}
+                className={iconBtn('border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100')}
+              >
+                <Ban className="h-4 w-4" />
+              </button>
+            ) : null}
           </div>
 
           <span className="mx-1 h-6 w-px bg-slate-200" aria-hidden="true" />
@@ -362,27 +384,6 @@ export default function MeetingActivityPanel({ timezone }) {
                 className={iconBtn('border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100')}
               >
                 <CalendarPlus className="h-4 w-4" />
-              </button>
-            ) : null}
-            <button
-              type="button"
-              title={meeting?.report?.submittedAt ? 'Edit report' : 'Add report'}
-              aria-label={meeting?.report?.submittedAt ? 'Edit report' : 'Add report'}
-              onClick={(e) => { e.stopPropagation(); setReportMeeting(meeting); }}
-              className={iconBtn('border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100')}
-            >
-              <FileText className="h-4 w-4" />
-            </button>
-            {meeting.status !== 'cancelled' ? (
-              <button
-                type="button"
-                title="Cancel meeting"
-                aria-label="Cancel meeting"
-                disabled={busyId === meeting._id}
-                onClick={(e) => { e.stopPropagation(); cancelOne(meeting._id); }}
-                className={iconBtn('border-amber-200 bg-white text-amber-700 hover:bg-amber-50')}
-              >
-                <XCircle className="h-4 w-4" />
               </button>
             ) : null}
             <button
@@ -482,22 +483,42 @@ export default function MeetingActivityPanel({ timezone }) {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={openAllMeetings}
-          className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-        >
-          <History className="h-3.5 w-3.5" /> All meetings
-        </button>
-        <button
-          type="button"
-          onClick={() => setPasteOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50"
-        >
-          <ClipboardPaste className="h-3.5 w-3.5" /> Create from paste
-        </button>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 p-1" role="tablist" aria-label="Meeting group">
+          {[
+            { key: 'all', label: 'All' },
+            { key: 'student', label: 'Students' },
+            { key: 'teacher', label: 'Teachers' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={groupFilter === tab.key}
+              onClick={() => setGroupFilter(tab.key)}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${groupFilter === tab.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openAllMeetings}
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            <History className="h-3.5 w-3.5" /> All meetings
+          </button>
+          <button
+            type="button"
+            onClick={() => setPasteOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50"
+          >
+            <ClipboardPaste className="h-3.5 w-3.5" /> Create from paste
+          </button>
+        </div>
       </div>
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
       {loading ? <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Loading meetings…</div> : null}
@@ -516,12 +537,6 @@ export default function MeetingActivityPanel({ timezone }) {
           </section>
         </div>
       ) : null}
-      <MeetingReportModal
-        isOpen={Boolean(reportMeeting)}
-        meeting={reportMeeting}
-        onClose={() => setReportMeeting(null)}
-        onSaved={handleReportSaved}
-      />
       <PasteMeetingModal
         open={pasteOpen}
         onClose={() => setPasteOpen(false)}

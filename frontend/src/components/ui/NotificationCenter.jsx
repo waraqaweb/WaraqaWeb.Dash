@@ -162,7 +162,7 @@ const NotificationCenter = () => {
         if (newUnreadNotifications.length > 0 && notificationPrefs.liveAlertsEnabled && canUseBrowserNotifications() && Notification.permission === 'granted') {
           newUnreadNotifications.slice(0, 3).forEach((notification) => {
             const title = getNotificationTitleText(notification);
-            const body = getNotificationMessageText(notification) || 'You have a new notification.';
+            const body = getNotificationMessageText(notification).replace(/\*\*(.+?)\*\*/g, '$1') || 'You have a new notification.';
             try {
               new Notification(title, { body, tag: `notif-${notification._id}` });
             } catch (e) {
@@ -576,6 +576,13 @@ const NotificationCenter = () => {
     return message;
   };
 
+  // Renders **bold** segments (e.g. around meeting times) as <strong>, plain text otherwise.
+  const renderNotificationMessage = (text) => {
+    if (!text) return null;
+    const parts = String(text).split(/\*\*(.+?)\*\*/g);
+    return parts.map((part, i) => (i % 2 === 1 ? <strong key={i}>{part}</strong> : part));
+  };
+
   const getActionLabel = (notification) => {
     if (!notification) return 'Open';
     if (notification.actionLabel) return notification.actionLabel;
@@ -696,7 +703,7 @@ const NotificationCenter = () => {
                         </div>
                         {getNotificationMessageText(notification) && (
                           <p className="text-sm text-gray-600 mt-1 whitespace-normal break-words">
-                            {getNotificationMessageText(notification)}
+                            {renderNotificationMessage(getNotificationMessageText(notification))}
                           </p>
                         )}
 

@@ -715,15 +715,24 @@ async function notifyRequestEvent({ request, eventType, toUser }) {
   });
 }
 
+// Teacher-side meeting types have no real "guardian" — bookingPayload.guardianName
+// is just reused generic storage that actually holds the candidate/teacher's own
+// contact info for these types, so admin/teacher notifications must label it
+// correctly instead of always saying "Guardian".
+const TEACHER_SIDE_MEETING_TYPES = [MEETING_TYPES.TEACHER_SYNC, MEETING_TYPES.NEW_TEACHER_INTERVIEW];
+
 async function notifyMeetingScheduled({ meeting, adminUser = null, triggeredBy = null } = {}) {
   if (!meeting) return null;
 
   try {
     const meetingLabel = MEETING_TYPE_LABELS[meeting.meetingType] || 'Meeting';
+    const isTeacherSide = TEACHER_SIDE_MEETING_TYPES.includes(meeting.meetingType);
+    const contactLabel = meeting.meetingType === MEETING_TYPES.NEW_TEACHER_INTERVIEW ? 'Candidate' : (isTeacherSide ? 'Teacher' : 'Guardian');
     const students = Array.isArray(meeting.bookingPayload?.students) ? meeting.bookingPayload.students : [];
     const studentCount = students.length;
     const studentLabel = studentCount ? `${studentCount} student${studentCount === 1 ? '' : 's'}` : null;
-    const guardianName = meeting.bookingPayload?.guardianName || null;
+    const contactName = meeting.bookingPayload?.guardianName || meeting.attendees?.teacherName || null;
+    const guardianName = isTeacherSide ? null : contactName;
     const teacherName = meeting.attendees?.teacherName || null;
     const metadataBase = {
       meetingType: meeting.meetingType,
@@ -745,16 +754,14 @@ async function notifyMeetingScheduled({ meeting, adminUser = null, triggeredBy =
     const notifications = [];
 
     if (meeting.adminId) {
-      const bookedBy = triggeredBy?.fullName || triggeredBy?.email || null;
       const timeLabel = formatFor(adminUserDoc?.timezone);
-      const adminMessageParts = [`${meetingLabel} scheduled for ${timeLabel}${studentLabel ? ` • ${studentLabel}` : ''}`];
-      if (guardianName) adminMessageParts.push(`Guardian: ${guardianName}`);
-      if (teacherName) adminMessageParts.push(`Teacher: ${teacherName}`);
-      if (bookedBy) adminMessageParts.push(`Booked by ${bookedBy}`);
+      const adminMessageParts = [`**${timeLabel}**`];
+      if (studentLabel) adminMessageParts.push(studentLabel);
+      if (contactName) adminMessageParts.push(`${contactLabel}: ${contactName}`);
       notifications.push(module.exports.createNotification({
         userId: meeting.adminId,
         title: `${meetingLabel} booked`,
-        message: adminMessageParts.join(' | '),
+        message: adminMessageParts.join(' • '),
         type: 'meeting',
         relatedTo: 'meeting',
         relatedId: meeting._id,
@@ -764,11 +771,10 @@ async function notifyMeetingScheduled({ meeting, adminUser = null, triggeredBy =
 
     if (meeting.guardianId) {
       const timeLabel = formatFor(guardianUserDoc?.timezone);
-      const guardianMessage = `Your ${meetingLabel.toLowerCase()} is scheduled for ${timeLabel}.`;
       notifications.push(module.exports.createNotification({
         userId: meeting.guardianId,
         title: `${meetingLabel} confirmed`,
-        message: guardianMessage,
+        message: `Scheduled for **${timeLabel}**.`,
         type: 'meeting',
         relatedTo: 'meeting',
         relatedId: meeting._id,
@@ -778,14 +784,14 @@ async function notifyMeetingScheduled({ meeting, adminUser = null, triggeredBy =
 
     if (meeting.teacherId) {
       const timeLabel = formatFor(teacherUserDoc?.timezone);
-      const teacherMessageParts = [`${meetingLabel} scheduled for ${timeLabel}`];
-      if (guardianName) teacherMessageParts.push(`with ${guardianName}`);
+      const teacherMessageParts = [`**${timeLabel}**`];
+      if (!isTeacherSide && guardianName) teacherMessageParts.push(`with ${guardianName}`);
       const adminName = adminUser?.fullName || adminUser?.firstName || 'Admin team';
-      teacherMessageParts.push(`Coordinated by ${adminName}`);
+      teacherMessageParts.push(`by ${adminName}`);
       notifications.push(module.exports.createNotification({
         userId: meeting.teacherId,
         title: `${meetingLabel} scheduled`,
-        message: teacherMessageParts.join(' | '),
+        message: teacherMessageParts.join(' • '),
         type: 'meeting',
         relatedTo: 'meeting',
         relatedId: meeting._id,

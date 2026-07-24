@@ -44,10 +44,17 @@ const PAGE_TABS = [
   { id: 'teachers', label: 'Teachers', icon: GraduationCap },
 ];
 
+const PAGE_TAB_STORAGE_KEY = 'waraqa.meetingAvailability.activeTab';
+
 const getInitialPageTab = () => {
   if (typeof window === 'undefined') return 'availability';
   const section = String(new URLSearchParams(window.location.search).get('section') || '').toLowerCase();
-  return PAGE_TABS.some((item) => item.id === section) ? section : 'availability';
+  if (PAGE_TABS.some((item) => item.id === section)) return section;
+  try {
+    const stored = window.localStorage.getItem(PAGE_TAB_STORAGE_KEY);
+    if (PAGE_TABS.some((item) => item.id === stored)) return stored;
+  } catch { /* ignore */ }
+  return 'availability';
 };
 
 const emptyFormState = (overrides = {}) => ({
@@ -942,7 +949,10 @@ const MeetingAvailabilityAdminPage = () => {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setPageTab(item.id)}
+                  onClick={() => {
+                    setPageTab(item.id);
+                    try { window.localStorage.setItem(PAGE_TAB_STORAGE_KEY, item.id); } catch { /* ignore */ }
+                  }}
                   className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${active ? 'border-primary bg-primary text-white' : 'border-gray-200 bg-white text-gray-700 hover:border-primary hover:text-primary'}`}
                 >
                   <Icon className="h-4 w-4" /> {item.label}

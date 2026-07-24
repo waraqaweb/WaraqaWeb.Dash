@@ -1192,11 +1192,22 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   }, [campaignFilter, items, statusFilter, searchTerm, opsFilters]);
 
   // Strongest-applicant-first ordering, applied only to the "Under review"
-  // stage (see sortUnderReviewCandidates above). Other stages/tabs keep the
-  // default order.
-  const sortedItems = useMemo(() => (
-    statusFilter === 'under_review' ? sortUnderReviewCandidates(filteredItems) : filteredItems
-  ), [filteredItems, statusFilter]);
+  // stage (see sortUnderReviewCandidates above). "Interview pending" instead
+  // orders by nearest booked interview meeting time first (candidates who
+  // haven't booked yet — no scheduledAt — sort to the end), matching the
+  // order used in the Interviews tab so the two views stay consistent. Other
+  // stages/tabs keep the default order.
+  const sortedItems = useMemo(() => {
+    if (statusFilter === 'under_review') return sortUnderReviewCandidates(filteredItems);
+    if (statusFilter === 'interview_pending') {
+      return [...filteredItems].sort((a, b) => {
+        const aTime = a?.recruitment?.interview?.scheduledAt ? new Date(a.recruitment.interview.scheduledAt).getTime() : Infinity;
+        const bTime = b?.recruitment?.interview?.scheduledAt ? new Date(b.recruitment.interview.scheduledAt).getTime() : Infinity;
+        return aTime - bTime;
+      });
+    }
+    return filteredItems;
+  }, [filteredItems, statusFilter]);
 
   const exportToExcel = () => {
     const rows = sortedItems;
@@ -1377,6 +1388,14 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${item?.recruitment?.reviewed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{item?.recruitment?.reviewed ? 'Reviewed' : 'New review'}</span>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{formatDateTime(item.submittedAt)}</span>
                     {overall?.label ? <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${overallTone(overall.label)}`}>{overall.label}{overall?.score != null ? ` • ${overall.score}%` : ''}</span> : null}
+                    {item?.recruitment?.interview?.scheduledAt ? (
+                      <span
+                        title="Manage scoring, outcome, and feedback for this booked interview from the Interviews tab."
+                        className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${item?.recruitment?.interview?.completedAt ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}
+                      >
+                        {item.recruitment.interview.completedAt ? 'Interview done' : 'Interview booked'} • {formatDateTime(item.recruitment.interview.scheduledAt)}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     <ContactActions item={item} compact />

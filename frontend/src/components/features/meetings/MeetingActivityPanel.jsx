@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, ClipboardPaste, FileText, RefreshCw, Trash2, Users, Pencil, XCircle, UserCheck, UserX, Ban, Bell, History, X } from 'lucide-react';
+import { CalendarClock, CalendarPlus, CheckCircle2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Clock3, ClipboardPaste, FileText, RefreshCw, Trash2, Users, Pencil, XCircle, UserCheck, UserX, Ban, Bell, History, X } from 'lucide-react';
 import { listMeetings, rescheduleMeeting, deleteMeeting, hardDeleteMeeting, updateMeetingAttendance, sendMeetingReminder } from '../../../api/meetings';
 import { MEETING_TYPE_LABELS, MEETING_TYPE_TONES } from '../../../constants/meetingConstants';
 import { makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
@@ -353,6 +353,17 @@ export default function MeetingActivityPanel({ timezone }) {
             >
               <Bell className="h-4 w-4" />
             </button>
+            {meeting?.calendar?.googleCalendarLink ? (
+              <button
+                type="button"
+                title="Add to Google Calendar"
+                aria-label="Add to Google Calendar"
+                onClick={(e) => { e.stopPropagation(); window.open(meeting.calendar.googleCalendarLink, '_blank', 'noopener,noreferrer'); }}
+                className={iconBtn('border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100')}
+              >
+                <CalendarPlus className="h-4 w-4" />
+              </button>
+            ) : null}
             <button
               type="button"
               title={meeting?.report?.submittedAt ? 'Edit report' : 'Add report'}

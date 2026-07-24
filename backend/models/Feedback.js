@@ -1,16 +1,18 @@
 const mongoose = require('mongoose');
 
+const NO_USER_REQUIRED_TYPES = ['evaluation', 'teacher_interview'];
+
 const feedbackSchema = new mongoose.Schema({
   type: {
     type: String,
-    enum: ['first_class', 'monthly', 'evaluation'],
+    enum: ['first_class', 'monthly', 'evaluation', 'teacher_interview'],
     required: true,
   },
   user: { // the user who submitted feedback (guardian or student user)
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: function () {
-      return this.type !== 'evaluation';
+      return !NO_USER_REQUIRED_TYPES.includes(this.type);
     },
   },
   student: { // if a guardian submitted, which student is the subject
@@ -21,7 +23,7 @@ const feedbackSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: function () {
-      return this.type !== 'evaluation';
+      return !NO_USER_REQUIRED_TYPES.includes(this.type);
     },
   },
   classId: {
@@ -49,6 +51,10 @@ const feedbackSchema = new mongoose.Schema({
     ref: 'EvaluationSession',
   },
   evaluationStudentSubId: { type: mongoose.Schema.Types.ObjectId },
+  teacherInterviewFeedback: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'TeacherInterviewFeedback',
+  },
   source: { type: String, trim: true, maxlength: 100 },
 
   // Whether the prompt was dismissed without submitting (for tracking)
@@ -70,6 +76,16 @@ feedbackSchema.index(
       type: 'evaluation',
       evaluationSession: { $exists: true },
       evaluationStudentSubId: { $exists: true },
+    },
+  }
+);
+feedbackSchema.index(
+  { teacherInterviewFeedback: 1, type: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      type: 'teacher_interview',
+      teacherInterviewFeedback: { $exists: true },
     },
   }
 );

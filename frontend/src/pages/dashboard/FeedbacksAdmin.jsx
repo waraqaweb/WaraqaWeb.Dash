@@ -34,6 +34,7 @@ const TYPE_STYLES = {
   monthly: 'border-border bg-muted/30 text-foreground',
   first_class: 'border-border bg-muted/30 text-foreground',
   evaluation: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  teacher_interview: 'border-blue-200 bg-blue-50 text-blue-800',
 };
 
 const formatTypeLabel = (value = '') => {
@@ -68,7 +69,7 @@ const collectMetrics = (feedback = {}) => {
   METRIC_FIELDS.forEach((field) => pushMetric(field.label, feedback[field.key], 10));
 
   if (feedback.metrics && typeof feedback.metrics === 'object') {
-    const dynamicMax = feedback.type === 'evaluation' ? 5 : 10;
+    const dynamicMax = (feedback.type === 'evaluation' || feedback.type === 'teacher_interview') ? 5 : 10;
     Object.entries(feedback.metrics).forEach(([key, value]) => {
       pushMetric(humanizeKey(key), value, dynamicMax);
     });
@@ -82,9 +83,9 @@ const collectNotes = (feedback = {}) =>
     .map((field) => {
       const raw = feedback[field.key];
       if (!raw || !String(raw).trim()) return null;
-      const label = field.key === 'notes' && feedback.type === 'evaluation'
-        ? 'Evaluation feedback'
-        : field.label;
+      let label = field.label;
+      if (field.key === 'notes' && feedback.type === 'evaluation') label = 'Evaluation feedback';
+      if (field.key === 'notes' && feedback.type === 'teacher_interview') label = 'Improvement suggestions';
       return { label, text: String(raw).trim() };
     })
     .filter(Boolean);

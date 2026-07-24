@@ -157,14 +157,17 @@ const clampRange = (rangeStart, rangeEnd) => {
   };
 };
 
-const fetchBusyMeetings = async ({ adminId, meetingType, rangeStart, rangeEnd, buffer = 0 }) => {
+const fetchBusyMeetings = async ({ adminId, rangeStart, rangeEnd, buffer = 0 }) => {
   // Widen the fetch window by the buffer so a meeting just outside
   // [rangeStart, rangeEnd] whose buffered gap still pokes into the range
   // isn't missed (mirrors the buffer applied when computing free segments).
+  // NOTE: intentionally NOT filtered by meetingType — the same admin runs
+  // every meeting type, so a meeting booked under any type (evaluation,
+  // follow-up, teacher sync, new teacher interview) must block that time
+  // slot for all the other types too, to avoid double-booking the admin.
   const bufferMs = buffer * 60000;
   return Meeting.find({
     adminId,
-    meetingType,
     status: { $in: BLOCKING_STATUSES },
     scheduledStart: { $lt: new Date(rangeEnd.getTime() + bufferMs) },
     scheduledEnd: { $gt: new Date(rangeStart.getTime() - bufferMs) }
@@ -271,7 +274,7 @@ const computeAvailabilityWindows = async ({
   }
 
   const [busyMeetings, systemVacations, meetingTimeOff] = await Promise.all([
-    fetchBusyMeetings({ adminId, meetingType, rangeStart: scopedStart, rangeEnd: scopedEnd, buffer }),
+    fetchBusyMeetings({ adminId, rangeStart: scopedStart, rangeEnd: scopedEnd, buffer }),
     fetchSystemVacations({ rangeStart: scopedStart, rangeEnd: scopedEnd }),
     fetchMeetingTimeOff({ adminId, rangeStart: scopedStart, rangeEnd: scopedEnd })
   ]);
@@ -381,9 +384,11 @@ const assertSlotAvailability = async ({ admin, meetingType, startUtc, endUtc }) 
   }
 
   const buffer = getBufferMinutes(admin, meetingType);
+  // Intentionally NOT scoped to meetingType — the same admin handles every
+  // meeting type, so an existing meeting of ANY type must block this slot
+  // to keep the admin from being double-booked across forms.
   const blockingMeeting = await Meeting.findOne({
     adminId,
-    meetingType,
     status: { $ne: MEETING_STATUSES.CANCELLED },
     scheduledStart: { $lt: new Date(endUtc.getTime() + buffer * 60000) },
     scheduledEnd: { $gt: new Date(startUtc.getTime() - buffer * 60000) }
@@ -551,15 +556,23 @@ const buildCalendarLinks = (meeting, admin) => {
   };
 };
 
-const formatMeetingResponse = (meeting) => {
+const formatMeetingResponse = (meeting, admin) => {
   if (!meeting) return null;
   // Accept both hydrated Mongoose documents and plain objects (e.g. lean query
   // results), so list endpoints can skip full-document hydration.
   const payload = typeof meeting.toObject === 'function'
     ? meeting.toObject({ virtuals: true })
     : meeting;
-  payload.calendar = payload.calendar || {};
   payload.visibility = payload.visibility || { displayColor: MEETING_COLORS.background };
+  // When the owning admin is available, (re)compute fresh "Add to calendar"
+  // links so every scheduled meeting can offer a Google/Outlook calendar
+  // button, not just the one returned right after booking.
+  if (admin && payload.scheduledStart && payload.scheduledEnd && payload.status !== MEETING_STATUSES.CANCELLED) {
+    const { googleCalendarLink, outlookCalendarLink } = buildCalendarLinks(payload, admin);
+    payload.calendar = { googleCalendarLink, outlookCalendarLink };
+  } else {
+    payload.calendar = payload.calendar || {};
+  }
   return payload;
 };
 
@@ -963,7 +976,26 @@ const listMeetings = async ({ requester, filters = {} }) => {
     .sort({ scheduledStart: 1 })
     .limit(limit)
     .lean();
-  return meetings.map(formatMeetingResponse);
+
+  // Resolve each meeting's admin (cached per adminId) so we can attach fresh
+  // "Add to Google/Outlook calendar" links to every entry in the list.
+  const adminCache = new Map();
+  if (requester.role === 'admin') {
+    adminCache.set(String(requester._id), requester);
+  }
+  const resolveAdminCached = async (id) => {
+    if (!id) return null;
+    const key = String(id);
+    if (adminCache.has(key)) return adminCache.get(key);
+    const doc = await User.findById(id);
+    adminCache.set(key, doc);
+    return doc;
+  };
+
+  return Promise.all(meetings.map(async (meeting) => {
+    const admin = await resolveAdminCached(meeting.adminId);
+    return formatMeetingResponse(meeting, admin);
+  }));
 };
 
 const cancelMeeting = async ({ meetingId, adminId, reason }) => {
@@ -1249,7 +1281,7 @@ const rescheduleMeeting = async ({ meetingId, adminId, startTime, endTime, durat
   await meeting.save();
   // Fire-and-forget email to guardian + teacher (+ additional emails)
   sendRescheduleEmails({ meeting, prevStart, prevEnd, reason }).catch(() => {});
-  return formatMeetingResponse(meeting);
+  return formatMeetingResponse(meeting, admin);
 };
 
 const submitMeetingReport = async ({ meetingId, payload, submittedBy }) => {

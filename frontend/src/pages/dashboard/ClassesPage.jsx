@@ -12,7 +12,7 @@ import { deleteMeeting, listMeetings } from '../../api/meetings';
 import Select from "react-select";
 import {
   ChevronDown, ChevronUp, Video, Clock, CheckCircle,
-  XCircle, AlertCircle, Plus, Trash2, Calendar, User, Users, BookOpen,
+  XCircle, AlertCircle, Plus, Trash2, Calendar, CalendarPlus, User, Users, BookOpen,
   Pencil, Copy, Repeat, Star, FileText, RotateCcw, Globe, MessageCircle, Image,
   CalendarClock, ShieldCheck, CheckSquare
 } from "lucide-react";
@@ -3994,6 +3994,16 @@ fetchClassesRef.current = fetchClasses;
                         className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:border-teal-500 hover:text-teal-600"
                       >
                         {meetingCard.reportSubmitted ? 'View report' : 'Add report'}
+                      </button>
+                    )}
+                    {meetingCard.meeting?.calendar?.googleCalendarLink && (
+                      <button
+                        type="button"
+                        onClick={() => window.open(meetingCard.meeting.calendar.googleCalendarLink, '_blank', 'noopener,noreferrer')}
+                        className="inline-flex items-center gap-1 rounded-full border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 hover:border-blue-400 hover:text-blue-700"
+                      >
+                        <CalendarPlus className="h-3.5 w-3.5" />
+                        Add to calendar
                       </button>
                     )}
                     {isAdminUser && (

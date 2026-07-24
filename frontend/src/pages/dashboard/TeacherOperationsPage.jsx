@@ -60,6 +60,7 @@ import {
   sendPendingCandidateEmails,
   setTeacherAcceptingStudents,
 } from '../../api/teacherContract';
+import { generateTeacherInterviewFeedbackLink } from '../../api/teacherInterviewFeedback';
 import { STANDARD_SUBJECTS } from '../../utils/subjectStandardization';
 import { bumpDomainVersion } from '../../utils/sessionCache';
 
@@ -165,6 +166,14 @@ function formatEgyptWhatsapp(rawPhone) {
 function buildInterviewInviteMessage(senderName, link) {
   const name = senderName || 'the Waraqa Recruitment Team';
   return `Assalamu alaykum,\n\nDear Respected Teacher,\n\nI am ${name} from Waraqa Institute for Quran, Arabic, and Islamic Studies for non-native Arabic speakers.\n\nWe are pleased to inform you that your application to join our teaching team has been preliminarily accepted, and we would be delighted to invite you to an online introductory interview at a time that is most convenient for you, in sha' Allah.\n\nPlease choose your preferred interview time using the following link:\n\n${link}\n\nWe look forward to meeting you soon and ask Allah to make our efforts and yours sincere for His sake alone.\n\nJazakum Allahu khayran, and may Allah bless you.`;
+}
+
+// Shared, professionally phrased post-interview feedback request used for
+// both the WhatsApp and email quick-action buttons.
+function buildInterviewFeedbackMessage(senderName, teacherName, link) {
+  const name = senderName || 'the Waraqa Recruitment Team';
+  const greeting = teacherName ? `Dear ${teacherName},` : 'Dear Respected Teacher,';
+  return `Assalamu alaykum,\n\n${greeting}\n\nI am ${name} from Waraqa Institute for Quran, Arabic, and Islamic Studies.\n\nThank you for taking the time to interview with us. Your experience matters to us, and we would be grateful if you could share a few minutes of honest feedback about the process so we can keep improving it for future applicants.\n\nPlease share your feedback using the link below:\n\n${link}\n\nJazakum Allahu khayran for your time, and may Allah bless your efforts.`;
 }
 
 // Post-interview decision reasons — phrased warmly and professionally
@@ -348,6 +357,9 @@ export default function TeacherOperationsPage({ isActive }) {
   const [emailSending, setEmailSending] = useState(false);
   const [emailNotice, setEmailNotice] = useState('');
   const [contractLinkState, setContractLinkState] = useState({ id: '', url: '', loading: false, notice: '' });
+  const [feedbackLinkState, setFeedbackLinkState] = useState({ id: '', url: '', loading: false, notice: '' });
+  const [manualFeedbackForm, setManualFeedbackForm] = useState({ name: '', email: '', phone: '' });
+  const [manualFeedbackLinkState, setManualFeedbackLinkState] = useState({ url: '', loading: false, notice: '' });
   const [decisionPreview, setDecisionPreview] = useState(null); // { source, id, outcome, event, template, name, reasonCategory, phone, email, subject, body }
   const [decisionSending, setDecisionSending] = useState(false);
   const [declineNote, setDeclineNote] = useState('');
@@ -717,6 +729,88 @@ export default function TeacherOperationsPage({ isActive }) {
         : r)));
     } catch (error) {
       setContractLinkState((p) => ({ ...p, loading: false, notice: error?.response?.data?.message || 'Failed to generate contract link.' }));
+    }
+  };
+
+  // Generates (or reuses) a post-interview feedback link for the currently
+  // selected candidate, caching it in feedbackLinkState so repeated WhatsApp/
+  // email/copy actions for the same candidate don't mint a new token each time.
+  const ensureCandidateFeedbackLink = async (candidate) => {
+    if (!candidate) return null;
+    if (feedbackLinkState.id === candidate.id && feedbackLinkState.url) return feedbackLinkState.url;
+    const teacherName = candidate?.personalInfo?.fullName || candidate?.contract?.fullName
+      || `${candidate?.user?.firstName || ''} ${candidate?.user?.lastName || ''}`.trim();
+    const contactEmail = candidate?.personalInfo?.email || candidate?.user?.email || '';
+    const contactPhone = candidate?.personalInfo?.whatsappNumber || candidate?.personalInfo?.mobileNumber || candidate?.user?.phone || '';
+    setFeedbackLinkState((p) => ({ ...p, loading: true, notice: '' }));
+    try {
+      const res = await generateTeacherInterviewFeedbackLink({
+        teacherName, contactEmail, contactPhone,
+        candidateSource: candidate.source, candidateId: candidate.id,
+      });
+      setFeedbackLinkState({ id: candidate.id, url: res.link, loading: false, notice: 'Feedback link ready.' });
+      return res.link;
+    } catch (error) {
+      setFeedbackLinkState((p) => ({ ...p, loading: false, notice: error?.response?.data?.message || 'Failed to generate feedback link.' }));
+      return null;
+    }
+  };
+
+  const handleSendFeedbackWhatsapp = async () => {
+    const candidate = interviewResponses.find((r) => r.id === selectedInterviewId);
+    if (!candidate) return;
+    const link = await ensureCandidateFeedbackLink(candidate);
+    if (!link) return;
+    const phoneNumber = formatEgyptWhatsapp(candidate?.personalInfo?.whatsappNumber || candidate?.personalInfo?.mobileNumber || candidate?.user?.phone);
+    if (!phoneNumber) return;
+    const teacherName = candidate?.personalInfo?.fullName || candidate?.contract?.fullName || '';
+    const senderName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim();
+    const message = buildInterviewFeedbackMessage(senderName, teacherName, link);
+    window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleSendFeedbackEmail = async () => {
+    const candidate = interviewResponses.find((r) => r.id === selectedInterviewId);
+    if (!candidate) return;
+    const link = await ensureCandidateFeedbackLink(candidate);
+    if (!link) return;
+    const emailAddress = candidate?.personalInfo?.email || candidate?.user?.email || '';
+    if (!emailAddress) return;
+    const teacherName = candidate?.personalInfo?.fullName || candidate?.contract?.fullName || '';
+    const senderName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim();
+    const message = buildInterviewFeedbackMessage(senderName, teacherName, link);
+    window.location.href = `mailto:${emailAddress}?subject=${encodeURIComponent('How was your Waraqa interview experience?')}&body=${encodeURIComponent(message)}`;
+  };
+
+  const handleCopyFeedbackLink = async () => {
+    const candidate = interviewResponses.find((r) => r.id === selectedInterviewId);
+    if (!candidate) return;
+    const link = await ensureCandidateFeedbackLink(candidate);
+    if (!link) return;
+    handleCopy(link, 'Feedback link');
+  };
+
+  // Standalone feedback link generator for any teacher, listed in the
+  // interview tab or not.
+  const handleGenerateManualFeedbackLink = async () => {
+    const { name, email, phone } = manualFeedbackForm;
+    if (!name.trim() && !email.trim() && !phone.trim()) {
+      setManualFeedbackLinkState((p) => ({ ...p, notice: 'Enter at least a name, email, or phone number.' }));
+      return;
+    }
+    setManualFeedbackLinkState((p) => ({ ...p, loading: true, notice: '' }));
+    try {
+      const res = await generateTeacherInterviewFeedbackLink({ teacherName: name, contactEmail: email, contactPhone: phone });
+      let notice = 'Feedback link ready.';
+      try {
+        await navigator.clipboard.writeText(res.link);
+        notice = 'Feedback link copied to clipboard.';
+      } catch (err) {
+        notice = 'Feedback link ready (copy it below).';
+      }
+      setManualFeedbackLinkState({ url: res.link, loading: false, notice });
+    } catch (error) {
+      setManualFeedbackLinkState((p) => ({ ...p, loading: false, notice: error?.response?.data?.message || 'Failed to generate feedback link.' }));
     }
   };
 
@@ -1482,6 +1576,25 @@ export default function TeacherOperationsPage({ isActive }) {
                   <button type="button" onClick={() => navigate('/dashboard/availability')} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs text-foreground hover:border-primary/40"><CalendarClock className="h-3.5 w-3.5" /> Slots</button>
                 </div>
               </div>
+
+              <div className="mb-2 rounded-xl border border-border bg-background p-2.5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Feedback link (any teacher)</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">Generate a post-interview feedback link for a teacher who isn&apos;t listed below.</p>
+                <div className="mt-1.5 grid gap-1.5 sm:grid-cols-3">
+                  <input value={manualFeedbackForm.name} onChange={(e) => setManualFeedbackForm((p) => ({ ...p, name: e.target.value }))} placeholder="Name" className="rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
+                  <input value={manualFeedbackForm.email} onChange={(e) => setManualFeedbackForm((p) => ({ ...p, email: e.target.value }))} placeholder="Email (optional)" className="rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
+                  <input value={manualFeedbackForm.phone} onChange={(e) => setManualFeedbackForm((p) => ({ ...p, phone: e.target.value }))} placeholder="Phone (optional)" className="rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground" />
+                </div>
+                <div className="mt-1.5">
+                  <button type="button" onClick={handleGenerateManualFeedbackLink} disabled={manualFeedbackLinkState.loading} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
+                    {manualFeedbackLinkState.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />} Generate & copy
+                  </button>
+                </div>
+                {manualFeedbackLinkState.url ? (
+                  <input readOnly value={manualFeedbackLinkState.url} onFocus={(e) => e.target.select()} className="mt-1.5 w-full rounded-lg border border-border bg-card px-2 py-1.5 text-[11px] text-foreground" />
+                ) : null}
+                {manualFeedbackLinkState.notice ? <p className="mt-1 text-[11px] text-muted-foreground">{manualFeedbackLinkState.notice}</p> : null}
+              </div>
               {interviewLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading candidates…</div>
               ) : (
@@ -1661,6 +1774,36 @@ export default function TeacherOperationsPage({ isActive }) {
                               </button>
                             ))}
                           </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-border bg-background p-2.5">
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Post-interview feedback</p>
+                      {!interviewForm.completedAt ? (
+                        <p className="text-[11px] text-muted-foreground">Available once the interview meeting has taken place.</p>
+                      ) : (
+                        <>
+                          <p className="mb-1.5 text-[11px] text-muted-foreground">Ask the candidate how the interview process went for them — five quick ratings plus an optional note on what we could do better.</p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {phone ? (
+                              <button type="button" onClick={handleSendFeedbackWhatsapp} disabled={feedbackLinkState.loading} className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60">
+                                {feedbackLinkState.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />} WhatsApp
+                              </button>
+                            ) : null}
+                            {email ? (
+                              <button type="button" onClick={handleSendFeedbackEmail} disabled={feedbackLinkState.loading} className="inline-flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-60">
+                                {feedbackLinkState.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />} Email
+                              </button>
+                            ) : null}
+                            <button type="button" onClick={handleCopyFeedbackLink} disabled={feedbackLinkState.loading} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
+                              <Copy className="h-3.5 w-3.5" /> Copy link
+                            </button>
+                          </div>
+                          {feedbackLinkState.id === selectedInterviewId && feedbackLinkState.url ? (
+                            <input readOnly value={feedbackLinkState.url} onFocus={(e) => e.target.select()} className="mt-1.5 w-full rounded-lg border border-border bg-card px-2 py-1.5 text-[11px] text-foreground" />
+                          ) : null}
+                          {feedbackLinkState.id === selectedInterviewId && feedbackLinkState.notice ? <p className="mt-1 text-[11px] text-muted-foreground">{feedbackLinkState.notice}</p> : null}
                         </>
                       )}
                     </div>

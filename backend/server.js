@@ -361,6 +361,7 @@ app.use('/api/meetings', meetingRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/teacher-contract', teacherContractRoutes);
 app.use('/api/evaluations', require('./routes/evaluations'));
+app.use('/api/teacher-interview-feedback', require('./routes/teacherInterviewFeedback'));
 app.use('/api/trash', trashRoutes);
 app.use('/api/whatsapp', require('./routes/whatsapp'));
 

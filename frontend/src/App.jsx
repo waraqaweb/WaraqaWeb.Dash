@@ -34,6 +34,7 @@ const PublicStudentRegistrationPage = React.lazy(() => import('./components/regi
 const PublicTeacherContractPage = React.lazy(() => import('./components/registration/PublicTeacherContractPage'));
 const PublicTeacherAgreementPage = React.lazy(() => import('./components/registration/PublicTeacherAgreementPage'));
 const PublicEvaluationFeedbackPage = React.lazy(() => import('./components/evaluation/PublicEvaluationFeedbackPage'));
+const PublicTeacherInterviewFeedbackPage = React.lazy(() => import('./components/evaluation/PublicTeacherInterviewFeedbackPage'));
 const SalariesPage = React.lazy(() => import('./pages/dashboard/salaries/SalariesPage'));
 const FeedbacksAdmin = React.lazy(() => import('./pages/dashboard/FeedbacksAdmin'));
 const CreateClassModal = React.lazy(() => import('./components/dashboard/CreateClassModal'));
@@ -379,6 +380,10 @@ const AppRoutes = () => {
       <Route
         path="/dashboard/evaluation/feedback/:token"
         element={<PublicEvaluationFeedbackPage />}
+      />
+      <Route
+        path="/dashboard/teacher-interview/feedback/:token"
+        element={<PublicTeacherInterviewFeedbackPage />}
       />
       <Route
         path="/dashboard/interactive-learning"

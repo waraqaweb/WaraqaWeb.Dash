@@ -66,6 +66,13 @@ export async function completeRegistration(kind, id, complete = true) {
   return data;
 }
 
+// Park a registration on the waiting list (not complete, not cancelled — expected
+// to reach out again later), or restore it back to the active board.
+export async function waitingRegistration(kind, id, waiting = true) {
+  const { data } = await api.post(`${BASE}/registration/${kind}/${id}/waiting`, { waiting });
+  return data;
+}
+
 // Lazily fetch heavy joins for one registration: linked evaluation availability
 // and whether each student already has scheduled classes. Only call when a modal opens.
 export async function getRegistrationDetails(kind, id) {

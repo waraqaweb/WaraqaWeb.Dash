@@ -85,6 +85,9 @@ const registrationLeadSchema = new mongoose.Schema({
     steps: { type: mongoose.Schema.Types.Mixed, default: {} },
     // Set when the whole registration is finished (paid + done) and closed out.
     completedAt: { type: Date, default: null },
+    // Set when this lead is parked on the waiting list (not complete, not
+    // cancelled — expected to reach out again later).
+    waitingAt: { type: Date, default: null },
   },
   // Free-form follow-up notes the admin adds while shepherding the lead.
   onboardingNotes: [

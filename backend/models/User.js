@@ -852,6 +852,9 @@ const userSchema = new mongoose.Schema({
     steps: { type: mongoose.Schema.Types.Mixed, default: {} },
     // Set when the whole registration is finished (paid + done) and closed out.
     completedAt: { type: Date, default: null },
+    // Set when this guardian is parked on the waiting list (not complete, not
+    // cancelled — expected to reach out again later).
+    waitingAt: { type: Date, default: null },
     notes: [
       {
         text: { type: String, trim: true, maxlength: 2000 },

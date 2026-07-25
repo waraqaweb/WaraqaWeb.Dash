@@ -448,12 +448,23 @@ const enforceGuardianMonthlyLimit = async ({ guardianId, studentId, meetingType,
 };
 
 const buildCalendarLinks = (meeting, admin) => {
-  const summary = {
-    [MEETING_TYPES.NEW_STUDENT_EVALUATION]: 'Waraqa Evaluation Session',
-    [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: 'Waraqa Follow-up Meeting',
-    [MEETING_TYPES.TEACHER_SYNC]: 'Waraqa Progress Sync',
-    [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: 'Waraqa New Teacher Interview'
-  }[meeting.meetingType] || 'Meeting';
+  // Calendar event title: "{Type}: {Contact name}" (e.g. "Teacher Interview:
+  // Mohamed Ali") so the entry is identifiable at a glance, falling back to a
+  // generic label when no contact name is on file.
+  const MEETING_TYPE_LABELS = {
+    [MEETING_TYPES.NEW_STUDENT_EVALUATION]: { full: 'Waraqa Evaluation Session', short: 'Evaluation' },
+    [MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP]: { full: 'Waraqa Follow-up Meeting', short: 'Follow-up' },
+    [MEETING_TYPES.TEACHER_SYNC]: { full: 'Waraqa Progress Sync', short: 'Teacher Sync' },
+    [MEETING_TYPES.NEW_TEACHER_INTERVIEW]: { full: 'Waraqa New Teacher Interview', short: 'Teacher Interview' }
+  };
+  const typeLabel = MEETING_TYPE_LABELS[meeting.meetingType] || { full: 'Meeting', short: 'Meeting' };
+  // Teacher-side meeting types stash the contact's name in bookingPayload.guardianName
+  // (a generic reused field) when attendees.teacherName isn't populated.
+  const isTeacherSideMeetingType = TEACHER_SIDE_MEETING_TYPES.includes(meeting.meetingType);
+  const summaryContactName = isTeacherSideMeetingType
+    ? (meeting.attendees?.teacherName || meeting.bookingPayload?.guardianName || '')
+    : (meeting.bookingPayload?.guardianName || meeting.attendees?.guardianName || '');
+  const summary = summaryContactName ? `${typeLabel.short}: ${summaryContactName}` : typeLabel.full;
 
   const descriptionParts = [];
   if (meeting.bookingPayload?.guardianName) {

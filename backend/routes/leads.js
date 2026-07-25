@@ -492,6 +492,7 @@ router.get('/onboarding-todos', authenticateToken, requireAdmin, async (req, res
       kind: 'lead',
       accountUserId: l.conversion?.guardianUserId?._id || l.conversion?.guardianUserId || null,
       completedAt: l.onboarding?.completedAt || null,
+      waitingAt: l.onboarding?.waitingAt || null,
       steps: seedFunnelSteps(l.onboarding?.steps, l.onboarding || {}),
       notes: l.onboardingNotes || [],
       meeting: null,
@@ -673,6 +674,7 @@ function buildSignupRow(u, extra = {}) {
     createdAt: u.createdAt,
     status: u.isActive === false ? 'cancelled' : 'account',
     completedAt: rf.completedAt || null,
+    waitingAt: rf.waitingAt || null,
     personalInfo: {
       fullName: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
       email: u.email,
@@ -717,6 +719,7 @@ function buildMeetingRow(m) {
     createdAt: m.createdAt || m.scheduledStart,
     status: m.status === MEETING_STATUSES.CANCELLED ? 'cancelled' : 'meeting',
     completedAt: ob.completedAt || null,
+    waitingAt: ob.waitingAt || null,
     personalInfo: {
       fullName: bp.guardianName || m.attendees?.guardianName || 'Guardian',
       email: bp.guardianEmail || '',
@@ -841,6 +844,26 @@ router.post('/registration/:kind/:id/complete', authenticateToken, requireAdmin,
   } catch (error) {
     console.error('Registration complete error:', error);
     return res.status(500).json({ message: 'Failed to update completion.' });
+  }
+});
+
+// Park a registration on the waiting list (not complete, not cancelled — the
+// admin expects this guardian/student to reach out again later), or restore it.
+router.post('/registration/:kind/:id/waiting', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const waiting = req.body?.waiting !== false;
+    const found = await loadRegistration(req.params.kind, req.params.id);
+    if (!found) return res.status(404).json({ message: 'Registration not found.' });
+    const { kind, doc } = found;
+    const block = onboardingBlock(kind);
+    if (!doc[block]) doc[block] = {};
+    doc[block].waitingAt = waiting ? new Date() : null;
+    doc.markModified(block);
+    await doc.save();
+    return res.json({ message: waiting ? 'Added to waiting list.' : 'Removed from waiting list.' });
+  } catch (error) {
+    console.error('Registration waiting error:', error);
+    return res.status(500).json({ message: 'Failed to update waiting list status.' });
   }
 });
 

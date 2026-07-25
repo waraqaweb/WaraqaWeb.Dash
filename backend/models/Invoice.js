@@ -1214,7 +1214,10 @@ invoiceSchema.methods.getExportSnapshot = function(options = {}) {
         attendanceStatus: item.attendanceStatus || null,
         classStatus: (entry.class && typeof entry.class === 'object' && entry.class.status) || item.status || null,
         excludeFromStudentBalance: Boolean(item.excludeFromStudentBalance),
-        excludeFromTeacherPayment: Boolean(item.excludeFromTeacherPayment)
+        excludeFromTeacherPayment: Boolean(item.excludeFromTeacherPayment),
+        waivedForGuardian: Boolean(item.waivedForGuardian),
+        hiddenFromGuardian: Boolean(item.hiddenFromGuardian),
+        waiverReason: item.waiverReason || ''
       });
     }
   });

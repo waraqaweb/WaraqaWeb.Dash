@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Archive, CheckCircle2, Circle, Copy, RotateCcw, UserPlus, Users, ClipboardList,
-  Ban, X, Mail, MessageCircle, StickyNote, Send, Clock3, CheckCheck, Loader2, CalendarClock,
+  Ban, X, Mail, MessageCircle, StickyNote, Send, Clock3, CheckCheck, Loader2, CalendarClock, Hourglass,
 } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import {
   convertRegistrationLead, getOnboardingTodos, setRegistrationStep,
   addRegistrationNote, sendRegistrationEmail, cancelRegistration,
-  completeRegistration, getRegistrationDetails,
+  completeRegistration, waitingRegistration, getRegistrationDetails,
 } from '../../../api/leads';
 import {
   introMessage, postEvaluationMessage, teacherAvailabilityMessage,
@@ -114,6 +114,9 @@ const progressOf = (row) => {
 
 const isCancelled = (row) => row.status === 'cancelled' || row.status === 'archived';
 const isCompleted = (row) => Boolean(row.completedAt);
+// Parked on the waiting list: not complete, not cancelled — expected to reach
+// out again later. Mutually exclusive with completed/cancelled in the UI.
+const isWaiting = (row) => Boolean(row.waitingAt);
 
 export default function OnboardingTodoPanel() {
   const { user } = useAuth();
@@ -157,13 +160,14 @@ export default function OnboardingTodoPanel() {
   }, [message]);
 
   const buckets = useMemo(() => {
-    const active = []; const completed = []; const cancelled = [];
+    const active = []; const completed = []; const cancelled = []; const waiting = [];
     rows.forEach((r) => {
       if (isCancelled(r)) cancelled.push(r);
       else if (isCompleted(r)) completed.push(r);
+      else if (isWaiting(r)) waiting.push(r);
       else active.push(r);
     });
-    return { active, completed, cancelled };
+    return { active, completed, cancelled, waiting };
   }, [rows]);
 
   // One column per phase + a final "Ready to close" column.
@@ -208,6 +212,7 @@ export default function OnboardingTodoPanel() {
 
   const tabDefs = [
     ['active', 'Active', buckets.active.length],
+    ['waiting', 'Waiting list', buckets.waiting.length],
     ['completed', 'Completed', buckets.completed.length],
     ['cancelled', 'Cancelled', buckets.cancelled.length],
   ];
@@ -366,6 +371,8 @@ function SimpleRow({ row, tab, onManage }) {
         <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
           <span>{tab === 'completed'
             ? `Completed ${fmtDateTime(row.completedAt)}`
+            : tab === 'waiting'
+            ? `Waiting since ${fmtDateTime(row.waitingAt)}`
             : (row.cancelReason ? `Cancelled · ${row.cancelReason}` : 'Cancelled')}</span>
           {row.personalInfo?.email ? <span className="truncate">{row.personalInfo.email}</span> : null}
         </div>
@@ -383,6 +390,7 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
   const phone = row.personalInfo?.phone || '';
   const cancelled = isCancelled(row);
   const completed = isCompleted(row);
+  const waiting = isWaiting(row);
 
   const [busy, setBusy] = useState('');
   const [localError, setLocalError] = useState('');
@@ -719,6 +727,25 @@ function RegistrationManageModal({ row, name, adminName, onClose, onChanged, set
                 className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
               >
                 <CheckCheck className="h-3.5 w-3.5" /> Complete &amp; close
+              </button>
+            ))}
+            {!cancelled && !completed && (waiting ? (
+              <button
+                type="button"
+                disabled={busy === 'waiting'}
+                onClick={() => run('waiting', () => waitingRegistration(kind, id, false), 'Removed from waiting list.')}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Remove from waiting list
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy === 'waiting'}
+                onClick={() => run('waiting', () => waitingRegistration(kind, id, true), 'Added to waiting list.')}
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 disabled:opacity-50"
+              >
+                <Hourglass className="h-3.5 w-3.5" /> Add to waiting list
               </button>
             ))}
             {cancelled ? (

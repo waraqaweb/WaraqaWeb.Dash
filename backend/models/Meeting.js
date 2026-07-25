@@ -263,6 +263,9 @@ const meetingSchema = new mongoose.Schema({
   onboarding: {
     steps: { type: mongoose.Schema.Types.Mixed, default: {} },
     completedAt: { type: Date, default: null },
+    // Set when this booking is parked on the waiting list (not complete, not
+    // cancelled — expected to reach out again later).
+    waitingAt: { type: Date, default: null },
     notes: [
       {
         text: { type: String, trim: true, maxlength: 2000 },

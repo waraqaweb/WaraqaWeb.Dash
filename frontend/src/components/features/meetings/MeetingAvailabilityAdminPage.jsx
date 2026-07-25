@@ -168,6 +168,14 @@ const MeetingAvailabilityAdminPage = () => {
   const timezoneOptions = useMemo(() => getMeetingTimezoneOptions(), []);
   const meetingsEnabled = user?.adminSettings?.meetingsEnabled !== false;
   const [meetingsEnabledSaving, setMeetingsEnabledSaving] = useState(false);
+  const [bufferValues, setBufferValues] = useState(() => ({
+    defaultBufferMinutes: user?.adminSettings?.defaultBufferMinutes ?? 5,
+    evaluationBufferMinutes: user?.adminSettings?.evaluationBufferMinutes ?? 10,
+    guardianBufferMinutes: user?.adminSettings?.guardianBufferMinutes ?? 10,
+    teacherBufferMinutes: user?.adminSettings?.teacherBufferMinutes ?? 15
+  }));
+  const [bufferStatus, setBufferStatus] = useState({ type: '', message: '' });
+  const [bufferSaving, setBufferSaving] = useState(false);
 
   const [timeOffPeriods, setTimeOffPeriods] = useState([]);
   const [timeOffLoading, setTimeOffLoading] = useState(false);
@@ -415,6 +423,20 @@ const MeetingAvailabilityAdminPage = () => {
     setMeetingLinkValue(user?.adminSettings?.meetingLink || '');
   }, [user?.adminSettings?.meetingLink]);
 
+  useEffect(() => {
+    setBufferValues({
+      defaultBufferMinutes: user?.adminSettings?.defaultBufferMinutes ?? 5,
+      evaluationBufferMinutes: user?.adminSettings?.evaluationBufferMinutes ?? 10,
+      guardianBufferMinutes: user?.adminSettings?.guardianBufferMinutes ?? 10,
+      teacherBufferMinutes: user?.adminSettings?.teacherBufferMinutes ?? 15
+    });
+  }, [
+    user?.adminSettings?.defaultBufferMinutes,
+    user?.adminSettings?.evaluationBufferMinutes,
+    user?.adminSettings?.guardianBufferMinutes,
+    user?.adminSettings?.teacherBufferMinutes
+  ]);
+
   const openCreateForm = (dayIndex = 0) => {
     const meetingType = activeType;
     const durationMinutes = MEETING_DEFAULT_DURATIONS[meetingType] || 30;
@@ -505,6 +527,35 @@ const MeetingAvailabilityAdminPage = () => {
       setError(message);
     } finally {
       setMeetingsEnabledSaving(false);
+    }
+  };
+
+  const handleBufferValueChange = (field, value) => {
+    const num = Number(value);
+    setBufferValues((prev) => ({ ...prev, [field]: Number.isFinite(num) ? Math.max(0, Math.min(240, Math.round(num))) : 0 }));
+  };
+
+  const handleSaveBufferSettings = async () => {
+    if (!user?._id) return;
+    setBufferStatus({ type: '', message: '' });
+    setBufferSaving(true);
+    try {
+      const payload = {
+        adminSettings: {
+          ...(user?.adminSettings || {}),
+          ...bufferValues
+        }
+      };
+      const result = await updateProfile(payload);
+      if (!result?.success) {
+        throw new Error(result?.error || 'Failed to save buffer settings');
+      }
+      setBufferStatus({ type: 'success', message: 'Buffer settings saved.' });
+    } catch (err) {
+      const message = err?.response?.data?.message || err?.message || 'Failed to save buffer settings';
+      setBufferStatus({ type: 'error', message });
+    } finally {
+      setBufferSaving(false);
     }
   };
 
@@ -1180,6 +1231,42 @@ const MeetingAvailabilityAdminPage = () => {
                 <Ban className="h-4 w-4" />{meetingsEnabledSaving ? 'Saving…' : meetingsEnabled ? 'Disable' : 'Enable'}
               </button>
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">Buffer between meetings (minutes)</div>
+            <p className="mt-1 text-xs text-gray-500">
+              Gap kept before/after every booked meeting. Set to 0 for back-to-back slots with no gap.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Evaluations</label>
+                <input type="number" min={0} max={240} value={bufferValues.evaluationBufferMinutes} onChange={(e) => handleBufferValueChange('evaluationBufferMinutes', e.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Guardian follow-ups</label>
+                <input type="number" min={0} max={240} value={bufferValues.guardianBufferMinutes} onChange={(e) => handleBufferValueChange('guardianBufferMinutes', e.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Teacher sync / interview</label>
+                <input type="number" min={0} max={240} value={bufferValues.teacherBufferMinutes} onChange={(e) => handleBufferValueChange('teacherBufferMinutes', e.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Default (other)</label>
+                <input type="number" min={0} max={240} value={bufferValues.defaultBufferMinutes} onChange={(e) => handleBufferValueChange('defaultBufferMinutes', e.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={handleSaveBufferSettings}
+                disabled={bufferSaving}
+                className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow disabled:opacity-60"
+              >
+                {bufferSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+            {bufferStatus.message ? <p className={`mt-2 text-xs ${bufferStatus.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>{bufferStatus.message}</p> : null}
           </div>
 
           <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">

@@ -57,6 +57,21 @@ jobs:
           echo "BUILD_VERSION=${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
           echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
 
+      # docker/setup-buildx-action bootstraps a builder by pulling
+      # moby/buildkit:buildx-stable-1 from Docker Hub; that pull occasionally
+      # times out ("context deadline exceeded") on GitHub-hosted runners. Warm
+      # the image with a few retries first so the bootstrap step below can use
+      # the local cache instead of racing a flaky first attempt.
+      - name: Pre-pull buildkit image (retry on transient Docker Hub errors)
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            docker pull moby/buildkit:buildx-stable-1 && exit 0
+            echo "buildkit pull attempt $i failed; retrying in 10s..."
+            sleep 10
+          done
+          echo "All buildkit pull attempts failed; continuing anyway."
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

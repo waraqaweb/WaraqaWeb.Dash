@@ -1731,7 +1731,13 @@ router.get('/guardian/:guardianId/unsettled-adjustments', authenticateToken, req
     const unsettled = [];
     for (const inv of invoices) {
       for (const adj of (inv.adjustments || [])) {
-        if (!adj.settled) {
+        // Only 'credit' adjustments go through the settle/reconcile workflow
+        // (reconcileGuardianCredits only ever flips settled on credits). Debit
+        // adjustments (e.g. a cancelled class re-activated, or a duration
+        // increase) default to settled:false forever since nothing ever
+        // settles them — surfacing them here made this banner permanently
+        // "stuck" on cases that never needed any admin action.
+        if (adj.type === 'credit' && !adj.settled) {
           unsettled.push({
             ...adj,
             invoiceId: inv._id,

@@ -9,7 +9,7 @@ const assetSchema = new mongoose.Schema({
 }, { _id: false });
 
 const recruitmentRatingValues = ['not_available', 'weak', 'good', 'very_good', 'excellent'];
-const recruitmentStatusValues = ['new', 'under_review', 'shortlisted', 'interview_pending', 'interviewed', 'accepted', 'rejected', 'archived'];
+const recruitmentStatusValues = ['new', 'under_review', 'shortlisted', 'interview_pending', 'interviewed', 'offer_call', 'accepted', 'rejected', 'withdrawn', 'cancelled', 'archived'];
 
 const recruitmentSchema = new mongoose.Schema({
   status: {

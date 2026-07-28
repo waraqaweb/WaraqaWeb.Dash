@@ -30,7 +30,6 @@ import { useNavigate } from 'react-router-dom';
 import TeacherResponsesPanel, { ALL_SUBJECT_RATING_FIELDS, resolveSubjectRatingKeys, StarRating } from '../../components/features/meetings/TeacherResponsesPanel';
 import BusinessIntelligencePage from './BusinessIntelligencePage';
 import { useSearch } from '../../contexts/SearchContext';
-import { useAuth } from '../../contexts/AuthContext';
 import {
   createRecruitmentCampaign,
   getTeacherOperationsSummary,
@@ -67,7 +66,6 @@ import { bumpDomainVersion } from '../../utils/sessionCache';
 const TABS = [
   { id: 'overview', label: 'Overview', icon: TrendingUp },
   { id: 'pipeline', label: 'Pipeline', icon: BriefcaseBusiness },
-  { id: 'interviews', label: 'Interviews', icon: CalendarClock },
   { id: 'training', label: 'Training', icon: GraduationCap },
   { id: 'stats', label: 'Stats & BI', icon: BarChart3 },
 ];
@@ -181,20 +179,24 @@ function formatEgyptWhatsapp(rawPhone) {
   return digits;
 }
 
+// First word of a person's name — used to greet candidates personally
+// ("Dear Sara,") in invites, decisions, and feedback requests.
+const firstNameOf = (fullName) => String(fullName || '').trim().split(/\s+/)[0] || '';
+
 // Shared, professionally phrased interview-invite message used for both the
 // WhatsApp and email quick-action buttons, so candidates get the same tone
-// regardless of channel. {{senderName}} is the currently logged-in admin.
-function buildInterviewInviteMessage(senderName, link) {
-  const name = senderName || 'the Waraqa Recruitment Team';
-  return `Assalamu alaykum,\n\nDear Respected Teacher,\n\nWe are pleased to inform you that your application to join our teaching team has been preliminarily accepted, and we would be delighted to invite you to an online introductory interview at a time that is most convenient for you, in sha' Allah.\n\nPlease choose your preferred interview time using the following link:\n\n${link}\n\nWe look forward to meeting you soon and ask Allah to make our efforts and yours sincere for His sake alone.\n\nJazakum Allahu khayran, and may Allah bless you.`;
+// regardless of channel.
+function buildInterviewInviteMessage(link, teacherFirstName) {
+  const greeting = teacherFirstName ? `Dear ${teacherFirstName},` : 'Dear Respected Teacher,';
+  return `Assalamu alaykum,\n\n${greeting}\n\nWe are pleased to inform you that your application to join our teaching team has been preliminarily accepted, and we would be delighted to invite you to an online introductory interview at a time that is most convenient for you, in sha' Allah.\n\nPlease choose your preferred interview time using the following link:\n\n${link}\n\nWe look forward to meeting you soon and ask Allah to make our efforts and yours sincere for His sake alone.\n\nJazakum Allahu khayran, and may Allah bless you.`;
 }
 
 // Shared, professionally phrased post-interview feedback request used for
-// both the WhatsApp and email quick-action buttons.
-function buildInterviewFeedbackMessage(senderName, teacherName, link) {
-  const name = senderName || 'the Waraqa Recruitment Team';
-  const greeting = teacherName ? `Dear ${teacherName},` : 'Dear Respected Teacher,';
-  return `Assalamu alaykum,\n\n${greeting}\n\nI am ${name} from Waraqa Institute for Quran, Arabic, and Islamic Studies.\n\nThank you for taking the time to interview with us. Your experience matters to us, and we would be grateful if you could share a few minutes of honest feedback about the process so we can keep improving it for future applicants.\n\nPlease share your feedback using the link below:\n\n${link}\n\nJazakum Allahu khayran for your time, and may Allah bless your efforts.`;
+// both the WhatsApp and email quick-action buttons. Deliberately does NOT
+// re-introduce the sender — the candidate already knows us by this point.
+function buildInterviewFeedbackMessage(teacherFirstName, link) {
+  const greeting = teacherFirstName ? `Dear ${teacherFirstName},` : 'Dear Respected Teacher,';
+  return `Assalamu alaykum,\n\n${greeting}\n\nThank you for taking the time to interview with us. Your experience matters to us, and we would be grateful if you could share a few minutes of honest feedback about the process so we can keep improving it for future applicants.\n\nPlease share your feedback using the link below:\n\n${link}\n\nJazakum Allahu khayran for your time, and may Allah bless your efforts.`;
 }
 
 // Post-interview decision reasons — phrased warmly and professionally
@@ -322,10 +324,11 @@ function SectionCard({ title, children, className = '' }) {
 export default function TeacherOperationsPage({ isActive }) {
   const navigate = useNavigate();
   const { searchTerm } = useSearch();
-  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const saved = localStorage.getItem(TAB_STORAGE_KEY);
+      // The old standalone Interviews tab was merged into Pipeline.
+      if (saved === 'interviews') return 'pipeline';
       return TABS.some((tab) => tab.id === saved) ? saved : 'overview';
     } catch {
       return 'overview';
@@ -536,7 +539,7 @@ export default function TeacherOperationsPage({ isActive }) {
 
   // Load interview candidates (shortlisted / interview stages)
   useEffect(() => {
-    if (!isActive || activeTab !== 'interviews') return;
+    if (!isActive || activeTab !== 'pipeline') return;
     let cancelled = false;
     (async () => {
       try {
@@ -544,18 +547,22 @@ export default function TeacherOperationsPage({ isActive }) {
         setInterviewError('');
         const data = await listTeacherContractResponses();
         if (!cancelled) {
-          // The Interviews tab is a focused queue of candidates who have
+          // The interview queue is a focused list of candidates who have
           // actually BOOKED (or completed) their interview meeting — not
           // merely "interview_pending" candidates who were sent an invite but
-          // haven't scheduled yet (those stay solely in the Pipeline tab
+          // haven't scheduled yet (those stay solely in the candidate list
           // until they book, avoiding the same name showing in both places
-          // with nothing to do here). A candidate falls out of this list once
-          // an outcome is decided, moving them to their next stage.
+          // with nothing to do here). Candidates manually marked as
+          // "interviewed" are always included (even without a booked meeting
+          // on record) so their results can still be submitted. A candidate
+          // falls out of this list once an outcome is decided, moving them to
+          // their next stage.
           const relevant = (data || []).filter((r) => {
             const status = r?.recruitment?.status || r?.status;
             if (['accepted', 'rejected', 'archived'].includes(status)) return false;
             const outcome = r?.recruitment?.interview?.outcome || 'pending';
             if (outcome !== 'pending') return false;
+            if (status === 'interviewed') return true;
             const iv = r?.recruitment?.interview || {};
             return Boolean(iv.scheduledAt || iv.completedAt);
           });
@@ -584,7 +591,7 @@ export default function TeacherOperationsPage({ isActive }) {
   }, []);
 
   useEffect(() => {
-    if (!isActive || activeTab !== 'interviews') return;
+    if (!isActive || activeTab !== 'pipeline') return;
     loadPendingEmails();
   }, [isActive, activeTab, loadPendingEmails]);
 
@@ -796,8 +803,7 @@ export default function TeacherOperationsPage({ isActive }) {
     const phoneNumber = formatEgyptWhatsapp(candidate?.personalInfo?.whatsappNumber || candidate?.personalInfo?.mobileNumber || candidate?.user?.phone);
     if (!phoneNumber) return;
     const teacherName = candidate?.personalInfo?.fullName || candidate?.contract?.fullName || '';
-    const senderName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim();
-    const message = buildInterviewFeedbackMessage(senderName, teacherName, link);
+    const message = buildInterviewFeedbackMessage(firstNameOf(teacherName), link);
     window.open(`https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
   };
 
@@ -809,8 +815,7 @@ export default function TeacherOperationsPage({ isActive }) {
     const emailAddress = candidate?.personalInfo?.email || candidate?.user?.email || '';
     if (!emailAddress) return;
     const teacherName = candidate?.personalInfo?.fullName || candidate?.contract?.fullName || '';
-    const senderName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim();
-    const message = buildInterviewFeedbackMessage(senderName, teacherName, link);
+    const message = buildInterviewFeedbackMessage(firstNameOf(teacherName), link);
     window.location.href = `mailto:${emailAddress}?subject=${encodeURIComponent('How was your Waraqa interview experience?')}&body=${encodeURIComponent(message)}`;
   };
 
@@ -867,8 +872,10 @@ export default function TeacherOperationsPage({ isActive }) {
     }
     const event = OUTCOME_TO_EMAIL_EVENT[outcome] || 'failed';
     const template = templates?.[event] || { subject: 'Waraqa Recruitment', body: 'Dear {{name}},\n\nWaraqa Recruitment Team' };
-    const name = current?.personalInfo?.fullName || current?.contract?.fullName
-      || `${current?.user?.firstName || ''} ${current?.user?.lastName || ''}`.trim() || 'there';
+    const fullName = current?.personalInfo?.fullName || current?.contract?.fullName
+      || `${current?.user?.firstName || ''} ${current?.user?.lastName || ''}`.trim();
+    // Greet by first name — warmer, and the candidate already knows who we are.
+    const name = firstNameOf(fullName) || 'there';
     const reasonCategory = '';
     const reason = String(interviewForm.notes || '').trim();
     const phone = formatEgyptWhatsapp(current?.personalInfo?.whatsappNumber || current?.personalInfo?.mobileNumber || current?.user?.phone);
@@ -1025,7 +1032,7 @@ export default function TeacherOperationsPage({ isActive }) {
         bumpDomainVersion('teacher-contract');
       }
       // Refresh interview list if we imported and are on that tab
-      if (res?.imported > 0 && activeTab === 'interviews') {
+      if (res?.imported > 0 && activeTab === 'pipeline') {
         try {
           const data = await listTeacherContractResponses();
           setInterviewResponses(data || []);
@@ -1464,7 +1471,6 @@ export default function TeacherOperationsPage({ isActive }) {
                 </div>
                 <div className="flex flex-wrap gap-1.5 pt-0.5">
                   <button type="button" onClick={() => setActiveTab('pipeline')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><BriefcaseBusiness className="h-3.5 w-3.5" /> Pipeline</button>
-                  <button type="button" onClick={() => setActiveTab('interviews')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><CalendarClock className="h-3.5 w-3.5" /> Interviews</button>
                   <button type="button" onClick={() => setActiveTab('training')} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><GraduationCap className="h-3.5 w-3.5" /> Training</button>
                   <button type="button" onClick={openEmailTemplates} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><Mail className="h-3.5 w-3.5" /> Email templates</button>
                   <button type="button" onClick={openCapacitySettings} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40"><Sliders className="h-3.5 w-3.5" /> Capacity rules</button>
@@ -1560,7 +1566,9 @@ export default function TeacherOperationsPage({ isActive }) {
           </div>
         ) : null}
 
-        {activeTab === 'interviews' ? (
+        {/* Interview queue + scorecard — merged into the Pipeline tab (the old
+            standalone Interviews tab did the same job in a second place). */}
+        {activeTab === 'pipeline' ? (
           <div className="grid gap-3 xl:grid-cols-[0.9fr_1.1fr]">
             <SectionCard title="Pending outcome emails" className="xl:col-span-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -1682,10 +1690,18 @@ export default function TeacherOperationsPage({ isActive }) {
                 const subjectRatingKeys = resolveSubjectRatingKeys(current, ALL_SUBJECT_RATING_FIELDS);
                 const phone = formatEgyptWhatsapp(current?.personalInfo?.whatsappNumber || current?.personalInfo?.mobileNumber || current?.user?.phone);
                 const email = current?.personalInfo?.email || current?.user?.email || '';
-                const senderName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim();
-                const inviteMessage = buildInterviewInviteMessage(senderName, newTeacherInterviewLink);
+                const candidateFirstName = firstNameOf(current?.personalInfo?.fullName || current?.contract?.fullName
+                  || `${current?.user?.firstName || ''} ${current?.user?.lastName || ''}`.trim());
+                const inviteMessage = buildInterviewInviteMessage(newTeacherInterviewLink, candidateFirstName);
                 const waText = encodeURIComponent(inviteMessage);
                 const mailtoHref = email ? `mailto:${email}?subject=${encodeURIComponent('Waraqa Institute — Teacher Interview Invitation')}&body=${encodeURIComponent(inviteMessage)}` : '';
+                // Results can be submitted (and outcome messages sent) as soon as
+                // the booked meeting's start time arrives — no need to wait for
+                // the derived "completed" timestamp. Candidates manually marked
+                // "interviewed" unlock too, even without a booked meeting on record.
+                const meetingStarted = Boolean(interviewForm.completedAt)
+                  || Boolean(interviewForm.scheduledAt && new Date(interviewForm.scheduledAt).getTime() <= Date.now())
+                  || (current?.recruitment?.status || current?.status) === 'interviewed';
                 return (
                   <div className="grid gap-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1800,8 +1816,8 @@ export default function TeacherOperationsPage({ isActive }) {
 
                     <div className="rounded-xl border border-border bg-background p-2.5">
                       <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 2 · Interview decision</p>
-                      {!interviewForm.completedAt ? (
-                        <p className="text-[11px] text-muted-foreground">Waiting for the interview meeting's scheduled time to pass before a decision can be recorded.</p>
+                      {!meetingStarted ? (
+                        <p className="text-[11px] text-muted-foreground">Available once the interview meeting starts — you can then record the result and send the outcome by email or WhatsApp.</p>
                       ) : (
                         <>
                           <p className="mb-1.5 text-[11px] text-muted-foreground">Each decision composes a dedicated, human-readable message you can edit before sending.</p>
@@ -1824,7 +1840,7 @@ export default function TeacherOperationsPage({ isActive }) {
 
                     <div className="rounded-xl border border-border bg-background p-2.5">
                       <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Post-interview feedback</p>
-                      {!interviewForm.completedAt ? (
+                      {!meetingStarted ? (
                         <p className="text-[11px] text-muted-foreground">Available once the interview meeting has taken place.</p>
                       ) : (
                         <>
@@ -2213,7 +2229,7 @@ export default function TeacherOperationsPage({ isActive }) {
                               <div className="flex flex-wrap items-center gap-1.5">
                                 <p className="font-semibold text-foreground">{teacher.name}</p>
                                 <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{LIFECYCLE_STAGE_LABELS[teacher.lifecycleStage] || teacher.lifecycleStage}</span>
-                                {!accepting ? <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/40 dark:text-red-300">Not accepting new students</span> : null}
+                                {!accepting ? <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/40 dark:text-red-300">Closed</span> : null}
                               </div>
                               <p className="text-xs text-muted-foreground">{(teacher.standardizedSubjects || []).join(', ') || 'No subjects yet'} • {teacher.timezone}</p>
                             </div>

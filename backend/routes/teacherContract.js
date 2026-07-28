@@ -414,9 +414,25 @@ const buildApplicationPayload = (body = {}, files = {}, existingApplication = nu
   };
 };
 
-const computeRecruitmentOverall = (evaluation = {}) => {
+const computeRecruitmentOverall = (evaluation = {}, interview = null) => {
   const values = Object.values(evaluation || {}).map((value) => normalizeRecruitmentRating(value));
   const scored = values.filter((value) => value !== 'not_available').map((value) => RATING_SCORE[value] || 0);
+
+  // Interview scorecard marks count toward the overall grade alongside the
+  // initial application assessment: each rated interview score (general +
+  // per-subject) joins the same 0-5 pool, and the English test percentage is
+  // folded in as one more 0-5 data point.
+  if (interview && typeof interview === 'object') {
+    [...Object.values(interview.scores || {}), ...Object.values(interview.subjectScores || {})]
+      .map((value) => normalizeRecruitmentRating(value))
+      .filter((value) => value !== 'not_available')
+      .forEach((value) => scored.push(RATING_SCORE[value] || 0));
+    const englishPct = Number(interview.englishTestScore);
+    if (interview.englishTestScore != null && !Number.isNaN(englishPct)) {
+      scored.push(Math.max(0, Math.min(100, englishPct)) / 20); // 0-100% -> 0-5
+    }
+  }
+
   if (!scored.length) {
     return { score: null, label: 'Not rated', recommendation: 'review' };
   }
@@ -463,7 +479,7 @@ const buildRecruitmentUpdate = (current = {}, payload = {}, actorId = null) => {
     professionalism: normalizeRecruitmentRating(payload?.evaluation?.professionalism ?? current?.evaluation?.professionalism),
     flexibility: normalizeRecruitmentRating(payload?.evaluation?.flexibility ?? current?.evaluation?.flexibility),
   };
-  const overall = computeRecruitmentOverall(nextEvaluation);
+  const overall = computeRecruitmentOverall(nextEvaluation, current?.interview);
   const reviewed = payload.reviewed == null ? true : Boolean(payload.reviewed);
   const previousStatus = normalizeRecruitmentStatus(current.status || 'new');
   const adminNotes = String(payload.adminNotes ?? current.adminNotes ?? '').trim();
@@ -1175,6 +1191,8 @@ router.patch('/responses/:source/:id/interview', authenticateToken, requireAdmin
     }
 
     recruitment.interview = interview;
+    // Interview marks feed the overall grade, so refresh it on every save.
+    recruitment.overall = computeRecruitmentOverall(recruitment.evaluation, interview);
     recruitment.history = Array.isArray(recruitment.history) ? recruitment.history : [];
     recruitment.history.push({
       at: new Date(),
@@ -2030,7 +2048,9 @@ async function sendRecruitmentEmailForDoc(doc, event, { notes = '', reason = '',
 
   const resolvedTemplates = templates || (await getRecruitmentEmailTemplates());
   const template = resolvedTemplates[event] || DEFAULT_RECRUITMENT_EMAIL_TEMPLATES[event] || { subject: '', body: '' };
-  const name = String(personalInfo.fullName || `${doc.user?.firstName || ''} ${doc.user?.lastName || ''}`.trim() || 'there');
+  const fullName = String(personalInfo.fullName || `${doc.user?.firstName || ''} ${doc.user?.lastName || ''}`.trim() || '');
+  // Greet by first name — warmer, and the candidate already knows who we are.
+  const name = fullName.trim().split(/\s+/)[0] || 'there';
   const baseUrl = (process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '').split(',')[0].replace(/\/$/, '');
   const interviewLink = `${baseUrl}/public/meetings/evaluation?type=new_teacher_interview`;
   const resubmitLink = `${baseUrl}/teacher-contract`;

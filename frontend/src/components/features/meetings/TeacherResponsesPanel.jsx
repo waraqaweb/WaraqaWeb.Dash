@@ -153,7 +153,7 @@ const getCandidateFiles = (item) => CANDIDATE_FILE_FIELDS
 const RATING_FIELDS = [...SUBJECT_RATING_FIELDS, ...GENERAL_RATING_FIELDS];
 
 // Full per-subject list (unlike SUBJECT_RATING_FIELDS above) — used by the
-// Interviews tab, which shows one mark per subject the candidate teaches
+// interview queue, which shows one mark per subject the candidate teaches
 // rather than collapsing non-Quran subjects into a single "Topic" field.
 export const ALL_SUBJECT_RATING_FIELDS = [
   ['quran', 'Quran'],
@@ -161,6 +161,24 @@ export const ALL_SUBJECT_RATING_FIELDS = [
   ['islamicStudies', 'Islamic Studies'],
   ['readingBasics', 'Reading Basics'],
 ];
+
+// General interview scorecard marks (mirrors the interview queue's fields) —
+// shown read-only on the candidate card in every stage once marks exist.
+const INTERVIEW_SCORE_FIELDS = [
+  ['punctuality', 'Punctuality'],
+  ['subjectKnowledge', 'Subject knowledge'],
+  ['teaching', 'Teaching'],
+  ['flexibility', 'Flexibility'],
+  ['professionalism', 'Professionalism'],
+];
+
+const INTERVIEW_OUTCOME_LABELS = {
+  pending: 'Pending',
+  passed: 'Passed',
+  passed_not_selected: 'Passed — waiting list',
+  completed_unsuitable: 'Completed — unsuitable',
+  failed: 'Failed',
+};
 
 // Maps the app-wide standardized subject taxonomy to the evaluation rating
 // keys above, so we know which subject-specific fields to show per candidate.
@@ -453,7 +471,9 @@ function composeRejectionReason(draft, subjectRatingKeys, resubmitLink) {
  * flow in the Interviews tab.
  */
 function buildRecruitmentMessage(item, draft, subjectRatingKeys, emailTemplates) {
-  const name = item?.personalInfo?.fullName || item?.contract?.fullName || `${item?.user?.firstName || ''} ${item?.user?.lastName || ''}`.trim() || 'there';
+  const fullName = item?.personalInfo?.fullName || item?.contract?.fullName || `${item?.user?.firstName || ''} ${item?.user?.lastName || ''}`.trim();
+  // Greet by first name — warmer, and the candidate already knows who we are.
+  const name = String(fullName || '').trim().split(/\s+/)[0] || 'there';
 
   if (draft.pipelineStatus === 'rejected') {
     const template = emailTemplates?.templates?.screening_rejected || emailTemplates?.defaults?.screening_rejected
@@ -1192,14 +1212,13 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   }, [campaignFilter, items, statusFilter, searchTerm, opsFilters]);
 
   // Strongest-applicant-first ordering, applied only to the "Under review"
-  // stage (see sortUnderReviewCandidates above). "Interview pending" instead
-  // orders by nearest booked interview meeting time first (candidates who
-  // haven't booked yet — no scheduledAt — sort to the end), matching the
-  // order used in the Interviews tab so the two views stay consistent. Other
-  // stages/tabs keep the default order.
+  // stage (see sortUnderReviewCandidates above). "Interview pending" and
+  // "Interviewed" instead order by nearest booked interview meeting time
+  // first (candidates who haven't booked yet — no scheduledAt — sort to the
+  // end). Other stages/tabs keep the default order.
   const sortedItems = useMemo(() => {
     if (statusFilter === 'under_review') return sortUnderReviewCandidates(filteredItems);
-    if (statusFilter === 'interview_pending') {
+    if (statusFilter === 'interview_pending' || statusFilter === 'interviewed') {
       return [...filteredItems].sort((a, b) => {
         const aTime = a?.recruitment?.interview?.scheduledAt ? new Date(a.recruitment.interview.scheduledAt).getTime() : Infinity;
         const bTime = b?.recruitment?.interview?.scheduledAt ? new Date(b.recruitment.interview.scheduledAt).getTime() : Infinity;
@@ -1390,7 +1409,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                     {overall?.label ? <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${overallTone(overall.label)}`}>{overall.label}{overall?.score != null ? ` • ${overall.score}%` : ''}</span> : null}
                     {item?.recruitment?.interview?.scheduledAt ? (
                       <span
-                        title="Manage scoring, outcome, and feedback for this booked interview from the Interviews tab."
+                        title="Manage scoring, outcome, and feedback for this booked interview from the Interview scorecard on this tab."
                         className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${item?.recruitment?.interview?.completedAt ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}
                       >
                         {item.recruitment.interview.completedAt ? 'Interview done' : 'Interview booked'} • {formatDateTime(item.recruitment.interview.scheduledAt)}
@@ -1515,6 +1534,46 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                           </label>
                         </div>
                       </div>
+
+                      {/* Interview scorecard summary — stays visible in EVERY stage
+                          (interviewed, accepted, rejected…) once any marks or notes
+                          were recorded, so a stage change never hides them. Marks
+                          are edited from the Interview scorecard card on this tab
+                          and count toward the overall grade above. */}
+                      {(() => {
+                        const iv = item?.recruitment?.interview || {};
+                        const ivScoreEntries = [
+                          ...INTERVIEW_SCORE_FIELDS.map(([key, label]) => [label, iv.scores?.[key]]),
+                          ...ALL_SUBJECT_RATING_FIELDS.map(([key, label]) => [label, iv.subjectScores?.[key]]),
+                        ].filter(([, value]) => value && value !== 'not_available');
+                        const hasInterviewData = ivScoreEntries.length > 0 || Boolean(String(iv.notes || '').trim()) || iv.englishTestScore != null;
+                        if (!hasInterviewData) return null;
+                        return (
+                          <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                              <p className="text-sm font-semibold text-slate-900">Interview scorecard</p>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                {iv.scheduledAt ? <span>📅 {formatDateTime(iv.scheduledAt)}</span> : null}
+                                <span>Outcome: <span className="font-semibold text-slate-900">{INTERVIEW_OUTCOME_LABELS[iv.outcome] || 'Pending'}</span></span>
+                                {iv.englishTestScore != null ? <span>English test: <span className="font-semibold text-slate-900">{iv.englishTestScore}%</span></span> : null}
+                              </div>
+                            </div>
+                            {ivScoreEntries.length ? (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {ivScoreEntries.map(([label, value]) => (
+                                  <div key={label} className="w-fit rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                                    <p className="whitespace-nowrap text-[11px] font-medium text-slate-600">{label}</p>
+                                    <StarRating compact disabled value={value} onChange={() => {}} />
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                            {String(iv.notes || '').trim() ? (
+                              <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600"><span className="font-semibold text-slate-700">Interview notes:</span> {iv.notes}</p>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <div className="space-y-3">

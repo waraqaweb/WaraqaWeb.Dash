@@ -778,7 +778,7 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
   );
 }
 
-export default function TeacherResponsesPanel({ headerSlot = null, renderInterviewTools = null, onExpandCandidate = null, refreshToken = 0 }) {
+export default function TeacherResponsesPanel({ headerSlot = null, renderInterviewTools = null, renderMeetingScores = null, onExpandCandidate = null, refreshToken = 0 }) {
   const { searchTerm, viewFilters } = useSearch();
   const opsFilters = viewFilters[TEACHER_OPERATIONS_VIEW_KEY] || createDefaultTeacherResponsesFilters();
   const [items, setItems] = useState([]);
@@ -1483,7 +1483,7 @@ export default function TeacherResponsesPanel({ headerSlot = null, renderIntervi
                           </div>
                         </div>
 
-                        {/* Row 1: stage / rejection category / tags — each field sized to its content, not stretched. */}
+                        {/* Row 1: stage / rejection category / admin notes — each field sized to its content, notes take the remaining space. */}
                         <div className="mt-4 flex flex-wrap items-end gap-3">
                           <label className="text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Stage</span>
@@ -1500,34 +1500,7 @@ export default function TeacherResponsesPanel({ headerSlot = null, renderIntervi
                                 : null}
                             </select>
                           </label>
-                          <label className="min-w-[180px] flex-1 text-sm text-slate-700">
-                            <span className="mb-1 block font-medium">Tags</span>
-                            <input value={draft.tags} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, tags: event.target.value })); scheduleAutosave(item, 1200); }} placeholder="strong english, tajweed, future pool" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
-                          </label>
-                        </div>
-
-                        {/* Row 2: evaluation scorecard (English, Quran, Topic, Professionalism)
-                            next to Admin notes — notes shrink first if the scorecard needs the room. */}
-                        <div className="mt-4 flex flex-wrap items-start gap-4">
-                          <div className="min-w-[260px] flex-auto">
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation scorecard</p>
-                            <div className="flex flex-wrap gap-2">
-                              {RATING_FIELD_ORDER.filter((key) => !RATING_SUBJECT_KEYS.has(key) || subjectRatingKeys.has(key)).map((key) => (
-                                <div key={key} className="w-fit rounded-lg border border-slate-200 bg-white px-2 py-1.5">
-                                  <div className="flex items-center justify-between gap-1">
-                                    <p className="whitespace-nowrap text-[11px] font-medium text-slate-600" title={RATING_FIELD_LABELS[key]}>{RATING_FIELD_LABELS[key]}</p>
-                                    {draft.evaluation[key] === 'not_available' ? <span title="Not available / not yet rated"><HelpCircle className="h-3 w-3 shrink-0 text-slate-300" /></span> : null}
-                                  </div>
-                                  <StarRating
-                                    compact
-                                    value={draft.evaluation[key]}
-                                    onChange={(nextValue) => { updateDraft(item.id, (current) => ({ ...current, evaluation: { ...current.evaluation, [key]: nextValue } })); scheduleAutosave(item, 300); }}
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                          <label className="min-w-[200px] max-w-sm flex-1 text-sm text-slate-700">
+                          <label className="min-w-[200px] flex-1 text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Admin notes</span>
                             <textarea
                               value={draft.adminNotes}
@@ -1539,43 +1512,78 @@ export default function TeacherResponsesPanel({ headerSlot = null, renderIntervi
                             />
                           </label>
                         </div>
+
+                        {/* Row 2: scores — the application-time evaluation (English,
+                            Quran, Topic, Professionalism) plus, once the candidate has
+                            attended their interview, the meeting scores appended right
+                            next to them in this same row (no separate scorecard box). */}
+                        <div className="mt-4">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Scores</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {RATING_FIELD_ORDER.filter((key) => !RATING_SUBJECT_KEYS.has(key) || subjectRatingKeys.has(key)).map((key) => (
+                              <div key={key} className="w-fit rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                                <div className="flex items-center justify-between gap-1">
+                                  <p className="whitespace-nowrap text-[11px] font-medium text-slate-600" title={RATING_FIELD_LABELS[key]}>{RATING_FIELD_LABELS[key]}</p>
+                                  {draft.evaluation[key] === 'not_available' ? <span title="Not available / not yet rated"><HelpCircle className="h-3 w-3 shrink-0 text-slate-300" /></span> : null}
+                                </div>
+                                <StarRating
+                                  compact
+                                  value={draft.evaluation[key]}
+                                  onChange={(nextValue) => { updateDraft(item.id, (current) => ({ ...current, evaluation: { ...current.evaluation, [key]: nextValue } })); scheduleAutosave(item, 300); }}
+                                />
+                              </div>
+                            ))}
+                            {renderMeetingScores ? renderMeetingScores(item) : (() => {
+                              const iv = item?.recruitment?.interview || {};
+                              const meetingEntries = [
+                                ...INTERVIEW_SCORE_FIELDS.map(([key, label]) => [label, iv.scores?.[key]]),
+                                ...ALL_SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)).map(([key, label]) => [label, iv.subjectScores?.[key]]),
+                              ].filter(([, value]) => value && value !== 'not_available');
+                              if (!meetingEntries.length && iv.englishTestScore == null) return null;
+                              return (
+                                <>
+                                  <span className="h-8 w-px shrink-0 bg-slate-200" aria-hidden="true" />
+                                  {meetingEntries.map(([label, value]) => (
+                                    <div key={label} className="w-fit rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                                      <p className="whitespace-nowrap text-[11px] font-medium text-slate-600">{label}</p>
+                                      <StarRating compact disabled value={value} onChange={() => {}} />
+                                    </div>
+                                  ))}
+                                  {iv.englishTestScore != null ? (
+                                    <div className="w-fit rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                                      <p className="whitespace-nowrap text-[11px] font-medium text-slate-600">English test</p>
+                                      <p className="text-sm font-semibold text-slate-900">{iv.englishTestScore}%</p>
+                                    </div>
+                                  ) : null}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        </div>
                       </div>
 
                       {/* Interview tools: when the parent supplies the full
                           interactive toolkit (Teacher Operations pipeline),
-                          render it here so scorecard, decision, feedback,
-                          contract, and training all live under the candidate's
-                          own card. Otherwise fall back to a read-only summary
-                          of any recorded marks (visible in EVERY stage). */}
+                          render it here so the outcome, decision, feedback,
+                          contract, and training steps all live under the
+                          candidate's own card. Scores are already shown above
+                          in the merged scores row. Otherwise fall back to a
+                          read-only summary of the interview notes/outcome
+                          (visible in EVERY stage). */}
                       {renderInterviewTools ? renderInterviewTools(item) : (() => {
                         const iv = item?.recruitment?.interview || {};
-                        const ivScoreEntries = [
-                          ...INTERVIEW_SCORE_FIELDS.map(([key, label]) => [label, iv.scores?.[key]]),
-                          ...ALL_SUBJECT_RATING_FIELDS.map(([key, label]) => [label, iv.subjectScores?.[key]]),
-                        ].filter(([, value]) => value && value !== 'not_available');
-                        const hasInterviewData = ivScoreEntries.length > 0 || Boolean(String(iv.notes || '').trim()) || iv.englishTestScore != null;
-                        if (!hasInterviewData) return null;
+                        const hasInterviewNotes = Boolean(String(iv.notes || '').trim());
+                        if (!hasInterviewNotes && !iv.outcome) return null;
                         return (
                           <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4">
                             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-                              <p className="text-sm font-semibold text-slate-900">Interview scorecard</p>
+                              <p className="text-sm font-semibold text-slate-900">Interview</p>
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
                                 {iv.scheduledAt ? <span>📅 {formatDateTime(iv.scheduledAt)}</span> : null}
                                 <span>Outcome: <span className="font-semibold text-slate-900">{INTERVIEW_OUTCOME_LABELS[iv.outcome] || 'Pending'}</span></span>
-                                {iv.englishTestScore != null ? <span>English test: <span className="font-semibold text-slate-900">{iv.englishTestScore}%</span></span> : null}
                               </div>
                             </div>
-                            {ivScoreEntries.length ? (
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                {ivScoreEntries.map(([label, value]) => (
-                                  <div key={label} className="w-fit rounded-lg border border-slate-200 bg-white px-2 py-1.5">
-                                    <p className="whitespace-nowrap text-[11px] font-medium text-slate-600">{label}</p>
-                                    <StarRating compact disabled value={value} onChange={() => {}} />
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-                            {String(iv.notes || '').trim() ? (
+                            {hasInterviewNotes ? (
                               <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600"><span className="font-semibold text-slate-700">Interview notes:</span> {iv.notes}</p>
                             ) : null}
                           </div>

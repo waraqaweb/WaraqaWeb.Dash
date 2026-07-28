@@ -1313,7 +1313,10 @@ export default function TeacherOperationsPage({ isActive }) {
   // prop) — scorecard, invite, decision, feedback, contract, and training all
   // live under the candidate's own name, in step order. The form state is
   // populated by selectInterview(), which the panel calls when a card expands.
-  const renderInterviewTools = (item) => {
+  // Shared derived state for a candidate's interview tools — used by both
+  // renderMeetingScoresInline (the score chips merged into the Recruitment
+  // review row) and renderInterviewTools (outcome/notes + action buttons).
+  const getInterviewContext = (item) => {
     if (!interviewForm || interviewForm.id !== item.id) return null;
     const current = selectedCandidate && selectedCandidate.id === item.id ? selectedCandidate : item;
     const subjectRatingKeys = resolveSubjectRatingKeys(current, ALL_SUBJECT_RATING_FIELDS);
@@ -1332,6 +1335,44 @@ export default function TeacherOperationsPage({ isActive }) {
       || ['interviewed', 'offer_call', 'accepted'].includes(statusNow);
     const outcomeDecided = interviewForm.outcome && interviewForm.outcome !== 'pending';
     const showContractStep = interviewForm.outcome === 'passed' || ['offer_call', 'accepted'].includes(statusNow);
+    return { current, subjectRatingKeys, phone, email, candidateFirstName, inviteMessage, statusNow, meetingStarted, outcomeDecided, showContractStep };
+  };
+
+  // Meeting/interview score chips, rendered inline by TeacherResponsesPanel
+  // right next to the application-time "Evaluation scorecard" — one merged
+  // scores row instead of a separate box, and only once the meeting started.
+  const renderMeetingScoresInline = (item) => {
+    const ctx = getInterviewContext(item);
+    if (!ctx || !ctx.meetingStarted) return null;
+    const { subjectRatingKeys } = ctx;
+    return (
+      <>
+        <span className="h-8 w-px shrink-0 bg-slate-200" aria-hidden="true" />
+        {INTERVIEW_SCORE_FIELDS.map((field) => (
+          <div key={field.key} className="w-fit rounded-lg border border-border bg-card px-2 py-1.5">
+            <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">{field.label}</p>
+            <StarRating compact value={interviewForm.scores[field.key]} onChange={(next) => { setInterviewForm((p) => ({ ...p, scores: { ...p.scores, [field.key]: next } })); scheduleInterviewAutosave(300); }} />
+          </div>
+        ))}
+        {ALL_SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)).map(([key, label]) => (
+          <div key={key} className="w-fit rounded-lg border border-border bg-card px-2 py-1.5">
+            <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">{label}</p>
+            <StarRating compact value={interviewForm.subjectScores[key]} onChange={(next) => { setInterviewForm((p) => ({ ...p, subjectScores: { ...p.subjectScores, [key]: next } })); scheduleInterviewAutosave(300); }} />
+          </div>
+        ))}
+        <div className="w-fit rounded-lg border border-border bg-card px-2 py-1.5">
+          <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">English test (%)</p>
+          <input type="number" min="0" max="100" value={interviewForm.englishTestScore} onChange={(e) => { setInterviewForm((p) => ({ ...p, englishTestScore: e.target.value })); scheduleInterviewAutosave(800); }} className="w-20 rounded-lg border border-border bg-card px-2 py-1 text-sm" />
+        </div>
+        <InterviewAutosaveStatus status={interviewAutosaveStatus} onRetry={handleSaveInterview} />
+      </>
+    );
+  };
+
+  const renderInterviewTools = (item) => {
+    const ctx = getInterviewContext(item);
+    if (!ctx) return null;
+    const { current, phone, email, inviteMessage, meetingStarted, outcomeDecided, showContractStep } = ctx;
     return (
       <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1347,11 +1388,28 @@ export default function TeacherOperationsPage({ isActive }) {
         </div>
         {interviewError ? <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{interviewError}</div> : null}
 
-        <div className="mt-2.5 grid gap-2.5">
-          {!meetingStarted ? (
-            <div className="rounded-xl border border-border bg-background p-2.5">
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 1 · Invite</p>
-              <div className="flex flex-wrap gap-1.5">
+        {/* One card, no nested boxes. Scores now live in the merged scores row
+            above (see renderMeetingScoresInline), so this card only needs 2
+            rows: (1) outcome/notes, (2) the action buttons for the
+            candidate's current stage. Later-stage steps (contract, training)
+            are appended below with a thin divider instead of their own box. */}
+        <div className="mt-2.5 space-y-2.5">
+          {/* Row 1: outcome, works-elsewhere flag, and notes */}
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="whitespace-nowrap text-xs text-foreground">
+              Outcome: <span className={`font-semibold ${INTERVIEW_OUTCOME_COLORS[interviewForm.outcome] || 'text-foreground'}`}>{INTERVIEW_OUTCOMES.find((o) => o.value === interviewForm.outcome)?.label || 'Pending'}</span>
+            </span>
+            <label className="inline-flex shrink-0 items-center gap-1.5 text-xs text-foreground">
+              <input type="checkbox" checked={interviewForm.worksElsewhere} onChange={(e) => { setInterviewForm((p) => ({ ...p, worksElsewhere: e.target.checked })); scheduleInterviewAutosave(300); }} />
+              Works elsewhere
+            </label>
+            <input value={interviewForm.notes} onChange={(e) => { setInterviewForm((p) => ({ ...p, notes: e.target.value })); scheduleInterviewAutosave(1200); }} placeholder="Notes: strengths, concerns, next steps…" className="min-w-[200px] flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-sm" />
+          </div>
+
+          {/* Row 2: action buttons for the candidate's current stage */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {!meetingStarted ? (
+              <>
                 {phone ? (
                   <a href={`https://wa.me/${phone}?text=${encodeURIComponent(inviteMessage)}`} target="_blank" rel="noreferrer" title="Send interview invite via WhatsApp" className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700">
                     <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
@@ -1366,118 +1424,42 @@ export default function TeacherOperationsPage({ isActive }) {
                 <button type="button" onClick={openEmailTemplates} title="Edit email templates" className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40">
                   <Edit3 className="h-3.5 w-3.5" /> Templates
                 </button>
-              </div>
-              {emailNotice ? <p className="mt-1.5 text-[11px] font-medium text-green-600 dark:text-green-400">{emailNotice}</p> : null}
-            </div>
-          ) : null}
-
-          <div className="rounded-xl border border-border bg-background p-2.5">
-            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Scores</p>
-              <InterviewAutosaveStatus status={interviewAutosaveStatus} onRetry={handleSaveInterview} />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {INTERVIEW_SCORE_FIELDS.map((field) => (
-                <div key={field.key} className="w-fit rounded-lg border border-border bg-card px-2 py-1.5">
-                  <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">{field.label}</p>
-                  <StarRating
-                    compact
-                    value={interviewForm.scores[field.key]}
-                    onChange={(next) => { setInterviewForm((p) => ({ ...p, scores: { ...p.scores, [field.key]: next } })); scheduleInterviewAutosave(300); }}
-                  />
-                </div>
-              ))}
-              {ALL_SUBJECT_RATING_FIELDS.filter(([key]) => subjectRatingKeys.has(key)).map(([key, label]) => (
-                <div key={key} className="w-fit rounded-lg border border-border bg-card px-2 py-1.5">
-                  <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">{label}</p>
-                  <StarRating
-                    compact
-                    value={interviewForm.subjectScores[key]}
-                    onChange={(next) => { setInterviewForm((p) => ({ ...p, subjectScores: { ...p.subjectScores, [key]: next } })); scheduleInterviewAutosave(300); }}
-                  />
-                </div>
-              ))}
-              <div className="w-fit rounded-lg border border-border bg-card px-2 py-1.5">
-                <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">English test (%)</p>
-                <input
-                  type="number" min="0" max="100"
-                  value={interviewForm.englishTestScore}
-                  onChange={(e) => { setInterviewForm((p) => ({ ...p, englishTestScore: e.target.value })); scheduleInterviewAutosave(800); }}
-                  className="w-20 rounded-lg border border-border bg-card px-2 py-1 text-sm"
-                />
-              </div>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-              <span className="text-xs text-foreground">
-                Outcome:{' '}
-                <span className={`font-semibold ${INTERVIEW_OUTCOME_COLORS[interviewForm.outcome] || 'text-foreground'}`}>
-                  {INTERVIEW_OUTCOMES.find((o) => o.value === interviewForm.outcome)?.label || 'Pending'}
-                </span>
-              </span>
-              <label className="inline-flex items-center gap-2 text-xs text-foreground">
-                <input type="checkbox" checked={interviewForm.worksElsewhere} onChange={(e) => { setInterviewForm((p) => ({ ...p, worksElsewhere: e.target.checked })); scheduleInterviewAutosave(300); }} />
-                Works elsewhere
-              </label>
-            </div>
-            <label className="mt-2 block text-xs text-foreground">
-              <span className="mb-1 block font-medium">Notes</span>
-              <textarea rows={1} value={interviewForm.notes} onChange={(e) => { setInterviewForm((p) => ({ ...p, notes: e.target.value })); scheduleInterviewAutosave(1200); }} className="w-full resize-y rounded-lg border border-border bg-card px-2 py-1.5 text-sm" placeholder="Strengths, concerns, next steps…" />
-            </label>
-          </div>
-
-          <div className="rounded-xl border border-border bg-background p-2.5">
-            <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 2 · Decision</p>
-            {!meetingStarted ? (
-              <p className="text-[11px] text-muted-foreground">Available once the interview meeting starts — you can then record the result and send the outcome by email or WhatsApp.</p>
+                {emailNotice ? <span className="text-[11px] font-medium text-green-600 dark:text-green-400">{emailNotice}</span> : null}
+              </>
             ) : (
               <>
-                <p className="mb-1.5 text-[11px] text-muted-foreground">Each decision composes a dedicated message you can edit before sending. Accepting moves the candidate to the acceptance-call step.</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {INTERVIEW_DECISIONS.map((d) => (
-                    <button
-                      key={d.outcome}
-                      type="button"
-                      onClick={() => openDecisionPreview(d.outcome)}
-                      disabled={interviewAutosaveStatus === 'saving'}
-                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-60 ${d.className}`}
-                    >
-                      {d.outcome === interviewForm.outcome ? <CheckCircle2 className="h-3.5 w-3.5" /> : null} {d.label}
-                    </button>
-                  ))}
-                </div>
-                {emailNotice ? <p className="mt-1.5 text-[11px] font-medium text-green-600 dark:text-green-400">{emailNotice}</p> : null}
-              </>
-            )}
-          </div>
-
-          {meetingStarted ? (
-            <div className="rounded-xl border border-border bg-background p-2.5">
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Post-interview feedback</p>
-              <p className="mb-1.5 text-[11px] text-muted-foreground">Ask the candidate how the interview process went for them — five quick ratings plus an optional note on what we could do better.</p>
-              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground" title="Each decision composes a dedicated message you can edit before sending. Accepting moves the candidate to the acceptance-call step.">Decision</span>
+                {INTERVIEW_DECISIONS.map((d) => (
+                  <button key={d.outcome} type="button" onClick={() => openDecisionPreview(d.outcome)} disabled={interviewAutosaveStatus === 'saving'} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-60 ${d.className}`}>
+                    {d.outcome === interviewForm.outcome ? <CheckCircle2 className="h-3.5 w-3.5" /> : null} {d.label}
+                  </button>
+                ))}
+                <span className="h-4 w-px shrink-0 bg-border" />
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground" title="Ask the candidate how the interview process went for them — five quick ratings plus an optional note on what we could do better.">Feedback</span>
                 {phone ? (
-                  <button type="button" onClick={handleSendFeedbackWhatsapp} disabled={feedbackLinkState.loading} className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60">
+                  <button type="button" onClick={handleSendFeedbackWhatsapp} disabled={feedbackLinkState.loading} title="Send feedback request via WhatsApp" className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60">
                     {feedbackLinkState.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />} WhatsApp
                   </button>
                 ) : null}
                 {email ? (
-                  <button type="button" onClick={handleSendFeedbackEmail} disabled={feedbackLinkState.loading} className="inline-flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-60">
+                  <button type="button" onClick={handleSendFeedbackEmail} disabled={feedbackLinkState.loading} title="Send feedback request by email" className="inline-flex items-center gap-1.5 rounded-full bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-60">
                     {feedbackLinkState.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />} Email
                   </button>
                 ) : null}
-                <button type="button" onClick={handleCopyFeedbackLink} disabled={feedbackLinkState.loading} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
+                <button type="button" onClick={handleCopyFeedbackLink} disabled={feedbackLinkState.loading} title="Copy feedback link" className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
                   <Copy className="h-3.5 w-3.5" /> Copy link
                 </button>
-              </div>
-              {feedbackLinkState.id === selectedInterviewId && feedbackLinkState.url ? (
-                <input readOnly value={feedbackLinkState.url} onFocus={(e) => e.target.select()} className="mt-1.5 w-full rounded-lg border border-border bg-card px-2 py-1.5 text-[11px] text-foreground" />
-              ) : null}
-              {feedbackLinkState.id === selectedInterviewId && feedbackLinkState.notice ? <p className="mt-1 text-[11px] text-muted-foreground">{feedbackLinkState.notice}</p> : null}
-            </div>
+                {emailNotice ? <span className="text-[11px] font-medium text-green-600 dark:text-green-400">{emailNotice}</span> : null}
+              </>
+            )}
+          </div>
+          {meetingStarted && feedbackLinkState.id === selectedInterviewId && feedbackLinkState.url ? (
+            <input readOnly value={feedbackLinkState.url} onFocus={(e) => e.target.select()} className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-[11px] text-foreground" />
           ) : null}
+          {meetingStarted && feedbackLinkState.id === selectedInterviewId && feedbackLinkState.notice ? <p className="text-[11px] text-muted-foreground">{feedbackLinkState.notice}</p> : null}
 
           {showContractStep ? (
-            <div className="rounded-xl border border-border bg-background p-2.5">
+            <div className="border-t border-border/60 pt-2.5">
               <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 3 · Acceptance call & contract</p>
               {current?.recruitment?.contract?.declinedAt ? (
                 <p className="text-[11px] font-medium text-red-600 dark:text-red-400">
@@ -1521,7 +1503,7 @@ export default function TeacherOperationsPage({ isActive }) {
           ) : null}
 
           {current?.recruitment?.contract?.acceptedAt ? (
-            <div className="rounded-xl border border-border bg-background p-2.5">
+            <div className="border-t border-border/60 pt-2.5">
               <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 4 · Move to training</p>
               <div className="flex flex-wrap items-center gap-1.5">
                 <select value={addToBatchId} onChange={(e) => setAddToBatchId(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs">
@@ -1537,7 +1519,7 @@ export default function TeacherOperationsPage({ isActive }) {
           ) : null}
 
           {outcomeDecided && !showContractStep ? (
-            <p className="text-[11px] text-muted-foreground">Outcome recorded — the outcome email is queued in “Pending outcome emails” above if it hasn't been sent yet.</p>
+            <p className="border-t border-border/60 pt-2.5 text-[11px] text-muted-foreground">Outcome recorded — the outcome email is queued in “Pending outcome emails” above if it hasn't been sent yet.</p>
           ) : null}
         </div>
       </div>
@@ -1734,6 +1716,7 @@ export default function TeacherOperationsPage({ isActive }) {
               {isActive ? (
                 <TeacherResponsesPanel
                   renderInterviewTools={renderInterviewTools}
+                  renderMeetingScores={renderMeetingScoresInline}
                   onExpandCandidate={selectInterview}
                   refreshToken={panelRefresh}
                   headerSlot={(

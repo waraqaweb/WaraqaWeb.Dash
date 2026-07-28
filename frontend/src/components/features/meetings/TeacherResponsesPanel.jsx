@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, HelpCircle, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Send, Settings2, Star, Table2, UserPlus, X } from 'lucide-react';
+import { Archive, AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ExternalLink, FileBadge2, FileSpreadsheet, HelpCircle, LayoutGrid, Mail, Maximize2, MessageCircle, Minimize2, Phone, Play, RefreshCw, Save, Send, Settings2, Star, Table2, UserPlus, X } from 'lucide-react';
 import { convertCandidateToTeacher, getRecruitmentEmailTemplates, getSheetSyncConfig, listRecruitmentCampaigns, listTeacherContractResponses, runSheetSyncNow, saveSheetSyncConfig, sendCandidateEmail, updateTeacherContractResponse } from '../../../api/teacherContract';
 import { bumpDomainVersion, makeCacheKey, readCache, writeCache } from '../../../utils/sessionCache';
 import { standardizeSubject } from '../../../utils/subjectStandardization';
@@ -1296,54 +1296,48 @@ export default function TeacherResponsesPanel({ headerSlot = null, renderIntervi
 
       {!loading ? (
         <>
-          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="max-h-[25vh] space-y-2 overflow-auto">
-              {headerSlot ? <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-2">{headerSlot}</div> : null}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-slate-900">Recruitment control center</p>
-                  <p className="truncate text-[11px] text-slate-500">
-                    {syncConfig?.lastSyncAt ? `Synced ${formatDateTime(syncConfig.lastSyncAt)}` : 'Not synced yet'}
-                    {syncConfig?.autoSync !== false
-                      ? ` • every ${(syncConfig?.intervalMinutes || 720) >= 60 ? `${Math.round((syncConfig?.intervalMinutes || 720) / 60)}h` : `${syncConfig?.intervalMinutes}m`}`
-                      : ' • auto OFF'}
-                    {syncConfig?.lastResult ? ` • ${syncConfig.lastResult.totalRows ?? 0} rows` : ''}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <button type="button" onClick={handleSyncNow} disabled={syncing} className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90 disabled:opacity-50"><RefreshCw className={`h-3 w-3 ${syncing ? 'animate-spin' : ''}`} />{syncing ? 'Sync…' : 'Sync'}</button>
-                  {syncConfig?.sheetUrl ? <a href={syncConfig.sheetUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"><FileSpreadsheet className="h-3 w-3" />Sheet</a> : null}
-                  {syncConfig?.formUrl ? <a href={syncConfig.formUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"><ExternalLink className="h-3 w-3" />Form</a> : null}
-                  <button type="button" onClick={() => setShowSyncSettings((open) => !open)} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"><Settings2 className="h-3 w-3" />Source</button>
-                </div>
-              </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-2.5 shadow-sm">
+            {/* Row 1: pipeline stage tabs, one scrollable row (no wrapping). */}
+            <div className="flex flex-nowrap items-stretch gap-1 overflow-x-auto pb-0.5">
+              <button type="button" onClick={() => setStatusFilter('all')} className={`flex min-w-[56px] shrink-0 flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
+                <span className="text-sm font-bold leading-tight">{allStagesCount}</span>
+                <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">All</span>
+              </button>
+              {STATUS_OPTIONS.map((option) => (
+                <button key={option.value} type="button" onClick={() => setStatusFilter((current) => (current === option.value ? 'all' : option.value))} className={`flex min-w-[56px] shrink-0 flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === option.value ? 'ring-2 ring-primary ring-offset-1' : 'hover:opacity-80'} ${STATUS_TONES[option.value] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                  <span className="text-sm font-bold leading-tight">{funnelCounts[option.value] || 0}</span>
+                  <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">{option.label}</span>
+                </button>
+              ))}
+            </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-stretch gap-1">
-                  <button type="button" onClick={() => setStatusFilter('all')} className={`flex min-w-[64px] flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
-                    <span className="text-sm font-bold leading-tight">{allStagesCount}</span>
-                    <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">All</span>
-                  </button>
-                  {STATUS_OPTIONS.map((option) => (
-                    <button key={option.value} type="button" onClick={() => setStatusFilter((current) => (current === option.value ? 'all' : option.value))} className={`flex min-w-[64px] flex-col items-center rounded-lg border px-2 py-1 text-center transition ${statusFilter === option.value ? 'ring-2 ring-primary ring-offset-1' : 'hover:opacity-80'} ${STATUS_TONES[option.value] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>
-                      <span className="text-sm font-bold leading-tight">{funnelCounts[option.value] || 0}</span>
-                      <span className="text-[9px] font-semibold uppercase tracking-wide opacity-80">{option.label}</span>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <select value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-primary">
-                    <option value="all">All campaigns</option>
-                    {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.title}</option>)}
-                  </select>
-                  <button type="button" onClick={load} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"><RefreshCw className="h-3 w-3" />Refresh</button>
-                  <button type="button" onClick={() => setViewMode((mode) => (mode === 'table' ? 'cards' : 'table'))} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">{viewMode === 'table' ? <><LayoutGrid className="h-3 w-3" />Cards</> : <><Table2 className="h-3 w-3" />Table</>}</button>
-                  <button type="button" onClick={exportToExcel} disabled={!sortedItems.length} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"><FileSpreadsheet className="h-3 w-3" />Export</button>
-                </div>
-              </div>
-
-              {syncConfig?.lastError ? <p className="text-[11px] font-medium text-rose-600">Sync error: {syncConfig.lastError}</p> : null}
+            {/* Row 2: every action as a small icon button, one scrollable row.
+                Sync status/schedule details move into the Sync button's
+                tooltip instead of a permanently visible text line. */}
+            <div className="mt-2 flex flex-nowrap items-center gap-1.5 overflow-x-auto border-t border-slate-100 pt-2">
+              {headerSlot}
+              <span className="h-4 w-px shrink-0 bg-slate-200" />
+              <button
+                type="button"
+                onClick={handleSyncNow}
+                disabled={syncing}
+                title={`${syncConfig?.lastSyncAt ? `Synced ${formatDateTime(syncConfig.lastSyncAt)}` : 'Not synced yet'}${syncConfig?.autoSync !== false ? ` • every ${(syncConfig?.intervalMinutes || 720) >= 60 ? `${Math.round((syncConfig?.intervalMinutes || 720) / 60)}h` : `${syncConfig?.intervalMinutes}m`}` : ' • auto OFF'}${syncConfig?.lastResult ? ` • ${syncConfig.lastResult.totalRows ?? 0} rows` : ''}`}
+                className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-2 py-1.5 text-[11px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3 w-3 ${syncing ? 'animate-spin' : ''}`} />{syncing ? 'Sync…' : 'Sync'}
+              </button>
+              {syncConfig?.lastError ? <span title={`Sync error: ${syncConfig.lastError}`}><AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-600" /></span> : null}
+              {syncConfig?.sheetUrl ? <a href={syncConfig.sheetUrl} target="_blank" rel="noreferrer" title="Open source sheet" className="inline-flex shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 p-1.5 text-emerald-700 hover:bg-emerald-100"><FileSpreadsheet className="h-3 w-3" /></a> : null}
+              {syncConfig?.formUrl ? <a href={syncConfig.formUrl} target="_blank" rel="noreferrer" title="Open application form" className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white p-1.5 text-slate-700 hover:bg-slate-50"><ExternalLink className="h-3 w-3" /></a> : null}
+              <button type="button" onClick={() => setShowSyncSettings((open) => !open)} title="Sync source settings" className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white p-1.5 text-slate-700 hover:bg-slate-50"><Settings2 className="h-3 w-3" /></button>
+              <span className="h-4 w-px shrink-0 bg-slate-200" />
+              <select value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value)} title="Filter by campaign" className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-primary">
+                <option value="all">All campaigns</option>
+                {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.title}</option>)}
+              </select>
+              <button type="button" onClick={load} title="Refresh list" className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white p-1.5 text-slate-700 hover:bg-slate-50"><RefreshCw className="h-3 w-3" /></button>
+              <button type="button" onClick={() => setViewMode((mode) => (mode === 'table' ? 'cards' : 'table'))} title={viewMode === 'table' ? 'Switch to card view' : 'Switch to table view'} className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white p-1.5 text-slate-700 hover:bg-slate-50">{viewMode === 'table' ? <LayoutGrid className="h-3 w-3" /> : <Table2 className="h-3 w-3" />}</button>
+              <button type="button" onClick={exportToExcel} disabled={!sortedItems.length} title="Export to Excel" className="inline-flex shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 p-1.5 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"><FileSpreadsheet className="h-3 w-3" /></button>
             </div>
 
             {showSyncSettings ? (
@@ -1434,9 +1428,10 @@ export default function TeacherResponsesPanel({ headerSlot = null, renderIntervi
                       type="button"
                       onClick={() => handleArchive(item)}
                       disabled={quickStageId === item.id}
-                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-500 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
+                      title={statusValue === 'archived' ? 'Restore candidate' : 'Archive candidate'}
+                      className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white p-1.5 text-slate-500 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
                     >
-                      <Archive className="h-3 w-3" /> {statusValue === 'archived' ? 'Restore' : 'Archive'}
+                      <Archive className="h-3 w-3" />
                     </button>
                   </div>
                 </div>
@@ -1480,32 +1475,32 @@ export default function TeacherResponsesPanel({ headerSlot = null, renderIntervi
                             <span><span className="font-semibold text-slate-900">Reviewed by:</span> {item?.recruitment?.reviewedBy ? `${item.recruitment.reviewedBy.firstName || ''} ${item.recruitment.reviewedBy.lastName || ''}`.trim() || item.recruitment.reviewedBy.email : '—'}</span>
                             <span><span className="font-semibold text-slate-900">Last reviewed:</span> {item?.recruitment?.reviewedAt ? formatDateTime(item.recruitment.reviewedAt) : '—'}</span>
                             {draft.pipelineStatus === 'rejected' || (!renderInterviewTools && draft.pipelineStatus === 'interview_pending') ? (
-                              <button type="button" onClick={() => openMessagePreview(item)} className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90">
+                              <button type="button" onClick={() => openMessagePreview(item)} title={draft.pipelineStatus === 'rejected' ? 'Prepare rejection message' : 'Prepare interview invite'} className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90">
                                 <Send className="h-3 w-3" />
-                                {draft.pipelineStatus === 'rejected' ? 'Prepare rejection message' : 'Prepare interview invite'}
+                                {draft.pipelineStatus === 'rejected' ? 'Reject msg' : 'Invite msg'}
                               </button>
                             ) : null}
                           </div>
                         </div>
 
-                        {/* Row 1: stage / rejection category / tags */}
-                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                        {/* Row 1: stage / rejection category / tags — each field sized to its content, not stretched. */}
+                        <div className="mt-4 flex flex-wrap items-end gap-3">
                           <label className="text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Stage</span>
-                            <select value={draft.pipelineStatus} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, pipelineStatus: event.target.value })); scheduleAutosave(item, 300); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
+                            <select value={draft.pipelineStatus} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, pipelineStatus: event.target.value })); scheduleAutosave(item, 300); }} className="w-auto rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
                               {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                             </select>
                           </label>
                           <label className="text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Rejection category</span>
-                            <select value={draft.rejectionCategory} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, rejectionCategory: event.target.value })); scheduleAutosave(item, 300); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
+                            <select value={draft.rejectionCategory} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, rejectionCategory: event.target.value })); scheduleAutosave(item, 300); }} className="w-auto rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10">
                               {REJECTION_CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                               {draft.rejectionCategory && !REJECTION_CATEGORY_OPTIONS.some((option) => option.value === draft.rejectionCategory)
                                 ? <option value={draft.rejectionCategory}>{draft.rejectionCategory} (legacy)</option>
                                 : null}
                             </select>
                           </label>
-                          <label className="text-sm text-slate-700">
+                          <label className="min-w-[180px] flex-1 text-sm text-slate-700">
                             <span className="mb-1 block font-medium">Tags</span>
                             <input value={draft.tags} onChange={(event) => { updateDraft(item.id, (current) => ({ ...current, tags: event.target.value })); scheduleAutosave(item, 1200); }} placeholder="strong english, tajweed, future pool" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10" />
                           </label>

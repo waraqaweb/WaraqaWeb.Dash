@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   BarChart3,
@@ -6,7 +6,6 @@ import {
   CalendarClock,
   CheckCircle2,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
   Clock3,
   Copy,
@@ -174,6 +173,25 @@ function buildInterviewInviteMessage(link, teacherFirstName) {
 function buildInterviewFeedbackMessage(teacherFirstName, link) {
   const greeting = teacherFirstName ? `Dear ${teacherFirstName},` : 'Dear Respected Teacher,';
   return `Assalamu alaykum,\n\n${greeting}\n\nThank you for taking the time to interview with us. Your experience matters to us, and we would be grateful if you could share a few minutes of honest feedback about the process so we can keep improving it for future applicants.\n\nPlease share your feedback using the link below:\n\n${link}\n\nJazakum Allahu khayran for your time, and may Allah bless your efforts.`;
+}
+
+/** Small inline autosave indicator for the interview scorecard \u2014 mirrors the
+ * pipeline panel's own recruitment-review autosave status pill so both areas
+ * of the same card feel like one consistent saving model. */
+function InterviewAutosaveStatus({ status, onRetry }) {
+  if (status === 'saving') {
+    return <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Saving\u2026</span>;
+  }
+  if (status === 'pending') {
+    return <span className="text-[11px] font-medium text-muted-foreground">Unsaved\u2026</span>;
+  }
+  if (status === 'error') {
+    return <button type="button" onClick={onRetry} className="text-[11px] font-semibold text-red-600 underline">Save failed \u2014 retry</button>;
+  }
+  if (status === 'saved') {
+    return <span className="inline-flex items-center gap-1 text-[11px] font-medium text-green-600 dark:text-green-400"><Save className="h-3 w-3" /> Saved</span>;
+  }
+  return null;
 }
 
 // Post-interview decision reasons — phrased warmly and professionally
@@ -354,7 +372,14 @@ export default function TeacherOperationsPage({ isActive }) {
   const [interviewError, setInterviewError] = useState('');
   const [selectedInterviewId, setSelectedInterviewId] = useState('');
   const [interviewForm, setInterviewForm] = useState(null);
-  const [interviewSaving, setInterviewSaving] = useState(false);
+  // Autosave status for the interview scorecard fields — 'idle' | 'pending' |
+  // 'saving' | 'saved' | 'error'. Every field change schedules a debounced
+  // save instead of requiring a manual "Save" click (same pattern as the
+  // pipeline panel's own recruitment-review autosave).
+  const [interviewAutosaveStatus, setInterviewAutosaveStatus] = useState('idle');
+  const interviewFormRef = useRef(null);
+  const interviewAutosaveTimer = useRef(null);
+  useEffect(() => { interviewFormRef.current = interviewForm; }, [interviewForm]);
   // Bumped after every interview-tool save so the pipeline panel refetches.
   const [panelRefresh, setPanelRefresh] = useState(0);
   const [showManualFeedbackModal, setShowManualFeedbackModal] = useState(false);
@@ -619,6 +644,11 @@ export default function TeacherOperationsPage({ isActive }) {
   const selectInterview = (response) => {
     setSelectedInterviewId(response.id);
     setSelectedCandidate(response);
+    // Switching candidates (or refreshing after a save) always lands on a
+    // clean autosave state — any in-flight debounce for a previous candidate
+    // is dropped so a stray timer can never save into the wrong record.
+    if (interviewAutosaveTimer.current) { clearTimeout(interviewAutosaveTimer.current); interviewAutosaveTimer.current = null; }
+    setInterviewAutosaveStatus('idle');
     const iv = response?.recruitment?.interview || {};
     const scores = iv.scores || {};
     const subjectScores = iv.subjectScores || {};
@@ -652,29 +682,43 @@ export default function TeacherOperationsPage({ isActive }) {
   }, []);
 
   const handleSaveInterview = async () => {
-    if (!interviewForm) return;
+    const form = interviewFormRef.current;
+    if (!form) return;
+    if (interviewAutosaveTimer.current) { clearTimeout(interviewAutosaveTimer.current); interviewAutosaveTimer.current = null; }
     try {
-      setInterviewSaving(true);
+      setInterviewAutosaveStatus('saving');
       setInterviewError('');
       const payload = {
-        worksElsewhere: interviewForm.worksElsewhere,
-        outcome: interviewForm.outcome,
-        notes: interviewForm.notes,
-        englishTestScore: interviewForm.englishTestScore === '' ? null : Number(interviewForm.englishTestScore),
-        scores: interviewForm.scores,
-        subjectScores: interviewForm.subjectScores,
+        worksElsewhere: form.worksElsewhere,
+        outcome: form.outcome,
+        notes: form.notes,
+        englishTestScore: form.englishTestScore === '' ? null : Number(form.englishTestScore),
+        scores: form.scores,
+        subjectScores: form.subjectScores,
       };
-      const updated = await saveInterviewScorecard(interviewForm.source, interviewForm.id, payload);
+      const updated = await saveInterviewScorecard(form.source, form.id, payload);
       if (updated) {
         selectInterview(updated);
         refreshPanel();
       }
+      setInterviewAutosaveStatus('saved');
       loadPendingEmails();
     } catch (error) {
+      setInterviewAutosaveStatus('error');
       setInterviewError(error?.response?.data?.message || 'Failed to save interview scorecard.');
-    } finally {
-      setInterviewSaving(false);
     }
+  };
+
+  // Debounced autosave for scorecard fields (star ratings save almost
+  // immediately; free-text/number fields wait a bit longer so we don't fire a
+  // save on every keystroke).
+  const scheduleInterviewAutosave = (delay = 600) => {
+    setInterviewAutosaveStatus('pending');
+    if (interviewAutosaveTimer.current) clearTimeout(interviewAutosaveTimer.current);
+    interviewAutosaveTimer.current = setTimeout(() => {
+      interviewAutosaveTimer.current = null;
+      handleSaveInterview();
+    }, delay);
   };
 
   const handleSendCandidateEmail = async (event) => {
@@ -1306,21 +1350,21 @@ export default function TeacherOperationsPage({ isActive }) {
         <div className="mt-2.5 grid gap-2.5">
           {!meetingStarted ? (
             <div className="rounded-xl border border-border bg-background p-2.5">
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 1 · Interview invite</p>
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 1 · Invite</p>
               <div className="flex flex-wrap gap-1.5">
                 {phone ? (
-                  <a href={`https://wa.me/${phone}?text=${encodeURIComponent(inviteMessage)}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700">
-                    <MessageCircle className="h-3.5 w-3.5" /> WhatsApp invite
+                  <a href={`https://wa.me/${phone}?text=${encodeURIComponent(inviteMessage)}`} target="_blank" rel="noreferrer" title="Send interview invite via WhatsApp" className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700">
+                    <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
                   </a>
                 ) : null}
-                <button type="button" onClick={() => handleSendCandidateEmail('interview_invite')} disabled={emailSending} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
-                  <Mail className="h-3.5 w-3.5" /> Email invite
+                <button type="button" onClick={() => handleSendCandidateEmail('interview_invite')} disabled={emailSending} title="Send interview invite by email" className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
+                  <Mail className="h-3.5 w-3.5" /> Email
                 </button>
-                <button type="button" onClick={() => handleSendCandidateEmail('missing_info')} disabled={emailSending} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
-                  <Mail className="h-3.5 w-3.5" /> Request missing info
+                <button type="button" onClick={() => handleSendCandidateEmail('missing_info')} disabled={emailSending} title="Ask the candidate for missing information" className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:opacity-60">
+                  <Mail className="h-3.5 w-3.5" /> Missing info
                 </button>
-                <button type="button" onClick={openEmailTemplates} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40">
-                  <Edit3 className="h-3.5 w-3.5" /> Edit templates
+                <button type="button" onClick={openEmailTemplates} title="Edit email templates" className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40">
+                  <Edit3 className="h-3.5 w-3.5" /> Templates
                 </button>
               </div>
               {emailNotice ? <p className="mt-1.5 text-[11px] font-medium text-green-600 dark:text-green-400">{emailNotice}</p> : null}
@@ -1328,7 +1372,10 @@ export default function TeacherOperationsPage({ isActive }) {
           ) : null}
 
           <div className="rounded-xl border border-border bg-background p-2.5">
-            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Interview scorecard</p>
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Scores</p>
+              <InterviewAutosaveStatus status={interviewAutosaveStatus} onRetry={handleSaveInterview} />
+            </div>
             <div className="flex flex-wrap gap-2">
               {INTERVIEW_SCORE_FIELDS.map((field) => (
                 <div key={field.key} className="w-fit rounded-lg border border-border bg-card px-2 py-1.5">
@@ -1336,7 +1383,7 @@ export default function TeacherOperationsPage({ isActive }) {
                   <StarRating
                     compact
                     value={interviewForm.scores[field.key]}
-                    onChange={(next) => setInterviewForm((p) => ({ ...p, scores: { ...p.scores, [field.key]: next } }))}
+                    onChange={(next) => { setInterviewForm((p) => ({ ...p, scores: { ...p.scores, [field.key]: next } })); scheduleInterviewAutosave(300); }}
                   />
                 </div>
               ))}
@@ -1346,16 +1393,16 @@ export default function TeacherOperationsPage({ isActive }) {
                   <StarRating
                     compact
                     value={interviewForm.subjectScores[key]}
-                    onChange={(next) => setInterviewForm((p) => ({ ...p, subjectScores: { ...p.subjectScores, [key]: next } }))}
+                    onChange={(next) => { setInterviewForm((p) => ({ ...p, subjectScores: { ...p.subjectScores, [key]: next } })); scheduleInterviewAutosave(300); }}
                   />
                 </div>
               ))}
               <div className="w-fit rounded-lg border border-border bg-card px-2 py-1.5">
-                <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">English test score (%)</p>
+                <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">English test (%)</p>
                 <input
                   type="number" min="0" max="100"
                   value={interviewForm.englishTestScore}
-                  onChange={(e) => setInterviewForm((p) => ({ ...p, englishTestScore: e.target.value }))}
+                  onChange={(e) => { setInterviewForm((p) => ({ ...p, englishTestScore: e.target.value })); scheduleInterviewAutosave(800); }}
                   className="w-20 rounded-lg border border-border bg-card px-2 py-1 text-sm"
                 />
               </div>
@@ -1368,23 +1415,18 @@ export default function TeacherOperationsPage({ isActive }) {
                 </span>
               </span>
               <label className="inline-flex items-center gap-2 text-xs text-foreground">
-                <input type="checkbox" checked={interviewForm.worksElsewhere} onChange={(e) => setInterviewForm((p) => ({ ...p, worksElsewhere: e.target.checked }))} />
+                <input type="checkbox" checked={interviewForm.worksElsewhere} onChange={(e) => { setInterviewForm((p) => ({ ...p, worksElsewhere: e.target.checked })); scheduleInterviewAutosave(300); }} />
                 Works elsewhere
               </label>
             </div>
             <label className="mt-2 block text-xs text-foreground">
               <span className="mb-1 block font-medium">Notes</span>
-              <textarea rows={3} value={interviewForm.notes} onChange={(e) => setInterviewForm((p) => ({ ...p, notes: e.target.value }))} className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm" placeholder="Strengths, concerns, next steps…" />
+              <textarea rows={1} value={interviewForm.notes} onChange={(e) => { setInterviewForm((p) => ({ ...p, notes: e.target.value })); scheduleInterviewAutosave(1200); }} className="w-full resize-y rounded-lg border border-border bg-card px-2 py-1.5 text-sm" placeholder="Strengths, concerns, next steps…" />
             </label>
-            <div className="mt-2">
-              <button type="button" onClick={handleSaveInterview} disabled={interviewSaving} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground shadow-sm disabled:opacity-60">
-                <Save className="h-4 w-4" /> {interviewSaving ? 'Saving…' : 'Save scorecard'}
-              </button>
-            </div>
           </div>
 
           <div className="rounded-xl border border-border bg-background p-2.5">
-            <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 2 · Interview decision</p>
+            <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Step 2 · Decision</p>
             {!meetingStarted ? (
               <p className="text-[11px] text-muted-foreground">Available once the interview meeting starts — you can then record the result and send the outcome by email or WhatsApp.</p>
             ) : (
@@ -1396,7 +1438,7 @@ export default function TeacherOperationsPage({ isActive }) {
                       key={d.outcome}
                       type="button"
                       onClick={() => openDecisionPreview(d.outcome)}
-                      disabled={interviewSaving}
+                      disabled={interviewAutosaveStatus === 'saving'}
                       className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-60 ${d.className}`}
                     >
                       {d.outcome === interviewForm.outcome ? <CheckCircle2 className="h-3.5 w-3.5" /> : null} {d.label}
@@ -1695,37 +1737,36 @@ export default function TeacherOperationsPage({ isActive }) {
                   onExpandCandidate={selectInterview}
                   refreshToken={panelRefresh}
                   headerSlot={(
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <BriefcaseBusiness className="h-3.5 w-3.5 text-primary" />
-                        {(() => {
-                          const active = campaigns.filter((c) => c.status !== 'archived').length;
-                          return <span><span className="font-semibold text-foreground">{active}</span> campaign{active === 1 ? '' : 's'}</span>;
-                        })()}
-                        {campaignLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        <button type="button" onClick={() => { resetCampaignForm(); setShowCampaignModal(true); }} className="inline-flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-sm">
-                          <Plus className="h-3.5 w-3.5" /> New
-                        </button>
-                        <button type="button" onClick={() => { setImportResult(null); setImportError(''); setShowImportModal(true); }} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground hover:border-primary/40">
-                          <Upload className="h-3.5 w-3.5" /> Import
-                        </button>
-                        <button type="button" onClick={() => setShowCampaignDrawer(true)} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground hover:border-primary/40">
-                          <BriefcaseBusiness className="h-3.5 w-3.5" /> Campaigns
-                          <ChevronRight className="h-3.5 w-3.5" />
-                        </button>
-                        <button type="button" onClick={() => handleCopy(newTeacherInterviewLink, 'Interview booking link')} title="Copy the public interview booking link" className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground hover:border-primary/40">
-                          <Copy className="h-3.5 w-3.5" /> Booking link
-                        </button>
-                        <button type="button" onClick={() => navigate('/dashboard/availability')} title="Manage interview slots" className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground hover:border-primary/40">
-                          <CalendarClock className="h-3.5 w-3.5" /> Slots
-                        </button>
-                        <button type="button" onClick={() => setShowManualFeedbackModal(true)} title="Generate a post-interview feedback link for any teacher" className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground hover:border-primary/40">
-                          <MessageCircle className="h-3.5 w-3.5" /> Feedback link
-                        </button>
-                      </div>
-                    </div>
+                    <>
+                      {(() => {
+                        const active = campaigns.filter((c) => c.status !== 'archived').length;
+                        return (
+                          <span title={`${active} active campaign${active === 1 ? '' : 's'}`} className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2 py-1.5 text-[11px] font-semibold text-foreground">
+                            <BriefcaseBusiness className="h-3 w-3 text-primary" /> {active}
+                            {campaignLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                          </span>
+                        );
+                      })()}
+                      <button type="button" onClick={() => { resetCampaignForm(); setShowCampaignModal(true); }} title="New campaign" className="inline-flex items-center justify-center rounded-lg bg-primary p-1.5 text-primary-foreground shadow-sm">
+                        <Plus className="h-3 w-3" />
+                      </button>
+                      <button type="button" onClick={() => { setImportResult(null); setImportError(''); setShowImportModal(true); }} title="Import applicants" className="inline-flex items-center justify-center rounded-lg border border-border bg-background p-1.5 text-foreground hover:border-primary/40">
+                        <Upload className="h-3 w-3" />
+                      </button>
+                      <button type="button" onClick={() => setShowCampaignDrawer(true)} title="Manage campaigns" className="inline-flex items-center justify-center rounded-lg border border-border bg-background p-1.5 text-foreground hover:border-primary/40">
+                        <BriefcaseBusiness className="h-3 w-3" />
+                      </button>
+                      <span className="h-4 w-px bg-border" />
+                      <button type="button" onClick={() => handleCopy(newTeacherInterviewLink, 'Interview booking link')} title="Copy interview booking link" className="inline-flex items-center justify-center rounded-lg border border-border bg-background p-1.5 text-foreground hover:border-primary/40">
+                        <Copy className="h-3 w-3" />
+                      </button>
+                      <button type="button" onClick={() => navigate('/dashboard/availability')} title="Manage interview slots" className="inline-flex items-center justify-center rounded-lg border border-border bg-background p-1.5 text-foreground hover:border-primary/40">
+                        <CalendarClock className="h-3 w-3" />
+                      </button>
+                      <button type="button" onClick={() => setShowManualFeedbackModal(true)} title="Generate a post-interview feedback link" className="inline-flex items-center justify-center rounded-lg border border-border bg-background p-1.5 text-foreground hover:border-primary/40">
+                        <MessageCircle className="h-3 w-3" />
+                      </button>
+                    </>
                   )}
                 />
               ) : null}

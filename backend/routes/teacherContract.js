@@ -62,7 +62,7 @@ const DEFAULT_LECTURE_TOPICS = [
   'Practical Teaching Demos (optional)',
 ];
 const RECRUITMENT_RATINGS = ['not_available', 'weak', 'good', 'very_good', 'excellent'];
-const RECRUITMENT_STATUSES = ['new', 'under_review', 'shortlisted', 'interview_pending', 'interviewed', 'accepted', 'rejected', 'archived'];
+const RECRUITMENT_STATUSES = ['new', 'under_review', 'shortlisted', 'interview_pending', 'interviewed', 'offer_call', 'accepted', 'rejected', 'withdrawn', 'cancelled', 'archived'];
 
 // ─── Recruitment automation config keys + defaults ───────────────────────────
 const RECRUITMENT_EMAIL_TEMPLATE_KEY = 'recruitment_email_templates_v1';
@@ -605,12 +605,77 @@ const deriveInterviewScheduleFromMeeting = (meeting) => {
   if (!meeting) return { scheduledAt: null, completedAt: null, meetingId: null };
   const scheduledAt = meeting.scheduledStart || null;
   const meetingCompleted = meeting.status === 'completed'
+    || meeting.attendanceStatus === 'attended'
     || (meeting.scheduledEnd && new Date(meeting.scheduledEnd).getTime() <= Date.now());
   return {
     scheduledAt,
-    completedAt: meetingCompleted ? (meeting.scheduledEnd || null) : null,
+    completedAt: meetingCompleted ? (meeting.scheduledEnd || meeting.scheduledStart || null) : null,
     meetingId: meeting._id || null,
   };
+};
+
+// Last 10 digits of a phone number — tolerant of +20/0020/leading-0 prefixes
+// so a booking made with "+201012345678" still matches an application that
+// wrote "01012345678".
+const normalizePhoneKey = (raw) => {
+  const digits = String(raw || '').replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+};
+
+// Picks THE interview meeting for a candidate out of all their bookings:
+// no-show / cancelled-without-penalty bookings never count; a meeting that
+// actually happened (attended / completed / end time passed) wins over a
+// later rebooking — otherwise the soonest upcoming booking is used.
+const pickInterviewMeeting = (meetings = []) => {
+  const usable = meetings.filter((m) => !['no_show', 'cancelled_no_penalty'].includes(m.attendanceStatus || ''));
+  if (!usable.length) return null;
+  const now = Date.now();
+  const isDone = (m) => m.status === 'completed'
+    || m.attendanceStatus === 'attended'
+    || (m.scheduledEnd && new Date(m.scheduledEnd).getTime() <= now);
+  const done = usable.filter(isDone).sort((a, b) => new Date(b.scheduledStart || 0) - new Date(a.scheduledStart || 0));
+  if (done.length) return done[0];
+  return [...usable].sort((a, b) => new Date(a.scheduledStart || 0) - new Date(b.scheduledStart || 0))[0];
+};
+
+// All non-cancelled interview bookings, grouped by candidate email AND
+// normalized phone number. Phone matching is the fallback for bookings made
+// with a different email than the application (happened in production —
+// candidates simply booked with another address and never showed up in the
+// interview queue).
+async function loadInterviewMeetingMaps() {
+  const meetings = await Meeting.find({
+    meetingType: 'new_teacher_interview',
+    status: { $ne: 'cancelled' },
+  }).sort({ scheduledStart: -1 }).lean();
+  const byEmail = new Map();
+  const byPhone = new Map();
+  meetings.forEach((m) => {
+    const email = String(m.bookingPayload?.guardianEmail || '').trim().toLowerCase();
+    if (email) {
+      if (!byEmail.has(email)) byEmail.set(email, []);
+      byEmail.get(email).push(m);
+    }
+    const phoneKey = normalizePhoneKey(m.bookingPayload?.guardianPhone);
+    if (phoneKey) {
+      if (!byPhone.has(phoneKey)) byPhone.set(phoneKey, []);
+      byPhone.get(phoneKey).push(m);
+    }
+  });
+  return { byEmail, byPhone };
+}
+
+const meetingsForCandidate = (doc, maps) => {
+  const email = String(doc?.personalInfo?.email || '').trim().toLowerCase();
+  const fromEmail = email ? maps.byEmail.get(email) : null;
+  if (fromEmail?.length) return fromEmail;
+  const phoneKeys = [doc?.personalInfo?.whatsappNumber, doc?.personalInfo?.mobileNumber]
+    .map(normalizePhoneKey).filter(Boolean);
+  for (const key of phoneKeys) {
+    const fromPhone = maps.byPhone.get(key);
+    if (fromPhone?.length) return fromPhone;
+  }
+  return [];
 };
 
 // Batch version used when listing/summarizing many lean (plain-object) docs
@@ -618,31 +683,23 @@ const deriveInterviewScheduleFromMeeting = (meeting) => {
 // single bulkWrite so DB-level filters (e.g. counts by scheduledAt) stay
 // accurate without needing to re-open the full response list first.
 async function syncInterviewSchedulesForLeanDocs(Model, leanDocs = []) {
-  const withEmail = (leanDocs || []).filter((d) => String(d?.personalInfo?.email || '').trim());
-  if (!withEmail.length) return;
+  const candidates = (leanDocs || []).filter((d) => String(d?.personalInfo?.email || '').trim()
+    || String(d?.personalInfo?.whatsappNumber || '').trim()
+    || String(d?.personalInfo?.mobileNumber || '').trim());
+  if (!candidates.length) return;
 
-  const emails = [...new Set(withEmail.map((d) => String(d.personalInfo.email).trim().toLowerCase()))];
-  const meetings = await Meeting.find({
-    meetingType: 'new_teacher_interview',
-    status: { $ne: 'cancelled' },
-    'bookingPayload.guardianEmail': { $in: emails },
-  }).sort({ scheduledStart: -1 }).lean();
-
-  const byEmail = new Map();
-  meetings.forEach((m) => {
-    const email = m.bookingPayload?.guardianEmail;
-    if (email && !byEmail.has(email)) byEmail.set(email, m); // first = most recent (sorted desc)
-  });
-  if (!byEmail.size) return;
+  const maps = await loadInterviewMeetingMaps();
+  if (!maps.byEmail.size && !maps.byPhone.size) return;
 
   const bulkOps = [];
-  withEmail.forEach((doc) => {
-    const email = String(doc.personalInfo.email).trim().toLowerCase();
-    const meeting = byEmail.get(email);
-    if (!meeting) return;
+  candidates.forEach((doc) => {
+    const meeting = pickInterviewMeeting(meetingsForCandidate(doc, maps));
+    const interview = doc.recruitment?.interview || {};
+    // No usable booking: clear a previously-derived schedule (e.g. the only
+    // booking was later marked a no-show) but never touch untracked docs.
+    if (!meeting && !interview.meetingId) return;
 
     const derived = deriveInterviewScheduleFromMeeting(meeting);
-    const interview = doc.recruitment?.interview || {};
     const scheduleChanged = String(interview.scheduledAt || '') !== String(derived.scheduledAt || '')
       || String(interview.completedAt || '') !== String(derived.completedAt || '')
       || String(interview.meetingId || '') !== String(derived.meetingId || '');
@@ -698,18 +755,14 @@ async function syncInterviewSchedulesForLeanDocs(Model, leanDocs = []) {
 // Single-document version used right before saving an interview scorecard
 // update, so the auto-advance-status logic below sees a fresh completedAt.
 async function syncInterviewScheduleForDoc(doc) {
-  const email = String(doc?.personalInfo?.email || '').trim().toLowerCase();
-  if (!email) return;
-  const meeting = await Meeting.findOne({
-    meetingType: 'new_teacher_interview',
-    status: { $ne: 'cancelled' },
-    'bookingPayload.guardianEmail': email,
-  }).sort({ scheduledStart: -1 }).lean();
-  if (!meeting) return;
+  const maps = await loadInterviewMeetingMaps();
+  const meeting = pickInterviewMeeting(meetingsForCandidate(doc, maps));
+  const recruitment = doc.recruitment || {};
+  const interview = recruitment.interview || {};
+  if (!meeting && !interview.meetingId) return;
 
   const derived = deriveInterviewScheduleFromMeeting(meeting);
-  const recruitment = doc.recruitment || {};
-  recruitment.interview = { ...(recruitment.interview || {}), ...derived };
+  recruitment.interview = { ...interview, ...derived };
   doc.recruitment = recruitment;
 }
 
@@ -1178,7 +1231,10 @@ router.patch('/responses/:source/:id/interview', authenticateToken, requireAdmin
     const fromStatus = recruitment.status;
     if (fromStatus !== 'archived') {
       if (interview.outcome === 'passed') {
-        recruitment.status = 'accepted';
+        // Passing the interview moves them to the acceptance-call step
+        // (share the good news, negotiate salary/terms, send the contract) —
+        // NOT directly to accepted; the contract acceptance does that.
+        if (!['offer_call', 'accepted'].includes(fromStatus)) recruitment.status = 'offer_call';
       } else if (interview.outcome === 'failed' || interview.outcome === 'completed_unsuitable') {
         recruitment.status = 'rejected';
       } else if (interview.outcome === 'passed_not_selected') {
@@ -1309,6 +1365,21 @@ router.post('/agreement/:token/accept', async (req, res) => {
     contract.acceptedName = fullName;
     contract.acceptedIp = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 60);
     recruitment.contract = contract;
+    // Confirming the contract completes the acceptance-call step — advance
+    // the pipeline so the candidate shows under Accepted (ready for training).
+    const fromStatus = recruitment.status;
+    if (!['accepted', 'archived'].includes(fromStatus)) {
+      recruitment.status = 'accepted';
+      recruitment.history = Array.isArray(recruitment.history) ? recruitment.history : [];
+      recruitment.history.push({
+        at: new Date(),
+        actor: null,
+        action: 'contract_accepted',
+        fromStatus,
+        toStatus: 'accepted',
+        note: `Contract accepted by ${fullName}.`,
+      });
+    }
     doc.recruitment = recruitment;
     doc.markModified('recruitment');
     await doc.save({ validateModifiedOnly: true });
@@ -1343,15 +1414,15 @@ router.post('/responses/:source/:id/contract-decline', authenticateToken, requir
     recruitment.contract = contract;
 
     const fromStatus = recruitment.status;
-    recruitment.status = 'rejected';
+    recruitment.status = 'withdrawn';
     recruitment.history = Array.isArray(recruitment.history) ? recruitment.history : [];
     recruitment.history.push({
       at: new Date(),
       actor: req.user?._id || null,
       action: 'contract_declined',
       fromStatus,
-      toStatus: 'rejected',
-      note: contract.declineNote || 'Candidate declined to continue after being accepted.',
+      toStatus: 'withdrawn',
+      note: contract.declineNote || 'Candidate apologized / declined to continue (salary or other reason).',
     });
 
     doc.recruitment = recruitment;

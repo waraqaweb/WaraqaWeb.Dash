@@ -45,8 +45,11 @@ const STATUS_OPTIONS = [
   { value: 'shortlisted', label: 'Shortlisted' },
   { value: 'interview_pending', label: 'Interview pending' },
   { value: 'interviewed', label: 'Interviewed' },
+  { value: 'offer_call', label: 'Acceptance call' },
   { value: 'accepted', label: 'Accepted' },
   { value: 'rejected', label: 'Rejected' },
+  { value: 'withdrawn', label: 'Apologized' },
+  { value: 'cancelled', label: 'Cancelled interview' },
   { value: 'archived', label: 'Archived' },
 ];
 
@@ -80,8 +83,11 @@ const STATUS_TONES = {
   shortlisted: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   interview_pending: 'bg-cyan-50 text-cyan-700 border-cyan-200',
   interviewed: 'bg-violet-50 text-violet-700 border-violet-200',
+  offer_call: 'bg-teal-50 text-teal-700 border-teal-200',
   accepted: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   rejected: 'bg-rose-50 text-rose-700 border-rose-200',
+  withdrawn: 'bg-orange-50 text-orange-700 border-orange-200',
+  cancelled: 'bg-stone-100 text-stone-600 border-stone-200',
   archived: 'bg-zinc-100 text-zinc-700 border-zinc-200',
 };
 
@@ -772,7 +778,7 @@ function ApplicantTable({ rows, openViewer, onQuickStage, quickStageId, selected
   );
 }
 
-export default function TeacherResponsesPanel({ headerSlot = null }) {
+export default function TeacherResponsesPanel({ headerSlot = null, renderInterviewTools = null, onExpandCandidate = null, refreshToken = 0 }) {
   const { searchTerm, viewFilters } = useSearch();
   const opsFilters = viewFilters[TEACHER_OPERATIONS_VIEW_KEY] || createDefaultTeacherResponsesFilters();
   const [items, setItems] = useState([]);
@@ -876,6 +882,14 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
   };
 
   useEffect(() => { load(); }, []);
+
+  // Parent-triggered refresh: the Teacher Operations page bumps this token
+  // after interview-tool saves (scorecard, decision, contract) so card
+  // badges, stages, and grades stay in sync without a manual refresh.
+  useEffect(() => {
+    if (refreshToken) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshToken]);
 
   // Load the Google Sheet sync configuration (source of truth for applicants).
   const loadSyncConfig = async () => {
@@ -1211,21 +1225,18 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
     });
   }, [campaignFilter, items, statusFilter, searchTerm, opsFilters]);
 
-  // Strongest-applicant-first ordering, applied only to the "Under review"
-  // stage (see sortUnderReviewCandidates above). "Interview pending" and
-  // "Interviewed" instead order by nearest booked interview meeting time
-  // first (candidates who haven't booked yet — no scheduledAt — sort to the
-  // end). Other stages/tabs keep the default order.
+  // Strongest-applicant-first ordering for the "Under review" stage (see
+  // sortUnderReviewCandidates above). Every other view orders by the booked
+  // interview meeting time — nearest first — with candidates who have no
+  // booked interview yet sorted after, most recent submission first.
   const sortedItems = useMemo(() => {
     if (statusFilter === 'under_review') return sortUnderReviewCandidates(filteredItems);
-    if (statusFilter === 'interview_pending' || statusFilter === 'interviewed') {
-      return [...filteredItems].sort((a, b) => {
-        const aTime = a?.recruitment?.interview?.scheduledAt ? new Date(a.recruitment.interview.scheduledAt).getTime() : Infinity;
-        const bTime = b?.recruitment?.interview?.scheduledAt ? new Date(b.recruitment.interview.scheduledAt).getTime() : Infinity;
-        return aTime - bTime;
-      });
-    }
-    return filteredItems;
+    return [...filteredItems].sort((a, b) => {
+      const aTime = a?.recruitment?.interview?.scheduledAt ? new Date(a.recruitment.interview.scheduledAt).getTime() : Infinity;
+      const bTime = b?.recruitment?.interview?.scheduledAt ? new Date(b.recruitment.interview.scheduledAt).getTime() : Infinity;
+      if (aTime !== bTime) return aTime - bTime;
+      return new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0);
+    });
   }, [filteredItems, statusFilter]);
 
   const exportToExcel = () => {
@@ -1409,7 +1420,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                     {overall?.label ? <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${overallTone(overall.label)}`}>{overall.label}{overall?.score != null ? ` • ${overall.score}%` : ''}</span> : null}
                     {item?.recruitment?.interview?.scheduledAt ? (
                       <span
-                        title="Manage scoring, outcome, and feedback for this booked interview from the Interview scorecard on this tab."
+                        title="Scoring, outcome, feedback, and contract for this interview are managed inside this candidate's expanded card."
                         className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${item?.recruitment?.interview?.completedAt ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}
                       >
                         {item.recruitment.interview.completedAt ? 'Interview done' : 'Interview booked'} • {formatDateTime(item.recruitment.interview.scheduledAt)}
@@ -1429,7 +1440,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                     </button>
                   </div>
                 </div>
-                <button type="button" onClick={() => { ensureDraft(item); setExpandedId(isOpen ? '' : item.id); }} className="flex w-full items-start justify-between gap-3 text-left">
+                <button type="button" onClick={() => { ensureDraft(item); const opening = !isOpen; setExpandedId(opening ? item.id : ''); if (opening && onExpandCandidate) onExpandCandidate(item); }} className="flex w-full items-start justify-between gap-3 text-left">
                   <div className="min-w-0 flex-1 space-y-2">
                     {(() => {
                       const chips = buildSelectionChips(item);
@@ -1468,7 +1479,7 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                             <span>Recommendation: <span className="text-slate-900">{item?.recruitment?.overall?.recommendation || 'review'}</span></span>
                             <span><span className="font-semibold text-slate-900">Reviewed by:</span> {item?.recruitment?.reviewedBy ? `${item.recruitment.reviewedBy.firstName || ''} ${item.recruitment.reviewedBy.lastName || ''}`.trim() || item.recruitment.reviewedBy.email : '—'}</span>
                             <span><span className="font-semibold text-slate-900">Last reviewed:</span> {item?.recruitment?.reviewedAt ? formatDateTime(item.recruitment.reviewedAt) : '—'}</span>
-                            {draft.pipelineStatus === 'rejected' || draft.pipelineStatus === 'interview_pending' ? (
+                            {draft.pipelineStatus === 'rejected' || (!renderInterviewTools && draft.pipelineStatus === 'interview_pending') ? (
                               <button type="button" onClick={() => openMessagePreview(item)} className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90">
                                 <Send className="h-3 w-3" />
                                 {draft.pipelineStatus === 'rejected' ? 'Prepare rejection message' : 'Prepare interview invite'}
@@ -1535,12 +1546,13 @@ export default function TeacherResponsesPanel({ headerSlot = null }) {
                         </div>
                       </div>
 
-                      {/* Interview scorecard summary — stays visible in EVERY stage
-                          (interviewed, accepted, rejected…) once any marks or notes
-                          were recorded, so a stage change never hides them. Marks
-                          are edited from the Interview scorecard card on this tab
-                          and count toward the overall grade above. */}
-                      {(() => {
+                      {/* Interview tools: when the parent supplies the full
+                          interactive toolkit (Teacher Operations pipeline),
+                          render it here so scorecard, decision, feedback,
+                          contract, and training all live under the candidate's
+                          own card. Otherwise fall back to a read-only summary
+                          of any recorded marks (visible in EVERY stage). */}
+                      {renderInterviewTools ? renderInterviewTools(item) : (() => {
                         const iv = item?.recruitment?.interview || {};
                         const ivScoreEntries = [
                           ...INTERVIEW_SCORE_FIELDS.map(([key, label]) => [label, iv.scores?.[key]]),

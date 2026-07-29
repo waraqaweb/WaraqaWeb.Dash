@@ -1480,6 +1480,9 @@ export default function TeacherOperationsPage({ isActive }) {
                   {contractLinkState.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
                   {current?.recruitment?.contract?.token ? 'Regenerate & copy contract link' : 'Generate & copy contract link'}
                 </button>
+                <button type="button" onClick={() => navigate('/dashboard/teacher-contract')} title="Edit the contract text candidates see on the acceptance link" className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40">
+                  <Edit3 className="h-3.5 w-3.5" /> Edit contract text
+                </button>
                 {!current?.recruitment?.contract?.acceptedAt && !current?.recruitment?.contract?.declinedAt ? (
                   <button type="button" onClick={() => setShowDeclineForm((v) => !v)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-red-600 hover:border-red-300">
                     <XCircle className="h-3.5 w-3.5" /> Candidate won't continue

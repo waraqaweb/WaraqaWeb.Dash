@@ -15,7 +15,8 @@
     "backfill:evaluation-feedbacks": "node scripts/backfillEvaluationFeedbacks.js",
     "sync:meetings-google-calendar": "node scripts/syncMeetingsToGoogleCalendar.js",
     "cleanup:meetings-google-calendar-duplicates": "node scripts/cleanupGoogleCalendarMeetingDuplicates.js",
-    "sync:classes-google-calendar": "node scripts/syncTeacherClassesToGoogleCalendar.js"
+    "sync:classes-google-calendar": "node scripts/syncTeacherClassesToGoogleCalendar.js",
+    "sync:availability-google-calendar": "node scripts/syncTeacherAvailabilityToGoogleCalendar.js"
   },
   "keywords": [
     "education",

@@ -155,4 +155,98 @@ availabilitySlotSchema.pre('save', function(next) {
   next();
 });
 
+function scheduleAvailabilitySlotCalendarSync(doc, mode = 'upsert') {
+  if (!doc) return;
+  setImmediate(async () => {
+    try {
+      const availabilitySyncService = require('../services/teacherAvailabilityCalendarSyncService');
+      if (!availabilitySyncService.isConfigured()) return;
+      await availabilitySyncService.syncAvailabilitySlotEvent({ slotDoc: doc, mode });
+    } catch (err) {
+      console.warn('[AvailabilitySlot calendar sync] failed:', err && err.message);
+    }
+  });
+}
+
+availabilitySlotSchema.post('save', function(doc) {
+  scheduleAvailabilitySlotCalendarSync(doc, 'upsert');
+});
+
+availabilitySlotSchema.post('deleteOne', { document: true, query: false }, function(doc) {
+  scheduleAvailabilitySlotCalendarSync(doc, 'delete');
+});
+
+availabilitySlotSchema.post('findOneAndDelete', function(doc) {
+  scheduleAvailabilitySlotCalendarSync(doc, 'delete');
+});
+
+availabilitySlotSchema.pre('findOneAndUpdate', async function(next) {
+  try {
+    this._slotBefore = await this.model.findOne(this.getQuery())
+      .select('_id teacherId dayOfWeek startTime endTime timezone isRecurring effectiveFrom effectiveTo isActive')
+      .lean();
+  } catch (_) {
+    this._slotBefore = null;
+  }
+  next();
+});
+
+availabilitySlotSchema.post('findOneAndUpdate', async function() {
+  try {
+    const before = this._slotBefore;
+    if (!before?._id) return;
+    const fresh = await this.model.findById(before._id)
+      .select('_id teacherId dayOfWeek startTime endTime timezone isRecurring effectiveFrom effectiveTo isActive')
+      .lean();
+    if (fresh) {
+      scheduleAvailabilitySlotCalendarSync(fresh, 'upsert');
+    }
+  } catch (err) {
+    console.warn('[AvailabilitySlot calendar sync] findOneAndUpdate post hook failed:', err && err.message);
+  }
+});
+
+availabilitySlotSchema.pre('updateMany', async function(next) {
+  try {
+    const ids = await this.model.find(this.getQuery()).select('_id').lean();
+    this._slotSyncIds = ids.map((d) => d._id);
+  } catch (_) {
+    this._slotSyncIds = [];
+  }
+  next();
+});
+
+availabilitySlotSchema.post('updateMany', async function() {
+  try {
+    const ids = Array.isArray(this._slotSyncIds) ? this._slotSyncIds : [];
+    if (!ids.length) return;
+    const docs = await this.model.find({ _id: { $in: ids } })
+      .select('_id teacherId dayOfWeek startTime endTime timezone isRecurring effectiveFrom effectiveTo isActive')
+      .lean();
+    docs.forEach((doc) => scheduleAvailabilitySlotCalendarSync(doc, 'upsert'));
+  } catch (err) {
+    console.warn('[AvailabilitySlot calendar sync] updateMany post hook failed:', err && err.message);
+  }
+});
+
+availabilitySlotSchema.pre('deleteMany', async function(next) {
+  try {
+    this._slotDeleteDocs = await this.model.find(this.getQuery())
+      .select('_id teacherId dayOfWeek startTime endTime timezone isRecurring effectiveFrom effectiveTo isActive')
+      .lean();
+  } catch (_) {
+    this._slotDeleteDocs = [];
+  }
+  next();
+});
+
+availabilitySlotSchema.post('deleteMany', function() {
+  try {
+    const docs = Array.isArray(this._slotDeleteDocs) ? this._slotDeleteDocs : [];
+    docs.forEach((doc) => scheduleAvailabilitySlotCalendarSync(doc, 'delete'));
+  } catch (err) {
+    console.warn('[AvailabilitySlot calendar sync] deleteMany post hook failed:', err && err.message);
+  }
+});
+
 module.exports = mongoose.model('AvailabilitySlot', availabilitySlotSchema);

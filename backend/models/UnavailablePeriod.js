@@ -160,4 +160,98 @@ unavailablePeriodSchema.statics.cleanupExpired = function() {
   );
 };
 
+function scheduleUnavailableCalendarSync(doc, mode = 'upsert') {
+  if (!doc) return;
+  setImmediate(async () => {
+    try {
+      const availabilitySyncService = require('../services/teacherAvailabilityCalendarSyncService');
+      if (!availabilitySyncService.isConfigured()) return;
+      await availabilitySyncService.syncUnavailablePeriodEvent({ periodDoc: doc, mode });
+    } catch (err) {
+      console.warn('[UnavailablePeriod calendar sync] failed:', err && err.message);
+    }
+  });
+}
+
+unavailablePeriodSchema.post('save', function(doc) {
+  scheduleUnavailableCalendarSync(doc, 'upsert');
+});
+
+unavailablePeriodSchema.post('deleteOne', { document: true, query: false }, function(doc) {
+  scheduleUnavailableCalendarSync(doc, 'delete');
+});
+
+unavailablePeriodSchema.post('findOneAndDelete', function(doc) {
+  scheduleUnavailableCalendarSync(doc, 'delete');
+});
+
+unavailablePeriodSchema.pre('findOneAndUpdate', async function(next) {
+  try {
+    this._periodBefore = await this.model.findOne(this.getQuery())
+      .select('_id teacherId startDateTime endDateTime reason description status isActive')
+      .lean();
+  } catch (_) {
+    this._periodBefore = null;
+  }
+  next();
+});
+
+unavailablePeriodSchema.post('findOneAndUpdate', async function() {
+  try {
+    const before = this._periodBefore;
+    if (!before?._id) return;
+    const fresh = await this.model.findById(before._id)
+      .select('_id teacherId startDateTime endDateTime reason description status isActive')
+      .lean();
+    if (fresh) {
+      scheduleUnavailableCalendarSync(fresh, 'upsert');
+    }
+  } catch (err) {
+    console.warn('[UnavailablePeriod calendar sync] findOneAndUpdate post hook failed:', err && err.message);
+  }
+});
+
+unavailablePeriodSchema.pre('updateMany', async function(next) {
+  try {
+    const ids = await this.model.find(this.getQuery()).select('_id').lean();
+    this._periodSyncIds = ids.map((d) => d._id);
+  } catch (_) {
+    this._periodSyncIds = [];
+  }
+  next();
+});
+
+unavailablePeriodSchema.post('updateMany', async function() {
+  try {
+    const ids = Array.isArray(this._periodSyncIds) ? this._periodSyncIds : [];
+    if (!ids.length) return;
+    const docs = await this.model.find({ _id: { $in: ids } })
+      .select('_id teacherId startDateTime endDateTime reason description status isActive')
+      .lean();
+    docs.forEach((doc) => scheduleUnavailableCalendarSync(doc, 'upsert'));
+  } catch (err) {
+    console.warn('[UnavailablePeriod calendar sync] updateMany post hook failed:', err && err.message);
+  }
+});
+
+unavailablePeriodSchema.pre('deleteMany', async function(next) {
+  try {
+    this._periodDeleteDocs = await this.model.find(this.getQuery())
+      .select('_id teacherId startDateTime endDateTime reason description status isActive')
+      .lean();
+  } catch (_) {
+    this._periodDeleteDocs = [];
+  }
+  next();
+});
+
+unavailablePeriodSchema.post('deleteMany', function() {
+  try {
+    const docs = Array.isArray(this._periodDeleteDocs) ? this._periodDeleteDocs : [];
+    docs.forEach((doc) => scheduleUnavailableCalendarSync(doc, 'delete'));
+  } catch (err) {
+    console.warn('[UnavailablePeriod calendar sync] deleteMany post hook failed:', err && err.message);
+  }
+});
+
 module.exports = mongoose.model('UnavailablePeriod', unavailablePeriodSchema);

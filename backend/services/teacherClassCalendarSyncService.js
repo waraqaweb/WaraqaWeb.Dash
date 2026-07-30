@@ -115,8 +115,18 @@ const ensureTeacherCalendar = async (teacher) => {
     throw new Error('Failed to create teacher calendar');
   }
 
-  // Share read-only with teacher email when available.
+  // Share read-only with teacher and admin dashboard account.
+  const aclTargets = new Set();
   if (teacher.email) {
+    aclTargets.add(String(teacher.email).trim().toLowerCase());
+  }
+
+  const adminCalendarEmail = String(process.env.GOOGLE_CALENDAR_ID || '').trim().toLowerCase();
+  if (adminCalendarEmail.includes('@')) {
+    aclTargets.add(adminCalendarEmail);
+  }
+
+  for (const email of aclTargets) {
     try {
       await calendar.acl.insert({
         calendarId,
@@ -125,13 +135,14 @@ const ensureTeacherCalendar = async (teacher) => {
           role: 'reader',
           scope: {
             type: 'user',
-            value: String(teacher.email).trim().toLowerCase(),
+            value: email,
           },
         },
       });
     } catch (aclError) {
+      if (aclError?.code === 409) continue;
       // Non-fatal: calendar creation should still succeed even if ACL invite fails.
-      console.warn('[teacherClassCalendarSync] Failed to add ACL for teacher:', aclError.message || aclError);
+      console.warn('[teacherClassCalendarSync] Failed to add ACL for calendar share:', aclError.message || aclError);
     }
   }
 
@@ -351,4 +362,6 @@ module.exports = {
   isConfigured,
   syncClassEvent,
   makeClassEventId,
+  ensureTeacherCalendar,
+  getCalendarClient,
 };

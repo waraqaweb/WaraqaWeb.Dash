@@ -147,6 +147,13 @@ const buildAttendees = (meeting) => {
   return Array.from(unique.values()).map((email) => ({ email }));
 };
 
+const shouldAttachAttendees = () => {
+  // Service accounts on consumer calendars cannot invite attendees unless
+  // domain-wide delegation is configured on a Google Workspace domain.
+  // Default disabled to keep sync working for standard setups.
+  return String(process.env.GOOGLE_CALENDAR_INCLUDE_ATTENDEES || 'false').toLowerCase() === 'true';
+};
+
 const buildEventRequestBody = ({ meeting, admin, eventId, isCancelled = false }) => {
   const timezone =
     meeting.timezone
@@ -163,7 +170,7 @@ const buildEventRequestBody = ({ meeting, admin, eventId, isCancelled = false })
     || admin?.teacherInfo?.googleMeetLink
     || '';
 
-  return {
+  const body = {
     id: eventId,
     status: isCancelled ? 'cancelled' : 'confirmed',
     summary: getSummary(meeting),
@@ -177,7 +184,6 @@ const buildEventRequestBody = ({ meeting, admin, eventId, isCancelled = false })
       dateTime: end.format(),
       timeZone: timezone,
     },
-    attendees: buildAttendees(meeting),
     reminders: {
       useDefault: false,
       overrides: [
@@ -192,6 +198,12 @@ const buildEventRequestBody = ({ meeting, admin, eventId, isCancelled = false })
       },
     },
   };
+
+  if (shouldAttachAttendees()) {
+    body.attendees = buildAttendees(meeting);
+  }
+
+  return body;
 };
 
 const syncMeetingEvent = async ({ meeting, admin = null, mode = 'upsert' }) => {
@@ -227,7 +239,7 @@ const syncMeetingEvent = async ({ meeting, admin = null, mode = 'upsert' }) => {
         calendarId,
         eventId,
         requestBody,
-        sendUpdates: 'all',
+        sendUpdates: shouldAttachAttendees() ? 'all' : 'none',
       });
     } else {
       try {
@@ -235,7 +247,7 @@ const syncMeetingEvent = async ({ meeting, admin = null, mode = 'upsert' }) => {
           calendarId,
           eventId,
           requestBody,
-          sendUpdates: 'all',
+          sendUpdates: shouldAttachAttendees() ? 'all' : 'none',
         });
       } catch (patchError) {
         if (patchError?.code !== 404) {
@@ -244,7 +256,7 @@ const syncMeetingEvent = async ({ meeting, admin = null, mode = 'upsert' }) => {
         await calendar.events.insert({
           calendarId,
           requestBody,
-          sendUpdates: 'all',
+          sendUpdates: shouldAttachAttendees() ? 'all' : 'none',
         });
       }
     }

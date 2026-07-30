@@ -75,6 +75,11 @@ services:
       WEBHOOK_DEFAULT_ADMIN_EMAIL: ${WEBHOOK_DEFAULT_ADMIN_EMAIL}
       WEBHOOK_DEFAULT_ADMIN_ID: ${WEBHOOK_DEFAULT_ADMIN_ID}
 
+      # Google Calendar sync for meetings
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID}
+      GOOGLE_SERVICE_ACCOUNT_EMAIL: ${GOOGLE_SERVICE_ACCOUNT_EMAIL}
+      GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY}
+
       # Persist local library assets across container rebuilds
       LIBRARY_LOCAL_ASSET_DIR: /data/library-assets
       LIBRARY_UPLOAD_TMP_DIR: /data/library-uploads

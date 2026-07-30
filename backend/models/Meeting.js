@@ -207,6 +207,8 @@ const meetingSchema = new mongoose.Schema({
   },
   calendar: {
     icsUid: { type: String, trim: true },
+    googleEventId: { type: String, trim: true },
+    googleSyncedAt: { type: Date },
     googleCalendarLink: { type: String, trim: true },
     outlookCalendarLink: { type: String, trim: true }
   },

@@ -13,6 +13,7 @@ const User = require('../models/User');
 const RegistrationLead = require('../models/RegistrationLead');
 const notificationService = require('./notificationService');
 const emailService = require('./emailService');
+const googleCalendarService = require('./googleCalendarService');
 const {
   MEETING_TYPES,
   MEETING_STATUSES,
@@ -628,6 +629,25 @@ const sendTeacherMeetingConfirmationEmail = async ({ meeting, calendarLinks }) =
   }
 };
 
+const syncMeetingCalendarEventSafe = async ({ meeting, admin = null, mode = 'upsert' }) => {
+  try {
+    const result = await googleCalendarService.syncMeetingEvent({ meeting, admin, mode });
+    if (result?.eventId) {
+      const update = {
+        'calendar.googleEventId': result.eventId,
+        'calendar.googleSyncedAt': new Date(),
+      };
+      await Meeting.updateOne({ _id: meeting._id }, { $set: update });
+      if (meeting.calendar && typeof meeting.calendar === 'object') {
+        meeting.calendar.googleEventId = result.eventId;
+        meeting.calendar.googleSyncedAt = update['calendar.googleSyncedAt'];
+      }
+    }
+  } catch (error) {
+    console.error('[meetingService] Google Calendar sync failed:', error.message || error);
+  }
+};
+
 const formatMeetingResponse = (meeting, admin) => {
   if (!meeting) return null;
   // Accept both hydrated Mongoose documents and plain objects (e.g. lean query
@@ -961,6 +981,8 @@ const bookMeeting = async ({
 
   await meeting.save();
 
+  await syncMeetingCalendarEventSafe({ meeting, admin, mode: 'upsert' });
+
   if (meetingType === MEETING_TYPES.NEW_STUDENT_EVALUATION && !guardianId) {
     try {
       await RegistrationLead.create({
@@ -1092,6 +1114,7 @@ const cancelMeeting = async ({ meetingId, adminId, reason }) => {
   };
 
   await meeting.save();
+  await syncMeetingCalendarEventSafe({ meeting, admin, mode: 'cancel' });
   return formatMeetingResponse(meeting);
 };
 
@@ -1109,6 +1132,7 @@ const hardDeleteMeeting = async ({ meetingId, adminId }) => {
   if (admin && meeting.adminId && String(meeting.adminId) !== String(admin._id)) {
     throw createError(403, 'Not allowed to delete this meeting');
   }
+  await syncMeetingCalendarEventSafe({ meeting, admin, mode: 'cancel' });
   await Meeting.findByIdAndDelete(meetingId);
   return { _id: meetingId, deleted: true };
 };
@@ -1143,6 +1167,11 @@ const setMeetingAttendance = async ({ meetingId, adminId, attendanceStatus }) =>
     };
   }
   await meeting.save();
+  await syncMeetingCalendarEventSafe({
+    meeting,
+    admin,
+    mode: meeting.status === MEETING_STATUSES.CANCELLED ? 'cancel' : 'upsert',
+  });
   return formatMeetingResponse(meeting);
 };
 
@@ -1358,6 +1387,7 @@ const rescheduleMeeting = async ({ meetingId, adminId, startTime, endTime, durat
   meeting.markModified('rescheduleHistory');
 
   await meeting.save();
+  await syncMeetingCalendarEventSafe({ meeting, admin, mode: 'upsert' });
   // Fire-and-forget email to guardian + teacher (+ additional emails)
   sendRescheduleEmails({ meeting, prevStart, prevEnd, reason }).catch(() => {});
   const calendarLinks = buildCalendarLinks(meeting, admin);
@@ -1532,6 +1562,8 @@ const adminCreateMeeting = async ({
   };
 
   await meeting.save();
+
+  await syncMeetingCalendarEventSafe({ meeting, admin, mode: 'upsert' });
 
   await notificationService.notifyMeetingScheduled({
     meeting,

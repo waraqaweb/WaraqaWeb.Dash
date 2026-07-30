@@ -1386,7 +1386,12 @@ function scheduleClassCalendarSync(doc, mode = 'upsert') {
 
       const syncResult = await teacherClassCalendarSyncService.syncClassEvent({ classDoc: doc, mode });
       if (mode !== 'delete' && syncResult && syncResult.eventId && syncResult.teacherCalendarId) {
-        await doc.constructor.updateOne(
+        // Query hooks often pass lean/plain objects, so fall back to the model.
+        const classModel = (doc && doc.constructor && typeof doc.constructor.updateOne === 'function')
+          ? doc.constructor
+          : mongoose.model('Class');
+
+        await classModel.updateOne(
           { _id: doc._id },
           {
             $set: {

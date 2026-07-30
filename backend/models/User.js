@@ -355,6 +355,15 @@ const userSchema = new mongoose.Schema({
       type: String,
       trim: true,
     },
+    classCalendarId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    classCalendarProvisionedAt: {
+      type: Date,
+      default: null,
+    },
     // Actual joining/start date (admin-adjustable). Older teachers were created
     // in the system long after they actually started, so createdAt is not a
     // reliable tenure anchor — this field, when set, takes precedence.
@@ -364,7 +373,7 @@ const userSchema = new mongoose.Schema({
     },
     // Admin-only switch controlling whether this teacher is open to accepting
     // NEW students. When false, the teacher stays active for existing students
-    // but is surfaced as "not accepting new students" across the platform.
+    // but is surfaced as "Closed" across the platform.
     acceptingNewStudents: {
       type: Boolean,
       default: true,

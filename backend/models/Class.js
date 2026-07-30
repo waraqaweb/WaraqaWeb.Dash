@@ -472,6 +472,14 @@ const classSchema = new mongoose.Schema({
     type: String,
     trim: true,
   },
+
+  // Google Calendar sync linkage for teacher class schedules.
+  calendar: {
+    provider: { type: String, trim: true, default: null },
+    teacherCalendarId: { type: String, trim: true, default: null },
+    googleEventId: { type: String, trim: true, default: null },
+    googleSyncedAt: { type: Date, default: null },
+  },
   
   // Class Materials and Resources
   materials: [{
@@ -1367,6 +1375,116 @@ classSchema.post('deleteOne', { document: true, query: false }, function(doc) {
 
 classSchema.post('findOneAndDelete', function(doc) {
   scheduleActivityRefresh(doc, 'findOneAndDelete');
+});
+
+function scheduleClassCalendarSync(doc, mode = 'upsert') {
+  if (!doc) return;
+  setImmediate(async () => {
+    try {
+      const teacherClassCalendarSyncService = require('../services/teacherClassCalendarSyncService');
+      if (!teacherClassCalendarSyncService.isConfigured()) return;
+
+      const syncResult = await teacherClassCalendarSyncService.syncClassEvent({ classDoc: doc, mode });
+      if (mode !== 'delete' && syncResult && syncResult.eventId && syncResult.teacherCalendarId) {
+        await doc.constructor.updateOne(
+          { _id: doc._id },
+          {
+            $set: {
+              'calendar.provider': 'google',
+              'calendar.teacherCalendarId': syncResult.teacherCalendarId,
+              'calendar.googleEventId': syncResult.eventId,
+              'calendar.googleSyncedAt': new Date(),
+            },
+          }
+        ).exec();
+      }
+    } catch (err) {
+      console.warn('[Class calendar sync] failed:', err && err.message);
+    }
+  });
+}
+
+// Sync single-document lifecycle changes.
+classSchema.post('save', function(doc) {
+  scheduleClassCalendarSync(doc, 'upsert');
+});
+
+classSchema.post('deleteOne', { document: true, query: false }, function(doc) {
+  scheduleClassCalendarSync(doc, 'delete');
+});
+
+classSchema.post('findOneAndDelete', function(doc) {
+  scheduleClassCalendarSync(doc, 'delete');
+});
+
+// Sync query-based updates/deletes commonly used for series edits.
+classSchema.pre('findOneAndUpdate', async function(next) {
+  try {
+    this._classCalendarBefore = await this.model.findOne(this.getQuery())
+      .select('_id teacher status scheduledDate duration timezone subject title meetingLink student calendar classReport')
+      .lean();
+  } catch (_) {
+    this._classCalendarBefore = null;
+  }
+  next();
+});
+
+classSchema.post('findOneAndUpdate', async function() {
+  try {
+    const before = this._classCalendarBefore;
+    if (!before?._id) return;
+    const fresh = await this.model.findById(before._id)
+      .select('_id teacher status scheduledDate duration timezone subject title meetingLink student calendar classReport')
+      .lean();
+    if (fresh) {
+      scheduleClassCalendarSync(fresh, 'upsert');
+    }
+  } catch (err) {
+    console.warn('[Class calendar sync] findOneAndUpdate post hook failed:', err && err.message);
+  }
+});
+
+classSchema.pre('updateMany', async function(next) {
+  try {
+    const ids = await this.model.find(this.getQuery()).select('_id').lean();
+    this._classCalendarSyncIds = ids.map((d) => d._id);
+  } catch (_) {
+    this._classCalendarSyncIds = [];
+  }
+  next();
+});
+
+classSchema.post('updateMany', async function() {
+  try {
+    const ids = Array.isArray(this._classCalendarSyncIds) ? this._classCalendarSyncIds : [];
+    if (!ids.length) return;
+    const docs = await this.model.find({ _id: { $in: ids } })
+      .select('_id teacher status scheduledDate duration timezone subject title meetingLink student calendar classReport')
+      .lean();
+    docs.forEach((doc) => scheduleClassCalendarSync(doc, 'upsert'));
+  } catch (err) {
+    console.warn('[Class calendar sync] updateMany post hook failed:', err && err.message);
+  }
+});
+
+classSchema.pre('deleteMany', async function(next) {
+  try {
+    this._classCalendarDeleteDocs = await this.model.find(this.getQuery())
+      .select('_id teacher status scheduledDate duration timezone subject title meetingLink student calendar classReport')
+      .lean();
+  } catch (_) {
+    this._classCalendarDeleteDocs = [];
+  }
+  next();
+});
+
+classSchema.post('deleteMany', function() {
+  try {
+    const docs = Array.isArray(this._classCalendarDeleteDocs) ? this._classCalendarDeleteDocs : [];
+    docs.forEach((doc) => scheduleClassCalendarSync(doc, 'delete'));
+  } catch (err) {
+    console.warn('[Class calendar sync] deleteMany post hook failed:', err && err.message);
+  }
 });
 
 module.exports = mongoose.model("Class", classSchema);

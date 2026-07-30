@@ -7,7 +7,6 @@
  */
 
 const { google } = require('googleapis');
-const moment = require('moment-timezone');
 const User = require('../models/User');
 const { DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 
@@ -229,7 +228,6 @@ const toDate = (value) => {
 };
 
 const buildEventBody = ({ classDoc, teacher, guardian, eventId }) => {
-  const timezone = classDoc.timezone || teacher?.timezone || DEFAULT_TIMEZONE;
   const start = toDate(classDoc.scheduledDate);
   const duration = Number(classDoc.duration || 0);
   const end = start ? new Date(start.getTime() + duration * 60000) : null;
@@ -243,12 +241,11 @@ const buildEventBody = ({ classDoc, teacher, guardian, eventId }) => {
     description: buildClassDescription({ classDoc, teacher, guardian }),
     location: classDoc.meetingLink || 'Online',
     start: {
-      dateTime: moment(start).tz(timezone).format(),
-      timeZone: timezone,
+      // Use UTC timestamps to avoid ambiguous/empty ranges around DST transitions.
+      dateTime: start.toISOString(),
     },
     end: {
-      dateTime: moment(end).tz(timezone).format(),
-      timeZone: timezone,
+      dateTime: end.toISOString(),
     },
     colorId: resolveColorId(classDoc.status),
     reminders: {

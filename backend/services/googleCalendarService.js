@@ -77,6 +77,14 @@ const getSummary = (meeting) => {
   return contactName ? `${typeLabel}: ${contactName}` : typeLabel;
 };
 
+const extractSummaryIdentifier = (summary) => {
+  const raw = String(summary || '').trim();
+  if (!raw) return '';
+  const idx = raw.indexOf(':');
+  if (idx === -1) return '';
+  return raw.slice(idx + 1).trim().toLowerCase();
+};
+
 const buildDescription = (meeting, admin) => {
   const lines = [];
 
@@ -205,6 +213,57 @@ const findSameTimeExistingEvent = async ({ calendar, calendarId, meeting }) => {
   return matched || null;
 };
 
+const findExistingEventBySummaryIdentifier = async ({ calendar, calendarId, meeting }) => {
+  const targetSummary = getSummary(meeting);
+  const targetIdentifier = extractSummaryIdentifier(targetSummary);
+  if (!targetIdentifier) return null;
+
+  const types = Object.values(MEETING_TYPE_LABELS).join(' OR ');
+  const query = `${targetIdentifier} (${types})`;
+  const now = new Date();
+  const farPast = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+  const farFuture = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+
+  let pageToken;
+  for (let page = 0; page < 8; page += 1) {
+    const response = await calendar.events.list({
+      calendarId,
+      q: query,
+      timeMin: farPast.toISOString(),
+      timeMax: farFuture.toISOString(),
+      singleEvents: true,
+      showDeleted: false,
+      maxResults: 250,
+      pageToken,
+      orderBy: 'startTime',
+    });
+
+    const items = Array.isArray(response?.data?.items) ? response.data.items : [];
+    const meetingIdString = String(meeting._id || '');
+
+    const match = items.find((event) => {
+      if (!event || event.status === 'cancelled') return false;
+
+      const eventIdentifier = extractSummaryIdentifier(event.summary || '');
+      if (!eventIdentifier || eventIdentifier !== targetIdentifier) return false;
+
+      const mappedMeetingId = event.extendedProperties?.private?.waraqaMeetingId;
+      if (mappedMeetingId && mappedMeetingId !== meetingIdString) {
+        return false;
+      }
+
+      return true;
+    });
+
+    if (match) return match;
+
+    pageToken = response?.data?.nextPageToken;
+    if (!pageToken) break;
+  }
+
+  return null;
+};
+
 const buildEventRequestBody = ({ meeting, admin, eventId, isCancelled = false }) => {
   const timezone =
     meeting.timezone
@@ -278,6 +337,15 @@ const syncMeetingEvent = async ({ meeting, admin = null, mode = 'upsert' }) => {
   // found, skip quietly so cancellation does not create a new event.
   const isCancelled = mode === 'cancel' || meeting.status === MEETING_STATUSES.CANCELLED;
   if (!isCancelled && !meeting.calendar?.googleEventId) {
+    try {
+      const byIdentifier = await findExistingEventBySummaryIdentifier({ calendar, calendarId, meeting });
+      if (byIdentifier?.id) {
+        eventId = byIdentifier.id;
+      }
+    } catch (lookupError) {
+      console.warn('[googleCalendarService] Identifier dedup lookup failed:', lookupError.message || lookupError);
+    }
+
     try {
       const existing = await findSameTimeExistingEvent({ calendar, calendarId, meeting });
       if (existing?.id) {

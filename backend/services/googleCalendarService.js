@@ -154,6 +154,57 @@ const shouldAttachAttendees = () => {
   return String(process.env.GOOGLE_CALENDAR_INCLUDE_ATTENDEES || 'false').toLowerCase() === 'true';
 };
 
+const findSameTimeExistingEvent = async ({ calendar, calendarId, meeting }) => {
+  const meetingStart = new Date(meeting.scheduledStart);
+  const meetingEnd = new Date(meeting.scheduledEnd);
+  if (Number.isNaN(meetingStart.getTime()) || Number.isNaN(meetingEnd.getTime())) {
+    return null;
+  }
+
+  // Narrow search window to nearby events then match exact time with a small
+  // tolerance to account for minor serialization differences.
+  const windowStart = new Date(meetingStart.getTime() - 5 * 60 * 1000);
+  const windowEnd = new Date(meetingEnd.getTime() + 5 * 60 * 1000);
+  const response = await calendar.events.list({
+    calendarId,
+    timeMin: windowStart.toISOString(),
+    timeMax: windowEnd.toISOString(),
+    singleEvents: true,
+    showDeleted: false,
+    maxResults: 25,
+    orderBy: 'startTime',
+  });
+
+  const items = Array.isArray(response?.data?.items) ? response.data.items : [];
+  const meetingIdString = String(meeting._id || '');
+
+  const matched = items.find((event) => {
+    if (!event || event.status === 'cancelled') return false;
+
+    const startRaw = event.start?.dateTime || event.start?.date;
+    const endRaw = event.end?.dateTime || event.end?.date;
+    if (!startRaw || !endRaw) return false;
+
+    const eventStart = new Date(startRaw);
+    const eventEnd = new Date(endRaw);
+    if (Number.isNaN(eventStart.getTime()) || Number.isNaN(eventEnd.getTime())) return false;
+
+    const startDiffMs = Math.abs(eventStart.getTime() - meetingStart.getTime());
+    const endDiffMs = Math.abs(eventEnd.getTime() - meetingEnd.getTime());
+    const isTimeMatch = startDiffMs <= 60 * 1000 && endDiffMs <= 60 * 1000;
+    if (!isTimeMatch) return false;
+
+    const mappedMeetingId = event.extendedProperties?.private?.waraqaMeetingId;
+    if (mappedMeetingId && mappedMeetingId !== meetingIdString) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return matched || null;
+};
+
 const buildEventRequestBody = ({ meeting, admin, eventId, isCancelled = false }) => {
   const timezone =
     meeting.timezone
@@ -215,7 +266,7 @@ const syncMeetingEvent = async ({ meeting, admin = null, mode = 'upsert' }) => {
     return { ok: true, skipped: true, reason: 'missing-config' };
   }
 
-  const eventId = meeting.calendar?.googleEventId || getEventIdForMeeting(meeting._id);
+  let eventId = meeting.calendar?.googleEventId || getEventIdForMeeting(meeting._id);
   if (!eventId) {
     return { ok: false, skipped: true, reason: 'invalid-event-id' };
   }
@@ -226,6 +277,17 @@ const syncMeetingEvent = async ({ meeting, admin = null, mode = 'upsert' }) => {
   // For cancelled meetings, attempt to mark existing event cancelled. If not
   // found, skip quietly so cancellation does not create a new event.
   const isCancelled = mode === 'cancel' || meeting.status === MEETING_STATUSES.CANCELLED;
+  if (!isCancelled && !meeting.calendar?.googleEventId) {
+    try {
+      const existing = await findSameTimeExistingEvent({ calendar, calendarId, meeting });
+      if (existing?.id) {
+        eventId = existing.id;
+      }
+    } catch (lookupError) {
+      console.warn('[googleCalendarService] Same-time dedup lookup failed:', lookupError.message || lookupError);
+    }
+  }
+
   const requestBody = buildEventRequestBody({
     meeting,
     admin,

@@ -342,11 +342,24 @@ const syncClassEvent = async ({ classDoc, mode = 'upsert' }) => {
       });
     } catch (patchError) {
       if (patchError?.code !== 404) throw patchError;
-      await calendar.events.insert({
-        calendarId: teacherCalendarId,
-        requestBody: body,
-        sendUpdates: getConfig().includeAttendees ? 'all' : 'none',
-      });
+      try {
+        await calendar.events.insert({
+          calendarId: teacherCalendarId,
+          requestBody: body,
+          sendUpdates: getConfig().includeAttendees ? 'all' : 'none',
+        });
+      } catch (insertError) {
+        const isAlreadyExists =
+          insertError?.code === 409 ||
+          /identifier already exists/i.test(String(insertError?.message || ''));
+        if (!isAlreadyExists) throw insertError;
+
+        // If Google reports the ID already exists, treat as synced and continue.
+        await calendar.events.get({
+          calendarId: teacherCalendarId,
+          eventId,
+        });
+      }
     }
 
     return { ok: true, skipped: false, eventId, teacherCalendarId, deleted: false };

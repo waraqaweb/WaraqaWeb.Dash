@@ -21,15 +21,23 @@ const getMongoUri = () => process.env.MONGODB_URI || process.env.MONGO_URI || 'm
 const parseArgs = () => {
   const dryRun = process.argv.includes('--dry-run');
   const fromArg = process.argv.find((a) => a.startsWith('--from='));
+  const toArg = process.argv.find((a) => a.startsWith('--to='));
   const from = fromArg ? new Date(fromArg.slice('--from='.length)) : new Date();
+  const to = toArg ? new Date(toArg.slice('--to='.length)) : null;
   if (Number.isNaN(from.getTime())) {
     throw new Error('Invalid --from value. Use ISO date format.');
   }
-  return { dryRun, from };
+  if (to && Number.isNaN(to.getTime())) {
+    throw new Error('Invalid --to value. Use ISO date format.');
+  }
+  if (to && to < from) {
+    throw new Error('--to must be greater than or equal to --from');
+  }
+  return { dryRun, from, to };
 };
 
 async function main() {
-  const { dryRun, from } = parseArgs();
+  const { dryRun, from, to } = parseArgs();
   if (!teacherClassCalendarSyncService.isConfigured()) {
     throw new Error('Teacher class calendar sync not configured. Check GOOGLE_CLASS_CALENDAR_SYNC_ENABLED and Google credentials.');
   }
@@ -38,7 +46,10 @@ async function main() {
 
   const query = {
     status: { $ne: 'pattern' },
-    scheduledDate: { $gte: from },
+    scheduledDate: {
+      $gte: from,
+      ...(to ? { $lte: to } : {}),
+    },
   };
 
   const cursor = Class.find(query)

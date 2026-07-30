@@ -67,7 +67,7 @@ async function runUninvoicedLessonsAudit(options = {}) {
         const adminIds = (admins || []).map((admin) => admin?._id).filter(Boolean);
 
         const title = 'Uninvoiced lessons detected';
-        const message = `There are ${total} lessons not attached to any invoice in the last ${sinceDays} days. Review and attach as needed.`;
+        const message = `${total} lessons are not attached to any invoices in (${sinceDays} days).`;
         const relatedTo = 'system';
         const relatedId = 'uninvoiced-lessons';
         const metadata = { category: 'audit', kind: 'uninvoiced_lessons', sinceDays, total };

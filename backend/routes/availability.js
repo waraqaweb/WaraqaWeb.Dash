@@ -327,6 +327,80 @@ router.put('/slots/:slotId', authenticateToken, async (req, res) => {
   }
 });
 
+// DELETE /api/availability/slots/bulk - Delete multiple slots or an entire day
+router.delete('/slots/bulk', authenticateToken, async (req, res) => {
+  try {
+    const { teacherId, slotIds, dayOfWeek } = req.body || {};
+    const targetTeacherId = teacherId || req.user._id;
+
+    if (req.user.role !== 'admin' && String(req.user._id) !== String(targetTeacherId)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const normalizedSlotIds = Array.isArray(slotIds)
+      ? slotIds.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+    const normalizedDay = dayOfWeek === undefined || dayOfWeek === null || dayOfWeek === ''
+      ? null
+      : Number(dayOfWeek);
+
+    if (!normalizedSlotIds.length && normalizedDay === null) {
+      return res.status(400).json({ message: 'slotIds or dayOfWeek is required' });
+    }
+
+    const query = {
+      teacherId: targetTeacherId,
+      isActive: true,
+    };
+    if (normalizedSlotIds.length) {
+      query._id = { $in: normalizedSlotIds };
+    }
+    if (normalizedDay !== null) {
+      if (!Number.isInteger(normalizedDay) || normalizedDay < 0 || normalizedDay > 6) {
+        return res.status(400).json({ message: 'dayOfWeek must be between 0 and 6' });
+      }
+      query.dayOfWeek = normalizedDay;
+    }
+
+    const slots = await AvailabilitySlot.find(query);
+    if (!slots.length) {
+      return res.status(404).json({ message: 'No matching availability slots found' });
+    }
+
+    for (const slot of slots) {
+      slot.isActive = false;
+      await slot.save();
+    }
+
+    const remainingActiveSlots = await AvailabilitySlot.countDocuments({
+      teacherId: targetTeacherId,
+      isActive: true,
+      $or: [
+        { effectiveTo: null },
+        { effectiveTo: { $gte: new Date() } }
+      ]
+    });
+
+    if (remainingActiveSlots === 0) {
+      await User.findByIdAndUpdate(targetTeacherId, {
+        'teacherInfo.availabilityStatus': 'default_24_7'
+      });
+    }
+
+    res.json({
+      message: normalizedDay !== null
+        ? 'Availability day deleted successfully'
+        : 'Availability slots deleted successfully',
+      deletedCount: slots.length,
+      deletedSlotIds: slots.map((slot) => String(slot._id)),
+      dayOfWeek: normalizedDay,
+    });
+  } catch (error) {
+    console.error('Error bulk deleting availability slots:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // DELETE /api/availability/slots/:slotId - Delete availability slot
 router.delete('/slots/:slotId', authenticateToken, async (req, res) => {
   try {
@@ -340,33 +414,6 @@ router.delete('/slots/:slotId', authenticateToken, async (req, res) => {
     // Authorization check
     if (req.user.role !== 'admin' && req.user._id.toString() !== slot.teacherId.toString()) {
       return res.status(403).json({ message: 'Access denied' });
-    }
-    
-    // Check if this deletion would violate minimum requirements
-    const teacher = await User.findById(slot.teacherId);
-    if (teacher?.teacherInfo?.availabilityConfig?.isAvailabilityRequired) {
-      const remainingSlots = await AvailabilitySlot.find({
-        _id: { $ne: slotId },
-        teacherId: slot.teacherId,
-        isActive: true
-      });
-      
-      // Check minimum requirements (simplified validation)
-      const { minDaysPerWeek, minHoursPerDay } = teacher.teacherInfo.availabilityConfig;
-      const slotsPerDay = remainingSlots.reduce((acc, s) => {
-        acc[s.dayOfWeek] = (acc[s.dayOfWeek] || 0) + s.durationMinutes;
-        return acc;
-      }, {});
-      
-      const daysWithMinHours = Object.values(slotsPerDay).filter(
-        minutes => minutes >= minHoursPerDay * 60
-      ).length;
-      
-      if (daysWithMinHours < minDaysPerWeek) {
-        return res.status(400).json({
-          message: `Cannot delete slot: Would violate minimum requirement of ${minDaysPerWeek} days per week with ${minHoursPerDay} hours each`
-        });
-      }
     }
     
     slot.isActive = false;

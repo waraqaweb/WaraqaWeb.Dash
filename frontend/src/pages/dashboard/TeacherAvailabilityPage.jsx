@@ -39,6 +39,7 @@ const TeacherAvailabilityPage = () => {
   const [duplicateTargets, setDuplicateTargets] = useState(() => new Set());
   const [duplicateStatus, setDuplicateStatus] = useState('');
   const [duplicating, setDuplicating] = useState(false);
+  const [selectedSlotIds, setSelectedSlotIds] = useState(() => new Set());
 
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const shortDayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -64,6 +65,7 @@ const TeacherAvailabilityPage = () => {
           : ((slotData.availabilityStatus || 'default_24_7') === 'default_24_7' && (slotData.slots?.length || 0) === 0),
         timezone: slotData.timezone || user?.timezone || 'Africa/Cairo'
       });
+      setSelectedSlotIds(new Set());
     } catch (error) {
       console.error('Error fetching availability:', error);
     } finally {
@@ -139,6 +141,63 @@ const TeacherAvailabilityPage = () => {
       console.error('Error deleting availability slot:', error);
       alert(error.response?.data?.message || 'Failed to delete availability slot');
     }
+  };
+
+  const toggleSlotSelection = (slotId) => {
+    setSelectedSlotIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(slotId)) {
+        next.delete(slotId);
+      } else {
+        next.add(slotId);
+      }
+      return next;
+    });
+  };
+
+  const deleteSlotsBulk = async ({ slotIds = [], dayOfWeek = null, label = 'these availability slots' }) => {
+    const normalizedIds = Array.isArray(slotIds) ? slotIds.filter(Boolean) : [];
+    const shouldDeleteDay = dayOfWeek !== null && dayOfWeek !== undefined;
+    if (!normalizedIds.length && !shouldDeleteDay) {
+      return;
+    }
+
+    const confirmMessage = shouldDeleteDay
+      ? `Delete all availability for ${dayNames[dayOfWeek]}?`
+      : `Delete ${normalizedIds.length} selected availability slot${normalizedIds.length === 1 ? '' : 's'}?`;
+
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    try {
+      await api.delete('/availability/slots/bulk', {
+        data: {
+          teacherId: user._id,
+          slotIds: normalizedIds,
+          dayOfWeek: shouldDeleteDay ? dayOfWeek : undefined,
+        },
+      });
+      setSelectedSlotIds(new Set());
+      await fetchAvailability();
+    } catch (error) {
+      console.error('Error deleting availability slots:', error);
+      alert(error.response?.data?.message || `Failed to delete ${label}`);
+    }
+  };
+
+  const handleDeleteSelectedSlots = async () => {
+    await deleteSlotsBulk({
+      slotIds: Array.from(selectedSlotIds),
+      label: 'selected availability slots',
+    });
+  };
+
+  const handleDeleteDay = async (dayOfWeek) => {
+    await deleteSlotsBulk({
+      dayOfWeek,
+      label: `${dayNames[dayOfWeek]} availability`,
+    });
   };
 
   const toggleVisibleDay = (dayIndex) => {
@@ -378,6 +437,30 @@ const TeacherAvailabilityPage = () => {
         </div>
       </div>
 
+      {selectedSlotIds.size > 0 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-sm text-slate-700">
+            {selectedSlotIds.size} slot{selectedSlotIds.size === 1 ? '' : 's'} selected
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedSlotIds(new Set())}
+              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Clear selection
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteSelectedSlots}
+              className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
+            >
+              Delete selected
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Day cards grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-3 mb-6">
         {selectedDays.map((dayIndex) => {
@@ -403,6 +486,15 @@ const TeacherAvailabilityPage = () => {
                       <Copy className="w-4 h-4" />
                     </button>
                   )}
+                  {hasSlots && (
+                    <button
+                      title={`Delete all ${dayName} availability`}
+                      onClick={() => handleDeleteDay(dayIndex)}
+                      className="icon-button icon-button--muted hover:text-red-600"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     title={`Add slot for ${dayName}`}
                     onClick={() => { setShowAddModal(true); setNewSlot((prev) => ({ ...prev, dayOfWeek: dayIndex })); }}
@@ -421,6 +513,13 @@ const TeacherAvailabilityPage = () => {
                     {daySlots.map(slot => (
                       <div key={slot._id} className="flex items-center justify-between gap-3 bg-gradient-to-r from-white to-gray-50 border rounded-md px-2 py-2">
                         <div className="flex items-center gap-3 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={selectedSlotIds.has(slot._id)}
+                            onChange={() => toggleSlotSelection(slot._id)}
+                            className="h-4 w-4 rounded border-gray-300 text-custom-teal focus:ring-custom-teal"
+                            aria-label={`Select availability slot ${slot.startTime} to ${slot.endTime} on ${dayName}`}
+                          />
                           <span className="inline-flex items-center justify-center w-8 h-8 bg-indigo-50 text-indigo-600 rounded-md text-sm font-medium flex-shrink-0">{formatTime(slot.startTime)}</span>
                           <div className="text-sm min-w-0">
                             <div className="font-medium whitespace-nowrap truncate">{formatTime(slot.startTime)} — {formatTime(slot.endTime)}</div>

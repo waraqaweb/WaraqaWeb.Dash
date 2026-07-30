@@ -642,7 +642,7 @@
 															</span>
 															{teacher.teacherInfo?.acceptingNewStudents === false && (
 																<span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-800">
-																	Not accepting new students
+																	Closed
 																</span>
 															)}
 															<span className="flex items-center">

@@ -61,7 +61,7 @@ const TeacherAvailabilityConfig = ({ teacher, value, onChange, isAdminView = fal
           {/* Current Status */}
           <div className="flex items-center gap-2">
             {teacher.teacherInfo?.acceptingNewStudents === false && (
-              <div className="px-3 py-1 rounded-full border border-red-200 bg-red-50 text-sm font-medium text-red-700">Not accepting new students</div>
+              <div className="px-3 py-1 rounded-full border border-red-200 bg-red-50 text-sm font-medium text-red-700">Closed</div>
             )}
             <div className={`px-3 py-1 rounded-full border text-sm font-medium flex items-center gap-2 ${availabilityStatus.color}`}>
               {availabilityStatus.icon}
@@ -151,7 +151,7 @@ const TeacherAvailabilityConfig = ({ teacher, value, onChange, isAdminView = fal
         {/* Current Status */}
         <div className="flex items-center gap-2">
           {teacher.teacherInfo?.acceptingNewStudents === false && (
-            <div className="px-3 py-1 rounded-full border border-red-200 bg-red-50 text-sm font-medium text-red-700">Not accepting new students</div>
+            <div className="px-3 py-1 rounded-full border border-red-200 bg-red-50 text-sm font-medium text-red-700">Closed</div>
           )}
           <div className={`px-3 py-1 rounded-full border text-sm font-medium flex items-center gap-2 ${availabilityStatus.color}`}>
             {availabilityStatus.icon}

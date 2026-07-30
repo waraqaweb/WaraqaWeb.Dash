@@ -5,7 +5,7 @@
 From `E:\waraqa`, run:
 
 ```powershell
-.\scripts\push-and-deploy.ps1 -WhatChanged "waiving a class for a teacher or guardian"
+.\scripts\push-and-deploy.ps1 -WhatChanged "slow dashboard"
 ```
 
 Optional examples:

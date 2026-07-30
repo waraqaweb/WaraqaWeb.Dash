@@ -4073,7 +4073,7 @@ fetchClassesRef.current = fetchClasses;
         value: teacher._id,
         label: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim() || teacher.email,
         subLabel: teacher.teacherInfo?.acceptingNewStudents === false
-          ? `${teacher.email || ''} • Not accepting new students`.trim()
+          ? `${teacher.email || ''} • Closed`.trim()
           : (teacher.email || '')
       }))
     ]

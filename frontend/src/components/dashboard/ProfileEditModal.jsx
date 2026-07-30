@@ -1011,7 +1011,7 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                           <div>
                             <h5 className="font-medium text-foreground">Accepting new students</h5>
                             <p className="mt-1 text-xs text-muted-foreground">
-                              When OFF, this teacher is marked as not accepting new students. This is reflected in their availability and everywhere the teacher is listed for assignment.
+                              When OFF, this teacher is marked as closed. This is reflected in their availability and everywhere the teacher is listed for assignment.
                             </p>
                           </div>
                           <Toggle

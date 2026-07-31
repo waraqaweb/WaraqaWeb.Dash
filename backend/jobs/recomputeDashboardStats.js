@@ -229,6 +229,68 @@ async function recomputeDashboardStats() {
         } catch (e) {
           if (DBG) console.warn('[jobs] recomputeDashboardStats: failed to compute scheduledHoursUntilMonthEnd from DB', e && e.message);
         }
+
+        try {
+          const startOfDayCalc = new Date(nowForCalc.getFullYear(), nowForCalc.getMonth(), nowForCalc.getDate());
+          const endOfDayCalc = new Date(nowForCalc.getFullYear(), nowForCalc.getMonth(), nowForCalc.getDate() + 1);
+          const next7Calc = new Date(nowForCalc.getTime() + 7 * 24 * 60 * 60 * 1000);
+          const scheduledMatchToday = { scheduledDate: { $gte: startOfDayCalc, $lt: endOfDayCalc }, hidden: { $ne: true } };
+          const scheduledMatchNext7 = { scheduledDate: { $gte: nowForCalc, $lt: next7Calc }, status: { $in: ['scheduled', 'in_progress'] }, hidden: { $ne: true } };
+          const cancelledStatuses = ['cancelled', 'cancelled_by_teacher', 'cancelled_by_guardian', 'cancelled_by_admin', 'cancelled_by_student'];
+
+          const [
+            scheduledTodayCount,
+            scheduledNext7Count,
+            todayMinutesAgg,
+            next7MinutesAgg,
+            completedMinutesAgg,
+            cancelledMinutesAgg,
+            totalTeachers,
+            activeTeachers,
+          ] = await Promise.all([
+            safeRun(() => Class.countDocuments(scheduledMatchToday), 0, 500),
+            safeRun(() => Class.countDocuments(scheduledMatchNext7), 0, 500),
+            safeRun(() => Class.aggregate([
+              { $match: scheduledMatchToday },
+              { $group: { _id: null, totalMinutes: { $sum: '$duration' } } }
+            ]).exec(), [], 500),
+            safeRun(() => Class.aggregate([
+              { $match: scheduledMatchNext7 },
+              { $group: { _id: null, totalMinutes: { $sum: '$duration' } } }
+            ]).exec(), [], 500),
+            safeRun(() => Class.aggregate([
+              { $match: { 'classReport.submittedAt': { $gte: monthStartCalc, $lt: monthEndCalc }, status: { $in: ['attended', 'completed', 'missed_by_student', 'absent'] }, hidden: { $ne: true } } },
+              { $group: { _id: null, totalMinutes: { $sum: '$duration' }, count: { $sum: 1 } } }
+            ]).exec(), [], 500),
+            safeRun(() => Class.aggregate([
+              { $match: { scheduledDate: { $gte: monthStartCalc, $lt: monthEndCalc }, status: { $in: cancelledStatuses }, hidden: { $ne: true } } },
+              { $group: { _id: null, totalMinutes: { $sum: '$duration' }, count: { $sum: 1 } } }
+            ]).exec(), [], 500),
+            safeRun(() => User.countDocuments({ role: 'teacher' }), 0, 500),
+            safeRun(() => User.countDocuments({ role: 'teacher', isActive: true }), 0, 500),
+          ]);
+
+          payload.summary.classes = payload.summary.classes || {};
+          payload.summary.teachers = payload.summary.teachers || {};
+
+          payload.summary.classes.scheduledToday = Number(scheduledTodayCount || payload.summary.classes.scheduledToday || 0);
+          payload.summary.classes.scheduledNext7 = Number(scheduledNext7Count || payload.summary.classes.scheduledNext7 || 0);
+          payload.summary.classes.hoursToday = Number(((todayMinutesAgg?.[0]?.totalMinutes || 0) / 60) || payload.summary.classes.hoursToday || 0);
+          payload.summary.classes.hoursNext7 = Number(((next7MinutesAgg?.[0]?.totalMinutes || 0) / 60) || payload.summary.classes.hoursNext7 || 0);
+          payload.summary.classes.completedHoursThisMonth = Number(((completedMinutesAgg?.[0]?.totalMinutes || 0) / 60) || payload.summary.classes.completedHoursThisMonth || 0);
+          payload.summary.classes.cancelledHoursThisMonth = Number(((cancelledMinutesAgg?.[0]?.totalMinutes || 0) / 60) || payload.summary.classes.cancelledHoursThisMonth || 0);
+          payload.summary.classes.completedThisMonth = Number((completedMinutesAgg?.[0]?.count || payload.summary.classes.completedThisMonth || 0));
+          payload.summary.classes.cancelledThisMonth = Number((cancelledMinutesAgg?.[0]?.count || payload.summary.classes.cancelledThisMonth || 0));
+
+          if (!payload.summary.teachers.totalTeachers || payload.summary.teachers.totalTeachers <= 0) {
+            payload.summary.teachers.totalTeachers = Number(totalTeachers || 0);
+          }
+          if (!payload.summary.teachers.activeTeachersTotal || payload.summary.teachers.activeTeachersTotal <= 0) {
+            payload.summary.teachers.activeTeachersTotal = Number(activeTeachers || 0);
+          }
+        } catch (e) {
+          if (DBG) console.warn('[jobs] recomputeDashboardStats: failed to compute class/teacher fallback metrics', e && e.message);
+        }
       } catch (e) {
         if (DBG) console.warn('[jobs] recomputeDashboardStats: pre-normalization DB fallback failed', e && e.message);
       }

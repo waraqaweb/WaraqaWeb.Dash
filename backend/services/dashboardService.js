@@ -9,6 +9,90 @@ const Class = require('../models/Class');
 const Invoice = require('../models/Invoice');
 const Student = require('../models/Student');
 
+const normalizeStudentKeyPart = (value = '') => String(value || '').trim().toLowerCase();
+const normalizeStudentDate = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+};
+
+const makeStudentMetricKey = (student = {}) => {
+  const guardianId = String(student.guardianId || student.guardian || '');
+  const linkedStandaloneId = student.standaloneStudentId || student.studentInfo?.standaloneStudentId || student._id || student.id;
+
+  if (guardianId && linkedStandaloneId) {
+    return `${guardianId}|standalone:${String(linkedStandaloneId)}`;
+  }
+
+  const firstName = normalizeStudentKeyPart(student.firstName || student.studentInfo?.firstName);
+  const lastName = normalizeStudentKeyPart(student.lastName || student.studentInfo?.lastName);
+  const dateOfBirth = normalizeStudentDate(student.dateOfBirth || student.studentInfo?.dateOfBirth);
+
+  if (guardianId && (firstName || lastName || dateOfBirth)) {
+    return `${guardianId}|name:${firstName}|last:${lastName}|dob:${dateOfBirth}`;
+  }
+
+  if (linkedStandaloneId) {
+    return `standalone:${String(linkedStandaloneId)}`;
+  }
+
+  return null;
+};
+
+async function getMergedStudentCounts() {
+  const [guardians, standaloneStudents] = await Promise.all([
+    User.find({ role: 'guardian' })
+      .select('guardianInfo.students._id guardianInfo.students.firstName guardianInfo.students.lastName guardianInfo.students.dateOfBirth guardianInfo.students.isActive guardianInfo.students.standaloneStudentId guardianInfo.students.studentInfo.standaloneStudentId')
+      .lean(),
+    Student.find({})
+      .select('_id guardian firstName lastName dateOfBirth isActive')
+      .lean(),
+  ]);
+
+  const byKey = new Map();
+  const addStudent = (student) => {
+    const key = makeStudentMetricKey(student);
+    if (!key) return;
+
+    const previous = byKey.get(key);
+    if (!previous) {
+      byKey.set(key, student);
+      return;
+    }
+
+    const previousActive = previous.isActive !== false;
+    const currentActive = student.isActive !== false;
+    if (!previousActive && currentActive) {
+      byKey.set(key, student);
+    }
+  };
+
+  (guardians || []).forEach((guardian) => {
+    const embeddedStudents = Array.isArray(guardian?.guardianInfo?.students) ? guardian.guardianInfo.students : [];
+    embeddedStudents.forEach((student) => {
+      addStudent({
+        ...student,
+        guardianId: guardian._id,
+      });
+    });
+  });
+
+  (standaloneStudents || []).forEach((student) => {
+    addStudent({
+      ...student,
+      guardianId: student.guardian,
+      standaloneStudentId: student._id,
+    });
+  });
+
+  const students = Array.from(byKey.values());
+  return {
+    total: students.length,
+    active: students.filter((student) => student?.isActive !== false).length,
+  };
+}
+
 // safeRun will execute an async function (fn) and if it returns a promise
 // we'll bound it with a timeout so tests that stub mongoose methods won't hang.
 const parsedTimeout = Number.parseInt(process.env.DASHBOARD_QUERY_TIMEOUT_MS || '4000', 10);
@@ -61,9 +145,7 @@ async function getUserStats() {
       { $count: 'count' }
     ]);
 
-    // total/active students from standalone Student collection
-    const totalStudentsAgg = await Student.aggregate([{ $count: 'count' }]);
-    const activeStudentsAgg = await Student.aggregate([{ $match: { isActive: true } }, { $count: 'count' }]);
+    const mergedStudentCounts = await getMergedStudentCounts();
 
     return {
       total: totalAgg[0]?.total || 0,
@@ -74,10 +156,10 @@ async function getUserStats() {
       activeUsersCount: activeAgg[0]?.count || 0,
       totalTeachers: byRole.teacher || 0,
       totalGuardians: byRole.guardian || 0,
-      totalStudents: totalStudentsAgg[0]?.count || 0,
+      totalStudents: mergedStudentCounts.total || 0,
       activeTeachersTotal: activeByRole.teacher || 0,
       activeGuardiansTotal: activeByRole.guardian || 0,
-      activeStudentsTotal: activeStudentsAgg[0]?.count || 0
+      activeStudentsTotal: mergedStudentCounts.active || 0
     };
   }, { total: 0, byRole: {}, newUsersThisMonth: 0, activeUsersCount: 0 });
 }
@@ -302,8 +384,7 @@ async function getStudentStats() {
     const last30Start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const inactiveCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-    const totalStudentsAgg = await Student.aggregate([{ $count: 'count' }]);
-    const activeStudentsAgg = await Student.aggregate([{ $match: { isActive: true } }, { $count: 'count' }]);
+    const mergedStudentCounts = await getMergedStudentCounts();
 
     const inactiveStudents = await Student.find({
       isActive: false,
@@ -479,8 +560,8 @@ async function getStudentStats() {
     );
 
     return {
-      totalStudents: totalStudentsAgg[0]?.count || 0,
-      activeStudentsTotal: activeStudentsAgg[0]?.count || 0,
+      totalStudents: mergedStudentCounts.total || 0,
+      activeStudentsTotal: mergedStudentCounts.active || 0,
       inactiveStudentsAfterActivity: inactiveAfterActivity,
       inactiveStudentsAfterActivityCount: inactiveAfterActivity.length,
       newStudentsLast30Days,

@@ -1175,6 +1175,8 @@ const DashboardHome = ({ isActive = true }) => {
 
             // teachers by role
             totalTeachers = pickFirst([
+              data.totalTeachers,
+              data.teachers?.totalTeachers,
               data.users?.byRole?.teacher,
               data.users?.teacher,
               data.summary?.users?.byRole?.teacher,

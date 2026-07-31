@@ -1401,6 +1401,30 @@ const submitMeetingReport = async ({ meetingId, payload, submittedBy }) => {
     throw createError(404, 'Meeting not found');
   }
 
+  const incomingIdempotencyKey = String(payload?.idempotencyKey || '').trim();
+  const existingIdempotencyKey = String(meeting?.report?.meta?.idempotencyKey || '').trim();
+  if (
+    incomingIdempotencyKey
+    && existingIdempotencyKey
+    && incomingIdempotencyKey === existingIdempotencyKey
+    && meeting?.report?.submittedAt
+  ) {
+    return formatMeetingResponse(meeting);
+  }
+
+  const previousVersion = Number(meeting?.report?.meta?.version || 0);
+  const nextVersion = previousVersion > 0 ? previousVersion + 1 : 1;
+  const derivedStudentIds = [];
+  if (Array.isArray(payload?.students)) {
+    for (const student of payload.students) {
+      const sid = toObjectId(student?.studentId);
+      if (sid) derivedStudentIds.push(sid);
+    }
+  }
+  const followUpStudentId = toObjectId(payload?.studentId) || toObjectId(meeting.bookingPayload?.students?.[0]?.studentId);
+  if (followUpStudentId) derivedStudentIds.push(followUpStudentId);
+  const linkedStudentIds = Array.from(new Set(derivedStudentIds.map((id) => String(id)))).map((id) => new mongoose.Types.ObjectId(id));
+
   const visibility = {
     admin: true,
     guardians: meeting.meetingType === MEETING_TYPES.CURRENT_STUDENT_FOLLOW_UP,
@@ -1441,8 +1465,23 @@ const submitMeetingReport = async ({ meetingId, payload, submittedBy }) => {
           }))
         }
       : undefined,
-    notes: payload.notes
+    notes: payload.notes,
+    meta: {
+      version: nextVersion,
+      source: 'meeting_report',
+      sourceRef: String(meeting._id),
+      sourceModule: 'meetings.submitMeetingReport',
+      idempotencyKey: incomingIdempotencyKey,
+    }
   };
+
+  meeting.links = meeting.links || {};
+  if (linkedStudentIds.length) {
+    meeting.links.studentIds = linkedStudentIds;
+  }
+  if (meeting.teacherId) {
+    meeting.links.teacherId = meeting.teacherId;
+  }
 
   await meeting.save();
   return formatMeetingResponse(meeting);

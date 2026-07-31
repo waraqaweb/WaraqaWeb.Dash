@@ -23,6 +23,9 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
   const [student, setStudent] = useState(null);
   const [actualGuardianId, setActualGuardianId] = useState(guardianId);
   const [uploadFile, setUploadFile] = useState(null);
+  const [interactions, setInteractions] = useState([]);
+  const [interactionsLoading, setInteractionsLoading] = useState(false);
+  const [interactionsError, setInteractionsError] = useState('');
   
   const [formData, setFormData] = useState({
     firstName: '',
@@ -263,6 +266,45 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
       fetchStudent();
     }
   }, [studentId, guardianId, actualGuardianId, user, isAdmin]);
+
+  useEffect(() => {
+    const fetchInteractions = async () => {
+      if (!studentId) return;
+      try {
+        setInteractionsLoading(true);
+        setInteractionsError('');
+        const response = await api.get(`/students/${studentId}/interactions`, {
+          params: { limit: 50 }
+        });
+        setInteractions(Array.isArray(response.data?.timeline) ? response.data.timeline : []);
+      } catch (err) {
+        console.warn('Failed to load student interactions', err?.response?.data?.message || err?.message || err);
+        setInteractionsError(err?.response?.data?.message || 'Failed to load student interaction history');
+      } finally {
+        setInteractionsLoading(false);
+      }
+    };
+
+    fetchInteractions();
+  }, [studentId]);
+
+  const formatWhen = (value) => {
+    if (!value) return 'Unknown date';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return 'Unknown date';
+    return d.toLocaleString();
+  };
+
+  const describeInteraction = (item = {}) => {
+    if (item.source === 'meeting') {
+      const type = String(item.meetingType || '').replace(/_/g, ' ').trim() || 'meeting';
+      const status = item.attendanceStatus || item.status || 'scheduled';
+      return `${type} - ${status}`;
+    }
+    const subject = item.subject || 'Class';
+    const attendance = item.attendanceStatus || item.status || 'scheduled';
+    return `${subject} - ${attendance}`;
+  };
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -790,6 +832,34 @@ const EditStudentModal = ({ studentId, guardianId, onClose, onUpdated }) => {
                 <label htmlFor="isActive" className="ml-2 block text-sm text-gray-700">
                   Student is active
                 </label>
+              </div>
+
+              <div className="md:col-span-2 rounded-lg border border-gray-200 p-4 bg-gray-50">
+                <h3 className="text-sm font-semibold text-gray-900 mb-2">Unified Meeting and Report History</h3>
+                <p className="text-xs text-gray-600 mb-3">
+                  This combines meetings and class reports for this student in one timeline.
+                </p>
+                {interactionsLoading ? (
+                  <p className="text-sm text-gray-500">Loading history...</p>
+                ) : interactionsError ? (
+                  <p className="text-sm text-red-600">{interactionsError}</p>
+                ) : interactions.length === 0 ? (
+                  <p className="text-sm text-gray-500">No interactions found yet.</p>
+                ) : (
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {interactions.slice(0, 30).map((item, idx) => (
+                      <div key={item.interactionId || idx} className="rounded-md border border-gray-200 bg-white px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-gray-800">{describeInteraction(item)}</span>
+                          <span className="text-xs text-gray-500">{formatWhen(item.occurredAt || item.reportSubmittedAt)}</span>
+                        </div>
+                        {item.notes ? (
+                          <p className="mt-1 text-xs text-gray-600 line-clamp-2">{item.notes}</p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </form>

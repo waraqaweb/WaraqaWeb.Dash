@@ -134,6 +134,33 @@ const meetingReportSchema = new mongoose.Schema({
     type: String,
     trim: true,
     maxlength: 2000
+  },
+  meta: {
+    version: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+    source: {
+      type: String,
+      trim: true,
+      default: 'meeting_report',
+    },
+    sourceRef: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    sourceModule: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    idempotencyKey: {
+      type: String,
+      trim: true,
+      default: '',
+    }
   }
 }, { _id: false });
 
@@ -222,6 +249,42 @@ const meetingSchema = new mongoose.Schema({
     afterMinutes: { type: Number, default: 5 }
   },
   report: meetingReportSchema,
+  links: {
+    studentIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Student',
+    }],
+    guardianStudentSubIds: [{
+      type: String,
+      trim: true,
+    }],
+    teacherId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    classId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Class',
+      default: null,
+    },
+    evaluationSessionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'EvaluationSession',
+      default: null,
+    },
+    recruitment: {
+      sourceModel: {
+        type: String,
+        trim: true,
+        default: '',
+      },
+      sourceId: {
+        type: mongoose.Schema.Types.ObjectId,
+        default: null,
+      }
+    }
+  },
   reminders: {
     lastSentAt: { type: Date },
     followUpSentAt: { type: Date }
@@ -297,6 +360,9 @@ meetingSchema.index({ sourceBookingId: 1 }, { unique: true, sparse: true });
 meetingSchema.index({ adminId: 1, scheduledStart: 1 });
 meetingSchema.index({ guardianId: 1, scheduledStart: 1 });
 meetingSchema.index({ teacherId: 1, scheduledStart: 1 });
+meetingSchema.index({ 'links.studentIds': 1, scheduledStart: 1 });
+meetingSchema.index({ 'links.teacherId': 1, scheduledStart: 1 });
+meetingSchema.index({ 'links.classId': 1 });
 
 meetingSchema.pre('validate', function ensureDuration(next) {
   if (this.scheduledStart && this.scheduledEnd) {

@@ -14,6 +14,7 @@ const EvaluationSession = require('../models/EvaluationSession');
 const Class = require('../models/Class');
 const Guardian = require('../models/Guardian');
 const notificationService = require('../services/notificationService');
+const interactionService = require('../services/interactionService');
 const {
   authenticateToken,
   authorizeRoles,
@@ -334,6 +335,39 @@ router.get('/:id', authenticateToken, async (req, res) => {
     console.error('Get student error:', error);
     res.status(500).json({
       message: 'Failed to fetch student',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * Get unified student interactions timeline
+ * GET /api/students/:id/interactions
+ */
+router.get('/:id/interactions', authenticateToken, async (req, res) => {
+  try {
+    const student = await Student.findById(req.params.id).select('_id guardian firstName lastName');
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    if (req.user.role === 'guardian' && String(student.guardian) !== String(req.user._id)) {
+      return res.status(403).json({ message: 'You are not authorized to view this student' });
+    }
+
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 300);
+    const payload = await interactionService.listStudentInteractions({
+      studentId: req.params.id,
+      from: req.query.from,
+      to: req.query.to,
+      limit,
+    });
+
+    return res.json(payload);
+  } catch (error) {
+    console.error('Get student interactions error:', error);
+    return res.status(500).json({
+      message: 'Failed to fetch student interactions',
       error: error.message,
     });
   }

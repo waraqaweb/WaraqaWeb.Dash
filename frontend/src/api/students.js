@@ -73,3 +73,13 @@ export const deleteStudent = async (studentId) => {
     throw error.response?.data || error;
   }
 };
+
+// Get unified student interactions timeline
+export const getStudentInteractions = async (studentId, params = {}) => {
+  try {
+    const response = await axios.get(`/students/${studentId}/interactions`, { params });
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || error;
+  }
+};

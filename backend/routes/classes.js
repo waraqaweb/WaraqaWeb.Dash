@@ -21,6 +21,7 @@ const InvoiceModel = require("../models/Invoice");
 const InvoiceService = require('../services/invoiceService');
 const systemVacationService = require("../services/systemVacationService");
 const availabilityService = require("../services/availabilityService");
+const interactionService = require('../services/interactionService');
 const {
   extractParticipantIds,
   refreshParticipantsFromSchedule,
@@ -4873,6 +4874,16 @@ router.put("/:id/report", authenticateToken, requireRole(["admin", "teacher"]), 
       throw saveErr;
     }
     console.log("✅ Class saved with report and attendance");
+
+    try {
+      await interactionService.syncClassReportToCanonicalMeeting({
+        classDoc,
+        submittedBy: req.user,
+        source: 'classes.route.report',
+      });
+    } catch (syncErr) {
+      console.warn('[report] Failed to sync canonical meeting interaction:', syncErr?.message || syncErr);
+    }
 
     // 🟦 Optional: propagate a subject change to FUTURE classes in the series.
     // Triggered when the teacher (or admin) ticks "Apply to future classes too"

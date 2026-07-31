@@ -35,6 +35,7 @@ const EditClassModal = React.lazy(() => import("../../components/dashboard/EditC
 const CreateClassModal = React.lazy(() => import("../../components/dashboard/CreateClassModal"));
 import FABCluster from "../../components/FABCluster";
 const MeetingReportModal = React.lazy(() => import("../../components/dashboard/MeetingReportModal"));
+const UnifiedReportComposerModal = React.lazy(() => import("../../components/reports/UnifiedReportComposerModal"));
 const RescheduleClassModal = React.lazy(() => import("../../components/dashboard/RescheduleClassModal"));
 const RescheduleRequestModal = React.lazy(() => import("../../components/dashboard/RescheduleRequestModal"));
 const RescheduleRequestDetailsModal = React.lazy(() => import("../../components/dashboard/RescheduleRequestDetailsModal"));
@@ -398,6 +399,10 @@ const ClassesPage = ({ isActive = true }) => {
   const [meetingsLoading, setMeetingsLoading] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [reportMeeting, setReportMeeting] = useState(null);
+  const [classReportComposerOpen, setClassReportComposerOpen] = useState(false);
+  const [composerClassItem, setComposerClassItem] = useState(null);
+  const [classReportComposerSaving, setClassReportComposerSaving] = useState(false);
+  const [classReportComposerError, setClassReportComposerError] = useState('');
   const [showAllMobileMeetings, setShowAllMobileMeetings] = useState(false);
   const [meetingDrawerOpen, setMeetingDrawerOpen] = useState(false);
   const [isLargeScreen, setIsLargeScreen] = useState(() => {
@@ -3110,6 +3115,19 @@ fetchClassesRef.current = fetchClasses;
     setReportMeeting(null);
   }, []);
 
+  const openClassReportComposer = useCallback((classItem) => {
+    if (!classItem?._id) return;
+    setComposerClassItem(classItem);
+    setClassReportComposerError('');
+    setClassReportComposerOpen(true);
+  }, []);
+
+  const closeClassReportComposer = useCallback(() => {
+    setClassReportComposerOpen(false);
+    setComposerClassItem(null);
+    setClassReportComposerError('');
+  }, []);
+
   const handleDeleteMeeting = useCallback(async (meeting) => {
     if (!meeting?._id) return;
     if (!window.confirm('Delete this meeting? This cannot be undone.')) return;
@@ -3126,6 +3144,25 @@ fetchClassesRef.current = fetchClasses;
     await fetchMeetings();
     closeMeetingReportModal();
   }, [fetchMeetings, closeMeetingReportModal]);
+
+  const handleClassComposerSubmit = useCallback(async ({ id, payload }) => {
+    if (!id) return;
+    try {
+      setClassReportComposerSaving(true);
+      setClassReportComposerError('');
+      await api.put(`/classes/${id}/report`, {
+        ...payload,
+        applyToFutureClasses: false,
+      });
+      await fetchClasses();
+      closeClassReportComposer();
+    } catch (err) {
+      const message = err?.response?.data?.message || err?.message || 'Failed to submit class report';
+      setClassReportComposerError(message);
+    } finally {
+      setClassReportComposerSaving(false);
+    }
+  }, [fetchClasses, closeClassReportComposer]);
 
   const meetingBuckets = useMemo(() => {
     if (!Array.isArray(meetings) || !meetings.length) {
@@ -3567,7 +3604,7 @@ fetchClassesRef.current = fetchClasses;
 
                 {canOpenReport(classItem) && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); navigate(`/classes/${classItem._id}/report`, { state: { background: location, reportClass: classItem } }); }}
+                    onClick={(e) => { e.stopPropagation(); openClassReportComposer(classItem); }}
                     className="icon-button icon-button--green"
                     title="Submit Class Report"
                   >
@@ -4381,7 +4418,7 @@ fetchClassesRef.current = fetchClasses;
           onCancel={handleOpenCancelModal}
           onDuplicate={handleOpenDuplicateModal}
           onDelete={handleOpenDeleteModal}
-          onSubmitReport={(classItem) => navigate(`/classes/${classItem._id}/report`, { state: { background: location, reportClass: classItem } })}
+          onSubmitReport={openClassReportComposer}
           canManageClasses={isAdmin()}
           canSubmitReport={canOpenReport}
           userTimezone={user?.timezone || DEFAULT_TIMEZONE}
@@ -4818,6 +4855,18 @@ fetchClassesRef.current = fetchClasses;
       )}
 
       <React.Suspense fallback={null}>
+      {classReportComposerOpen && (
+      <UnifiedReportComposerModal
+        isOpen={classReportComposerOpen}
+        mode="class"
+        context={{ classData: composerClassItem }}
+        onClose={closeClassReportComposer}
+        onSubmit={handleClassComposerSubmit}
+        saving={classReportComposerSaving}
+        error={classReportComposerError}
+      />
+      )}
+
       {reportModalOpen && (
       <MeetingReportModal
         isOpen={reportModalOpen}

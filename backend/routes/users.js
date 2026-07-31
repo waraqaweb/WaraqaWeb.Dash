@@ -25,6 +25,7 @@ const TeacherInvoice = require('../models/TeacherInvoice');
 const TeacherSalaryAudit = require('../models/TeacherSalaryAudit');
 const { getTeacherVacationSummaryMap } = require('../services/teacherVacationService');
 const { computeGuardianHoursFromPaidInvoices, syncComputedHoursToStorage, normalizeId, roundHours } = require('../services/guardianHoursService');
+const interactionService = require('../services/interactionService');
 const { isValidTimezone, DEFAULT_TIMEZONE } = require('../utils/timezoneUtils');
 const dayjs = require('dayjs');
 const utcPlugin = require('dayjs/plugin/utc');
@@ -1861,6 +1862,44 @@ router.post('/admin/teachers/:teacherId/hours', [
   } catch (error) {
     console.error('Update teacher hours error:', error);
     return res.status(500).json({ message: 'Failed to update teacher hours', error: error.message });
+  }
+});
+
+/**
+ * Get unified teacher interactions timeline
+ * GET /api/users/:id/teacher-interactions
+ */
+router.get('/:id/teacher-interactions', authenticateToken, requireResourceAccess('user'), async (req, res) => {
+  try {
+    const teacher = await User.findById(req.params.id).select('_id role firstName lastName');
+    if (!teacher) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    if (teacher.role !== 'teacher') {
+      return res.status(400).json({ message: 'Target user is not a teacher' });
+    }
+
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 300);
+    const payload = await interactionService.listTeacherInteractions({
+      teacherId: req.params.id,
+      from: req.query.from,
+      to: req.query.to,
+      limit,
+    });
+
+    return res.json({
+      teacher: {
+        _id: teacher._id,
+        fullName: `${teacher.firstName || ''} ${teacher.lastName || ''}`.trim(),
+      },
+      timeline: payload.timeline,
+    });
+  } catch (error) {
+    console.error('Get teacher interactions error:', error);
+    return res.status(500).json({
+      message: 'Failed to fetch teacher interactions',
+      error: error.message,
+    });
   }
 });
 

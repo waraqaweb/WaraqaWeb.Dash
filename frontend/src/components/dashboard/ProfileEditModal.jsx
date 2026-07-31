@@ -15,6 +15,9 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
   const { user: viewer } = useAuth();
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [teacherInteractions, setTeacherInteractions] = useState([]);
+  const [teacherInteractionsLoading, setTeacherInteractionsLoading] = useState(false);
+  const [teacherInteractionsError, setTeacherInteractionsError] = useState('');
   const [subjectOptions, setSubjectOptions] = useState(Array.isArray(fallbackSubjects) ? fallbackSubjects : []);
   const currentYear = new Date().getFullYear();
 
@@ -150,6 +153,44 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
       setForm(null);
     }
   }, [targetUser]);
+
+  useEffect(() => {
+    const fetchTeacherInteractions = async () => {
+      if (!isOpen || !targetUser?._id || targetUser?.role !== 'teacher') {
+        setTeacherInteractions([]);
+        setTeacherInteractionsError('');
+        return;
+      }
+      try {
+        setTeacherInteractionsLoading(true);
+        setTeacherInteractionsError('');
+        const response = await api.get(`/users/${targetUser._id}/teacher-interactions`, {
+          params: { limit: 50 }
+        });
+        setTeacherInteractions(Array.isArray(response.data?.timeline) ? response.data.timeline : []);
+      } catch (err) {
+        console.warn('Failed to load teacher interactions', err?.response?.data?.message || err?.message || err);
+        setTeacherInteractionsError(err?.response?.data?.message || 'Failed to load teacher interactions');
+      } finally {
+        setTeacherInteractionsLoading(false);
+      }
+    };
+
+    fetchTeacherInteractions();
+  }, [isOpen, targetUser?._id, targetUser?.role]);
+
+  const formatInteractionWhen = (value) => {
+    if (!value) return 'Unknown date';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return 'Unknown date';
+    return d.toLocaleString();
+  };
+
+  const describeTeacherInteraction = (item = {}) => {
+    const type = String(item.meetingType || '').replace(/_/g, ' ').trim() || 'meeting';
+    const status = item.attendanceStatus || item.status || 'scheduled';
+    return `${type} - ${status}`;
+  };
 
   // Avatar cropping functions
   const handleFile = (file) => {
@@ -1100,6 +1141,40 @@ export default function ProfileEditModal({ isOpen, targetUser, onClose, onSaved 
                         </div>
                       </div>
                     )}
+
+                    <div className="md:col-span-2 rounded-lg border border-border p-4 bg-muted/20">
+                      <h5 className="font-medium text-foreground">Unified Meeting and Recruitment History</h5>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Timeline of this teacher's meetings and synced reports.
+                      </p>
+
+                      {teacherInteractionsLoading ? (
+                        <p className="mt-3 text-sm text-muted-foreground">Loading history...</p>
+                      ) : teacherInteractionsError ? (
+                        <p className="mt-3 text-sm text-red-600">{teacherInteractionsError}</p>
+                      ) : teacherInteractions.length === 0 ? (
+                        <p className="mt-3 text-sm text-muted-foreground">No interactions found yet.</p>
+                      ) : (
+                        <div className="mt-3 space-y-2 max-h-56 overflow-y-auto pr-1">
+                          {teacherInteractions.slice(0, 30).map((item, idx) => (
+                            <div key={item.interactionId || idx} className="rounded-md border border-border bg-background px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-sm font-medium text-foreground">{describeTeacherInteraction(item)}</span>
+                                <span className="text-xs text-muted-foreground">{formatInteractionWhen(item.occurredAt || item.reportSubmittedAt)}</span>
+                              </div>
+                              {Array.isArray(item.discussedStudents) && item.discussedStudents.length > 0 ? (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  Students: {item.discussedStudents.map((s) => s.studentName).filter(Boolean).join(', ')}
+                                </p>
+                              ) : null}
+                              {item.notes ? (
+                                <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{item.notes}</p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

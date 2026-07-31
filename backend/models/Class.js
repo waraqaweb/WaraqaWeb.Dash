@@ -480,6 +480,29 @@ const classSchema = new mongoose.Schema({
     googleEventId: { type: String, trim: true, default: null },
     googleSyncedAt: { type: Date, default: null },
   },
+
+  interaction: {
+    meetingId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Meeting',
+      default: null,
+      index: true,
+    },
+    reportSource: {
+      type: String,
+      enum: ['class', 'meeting', 'sync'],
+      default: 'class',
+    },
+    reportSyncedAt: {
+      type: Date,
+      default: null,
+    },
+    reportVersion: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+  },
   
   // Class Materials and Resources
   materials: [{
